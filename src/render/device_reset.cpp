@@ -25,6 +25,7 @@
 #include <cstdint>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -64,6 +65,9 @@ void PostDeviceReset(MMDApp* app) {
             (*reinterpret_cast<void***>(d3dxObj))[0x114 / 4]))(d3dxObj);
     }
 
+    // 内置 MMEffect（对应原版 MMHack 设备 Reset 槽 16 拦截的前半）。
+    mme::OnLostDevice(app);
+
     IDirect3DDevice9* device = r->device;
     if (device == nullptr)
         return;
@@ -83,6 +87,9 @@ void PostDeviceReset(MMDApp* app) {
         (*(void(__stdcall**) (IUnknown*))(
             (*reinterpret_cast<void***>(d3dxObj))[0x118 / 4]))(d3dxObj);
     }
+
+    // 内置 MMEffect（对应原版 MMHack 设备 Reset 槽 16 拦截的后半）。
+    mme::OnResetDevice(app);
 
     if (app->FullscreenMode() != 0) {
         RefreshSeparateWindowViewport(app);                                           // 0x4290F0

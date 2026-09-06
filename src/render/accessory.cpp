@@ -22,6 +22,7 @@
 #include "fx_slots.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -291,7 +292,7 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
         device->SetTexture(0, nullptr);
         for (DWORD i = 0; i < count; ++i) {
             ++mdl::Accessory(accessory)->currentMaterial;
-            DrawSubset(accessory, i);
+            mme::DrawAccessorySubset(app, accessory, i);
             ResetAccessoryTextureStages(device);
         }
     } else {
@@ -305,7 +306,7 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
                 *reinterpret_cast<D3DMATERIAL9*>(materials + 68 * i);
             material.Diffuse.a *= mdl::Accessory(accessory)->opacity;
             device->SetMaterial(&material);
-            DrawSubset(accessory, i);
+            mme::DrawAccessorySubset(app, accessory, i);
             ResetAccessoryTextureStages(device);
         }
     }
@@ -934,7 +935,7 @@ void RenderAccessoriesShadow(MMDApp* app) {                     // 0x4C52D0
         for (DWORD i = 0; i < count; ++i) {
             ++mdl::Accessory(accessory)->currentMaterial;
             if (materials[i].Diffuse.a != 0.9800000190734863f)
-                DrawSubset(accessory, i);
+                mme::DrawAccessorySubset(app, accessory, i);
         }
         fx::EndPass(effect);
         mdl::Accessory(accessory)->currentMaterial = -1;
@@ -1041,7 +1042,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
                 AccessoryScreenTexture(app));
             fx::Begin(effect);
             fx::BeginPass(effect);
-            DrawSubset(accessory, i);
+            mme::DrawAccessorySubset(app, accessory, i);
             fx::EndPass(effect);
             fx::End(effect);
         }

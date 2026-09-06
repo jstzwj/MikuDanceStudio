@@ -26,6 +26,7 @@
 
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
@@ -461,6 +462,10 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
         ProbeStereo3D(device, reinterpret_cast<unsigned char*>(
                                   &r->stereoHandle)))
         r->stereoEnabled = 0;
+
+    // 内置 MMEffect：设备与内置标准效果均已就绪，注册宿主窗口/标准效果。
+    // 实际 Initialize 保持原版的惰性时机（首个 BeginScene）。
+    mme::OnDeviceCreated(app);
     return true;
 }
 

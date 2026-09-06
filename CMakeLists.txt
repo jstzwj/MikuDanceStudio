@@ -178,11 +178,15 @@ add_library(mikudancestudio_core STATIC
     src/render/draw_glyph.cpp
     src/render/toon_textures.cpp
     src/render/scene_font.cpp
+    src/render/mme/mme_bridge.cpp
     src/exports/effect_api.cpp
     src/app/late_ports.cpp
 )
 
 target_include_directories(mikudancestudio_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# 内置 MMEffect 的宿主集成面（mme_bridge → MmeHost* 声明）。
+target_include_directories(mikudancestudio_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include)
 target_link_libraries(mikudancestudio_core PUBLIC
     BULLET275::BULLET275
     user32      # RegisterClass / CreateWindow / MessageBox
@@ -284,3 +288,90 @@ target_link_options(MMDxShow PRIVATE
 set_target_properties(MMDxShow PROPERTIES
     OUTPUT_NAME "MMDxShow"
 )
+
+# ---------------------------------------------------------------------------
+# 内置 MMEffect.dll - MikuMikuEffect v0.37 效果引擎的直接内置
+# (third_party/mmeffect，逆向重建源码的去 hook 化移植)。
+#
+# 原版经由 d3d9.dll 代理 + IAT/vtable 拦截注入 MMD；本工程的宿主导出
+# (37 个 Exp*)与渲染重复计数循环等价存在，故引擎以 DLL 形式链接进进程，
+# 由宿主在管线对应点直接调用 MmeHost* 导出（见 mme_bridge）。
+#
+# 链接方向：MMEffect.dll 导入宿主 37 个 Exp*。exe 的导入库在 exe 链接时
+# 才生成，直接相互链接构成文件级循环，故先用 lib /def 预生成一份同名导
+# 入库（/NAME:MikuMikuDanceE.exe 与 exe 实际导出模块名一致，加载器按名
+# 对已映射的 exe 解析导入）。
+# ---------------------------------------------------------------------------
+set(MME_HOST_IMPORT_DIR ${CMAKE_CURRENT_BINARY_DIR}/mme_host_import)
+set(MME_HOST_IMPORT_LIB ${MME_HOST_IMPORT_DIR}/MikuMikuDanceE.lib)
+if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(MME_HOST_MACHINE x64)
+else()
+    set(MME_HOST_MACHINE x86)
+endif()
+add_custom_command(
+    OUTPUT ${MME_HOST_IMPORT_LIB}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${MME_HOST_IMPORT_DIR}
+    COMMAND ${CMAKE_AR} /NOLOGO
+            /DEF:${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
+            /NAME:MikuMikuDanceE.exe
+            /MACHINE:${MME_HOST_MACHINE}
+            /OUT:${MME_HOST_IMPORT_LIB}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
+    VERBATIM)
+add_custom_target(mme_host_importlib DEPENDS ${MME_HOST_IMPORT_LIB})
+
+add_library(MMEffect SHARED
+    third_party/mmeffect/src/d3dx9_dyn.cpp
+    third_party/mmeffect/src/mme_host.cpp
+    third_party/mmeffect/src/mmhack/mmhack_registry.cpp
+    third_party/mmeffect/src/mmhack/mmhack_material.cpp
+    third_party/mmeffect/src/mmhack/mmhack_material_table.cpp
+    third_party/mmeffect/src/mmhack/mmhack_lightmatrix.cpp
+    third_party/mmeffect/src/mmhack/mmhack_getters.cpp
+    third_party/mmeffect/src/mmeffect/anime_texture.cpp
+    third_party/mmeffect/src/mmeffect/callbacks.cpp
+    third_party/mmeffect/src/mmeffect/effect_engine.cpp
+    third_party/mmeffect/src/mmeffect/emm_manager.cpp
+    third_party/mmeffect/src/mmeffect/ini_file.cpp
+    third_party/mmeffect/src/mmeffect/material_bind.cpp
+    third_party/mmeffect/src/mmeffect/mme_context.cpp
+    third_party/mmeffect/src/mmeffect/mme_dlg.cpp
+    third_party/mmeffect/src/mmeffect/mme_globals.cpp
+    third_party/mmeffect/src/mmeffect/mme_log.cpp
+    third_party/mmeffect/src/mmeffect/mme_ui.cpp
+    third_party/mmeffect/src/mmeffect/mme_util.cpp
+    third_party/mmeffect/src/mmeffect/model_data.cpp
+    third_party/mmeffect/src/mmeffect/pass_planner.cpp
+    third_party/mmeffect/src/mmeffect/render_snapshot.cpp
+    third_party/mmeffect/src/mmeffect/sas_exec.cpp
+    third_party/mmeffect/src/mmeffect/sas_interpreter.cpp
+    third_party/mmeffect/res/MMEffect.rc
+)
+target_include_directories(MMEffect PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/src/mmhack   # mmhack_state.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp（运行时 d3dx9 转发）
+)
+add_dependencies(MMEffect mme_host_importlib)
+target_link_libraries(MMEffect PRIVATE
+    ${MME_HOST_IMPORT_LIB}
+    user32       # 窗口/菜单/消息
+    gdi32        # GDI+ 底层
+    gdiplus      # 动画纹理（GIF/APNG 解码）
+    comctl32     # 分配对话框列表视图
+    comdlg32     # 特效文件选择对话框
+    shell32
+    ole32
+    winmm        # timeGetTime
+    shlwapi
+    advapi32
+)
+target_link_options(MMEffect PRIVATE
+    "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/MMEffect.def")
+set_target_properties(MMEffect PROPERTIES
+    OUTPUT_NAME "MMEffect"
+)
+
+# 宿主 exe 静态链接内置 MMEffect.dll（无任何运行时注入）。
+target_link_libraries(MikuDanceStudio PRIVATE MMEffect)

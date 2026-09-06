@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
@@ -55,7 +56,7 @@ void DrawTextOverlay(MMDApp* app, IDirect3DDevice9* device) {
     device->SetTexture(0, app->TextOverlayTexture());
     device->SetStreamSource(0, vb, 0, sizeof(TexturedScreenVertex));
     device->SetFVF(kTexturedScreenVertexFvf);
-    device->DrawPrimitive(D3DPT_TRIANGLELIST, 0, count);
+    mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, count);
 }
 
 void DrawLineOverlay(MMDApp* app, D3DRenderer* sub,
@@ -80,7 +81,7 @@ void DrawSpriteOverlay(MMDApp* app, IDirect3DDevice9* device) {
     device->SetTexture(0, app->OverlayTexture());
     device->SetStreamSource(0, vb, 0, sizeof(TexturedScreenVertex));
     device->SetFVF(kTexturedScreenVertexFvf);
-    device->DrawPrimitive(D3DPT_TRIANGLELIST, 0, count);
+    mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, count);
 }
 
 void DrawFullscreenQuad(IDirect3DDevice9* device,
@@ -89,7 +90,7 @@ void DrawFullscreenQuad(IDirect3DDevice9* device,
     device->SetTexture(0, texture);
     device->SetStreamSource(0, vertices, 0, 28);
     device->SetFVF(0x144);
-    device->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 2);
+    mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
 }
 
 // Porting-era screen-texture readback under
@@ -382,10 +383,10 @@ void RenderFrameScene(MMDApp* app) {
         app->state.blackBackgroundEnabled != 0
             ? D3DCOLOR_XRGB(0, 0, 0)
             : D3DCOLOR_XRGB(255, 255, 255);
-    device->Clear(0, nullptr, clearFlags, clearColor, 1.0f, 0);
+    mme::ClearScene(app, device, clearFlags, clearColor, 1.0f, 0);
 
     app->state.renderPassCount = 1;
-    if (FAILED(device->BeginScene()))
+    if (FAILED(mme::BeginScene(app, device)))
         return;
 
     const bool effectRenderer = UseEffectModelRenderer(app);
@@ -406,6 +407,11 @@ void RenderFrameScene(MMDApp* app) {
     ComposeSelfShadow(app, sub, device);
     ComposeCallbackTexture(app, device);
 
+    // MME: 主渲染目标即将被回读（捕获/AVI 采样）——若本帧后处理链尚未
+    // 运行则先触发（对应原版 MMHack 对 UpdateSurface/GetRenderTargetData/
+    // StretchRect 槽 30/32/34 的拦截）。
+    mme::PreRenderTargetCopy(app, device);
+
     // 0x46DFDE: mirror the full-size capture RT into the secondary-window
     // back buffer.  The original reacquires the back buffer after a reset.
     if (sub->multisampleAvailable == 0 &&
@@ -422,7 +428,7 @@ void RenderFrameScene(MMDApp* app) {
     // 0x46E208: the recording/sub-window path ends the scene here; it never
     // draws debug geometry or the dynamic overlay batches.
     if (app->RecordingWindow() != nullptr) {
-        device->EndScene();
+        mme::EndScene(app, device);
         DumpAccessoryScreenTexture(app, device);
         return;
     }
@@ -456,7 +462,7 @@ void RenderFrameScene(MMDApp* app) {
     DrawTextOverlay(app, device);
     DrawLineOverlay(app, sub, device);
     DrawSpriteOverlay(app, device);
-    device->EndScene();
+    mme::EndScene(app, device);
     DumpAccessoryScreenTexture(app, device);
 }
 

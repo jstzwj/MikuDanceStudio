@@ -1,0 +1,22 @@
+; MMEffect.def - 内置 MMEffect.dll 的宿主集成导出表。
+;
+; 原版 MMEffect.dll 的 11 个回调导出不再需要（MMHack 层已由宿主 MmeHost*
+; 集成取代，调用在同一模块内直连）；本表只导出宿主桥使用的集成面。
+LIBRARY MMEffect
+EXPORTS
+    MmeHostBeginScene
+    MmeHostClear
+    MmeHostDestroyDevice
+    MmeHostDrawIndexedPrimitive
+    MmeHostDrawPrimitive
+    MmeHostEffectsActive
+    MmeHostEndScene
+    MmeHostNotifyPmmLoaded
+    MmeHostNotifyPmmSaved
+    MmeHostOnLostDevice
+    MmeHostOnResetDevice
+    MmeHostPreRenderTargetCopy
+    MmeHostRecordTextureFile
+    MmeHostSetDrawnWindow
+    MmeHostSetMainWindow
+    MmeHostSetStandardEffect

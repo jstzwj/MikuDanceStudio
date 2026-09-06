@@ -20,6 +20,7 @@
 
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -194,7 +195,8 @@ void ReleaseCom(void* object) {
         reinterpret_cast<IUnknown*>(object)->Release();  // vtable slot 2
 }
 
-void DrawAxisMesh(void* axis, D3DRenderer* sub) {
+void DrawAxisMesh(void* axis, MMDApp* app) {
+    D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     mdl::AccessoryRecord& gizmo = *mdl::Accessory(axis);
     const DWORD count = gizmo.materialCount;
@@ -202,8 +204,7 @@ void DrawAxisMesh(void* axis, D3DRenderer* sub) {
     for (DWORD i = 0; i < count; ++i) {
         device->SetMaterial(&materials[i]);
         device->SetTexture(0, nullptr);
-        reinterpret_cast<MeshDrawSubset>(
-            (*reinterpret_cast<void***>(gizmo.mesh))[3])(gizmo.mesh, i);
+        mme::DrawAccessorySubset(app, axis, i);
     }
 }
 
@@ -418,8 +419,7 @@ void DrawAccessoryDebug(MMDApp* app) {
             device->SetRenderState(D3DRS_ZENABLE, TRUE);
             device->SetRenderState(D3DRS_LIGHTING, TRUE);
             device->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0x00FFFFFF, 1.0f, 0);
-            DrawAxisMesh(app->state.axisMeshObject,
-                         app->Renderer());
+            DrawAxisMesh(app->state.axisMeshObject, app);
             device->SetRenderState(D3DRS_ZENABLE, FALSE);
             device->SetRenderState(D3DRS_LIGHTING, FALSE);
         } else {
@@ -505,7 +505,7 @@ void DrawBoneOperationAxis(MMDApp* app, const float frameMatrix[16]) {
     device->SetTransform(D3DTS_WORLD,
                          reinterpret_cast<const D3DMATRIX*>(&world));
     device->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0x00FFFFFF, 1.0f, 0);
-    DrawAxisMesh(app->state.axisMeshObject, app->Renderer());
+    DrawAxisMesh(app->state.axisMeshObject, app);
 }
 
 void SetupFrameWorldTransform(MMDApp* app) {

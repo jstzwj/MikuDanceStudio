@@ -107,6 +107,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/scene_ownership.hpp"
@@ -2603,6 +2604,9 @@ static void LoadSceneV2_SuccessTail(PmmV2LoadContext& ctx,
     swprintf_s(wndText, 0x100, kAppTitleFormat,
                reinterpret_cast<const wchar_t*>(s->state.envFileName));
     SetWindowTextW(main, wndText);
+
+    // 内置 MMEffect：场景加载成功通知（EMM 自动加载）。
+    mme::NotifyPmmLoaded(s);
 
     // record post-processing (0x458309..0x458996)
     for (unsigned char i = 0; i < modelCount; ++i) {

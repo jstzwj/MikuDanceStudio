@@ -68,6 +68,7 @@
 #include <cstdlib>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/dshow_recorder.hpp"
 
@@ -587,6 +588,9 @@ void ShutdownCleanup(MMDApp* app) {
         s.Audio() = nullptr;
     }
     if (D3DRenderer* render = s.Renderer()) {                   // 0x4632A1
+        // 内置 MMEffect：设备销毁前的 Cleanup（对应原版设备 Release 归零
+        // 路径上的 MMHack 销毁钩子）。
+        mme::OnDeviceDestroyed(app);
         DisposeRenderSubsystem(render);                         // 0x4632AD
         std::free(render);                                      // 0x4632B3
         s.Renderer() = nullptr;

@@ -28,6 +28,7 @@
 #include <cstring>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -139,6 +140,8 @@ bool InitToonTextures(MMDApp* app) {
     for (int i = 1; i < 11; ++i) {
         char path[256];
         sprintf_s(path, 0x100, "data\\toon%02d.bmp", i);
+        wchar_t widePath[256] = {};
+        MultiByteToWideChar(CP_ACP, 0, path, -1, widePath, 256);
         IDirect3DTexture9** slot = &s.ToonTexture(i);
         D3dxImageInfo info{};
         if (FAILED(g_d3dx.fromFileExA(device, path,
@@ -176,6 +179,11 @@ bool InitToonTextures(MMDApp* app) {
                 out[2] = row[0] * 0.00390625f;     // B
                 (*slot)->UnlockRect(0);
             }
+        }
+        if (*slot != nullptr) {
+            // 内置 MMEffect：登记内置 toon 纹理（GetToonTexture 的
+            // "toonNN.bmp" 裸名查询经 MME 侧别名机制解析）。
+            mme::RecordTexture(widePath, *slot);
         }
     }
     return true;

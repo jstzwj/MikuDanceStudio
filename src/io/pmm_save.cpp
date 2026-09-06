@@ -122,6 +122,7 @@
 
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -1008,6 +1009,9 @@ void SaveSceneFile(MMDApp* app) {
     SetWindowTextW(main, title);
     MessageBeep(0x40);
     s->state.windowLayoutReady = 1;
+
+    // 内置 MMEffect：场景保存成功通知（EMM 自动保存）。
+    mme::NotifyPmmSaved(s);
 }
 
 }  // namespace mikudancestudio

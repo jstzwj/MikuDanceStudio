@@ -14,6 +14,7 @@
 
 #include "fx_slots.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -907,9 +908,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                                           firstIndex);
                         stateDumped = true;
                     }
-                    device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0,
-                                                 state.vertexCount,
-                                                 firstIndex, indexCount / 3);
+                    mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
+                                              state.vertexCount,
+                                              firstIndex, indexCount / 3);
                 };
                 // 0x492203 compares the COPY's Diffuse.a (esp+0x138),
                 // which carries the 0.5 displayState override - not the
@@ -987,9 +988,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                 device->SetFVF(fvf);
                 device->SetStreamSource(0, vertices, 0, stride);
                 device->SetIndices(indices);
-                device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0,
-                                             state.vertexCount, firstIndex,
-                                             indexCount / 3);
+                mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
+                                          state.vertexCount, firstIndex,
+                                          indexCount / 3);
                 if (effectPass && effect != nullptr) {
                     fx::EndPass(effect);
                     if (!shadowOnly) {
@@ -1051,7 +1052,7 @@ void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
             device->SetFVF(66);
             device->SetStreamSource(0, vb, 0, 16);
             device->SetIndices(ib);
-            device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0,
+            mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
                 state.vertexCount, firstIndex, count / 3);
         }
         firstIndex += count;
@@ -1224,7 +1225,7 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
         device->SetFVF(66);
         device->SetStreamSource(0, vb, 0, 16);
         device->SetIndices(ib);
-        device->DrawIndexedPrimitive(D3DPT_LINELIST, 0, 0, 90, 0, 45);
+        mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, 90, 0, 45);
     }
 
     device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
@@ -1236,7 +1237,7 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
     if (plane != nullptr) {
         device->SetStreamSource(0, plane, 0, 16);
         device->SetFVF(66);
-        device->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 2);
+        mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     }
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
     if (stencil)
@@ -1253,7 +1254,7 @@ void DrawPreModelQuad(IDirect3DDevice9* device,
     device->SetTexture(0, texture);
     device->SetStreamSource(0, vertices, 0, 28);
     device->SetFVF(324);
-    device->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+    mme::DrawPrimitive(device, D3DPT_TRIANGLESTRIP, 0, 2);
     device->SetRenderState(D3DRS_ZENABLE, TRUE);
 }
 
