@@ -20,8 +20,9 @@ class MMDApp;
 namespace mme {
 
 // 设备创建后调用（InitD3D 尾部）：注册主窗口与内置标准效果。标准效果为
-// 空时 MME 保持不可用，全部直通。
-void OnDeviceCreated(MMDApp* app);
+// 空时 MME 保持不可用，全部直通。注意 InitD3D 运行于 WM_CREATE 期间、
+// app->Hwnd() 尚未赋值——必须传入 InitD3D 收到的窗口句柄。
+void OnDeviceCreated(MMDApp* app, HWND hwnd);
 
 // 设备销毁前调用（应用关闭/设备释放路径）。
 void OnDeviceDestroyed(MMDApp* app);

@@ -15,14 +15,18 @@ namespace {
 
 // 标准效果已注册（MME Initialize 的前置条件齐备）。
 bool g_available = false;
+// 已注册给 MME 的主窗口（帧级刷新用；初始化期间 WM_CREATE 的句柄可能
+// 尚未写回 app->Hwnd()）。
+HWND g_registeredWindow = nullptr;
 
 }  // namespace
 
 // ---------------------------------------------------------------------------
 // 设备生命周期
 // ---------------------------------------------------------------------------
-void OnDeviceCreated(MMDApp* app) {
+void OnDeviceCreated(MMDApp* app, HWND hwnd) {
     g_available = false;
+    g_registeredWindow = nullptr;
     D3DRenderer* renderer = app->Renderer();
     if (renderer == nullptr || renderer->device == nullptr)
         return;
@@ -30,9 +34,15 @@ void OnDeviceCreated(MMDApp* app) {
     // d3dx9_XX.dll / 着色器低于 SM2 时 r->effect 为空，MME 整体保持直通。
     if (renderer->effect == nullptr)
         return;
-    MmeHostSetMainWindow(static_cast<HWND>(app->Hwnd()));
-    MmeHostSetDrawnWindow(static_cast<HWND>(app->Hwnd()));
+    // InitD3D 于 WM_CREATE 期间运行，app->Hwnd() 此时还是空——以参数句柄
+    // 为准（回落到 app->Hwnd() 仅为防御）。
+    HWND window = hwnd;
+    if (window == nullptr)
+        window = static_cast<HWND>(app->Hwnd());
+    MmeHostSetMainWindow(window);
+    MmeHostSetDrawnWindow(window);
     MmeHostSetStandardEffect(renderer->effect);
+    g_registeredWindow = window;
     g_available = true;
 }
 
@@ -73,6 +83,14 @@ HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
 HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device) {
     if (!g_available)
         return device->BeginScene();
+    // 主窗口句柄刷新（初始化时序的兜底：若注册句柄与当前不符则更新，
+    // 需在 MME 惰性 Initialize 之前生效）。
+    HWND window = static_cast<HWND>(app->Hwnd());
+    if (window != nullptr && window != g_registeredWindow) {
+        MmeHostSetMainWindow(window);
+        MmeHostSetDrawnWindow(window);
+        g_registeredWindow = window;
+    }
     // 原版语义（MmhProbeEditMode）：帧编辑控件被禁用或 AVI 录制中视为非编
     // 辑态——本工程的对应判定为 AVI 录制窗口存在（播放中仍为编辑态，与
     // MMD 一致：播放不锁帧编辑控件）。

@@ -464,8 +464,9 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
         r->stereoEnabled = 0;
 
     // 内置 MMEffect：设备与内置标准效果均已就绪，注册宿主窗口/标准效果。
-    // 实际 Initialize 保持原版的惰性时机（首个 BeginScene）。
-    mme::OnDeviceCreated(app);
+    // 实际 Initialize 保持原版的惰性时机（首个 BeginScene）。InitD3D 运行
+    // 于 WM_CREATE 期间，app->Hwnd() 尚未赋值——传参数句柄。
+    mme::OnDeviceCreated(app, hwnd);
     return true;
 }
 

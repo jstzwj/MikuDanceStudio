@@ -79,18 +79,24 @@ void __cdecl MmeHostSetMainWindow(HWND window)
 
     // [原 MMHack DllMain] exe 目录下的 MMEffect.debug 存在则置调试模式
     // （x64 原版在 MMHack.dll 旁检查，与其同目录 = 宿主 exe 目录）。
-    if (!g_mmh.debugMode) {
-        char modulePath[MAX_PATH];
-        if (GetModuleFileNameA(nullptr, modulePath, MAX_PATH) > 0) {
-            char* slash = strrchr(modulePath, '\\');
-            std::string debugFile =
-                (slash != nullptr) ? std::string(modulePath, slash - modulePath + 1)
-                                     + "MMEffect.debug"
-                                   : std::string("MMEffect.debug");
-            FILE* fp = nullptr;
-            if (fopen_s(&fp, debugFile.c_str(), "rb") == 0 && fp != nullptr) {
-                g_mmh.debugMode = true;
-                fclose(fp);
+    // 探测仅一次（宿主桥可能在帧级刷新时重复调用本函数）。
+    static bool debugProbed = false;
+    if (!debugProbed) {
+        debugProbed = true;
+        if (!g_mmh.debugMode) {
+            char modulePath[MAX_PATH];
+            if (GetModuleFileNameA(nullptr, modulePath, MAX_PATH) > 0) {
+                char* slash = strrchr(modulePath, '\\');
+                std::string debugFile =
+                    (slash != nullptr)
+                        ? std::string(modulePath, slash - modulePath + 1) +
+                              "MMEffect.debug"
+                        : std::string("MMEffect.debug");
+                FILE* fp = nullptr;
+                if (fopen_s(&fp, debugFile.c_str(), "rb") == 0 && fp != nullptr) {
+                    g_mmh.debugMode = true;
+                    fclose(fp);
+                }
             }
         }
     }
