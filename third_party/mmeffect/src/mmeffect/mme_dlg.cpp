@@ -1092,6 +1092,7 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         bool japanese = !MmeIsEnglishUiMode();
         if (!japanese) {
             SetWindowTextA(dlg, "Map Effect File");
+            SetWindowTextA(GetDlgItem(dlg, 1), "OK");          // IDOK：资源模板为日文侧文案
             SetWindowTextA(GetDlgItem(dlg, 2), "Cancel");
             SetWindowTextA(GetDlgItem(dlg, kBtnRefresh), "Apply");
             SetWindowTextA(GetDlgItem(dlg, kBtnGroup), "Selected Items");
