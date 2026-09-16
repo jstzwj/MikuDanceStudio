@@ -344,8 +344,12 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                         const int linked = bone->tailBone;
                         if (linked <= 0 || linked >= boneCount)
                             return false;
-                        *x = At<int>(&bones[linked], 452);
-                        *y = At<int>(&bones[linked], 456);
+                        // 尾骨骼的已投影屏幕坐标（原版 x64 0x7FF7CB4E56xx 读
+                        // [linked]+460/+464 = selState/selState2）；结构体成员
+                        // 访问双架构取对偏移——此前裸写 x86 字节偏移 452/456，
+                        // x64 上会读到 ikWorkingQuat 浮点位模式，连线飞散。
+                        *x = bones[linked].selState;
+                        *y = bones[linked].selState2;
                         return true;
                     };
                     const auto emitBone = [&](mikudancestudio::mdl::BoneRecord* bone,
