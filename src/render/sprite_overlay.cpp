@@ -7,6 +7,7 @@
 #include <d3d9.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 #include "mikudancestudio/mmd_app.hpp"
@@ -79,13 +80,16 @@ ClipPoint TransformPoint(const ClipPoint& p, const D3DMATRIX& m) {
     };
 }
 
+// pointOffset is a byte offset into the bone record (x64 original 0x7FF7CB4E4980:
+// [index*0x270 + boneTable + 0x13C] - record-scaled index, raw byte field offset).
 bool ProjectBonePoint(mikudancestudio::mdl::BoneRecord* bone, std::size_t pointOffset,
                       const D3DMATRIX& world, const D3DMATRIX& view,
                       const D3DMATRIX& projection, const RECT& viewport,
                       int* screenX, int* screenY, float* clipW) {
     const auto& boneMatrix =
         *reinterpret_cast<const D3DMATRIX*>(bone->matInit);
-    const float* point = reinterpret_cast<const float*>(bone + pointOffset);
+    const float* point = reinterpret_cast<const float*>(
+        reinterpret_cast<const unsigned char*>(bone) + pointOffset);
     ClipPoint p = TransformPoint(point[0], point[1], point[2], boneMatrix);
     p = TransformPoint(p, world);
     p = TransformPoint(p, view);
@@ -289,7 +293,8 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                  ++index) {
                 auto* bone = &bones[index];
                 float w = 0.0f;
-                ProjectBonePoint(bone, 308, world, viewMatrix, projection,
+                ProjectBonePoint(bone, offsetof(mdl::BoneRecord, position),
+                                 world, viewMatrix, projection,
                                  view, &bone->selState,
                                  &bone->selState2, &w);
                 if (index == selected) {
@@ -300,7 +305,8 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                 if (mdl::Mdl(model)->physicsMode == 2 &&
                     (bone->flags & mdl::kBoneFlagTailIsBone) == 0) {
                     float secondaryW = 0.0f;
-                    ProjectBonePoint(bone, 464, world, viewMatrix, projection,
+                    ProjectBonePoint(bone, offsetof(mdl::BoneRecord, tailOffset),
+                                     world, viewMatrix, projection,
                                      view, &bone->tailScreenX,
                                      &bone->tailScreenY, &secondaryW);
                 }

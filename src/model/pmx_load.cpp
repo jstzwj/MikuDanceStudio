@@ -350,7 +350,11 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         static const VbSpec kSpec[5] = {
             {32, 274}, {48, 524818}, {64, 2622226}, {80, 11011090},
             {96, 44565778}};
-        const VbSpec& s = kSpec[model.pmxAdditionalUvCount & 7];
+        // additional-UV 数正常域 0..4；畸形文件的 5..7 回落 0 档（原版
+        // default 分支同取 32/274，掩码本身是原版的 UB，不复制越界读）。
+        const std::uint32_t uvLadder =
+            model.pmxAdditionalUvCount < 5 ? model.pmxAdditionalUvCount : 0;
+        const VbSpec& s = kSpec[uvLadder];
         IDirect3DVertexBuffer9* vb = nullptr;
         if (FAILED(dev->CreateVertexBuffer(s.stride * vertCount, 8, s.fvf,
                                            D3DPOOL_SYSTEMMEM, &vb, nullptr))
