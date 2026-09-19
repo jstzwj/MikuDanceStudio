@@ -28,6 +28,8 @@
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
+#include "fx_slots.hpp"
+
 namespace mikudancestudio {
 namespace {
 
@@ -58,20 +60,34 @@ void PostDeviceReset(MMDApp* app) {
     ReleaseSubSlot(r->hdrTexture);                                // 0x440EEA
     ReleaseSubSlot(r->shadowDepthSurface);                        // 0x440F12
 
-    auto* d3dxObj = reinterpret_cast<IUnknown*>(r->effect);
-    if (d3dxObj != nullptr) {
-        // vtable+0x114 = OnLostDevice on the effect (D3DX) object.
-        (*(void(__stdcall**) (IUnknown*))(
-            (*reinterpret_cast<void***>(d3dxObj))[0x114 / 4]))(d3dxObj);
+    if (r->effect != nullptr) {
+        // ID3DXEffect::OnLostDevice（vtable 槽 69 / +0x228，对应原版
+        // PostDeviceReset x64 0x7FF7CB4C6308 的 call [vtbl+0x228]）。
+        fx::OnLostDevice(r->effect);
     }
 
-    // 内置 MMEffect（对应原版 MMHack 设备 Reset 槽 16 拦截的前半）。
+    // 内置 MMEffect：原版 MMHack.dll 设备包装 vtable 槽 16（0x80）的 Reset
+    // 拦截器 [0x180003d30] 前半。MMD 侧 Reset（x64 sub_7FF7CB4C6160 @
+    // 0x7FF7CB4C6323，call [dev+0x80]）进入拦截器后先调
+    // OnLostDevice(0x180058970，打印 "Resetting MME...")——前提是
+    // OnLostDevice 与 OnResetDevice 两个导出都在 MMHack DllMain 解析成功
+    //（0x18000b3f3/0x18000b418 赋值 0x18006e828/0x18006e830，缺一不通知）。
     mme::OnLostDevice(app);
 
     IDirect3DDevice9* device = r->device;
     if (device == nullptr)
         return;
     device->Reset(&r->presentParameters);                          // 0x440F57
+
+    // 内置 MMEffect：拦截器 [0x180003d30] 后半——OnResetDevice(0x180058A20)
+    // 紧贴真 Reset 返回、InitRenderStates 之前调用。原版合成顺序：
+    // D3DX OnLost → MME OnLost → Reset → MME OnReset → InitRenderStates →
+    // SetRenderState(0xA1) → D3DX OnReset（2026-09 二次核验修正：此前误置于
+    // D3DX OnResetDevice 之后，与原版不符）。拦截器尾部另把 qword_18006E7C8
+    // 更新为 d3dpp.hDeviceWindow(+0x20)（空则 GetCreationParameters
+    // [real+0x48] 的 hFocusWindow）；该缓存语义已由 mme_bridge 帧级
+    // SetDrawnWindow 预置覆盖，无需在此重复。
+    mme::OnResetDevice(app);
 
     InitRenderStates(app);                                        // 0x406E90
 
@@ -81,15 +97,11 @@ void PostDeviceReset(MMDApp* app) {
         static_cast<D3DRENDERSTATETYPE>(0xA1),
         (menuState & 8) != 0 ? 1 : 0);
 
-    d3dxObj = reinterpret_cast<IUnknown*>(r->effect);
-    if (d3dxObj != nullptr) {
-        // vtable+0x118 = OnResetDevice on the effect (D3DX) object.
-        (*(void(__stdcall**) (IUnknown*))(
-            (*reinterpret_cast<void***>(d3dxObj))[0x118 / 4]))(d3dxObj);
+    if (r->effect != nullptr) {
+        // ID3DXEffect::OnResetDevice（vtable 槽 70 / +0x230，对应原版
+        // PostDeviceReset x64 0x7FF7CB4C6398 的 call [vtbl+0x230]）。
+        fx::OnResetDevice(r->effect);
     }
-
-    // 内置 MMEffect（对应原版 MMHack 设备 Reset 槽 16 拦截的后半）。
-    mme::OnResetDevice(app);
 
     if (app->FullscreenMode() != 0) {
         RefreshSeparateWindowViewport(app);                                           // 0x4290F0

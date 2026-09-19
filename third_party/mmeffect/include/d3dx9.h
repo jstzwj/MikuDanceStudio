@@ -64,8 +64,54 @@ struct ID3DXBuffer : public IUnknown {
     virtual unsigned long __stdcall GetBufferSize() = 0;
 };
 
+// ID3DXBaseMesh / ID3DXMesh, declaration order and signatures verified against
+// the June 2010 SDK d3dx9mesh.h. No device or mesh vtable interception is used.
+struct D3DXATTRIBUTERANGE {
+    DWORD AttribId, FaceStart, FaceCount, VertexStart, VertexCount;
+};
+struct ID3DXMesh;
+struct ID3DXBaseMesh : public IUnknown {
+    virtual HRESULT __stdcall DrawSubset(DWORD attribute) = 0;
+    virtual DWORD __stdcall GetNumFaces() = 0;
+    virtual DWORD __stdcall GetNumVertices() = 0;
+    virtual DWORD __stdcall GetFVF() = 0;
+    virtual HRESULT __stdcall GetDeclaration(D3DVERTEXELEMENT9* declaration) = 0;
+    virtual DWORD __stdcall GetNumBytesPerVertex() = 0;
+    virtual DWORD __stdcall GetOptions() = 0;
+    virtual HRESULT __stdcall GetDevice(IDirect3DDevice9** device) = 0;
+    virtual HRESULT __stdcall CloneMeshFVF(DWORD options, DWORD fvf,
+        IDirect3DDevice9* device, ID3DXMesh** mesh) = 0;
+    virtual HRESULT __stdcall CloneMesh(DWORD options, const D3DVERTEXELEMENT9* declaration,
+        IDirect3DDevice9* device, ID3DXMesh** mesh) = 0;
+    virtual HRESULT __stdcall GetVertexBuffer(IDirect3DVertexBuffer9** buffer) = 0;
+    virtual HRESULT __stdcall GetIndexBuffer(IDirect3DIndexBuffer9** buffer) = 0;
+    virtual HRESULT __stdcall LockVertexBuffer(DWORD flags, void** data) = 0;
+    virtual HRESULT __stdcall UnlockVertexBuffer() = 0;
+    virtual HRESULT __stdcall LockIndexBuffer(DWORD flags, void** data) = 0;
+    virtual HRESULT __stdcall UnlockIndexBuffer() = 0;
+    virtual HRESULT __stdcall GetAttributeTable(D3DXATTRIBUTERANGE* table, DWORD* size) = 0;
+    virtual HRESULT __stdcall ConvertPointRepsToAdjacency(const DWORD* points, DWORD* adjacency) = 0;
+    virtual HRESULT __stdcall ConvertAdjacencyToPointReps(const DWORD* adjacency, DWORD* points) = 0;
+    virtual HRESULT __stdcall GenerateAdjacency(FLOAT epsilon, DWORD* adjacency) = 0;
+    virtual HRESULT __stdcall UpdateSemantics(D3DVERTEXELEMENT9* declaration) = 0;
+};
+struct ID3DXMesh : public ID3DXBaseMesh {
+    virtual HRESULT __stdcall LockAttributeBuffer(DWORD flags, DWORD** data) = 0;
+    virtual HRESULT __stdcall UnlockAttributeBuffer() = 0;
+    virtual HRESULT __stdcall Optimize(DWORD flags, const DWORD* adjacencyIn,
+        DWORD* adjacencyOut, DWORD* faceRemap, ID3DXBuffer** vertexRemap, ID3DXMesh** mesh) = 0;
+    virtual HRESULT __stdcall OptimizeInplace(DWORD flags, const DWORD* adjacencyIn,
+        DWORD* adjacencyOut, DWORD* faceRemap, ID3DXBuffer** vertexRemap) = 0;
+    virtual HRESULT __stdcall SetAttributeTable(const D3DXATTRIBUTERANGE* table, DWORD size) = 0;
+};
+
 // ID3DXEffectPool：效果共享池，仅作不透明 COM 对象使用。
 struct ID3DXEffectPool : public IUnknown {};
+
+// ID3DXTextureShader：0x2C Function 生成分支（sub_1800143D0 case ','）经
+// D3DXCreateTextureShader 创建的纹理着色器对象。原版用完立即 Release、
+// 不记录复用（LABEL_326），故这里仅需不透明指针满足 Fill*TX 签名。
+struct ID3DXTextureShader : public IUnknown {};
 
 // ---------------------------------------------------------------------------
 // 描述符（d3dx9effect.h / d3dx9shader.h 布局）
@@ -312,6 +358,84 @@ HRESULT WINAPI D3DXCreateTexture(IDirect3DDevice9* device, unsigned int width,
                                  unsigned int height, unsigned int mipLevels,
                                  unsigned long usage, D3DFORMAT format, D3DPOOL pool,
                                  IDirect3DTexture9** texture);
+// [MMEffect.dll 静态导入 0x1800A4720] RENDERCOLORTARGET 的 cube 创建
+// （sub_1800143D0 case 38，调用点 0x180014516：usage=1=RT、pool=0=DEFAULT、
+// 边长 = 记录 +0x58、Miplevels = 记录 +0x6C 原值，无 0/-1 特例）。
+HRESULT WINAPI D3DXCreateCubeTexture(IDirect3DDevice9* device,
+                                     unsigned int size, unsigned int mipLevels,
+                                     unsigned long usage, D3DFORMAT format,
+                                     D3DPOOL pool,
+                                     IDirect3DCubeTexture9** cubeTexture);
+// SAS "ResourceName" 文件纹理（原版经 MMHack 的 D3DXCreateTextureFromFileExA
+// 静态导入）。参数不透明（D3DX_DEFAULT = 0xFFFFFFFF 传入）；colorKey/mip 链
+// 由 d3dx 默认处理。
+HRESULT WINAPI D3DXCreateTextureFromFileExW(
+    IDirect3DDevice9* device, const wchar_t* srcFile, unsigned int width,
+    unsigned int height, unsigned int mipLevels, unsigned long usage,
+    D3DFORMAT format, D3DPOOL pool, unsigned long filter, unsigned long mipFilter,
+    unsigned long colorKey, void* srcInfo, void* palette,
+    IDirect3DTexture9** texture);
+// SAS "ResourceName" 文件纹理（原版经 MMHack 的 D3DXCreateTextureFromFileExA
+// 静态导入，IAT 0x1800A4708）。与 ExW 相同的参数面；Width/Height/MipLevels
+// 由调用方传入注解存档值（D3DX_DEFAULT = 0xFFFFFFFF），colorKey/mip 链
+// 由 d3dx 默认处理。
+HRESULT WINAPI D3DXCreateTextureFromFileExA(
+    IDirect3DDevice9* device, const char* srcFile, unsigned int width,
+    unsigned int height, unsigned int mipLevels, unsigned long usage,
+    D3DFORMAT format, D3DPOOL pool, unsigned long filter, unsigned long mipFilter,
+    unsigned long colorKey, void* srcInfo, void* palette,
+    IDirect3DTexture9** texture);
+// [MMEffect.dll 静态导入 0x1800A4710 / 0x1800A4718] case 44 文件纹理按
+// textureType 的分派：cube(9) 与 volume(8) 变体。参数面与 ExA 同构
+// （pool=MANAGED、filter/mipFilter=D3DX_DEFAULT 由调用方传入；cube 的第二
+// 尺寸参数是边长 + Miplevels，volume 多一个 Depth 参数 = 记录 +0x60 原值）。
+HRESULT WINAPI D3DXCreateCubeTextureFromFileExA(
+    IDirect3DDevice9* device, const char* srcFile, unsigned int size,
+    unsigned int mipLevels, unsigned long usage, D3DFORMAT format, D3DPOOL pool,
+    unsigned long filter, unsigned long mipFilter, unsigned long colorKey,
+    void* srcInfo, void* palette, IDirect3DCubeTexture9** cubeTexture);
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileExA(
+    IDirect3DDevice9* device, const char* srcFile, unsigned int width,
+    unsigned int height, unsigned int depth, unsigned int mipLevels,
+    unsigned long usage, D3DFORMAT format, D3DPOOL pool, unsigned long filter,
+    unsigned long mipFilter, unsigned long colorKey, void* srcInfo,
+    void* palette, IDirect3DVolumeTexture9** volumeTexture);
+// [MMEffect.dll 静态导入 0x1800A46F0] 0x2C Function 生成分支的 volume 纹理
+// 创建（sub_1800143D0 0x1800158B7 后：Width/Height/Depth = 记录 +0x58/
+// +0x5C/+0x60 的 -1→64 归一值、Miplevels = +0x6C 原值、usage=0、
+// pool=1=MANAGED）。
+HRESULT WINAPI D3DXCreateVolumeTexture(IDirect3DDevice9* device,
+                                       unsigned int width, unsigned int height,
+                                       unsigned int depth, unsigned int mipLevels,
+                                       unsigned long usage, D3DFORMAT format,
+                                       D3DPOOL pool,
+                                       IDirect3DVolumeTexture9** volumeTexture);
+// [MMEffect.dll 静态导入 0x1800A4700，调用点 0x1800152A6] 0x2C Function
+// 生成分支：从效果自身 .fx 文件（sas+0x48 FullPath）编译入口点（"Function"
+// 注解），profile 取 "Target" 注解（缺省 tx_1_0）；defines/include/flags
+// 恒空，ppShader/ppErrorMsgs 为 ID3DXBuffer**，第 9 参数 ppConstantTable
+// 传 NULL。
+HRESULT WINAPI D3DXCompileShaderFromFileA(
+    const char* srcFile, const D3DXMACRO* defines, ID3DXInclude* include,
+    const char* functionName, const char* profile, unsigned long flags,
+    ID3DXBuffer** shader, ID3DXBuffer** errorMsgs, void** constantTable);
+// [MMEffect.dll 静态导入 0x1800A46F8，调用点 0x180015688] 编译产物
+// ID3DXBuffer::GetBufferPointer 的字节码包成 ID3DXTextureShader。
+HRESULT WINAPI D3DXCreateTextureShader(const unsigned long* function,
+                                       ID3DXTextureShader** textureShader);
+// [MMEffect.dll 静态导入 0x1800A46E0/0x1800A46E8/0x1800A4740] 按 textureType
+// 分派的填充调用（2D/cube/volume，sub_1800143D0 case ','）。
+HRESULT WINAPI D3DXFillTextureTX(IDirect3DTexture9* texture,
+                                 ID3DXTextureShader* textureShader);
+HRESULT WINAPI D3DXFillCubeTextureTX(IDirect3DCubeTexture9* cubeTexture,
+                                     ID3DXTextureShader* textureShader);
+HRESULT WINAPI D3DXFillVolumeTextureTX(IDirect3DVolumeTexture9* volumeTexture,
+                                       ID3DXTextureShader* textureShader);
+// 调试转储：把表面存成 PNG（D3DXSaveSurfaceToFileA）。
+HRESULT WINAPI D3DXSaveSurfaceToFileA(const char* destFile, unsigned long format,
+                                      IDirect3DSurface9* srcSurface,
+                                      const void* srcPalette,
+                                      const void* srcRect);
 HRESULT WINAPI D3DXCreateEffectPool(ID3DXEffectPool** pool);
 HRESULT WINAPI D3DXCreateEffectFromFileW(IDirect3DDevice9* device,
                                          const wchar_t* srcFile,
@@ -324,8 +448,32 @@ D3DXMATRIX* WINAPI D3DXMatrixMultiply(D3DXMATRIX* out, const D3DXMATRIX* a,
                                       const D3DXMATRIX* b);
 D3DXMATRIX* WINAPI D3DXMatrixInverse(D3DXMATRIX* out, float* determinant,
                                      const D3DXMATRIX* matrix);
+// [MMEffect.dll 静态导入 d3dx9_43!D3DXMatrixTranspose，IAT 0x1800A46A0]
+// 矩阵转置。原版 3 处调用（sub_180057720+0xE5 / sub_18005EA40+0x164 /
+// sub_18005EBE0+0x16E）均为 pOut==pM 原地转置（RCX/RDX 同一栈矩阵）、
+// 返回值未使用；用于 CONTROLOBJECT 矩阵注解的可选 transpose 语义
+// （选源矩阵 → 可选 Inverse → 可选 Transpose → effect->SetMatrix）。
+// 原地转置语义由转发到的真实 d3dx9 导出保证，与原版运行时一致。
+D3DXMATRIX* WINAPI D3DXMatrixTranspose(D3DXMATRIX* out, const D3DXMATRIX* matrix);
 D3DXMATRIX* WINAPI D3DXMatrixLookAtLH(D3DXMATRIX* out, const D3DXVECTOR3* eye,
                                       const D3DXVECTOR3* at, const D3DXVECTOR3* up);
+// [MMEffect.dll imports] the original links these statically from d3dx9_lib;
+// forwarded here for the CONTROLOBJECT default matrices / light direction
+// transforms (sub_180058133 defaults, sub_180057A20 DIRECTION normalize).
+// EXCEPTION - D3DXMatrixIdentity is NOT in the import table: the original
+// inlines the identity matrix at 0x1800581d0 (inside sub_180057BC0:
+// xorps xmm0,xmm0 zero-fill + movss stores into the stack matrix, 1.0f
+// diagonal). d3dx9_XX.dll likewise has no such export (the SDK ships it
+// as a header D3DXINLINE), so d3dx9_dyn.cpp fills the matrix inline
+// instead of forwarding - a GetProcAddress here would be forever null.
+D3DXMATRIX* WINAPI D3DXMatrixScaling(D3DXMATRIX* out, float sx, float sy,
+                                     float sz);
+D3DXMATRIX* WINAPI D3DXMatrixIdentity(D3DXMATRIX* out);
+D3DXVECTOR3* WINAPI D3DXVec3TransformNormal(D3DXVECTOR3* out,
+                                            const D3DXVECTOR3* v,
+                                            const D3DXMATRIX* matrix);
+D3DXVECTOR3* WINAPI D3DXVec3Normalize(D3DXVECTOR3* out,
+                                      const D3DXVECTOR3* v);
 const char* WINAPI D3DXGetVertexShaderProfile(IDirect3DDevice9* device);
 const char* WINAPI D3DXGetPixelShaderProfile(IDirect3DDevice9* device);
 unsigned int WINAPI D3DXGetShaderVersion(const unsigned long* function);

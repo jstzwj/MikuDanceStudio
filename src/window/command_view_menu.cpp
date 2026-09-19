@@ -280,7 +280,8 @@ int CollectToonFileNames(HWND hDlg);             // VA 0x0041EA20
 // (SaveEnhancedModel / SetModelColor declared in ported_funcs.hpp; RefreshMenuLanguage below)
 void RefreshMenuLanguage(MMDApp* app);           // VA 0x0040B5A0
 // misc dialog bodies: misc_dialogs.cpp
-void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043E000
+void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043DAD0
+void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg);    // VA 0x0043E000
 void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043E680
 void InitModelOrderDialog(int count, HWND hDlg);  // VA 0x0041E810
 void InitGravityDialog(HWND hDlg);               // VA 0x00423160
@@ -357,26 +358,27 @@ double AngleAtan2(float y, float x) {
 }
 
 // Scene object = locale subsystem (app+0xA06C4) -> Renderer()->device
-// (+0x1D4E0); vtable slot 0x94: __stdcall(obj, 0, locale->captureSurface)
-// (0x48B28B, case 276; x86 passed the pointer slot's low dword - bit-exact
-// pass-through of the pointer is the x64-correct equivalent).
+// (+0x1D4E0).  原版 sub_7FF7CB45F550（CommandDispatch）case 276 尾部
+// 0x7FF7CB46F9EE: `call qword ptr [rax+128h]` —— x64 vtable 偏移 +0x128
+// （296 = 8×37，槽 37），即 IDirect3DDevice9::SetRenderTarget(dev, 0,
+// locale->captureSurface)；x86 原版偏移 +0x94（148 = 4×37，同为槽 37）。
+// 裸字节偏移在 x64 移植构建下会落到槽 18（GetBackBuffer），故用类型化
+// 虚调用。gate（multisampleAvailable == 0）由调用方 case 276 持有，对应
+// 原版 0x7FF7CB46F9D2 的 cmp/jnz。
 void CallSceneVtable94(MMDApp* app) {
     D3DRenderer* locale = app->Renderer();
-    void* scene = locale->device;  // 0x1D4E0
-    using Fn = void(__stdcall*)(void*, int, void*);
-    Fn fn = *reinterpret_cast<Fn*>(
-        static_cast<unsigned char*>(*reinterpret_cast<void**>(scene)) + 0x94);
-    fn(scene, 0, locale->captureSurface);  // 0x1D534
+    locale->device->SetRenderTarget(0, locale->captureSurface);  // 0x1D534
 }
 
-// Scene vtable slot 0xE4: __stdcall(obj, 0xA1, on)  (0x48B33C, case 277).
+// 原版 sub_7FF7CB45F550 case 277 0x7FF7CB46FAB4 / 0x7FF7CB46FAEF:
+// `call qword ptr [rax+1C8h]` —— x64 vtable 偏移 +0x1C8（456 = 8×57，
+// 槽 57），即 IDirect3DDevice9::SetRenderState(dev, 0xA1, on)；x86 原版
+// 偏移 +0xE4（228 = 4×57，同为槽 57）。裸字节偏移在 x64 移植构建下会落
+// 到槽 28（CreateRenderTarget），故用类型化虚调用。
 void CallSceneVtableE4(MMDApp* app, int on) {
     D3DRenderer* locale = app->Renderer();
-    void* scene = locale->device;  // 0x1D4E0
-    using Fn = void(__stdcall*)(void*, int, int);
-    Fn fn = *reinterpret_cast<Fn*>(
-        static_cast<unsigned char*>(*reinterpret_cast<void**>(scene)) + 0xE4);
-    fn(scene, 0xA1, on);
+    locale->device->SetRenderState(
+        static_cast<D3DRENDERSTATETYPE>(0xA1), static_cast<DWORD>(on));
 }
 
 // Shared tail of cases 300/302 (0x48A805): D3DXQuaternionRotationMatrix of
@@ -897,7 +899,7 @@ INT_PTR CALLBACK BoneFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
         if (id == 1) {
-            ApplyCameraFrameScaleAdd(g_Block, hDlg);  // 0x43E000
+            ApplyBoneFrameScaleAdd(g_Block, hDlg);  // 0x43E000
             EndDialog(hDlg, 1);
             return 0;
         }
@@ -2300,7 +2302,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
 
     // ------------------------------------------------------------------
     // 277 (0x0048B2F7): shadow toggle - menu 0x115 from GetMenuState bit
-    // 8, scene vtable+0xE4(scene, 0xA1, on/off).
+    // 8, SetRenderState(0xA1, on/off) (x64 sub_7FF7CB45F550 0x7FF7CB46FAB4:
+    // vtable+0x1C8 = 槽 57; x86 +0xE4/4 = 槽 57).
     // ------------------------------------------------------------------
     case 277: {
         app->state.dialogFlags[10] = 1;
@@ -2418,14 +2421,19 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->state.dialogFlags[15] = 1;
         unsigned char* target = reinterpret_cast<unsigned char*>(
             app->Physics()->groundBody);   // scene slot 0x44
+        // x64 0x7FF7CB4700BC / 0x7FF7CB4700FB: mov dword ptr [rcx+0E0h], 1 /
+        // r14d(-1) on the btRigidBody* at scene+0x88.  +0xE0 is the x64
+        // twin of the x86 +0xD4 store (three pointer members earlier in
+        // btCollisionObject widen by 4 each); the raw x86 literal would
+        // land 12 bytes short in the x64 Bullet layout.
         if (app->state.floorVisible != 0) {
             app->state.floorVisible = 0;
             CheckMenuItem(GetMenu(hwnd), 0x11D, MF_UNCHECKED);
-            *reinterpret_cast<std::int32_t*>(target + 0xD4) = -1;
+            *reinterpret_cast<std::int32_t*>(target + 0xE0) = -1;
         } else {
             app->state.floorVisible = 1;
             CheckMenuItem(GetMenu(hwnd), 0x11D, MF_CHECKED);
-            *reinterpret_cast<std::int32_t*>(target + 0xD4) = 1;
+            *reinterpret_cast<std::int32_t*>(target + 0xE0) = 1;
         }
         return;
     }

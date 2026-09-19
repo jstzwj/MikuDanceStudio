@@ -35,17 +35,6 @@ inline float RdF32(const unsigned char* p) {
 }
 inline void Wr32(unsigned char* p, std::uint32_t v) { std::memcpy(p, &v, 4); }
 inline void WrF32(unsigned char* p, float v) { std::memcpy(p, &v, 4); }
-inline const unsigned char* RdPtr(const unsigned char* p) {
-    const unsigned char* v;
-    std::memcpy(&v, p, 4);
-    return v;
-}
-inline unsigned char* RdPtr(unsigned char* p) {
-    unsigned char* v;
-    std::memcpy(&v, p, 4);
-    return v;
-}
-
 // Per-IK display flags copy (0x4A329F / 0x4A3487 / 0x4A3709 /
 // 0x4B42D9 / 0x4B46E5 / 0x4B43D2): one byte per IK chain.
 inline void CopyIkDisplayFlags(unsigned char* m, const mdl::DisplayKey& rec) {

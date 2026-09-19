@@ -23,6 +23,8 @@
 //     (FUN_18005e210) and step the pass record; then FUN_18005c510; then
 //     BeginStateBlock (slot 0x150) / EndStateBlock (slot 0x148) around the
 //     ctx+0x168 update: repeat < 1 -> null; else renderPassList[repeat-1]
+//     (a PER-TECHNIQUE queue item - one 0x48 wrapper per pass-class
+//     technique, the renderPassList of the original, see MmeRenderPassItem)
 //     plus GetRenderState(0xa1) + the FUN_18005c970 record apply (Phase 3).
 //   - FUN_18005c510 [0x18005c510]: final bookkeeping - per-model resets, the
 //     pending-snapshot clear, the ctx flag resets, the state re-init block
@@ -40,6 +42,10 @@
 //   - FUN_180055780 [0x180055780]: pool release (device loss / context dtor).
 #pragma once
 
+#include <map>
+
+#include <d3d9.h>
+
 namespace mme {
 
 class MmeContext;
@@ -56,7 +62,8 @@ void MmeRefreshObjectPlan(ModelData* model, int hostIndex);
 // [0x18002baa0 + 0x18005fd30] FUN_18002baa0: sort the scanned objects by
 // |order|, split renderClass 1/2 into ctx+0xb8/ctx+0xd8, publish the extra
 // -pass plan (manager+0x158) into ctx+0x148 (FUN_18005fd30).
-void MmeSortPlanObjects(MmeContext* ctx);
+void MmeSortPlanObjects(MmeContext* ctx,
+                        const std::map<int, ModelData*>& orderMap);
 
 // [0x18005c510] FUN_18005c510: final pass bookkeeping (end of the plan
 // rebuild and of every FUN_18005d130).
@@ -72,8 +79,35 @@ void MmePassBookkeeping(MmeContext* ctx);
 // are Phase 3.
 void MmeRunPostEffect(MmeContext* ctx);
 
-// [0x18005da50] FUN_18005da50: the DirectX Error reporter ("DirectX Error: "
-// + DXErr9 description; compact HRESULT subset, documented divergence).
+// [0x180001880] sub_180001880(mgr = ctx+0x240, ...): the turn-boundary
+// main-RT snapshot - refetch the saved main target set, create/obtain the
+// cached offscreen snapshot surfaces (CreateRenderTarget /
+// CreateDepthStencilSurface), StretchRect-preserve the previous content
+// when no staged clear validates, rebind the snapshots as the device
+// targets and issue the staged Clear on them. Returns the post-effect
+// HRESULT (the mgr+0x1fc value on create failure).
+HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
+                               bool depthStaged, D3DCOLOR clearColor,
+                               float clearDepth);
+
+// [0x18005cac0] sub_18005cac0(record, device): the bound record's
+// turn-boundary post-effect executor - the FUN_18005da50 record-branch
+// call site (EndScene -> staged validation -> MmeSnapshotMainTargets ->
+// gate kill + error box on failure -> BeginScene), gated by the
+// record+0x3c snapshot gate the FUN_18005c970 apply recomputes. techIndex
+// is the queue item's technique (the original's wrapper+0 chain - see
+// MmeRenderPassItem in mme_context.h).
+void MmeRunPostEffectRecord(MmeContext* ctx, ModelData* record, int techIndex,
+                            IDirect3DDevice9* device);
+
+// [0x18005da50] FUN_18005da50: the per-repeat first-draw choreography
+// (despite the historical name, not just an error reporter) - state-block
+// capture, the GetRenderState(0xa1) probe, the passPlanB step walk, the
+// null-binding snapshot branch (FUN_180001880) or the bound-record
+// executor (FUN_18005cac0), the passPlanA walk, the queued background
+// replay (FUN_18005d5c0) and the viewport/state restore; on snapshot
+// failure it reports "DirectX Error: <desc> [%08X]" + the localized
+// "Failed to process post effect:" box.
 void MmeReportDrawError(MmeContext* ctx);
 
 // [0x180055690] FUN_180055690: binding-context pool acquire (the pool holds
@@ -81,7 +115,15 @@ void MmeReportDrawError(MmeContext* ctx);
 // the callers Capture() them at slot 0x20).
 void* MmeAcquireBindingContext(MmeContext* ctx);
 
-// [0x180055780] FUN_180055780: release the binding-context pool (device loss).
-void MmeReleaseBindingContextPool(MmeContext* ctx);
+struct MmeTargetSet;
+
+// [FUN_180067500 / FUN_1800675E0 / sub_180067680 payloads] the saved device
+// target-set helpers (implemented in pass_planner.cpp; MmeTargetSet is
+// defined in mme_context.h).
+void MmeReleaseTargetSet(MmeTargetSet& set);
+void MmeSaveTargetSet(MmeTargetSet& set, IDirect3DDevice9* device,
+                      unsigned int mask);
+void MmeRestoreTargetSet(const MmeTargetSet& set,
+                         IDirect3DDevice9* device);
 
 } // namespace mme

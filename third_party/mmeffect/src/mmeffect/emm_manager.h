@@ -1,38 +1,172 @@
 // emm_manager.h - the EMM/EMD effect-mapping manager of MMEffect.dll.
 //
-// Evidence:
-//   - RTTI classes EmmFile (TD 0x1800D7758) / EmdFile (TD 0x1800D7738); both
-//     parse the same [section]/key=value text shape as IniFile (FUN_180047BD0).
-//   - Validation strings (strings_evidence.md section 7):
-//       "section 'Info' was not found" 0x1800b5500, "key 'Version' was not
-//       found" 0x1800b5520, "section 'Object' was not found" 0x1800b5540,
-//       "section 'Effect' was not found" 0x1800b5560, "key 'Default' was not
-//       found" 0x1800b5580, "key 'Owner' was not found" 0x1800b55a0,
-//       "unknown object '" 0x1800b55c0, "key 'Obj' was not found" 0x1800b5600,
-//       ".show" 0x1800b54f8, "MikuMikuEffect ver.0.37 cannot support this (EMM
-//       )file format:\n" 0x1800b5338/0x1800b5430.
-//   - The EMM loader FUN_18002E8D0 (called from the .emm open dialog
-//     FUN_180042F60 with a path, and from the PMM autoload FUN_1800570D0);
-//     the EMM save FUN_1800315F0 / save dialog FUN_1800431E0; the application
-//     to live models FUN_180030590 / FUN_180031980 (both reference the
-//     effect-owner manager DAT_1800d9a40).
-//   - PMM linkage (MMEffect.txt lines 79-81): with [MMEffect][EMMAutoSave] the
-//     EMM is saved next to the PMM on save (FUN_180057290: splitpath/makepath
-//     "<dir><name>.emm" then the save dialog) and reloaded on load
-//     (FUN_1800570D0: "<dir><name>.emm" existence check + "AutoLoading: " log).
-//   - Auto-assignment on model load (MMEffect.txt lines 20-66):
-//       (1) <dir>\<basename>.fx beside the model file, or
-//       (2) the embedded convention "<name>[<fx>].<ext>" -> <dir>\<fx>, or
-//       (3) the EMM "(default)" row.
+// Byte-level EMM format, re-verified against the original x64 binary
+// (MMEffect.dll 0.37, imagebase 0x180000000, 2026-09-10):
 //
-// Divergences (documented, see PHASE2_IMPLEMENTATION_NOTES.md):
-//   - boost::regex -> std::regex (ECMAScript grammar, the boost default).
-//   - The exact byte format of the original .emm writer is not recoverable
-//     from the decompile; this module implements a self-consistent reader and
-//     writer over the evidenced keys (Info/Version, Object/Obj+.show,
-//     Effect/Default/Owner+Obj). Round-trips with itself.
-//   - The original opens a save dialog (FUN_1800431E0) in the autosave path;
-//     Phase 2 has no dialog, so the autosave writes the file directly.
+//   Text shape (generic IniFile driver FUN_180047BD0): fopen "rt", fgets
+//   0x400; the first line must NOT start with the UTF-8 BOM EF BB BF
+//   (0x1800B52E8..EA) or the load aborts with "MikuMikuEffect ver.0.37
+//   cannot support this file format:\n<path>" (0x1800B5338). Per line:
+//   strip comments "[;#].*$" (0x1800B52A0), trim "^\s+|\s+$" (0x1800B52A8),
+//   section "^\[([^\[\]]+)\]$" (0x1800B52B8), pair "^([^=\s]+)\s*=\s*(.*)$"
+//   (0x1800B52D0). Anything else (or a row rejected by the EmmFile callback)
+//   is logged (flag 1) as "Error: failed to load file: <file> (line N):\n
+//   '<raw line>'" (prefix 0x1800B5280; the RAW fgets buffer as-is, newline
+//   included, wrapped in quotes). Every pair row first passes the shared
+//   this+0x60 gate at the top of FUN_180049EB0 (@0x180049eed): the key is
+//   registered under the current section name BEFORE any validation; a
+//   second row with the same key in the same section is rejected outright
+//   (@0x180049f04 - first wins), and an empty value is rejected too
+//   (@0x180049f33) while the key stays registered. After a failed
+//   end-of-load validator the driver also logs "Error: failed to load file:
+//   <file> (line <total physical lines>)" (flag 1, skipped once the version
+//   gate cleared the log flag a1+8).
+//
+//   [Info]    one row "Version = <int>". The value goes through
+//             boost::lexical_cast<int> (FUN_180051450) and must satisfy
+//             0 < v <= 3 (FUN_180049EB0 @0x18004A036) or the load aborts
+//             with "MikuMikuEffect ver.0.37 cannot support this EMM file
+//             format:\n<path>" (0x1800B5430) + a1+8=0 (stop logging).
+//             The writer hardcodes 3 (FUN_18004C160 @0x18004C17B).
+//   [Object]  keys are ONLY the bare ^((Pmd|Acs)(\d+))$ (0x1800B5470) - no
+//             [n]/@Name suffixes. The VALUE is the object FILE path
+//             (model/accessory, absolute on save via FUN_180067870), never
+//             an effect path. Record = {slot N, isPmd, path}; duplicate keys
+//             are rejected by the shared row gate before FUN_18004EB20's
+//             find-or-create + assign runs (first wins).
+//   [Effect]  (exactly this name; OnSection FUN_180049930) is the "default"
+//             section: first row "Default = <abs effect path|none>". Named
+//             sections "[Effect@<base>(<n>)]" must match
+//             ^Effect@((\w+)(\(\d+\))?)$ (0x1800B53B8); their first row is
+//             "Owner = <Pmd|Acs><N>[<subset>][@<base>(<n>)]" with the value
+//             regex ^((Pmd|Acs)\d+)(\[(\d+)\])?(@(\w+(\(\d+\))?))?$ 
+//             (0x1800B5498; g1=key, g4=subset index, g6=material base name).
+//             Assignment rows in every Effect* section use the key regex
+//             ^((Pmd|Acs)\d+|Obj)(\[(\d+)\])?(\.show)?$ (0x1800B54C8); the
+//             EmmFile rejects "Obj" keys (EmdFile accepts them instead):
+//               - no ".show": value = effect path ("none" = unassigned),
+//                 group 4 present = subset row [n].
+//               - ".show": value must be exactly "true"/"false"
+//                 (0x1800B5200/0x1800B5208) and sets the whole-entry or
+//                 subset show flag (FUN_1800343F0(entry+0x48, &subset)).
+//             Each row carries its own path; the Owner line only tags the
+//             section (it assigns nothing by itself).
+//   Writer byte shape (FUN_18004C160 + IniFile::Save FUN_1800490A0, byte
+//   re-verified 2026-09-10): "[<section>]\n", then "%s = %s\n" per row
+//   (spaces around '='), then one blank line after every section. The
+//   IniFile's section container is a VECTOR (walked linearly by
+//   FUN_1800490A0), so the file order = the insertion order:
+//     1. [Info]  "Version = 3" (hardcoded @0x18004C17B).
+//     2. [Object] one row per live object, key "Pmd<N>"/"Acs<N>"
+//        (FUN_180029F60: kind 1 -> "Pmd", else "Acs", "%s%d"), value =
+//        AbsPath of the object file (FUN_180067870). The records come from
+//        the manager's (|order|, ModelData*)-sorted object vector and are
+//        then sorted by the slot INT only (FUN_18004C150) with an
+//        introsort (FUN_1800525B0 = std::sort, UNSTABLE) - the Pmd/Acs
+//        interleaving at equal slots is therefore unspecified in the
+//        original (the port's stable Pmd-before-Acs is one legal outcome).
+//     3. The [Effect*] sections, one per 280-byte record of the section
+//        vector a3 built by FUN_180030590(0,0,-1,"",&out):
+//        - a3[0] is ALWAYS the default section first (name "Effect", first
+//          row "Default = none|<abs effect path>" from mgr+0 dword / mgr+8);
+//          a3[1..] are the NAMED sections generated by FUN_180030590's
+//          recursion over each assignment node's owner set (mgr+0xD8 object
+//          order x subset -1..count-1 x set-node order), one record per
+//          (owner id, affected object, subset).
+//        - Named-section name = "Effect@" + v93["%x"(ownerId)] where the
+//          counting pass (0x18004C76D-0x18004C854, over ALL records incl.
+//          the default one) does v93[sprintf("%x",ownerId)] =
+//          ownerObjectName + (counter[ownerObjectName]++ != 0 ? "(%d)" :
+//          "") - the counter key is the OWNER OBJECT'S NAME
+//          (sub_18002DCD0(id)+8 @0x1800307F4-0x18003080D), the v93 key is
+//          the owner id in hex (0x180030812-0x18003084C), NOT a material
+//          name; first occurrence has no suffix, second "(1)", ...
+//        - A named section's first row is "Owner = <Pmd|Acs><N of the
+//          AFFECTED object>[<subset>][@<v93[parent hex id]>]" (the @ part
+//          only for nested owners; there is NO Default row in a named
+//          section - the Default/Owner branches are mutually exclusive,
+//          0x18004C913-0x18004CA93).
+//        - Then, per object in the SAME slot-sorted order as [Object]: the
+//          path row only when the entry path is non-empty (carriers with
+//          scriptOrder (+0x364) != 0 are serialized WITHOUT a path row and
+//          WITHOUT subset rows - only a possible ".show" row), the
+//          "<key>.show = true|false" row only when a whole-show record
+//          exists, then "[n]" / "[n].show" rows for n = 0..max(max key of
+//          the path map, max key of the show map), each present one only.
+//        - Unassigned slots are written as the literal "none" (0x1800B3AB8),
+//          not "(none)".
+//
+//   Validator (FUN_18004B6E0, vtable+0x20): registry must contain the exact
+//   sections "Info", "Object" AND "Effect"; Version must have parsed; every
+//   named section needs a non-empty Owner whose key exists in [Object]; the
+//   default section needs a non-empty Default ("none" counts); every
+//   assignment-row key must exist in [Object]. Failures log the strings at
+//   0x1800B5500..0x1800B5600 ("section 'X' was not found" / "key 'X' was not
+//   found" / "unknown object '<key>'") and abort the load.
+//
+//   Apply (FUN_18002E8D0): [Object] records are matched to the live host
+//   objects by TYPE (Pmd/Acs) + PATH IDENTITY - NOT by slot number: pass 1
+//   stricmp on the raw path, then on both paths made absolute (the record
+//   path joined with the EMM's directory), then a tail/suffix comparison;
+//   pass 2 falls back to comparing just the file name+ext (FUN_18002E6F0).
+//   Live objects with no matching record are reported via
+//   MessageBoxA(0x40): "<emm path>\n" + "Failed to load effect mapping for
+//   the following objects:\n" (0x1800B4D30) + one "\n  <name>" per object.
+//   After the assignments execute, distinct assigned paths that do not
+//   exist are reported via MessageBoxA(0x30): "The following effect files
+//   do not exist:\n" (0x1800B4DA0) + one "\n<path>" each.
+//
+//   [Effect*] 行级 round-trip 核验补充（2026-09-15，行为级）：
+//   - "[n].show" 行现在完整落地：load 侧写入管理层注册表
+//     （MmeEmmSetSubsetShown，应用上界 = 材质数，同 FUN_18002E8D0
+//     @0x18002fe07 的 *(object+0x38) 循环界）；save 侧按
+//     FUN_180030590 @0x180030db2-0x180030e30 / FUN_180032680
+//     @0x180032a60-0x180032ad7 合成（每个 hasShow 子集一行，值取工作
+//     节点 +0x30）；运行时有效可见性查询 MmeEmmEffectiveSubsetShown 复刻
+//     FUN_18002DB10（子集记录优先，回退整对象，默认可见）。
+//   - [FUN_1800431E0 @0x180043307] 复核更正（此前注释有误，非 divergence）：
+//     PMM 自动保存（FUN_180057290 @0x1800573ed）把预构建的
+//     "<PMM同名>.emm" 全路径作为 a2 传入，FUN_1800431E0 在 a2 != NULL 时
+//     直接 strcpy_s + FUN_1800315F0 序列化——不弹任何对话框。
+//     GetSaveFileNameA 分支（a2 == NULL）只属于 40010 菜单命令
+//     （sub_180044080 @0x1800451b9: xor edx,edx），其参数为：过滤器
+//     "emm files(*.emm)\0*.emm\0All files(*.*)\0*.*\0"（英文，
+//     0x1800B4FF8）/ Shift-JIS "emmファイル(*.emm)\0*.emm\0
+//     すべてのファイル(*.*)\0*.*\0"（0x1800B4FC0），lpstrDefExt "emm"，
+//     nMaxFile 260，Flags 0x80A（OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR|
+//     OFN_PATHMUSTEXIST），无 lpstrTitle，lpstrInitialDir = ini
+//     "UserFile" 缓存目录（OK 后更新为所选文件目录）；取消返回 0 不保存。
+//     移植的直写同名 .emm 行为与原版一致。
+//
+// Divergences (documented):
+//   - boost::regex -> std::regex (ECMAScript grammar, the boost default);
+//     lexical_cast -> the strict scanner below.
+//   - The save side emits only the default [Effect] section (no
+//     [Effect@base(n)] owner sections): the port's engine keeps subset
+//     bindings per object without an owner-effect registry, so neither the
+//     owner-name counters nor the "%x"-keyed display-name table can be
+//     synthesized. Owner sections are fully read and applied; after a
+//     load/save round trip their rows reappear as [n] rows of the default
+//     section (same assignments, simplified structure). For the port's
+//     reachable state (no owner-scoped assignments exist) the flattened
+//     output is byte-identical to the original's: the original's a3 vector
+//     holds exactly ONE record (the default section) when no assignment
+//     node carries an owner set.
+//   - The whole ".show" row is synthesized from the live object state
+//     (always present for a registered object); the original writes it
+//     only when the working-map node recorded a whole-show flag (key -1).
+//     The "[n].show" rows round-trip through the manager-side registry
+//     (see MmeEmmSetSubsetShown); the RUNTIME hide effect for a hidden
+//     subset still needs the draw gate hookup in callbacks.cpp (see
+//     MmeEmmEffectiveSubsetShown) - the original drops the subset's draws
+//     at binding time (sub_18002CA80 @0x18002ce6e inserts a NULL
+//     LoadedEffect node), the port's draw path does not gate per subset
+//     yet.
+//   - The port's PMM-save hook placement: the original fires the same
+//     FUN_180057290 body from the OnCreateModel/OnDeleteModel/OnBeginScene
+//     export callbacks (xrefs @0x180057456/0x1800574b7/0x180057513, each
+//     gated on the EMMAutoSave flag byte_1800D72E0), not from a PMM-save
+//     seam; the emitted bytes are the same either way.
 #pragma once
 
 #include <map>
@@ -43,72 +177,288 @@ namespace mme {
 
 class ModelData;
 
-// One per-object assignment row.
-struct EmmAssignment {
-    std::string effectPath;   // "" = (none)
-    bool shown;               // the ".show" suffix state
-    EmmAssignment() : shown(true) {}
+// One [Object] row: the host object enumerated as Pmd<N>/Acs<N> (reader:
+// FUN_180049EB0 tail @0x18004A3E1; writer source FUN_1800315F0).
+struct EmmObjectRecord {
+    bool isModel;            // true = Pmd, false = Acs
+    int slot;                // the <N> of Pmd<N>/Acs<N> (host enumeration)
+    std::string objectPath;  // the value: the object file's path
+    EmmObjectRecord() : isModel(true), slot(0) {}
 };
 
-// An Owner rule: a regex over object names with the effect file it selects.
-struct EmmOwnerRule {
-    std::string pattern;      // source text of the regex
-    std::string effectPath;
+// One object's rows inside one [Effect*] section (FUN_180049EB0 assignment
+// handler @0x18004AFC6; find-or-create FUN_180034560 - duplicate rows are
+// rejected by the shared row gate at the top of FUN_180049EB0, so the first
+// row wins).
+struct EmmEffectEntry {
+    std::string key;                        // base key "Pmd0" (no [n]/.show)
+    std::string effectPath;                 // "" = no path row; "none" = row present, unassigned
+    bool hasShow;                           // a "<key>.show" row was present
+    bool shown;                             // its true/false value
+    std::map<int, std::string> subsetPaths; // "[n]" rows (same ""/"none" convention)
+    std::map<int, bool> subsetShows;        // "[n].show" rows
+    EmmEffectEntry() : hasShow(false), shown(true) {}
+};
+
+// One [Effect] / [Effect@<base>(<n>)] section record (OnSection
+// FUN_180049930: bare "Effect" gets baseName "", named sections parse
+// ^Effect@((\w+)(\(\d+\))?)$ and keep the base name without the counter).
+struct EmmEffectSection {
+    std::string name;                // raw header name ("Effect@Hair(1)")
+    std::string baseName;            // "" = default section, else "Hair"
+    std::string ownerKey;            // Owner row g1 ("Pmd0"); "" until seen
+    int ownerSubsetIndex;            // Owner "[n]"; -1 when absent
+    std::string ownerMaterialName;   // Owner "@base" g6 ("" when absent)
+    std::string defaultPath;         // [Effect] Default row ("" until seen)
+    std::vector<EmmEffectEntry> entries;  // in file order
+    EmmEffectSection() : ownerSubsetIndex(-1) {}
+    bool isDefault() const { return baseName.empty(); }
+};
+
+// ---------------------------------------------------------------------------
+// EMD - the per-model effect-mapping file (byte-verified against the original
+// x64 binary, 2026-09-10)
+//
+//   The EmdFile shares the generic IniFile driver (FUN_180047BD0) and the
+//   EmmFile's row infrastructure but diverges at three virtuals
+//   (vtable 0x1800B4E38):
+//   - OnSection (FUN_18004D4C0): ONLY the exact names "Info" and "Effect"
+//     reach the shared handler (FUN_180049930); every other header (incl.
+//     [Object] and [Effect@...]) is rejected like an unknown line.
+//   - OnKeyValue (FUN_18004D5A0): rejects the "[Effect] Default = ..." row,
+//     delegates everything else to the shared handler (FUN_180049EB0).
+//   - The shared assignment-row branch accepts the key regex
+//     ^((Pmd|Acs)\d+|Obj)(\[(\d+)\])?(\.show)?$ (0x1800B54C8) but gates the
+//     capture on the isEmd flag (this+0x5C: 0 = EmmFile, 1 = EmdFile) at
+//     0x18004B282: the row is accepted iff isEmd == (g1 == "Obj"). So an EMD
+//     accepts ONLY "Obj[...][.show]" keys and REJECTS Pmd/Acs keys; the EmmFile
+//     is the mirror image. "Owner" rows parse (stored on the section record)
+//     but assign nothing.
+//   - Validator (FUN_18004D690): "Info" registered, Version parsed non-zero,
+//     exactly ONE [Effect] section record, and that record holds exactly one
+//     entry (the "Obj" entry; entry count 1 at record+264). Failures log
+//     "section 'Info' was not found" / "key 'Version' was not found" /
+//     "section 'Effect' was not found" / "key 'Obj' was not found" and abort.
+//
+//   Writer (FUN_180032680 -> FUN_18004DC30 -> IniFile::Save FUN_1800490A0,
+//   same "%s = %s\n" + blank-line-after-section shape as the EMM):
+//     [Info]
+//     Version = 3
+//
+//     [Effect]
+//     Obj = <absolute effect path | "none">        (always present)
+//     Obj.show = true|false                        (only when the object has
+//                                                  a live whole assignment)
+//     Obj[0] = <absolute path | "none">            (only subsets with a live
+//     Obj[0].show = true|false                      record; "[n].show" rows
+//     ...                                           share the record)
+//   Unassigned values are the literal "none" (0x1800B3AB8). Paths are made
+//   absolute against the EMD's own directory (FUN_180067870).
+//
+//   Apply (FUN_180031980, the 40016 "Open by Model" flow): the file maps ONE
+//   object - the dialog passes every selected whole-object row and the EMD is
+//   applied to each, REPLACING the object's whole+subset assignment state
+//   (the working-map walk erases the object's existing nodes first). Values
+//   are resolved by FUN_18002A9E0: "none", "hide" and "main_default" map to
+//   the empty path (unassigned); anything else joins the EMD's directory.
+//   "[n]" rows beyond the object's material count are ignored. The distinct
+//   assigned paths that do not exist are reported via MessageBoxA(0x30):
+//   "The following effect files do not exist:\n" (0x1800B4DA0) + "\n<path>".
+//
+//   Dialog behavior (FUN_180043420 open / FUN_180043B00 save):
+//   - open requires >= 1 selected whole-object normal row (else silent
+//     return); save requires EXACTLY one.
+//   - filter "emd files(*.emd)\0*.emd\0All files(*.*)\0*.*\0" (Japanese
+//     "emdファイル(*.emd)"); NO lpstrTitle on either dialog.
+//   - the save dialog's lpstrDefExt is "emm" (0x1800B5024 - bug-compatible).
+//   - both seed lpstrInitialDir from DAT_1800D7528 (the shared "UserFile"
+//     last directory, one-shot seeded from the ini when empty) and update it
+//     from nFileOffset on OK. The port keeps a session-static directory
+//     (documented divergence: no ini "UserFile" seed).
+//   - open: flags 0x1004; save: flags 0x80A.
+// ---------------------------------------------------------------------------
+
+// The single [Effect] "Obj" entry of an EMD (same row shape as an
+// EmmEffectEntry; key is always "Obj").
+class EmdFile {
+public:
+    // Parse + validate (the IniFile driver with the EmdFile virtuals).
+    // Returns false when the file could not be used.
+    bool Load(const char* path);
+
+    // Serialize the writer byte shape above ("wt" text mode).
+    bool Save(const char* path) const;
+
+    int version() const { return version_; }
+    bool hasEntry() const { return hasEntry_; }
+    const EmmEffectEntry& entry() const { return entry_; }
+
+    // Writer-side population (MmeEmdSave serializes one object's state).
+    void SetEntry(const EmmEffectEntry& entry) { entry_ = entry; }
+
+private:
+    int version_ = 0;              // [Info] Version (0 = not parsed)
+    bool versionParsed_ = false;
+    bool hasEntry_ = false;        // exactly one "Obj" entry parsed
+    std::string path_;             // the .emd path (error messages)
+    EmmEffectEntry entry_;         // the [Effect] Obj entry
 };
 
 class EmmFile {
 public:
-    // Parse + validate. Raises (logs) the evidenced error strings; returns
-    // false when the file could not be used.
+    // Parse + validate (the IniFile driver + EmmFile virtuals). Returns
+    // false when the file could not be used; the evidenced error strings
+    // are logged along the way.
     bool Load(const char* path);
 
-    // Serialize the current assignment state (writer side of FUN_1800315F0).
+    // Serialize (FUN_18004C160 row generation + FUN_1800490A0 "%s = %s\n"
+    // writer): [Info]/[Object]/[Effect] with a blank line after each
+    // section, "wt" text mode.
     bool Save(const char* path) const;
 
-    const std::string& version() const { return version_; }
-    const std::vector<std::string>& objects() const { return objects_; }
-    const std::map<std::string, EmmAssignment>& assignments() const { return assignments_; }
-    const std::vector<EmmOwnerRule>& ownerRules() const { return ownerRules_; }
-    const std::string& defaultEffect() const { return defaultEffect_; }
+    int version() const { return version_; }
+    const std::vector<EmmObjectRecord>& objectRecords() const {
+        return objectRecords_;
+    }
+    const std::vector<EmmEffectSection>& effectSections() const {
+        return effectSections_;
+    }
+    const std::string& defaultEffect() const {
+        for (size_t i = 0; i < effectSections_.size(); ++i) {
+            if (effectSections_[i].isDefault()) {
+                return effectSections_[i].defaultPath;
+            }
+        }
+        static const std::string kEmpty;
+        return kEmpty;
+    }
 
     // Writer-side population (MmeEmmSave serializes the live state).
-    void SetAssignments(const std::map<std::string, EmmAssignment>& table)
-    {
-        assignments_ = table;
+    void SetObjectRecords(const std::vector<EmmObjectRecord>& records) {
+        objectRecords_ = records;
     }
-    void SetDefaultEffect(const std::string& path) { defaultEffect_ = path; }
+    void SetDefaultEffect(const std::string& path) { defaultPath_ = path; }
+    void SetDefaultEntries(const std::vector<EmmEffectEntry>& entries) {
+        defaultEntries_ = entries;
+    }
 
 private:
-    std::string version_;                                    // [Info] Version
-    std::vector<std::string> objects_;                       // [Object] Obj rows
-    std::map<std::string, EmmAssignment> assignments_;       // object -> assignment
-    std::vector<EmmOwnerRule> ownerRules_;                   // [Effect] Owner rows
-    std::string defaultEffect_;                              // [Effect] Default
+    int version_ = 0;                    // [Info] Version (0 = not parsed)
+    std::string path_;                   // the .emm path (error messages)
+    std::vector<EmmObjectRecord> objectRecords_;   // [Object] by (type, slot)
+    std::vector<EmmEffectSection> effectSections_; // in file order
+    // Writer-side scratch (not populated by Load).
+    std::string defaultPath_;
+    std::vector<EmmEffectEntry> defaultEntries_;
 };
 
 // ---------------------------------------------------------------------------
 // Manager state + entry points
 // ---------------------------------------------------------------------------
 
-// The live assignment table (object name -> assignment). Loaded by
-// MmeEmmLoad / extended by MmeAssignEffect / MmeAutoAssignForModel.
-std::map<std::string, EmmAssignment>& MmeEmmAssignments();
-
-// The "(default)" row effect path ("" = none).
+// The "(default)" row effect path ("" = none; the file's literal "none"
+// sentinel is mapped to "" here).
 const std::string& MmeEmmDefaultEffect();
 void MmeEmmSetDefaultEffect(const std::string& path);
 
-// [FUN_18002E8D0 / FUN_180030590] load an .emm file and apply the assignments
-// to the live models (matching by ModelData name).
+// [FUN_18002E8D0] load an .emm file and apply the assignments to the live
+// models (matching [Object] rows by type + path identity, two passes; the
+// two evidenced MessageBox reports are emitted along the way).
 bool MmeEmmLoad(const char* path);
 
-// [FUN_1800315F0] save the live assignments to an .emm file.
+// [FUN_1800315F0] save the live assignments to an .emm file (absolute
+// object/effect paths, "none" sentinels, "key = value" rows).
 bool MmeEmmSave(const char* path);
+
+// [FUN_180031980] load an .emd file and apply its single "Obj" mapping to
+// every target object (the assignment dialog passes its selected whole-object
+// rows); each target's whole+subset state is REPLACED first, then the Obj /
+// Obj[n] rows are applied ("none"/"hide"/"main_default" unassign; paths join
+// the EMD's directory; "[n]" beyond the material count is ignored). The
+// missing-effect-file MessageBoxA(0x30) report follows.
+bool MmeEmdLoad(const char* path, const std::vector<ModelData*>& targets);
+
+// [FUN_180032680] save ONE object's mapping to an .emd file (whole row always
+// "path|none"; ".show"/"[n]"/"[n].show" rows only for live records; subset
+// rows skipped for carrier objects [0x18003294f]; absolute paths resolved
+// against the EMD's directory).
+bool MmeEmdSave(const char* path, ModelData* model);
+
+// --- per-subset show state ("[n].show" rows) ---------------------------------
+// The original stores the flag on the working map's (owner=0, object, subset)
+// node (+1 = hasShow, +0x30 = the value; the whole-object flag is key -1,
+// mirrored by ModelData::shown()). ModelData has no subset-show field, so the
+// port keeps the records in a manager-side registry keyed by the host object
+// id. Written by the EMM/EMD applies below and (future seam) the assignment
+// dialog's per-subset Hide/Show button.
+
+// Record one "[n].show" value (subsetIndex >= 0; -1 belongs to
+// ModelData::setShown). Presence in the registry == hasShow.
+void MmeEmmSetSubsetShown(ModelData* model, int subsetIndex, bool shown);
+
+// hasShow query: true when a "[n].show" record exists for the subset.
+bool MmeEmmSubsetShowRecorded(const ModelData* model, int subsetIndex,
+                              bool* shown);
+
+// [FUN_18002DB10 0x18002db10] the effective visibility the draw path asks
+// for: the subset's own record wins [0x18002db34], then the whole-object
+// state (ModelData::shown()) [0x18002db42-0x18002db5b], default visible
+// [0x18002db61]. DRAW-GATE HANDUP NEEDED (main thread): the original hides a
+// subset by inserting a NULL LoadedEffect node at binding time
+// (sub_18002CA80 @0x18002ce6e), which makes sub_18002D910 find the subset
+// entry terminal and drops its draws; the port's draw path
+// (callbacks.cpp MmeHandleDrawIndexedPrimitive) gates only the whole object
+// (model->shown()). Wiring this query next to that gate (~line 149,
+// "if (snap.subset_index >= 0 && !MmeEmmEffectiveSubsetShown(model,
+// snap.subset_index)) return;") completes the runtime effect; until then the
+// rows persist and round-trip but do not yet hide at draw time.
+bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex);
+
+// Erase every subset-show record of the object (the EMD apply's
+// replace-first walk; FUN_180031980 erases the object's working nodes the
+// same way before writing the file's rows back).
+void MmeEmmClearSubsetShows(ModelData* model);
 
 // [FUN_180030590] assign one effect file to (objectId, subsetIndex); pass
 // subsetIndex < 0 for the whole object. path "" clears the assignment.
 // Returns true when the object was found and the effect (if any) loaded.
 bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::string& path);
+
+// --- [FUN_18002DEF0 / sub_18000B880] 热重载的绑定重解析（不碰分配映射）------
+//
+// 原版 40004 Reload All（FUN_18002DEF0）只给管理器绑定树
+// （qword_1800D9A40+0xA0）的每个活绑定打标记 *(WORD*)(binding+56)=0x100
+// （loaded=0 / unloadRequest=1，@0x18002df0f），分配表一个字节不动；各
+// （owner=0, object, subset）节点在下次 apply 经 sub_18000B880 消费标记：
+// 先 sub_18000B210 释放旧条目引用，再 sub_18000BC90 重编译并切回绑定
+// （@0x18000b8e6-0x18000b930）。移植绑定不逐帧轮询（分配时解析），故由
+// 下面两个入口同步承载同一消费链。path 精确匹配“引用该 .fx 的绑定”，
+// 空串 = 全部受影响绑定（Reload All）。绝不触碰 effectFile /
+// subsetEffects / show 记录——[n] 子集分配原样保留是本族入口的核心约束
+// （对比：MmeAssignEffect(-1) 会 clearSubsetEffects()，热重载禁用之）。
+
+// 消费半程 A（= 标记的 unloadRequest 位 + sub_18000B210 的引用释放）：
+// 让受影响绑定就地释放对旧缓存条目的 owner 引用（MmeEnsureMaterialBinding
+// 原位置空 effect/sas/owner），旧条目在最后一个引用死亡时经 ~LoadedEffect
+// 执行 FUN_18000B210 卸载语义（"Unload effect file" 日志 / SasUnload /
+// Release）。绑定转为无效果状态（绘制路径回退裸主机绘制，与原版
+// B210 后的绑定一致）。
+void MmeReleaseEffectBindings(const std::string& path);
+
+// 消费半程 B（= 标记的 loaded=0 位 + sub_18000BC90 的重装载）：按当前
+// 分配表逐模型重跑 MmeResolveModelEffectBinding / MmeResolveSubsetEffectBinding，
+// 把绑定切到重新装载的缓存条目（"Loading effect file" 与 "done.\n\n" 日志
+// 经引擎和 LoadedEffect::doneLogged 闩各记一次，多绑定共享同一条目时静默，
+// 与原版 (path,stamp) 缓存命中行为一致）。装载失败按 sub_18000B880 的失败
+// 路径报告（errorText 日志 + "Failed to load effect file:" 弹窗 + 失败条目
+// 卸载），分配保留、绑定维持无效果；文件缺失（stamp==0）静默
+// （sub_18000BC90 @0x18000bd19 的早退）。返回是否有绑定成功重解析。
+bool MmeRebindEffectAssignments(const std::string& path);
+
+// [0x18000b972 `if (!*(a1))`] 文件级等价查询：是否仍有“effectPath == path
+// 且 effect 非空”的活绑定。无效果绑定（此前装载失败/已卸载）在原版 B880
+// 的删文件分支里直接静默返回、状态不推进——轮询侧以此门复刻该行为。
+bool MmeAnyEffectBindingForPath(const std::string& path);
 
 // Auto-assignment for a freshly registered model (MMEffect.txt (1)): the
 // same-name .fx, the "[<fx>]" embedded-name convention, then the EMM default
@@ -117,8 +467,13 @@ std::string MmeFindEffectFileForModel(ModelData* model);
 
 // [FUN_180057290] PMM-save hook (the SavedPMMFile seam): when EMMAutoSave is
 // enabled and the PMM path is valid (not "(invalid)"), build
-// "<dir>\<name>.emm" and save. The original opens the save dialog
-// (FUN_1800431E0); Phase 2 writes the file directly (documented divergence).
+// "<dir>\<name>.emm" and save it SILENTLY - the original passes the prebuilt
+// path to FUN_1800431E0 (a2 != NULL @0x1800573ed), which skips the
+// GetSaveFileNameA branch (dialog = a2 == NULL, the 40010 menu command only)
+// and goes straight to FUN_1800315F0. The port's direct write is
+// behavior-faithful. (In the original this body fires from the
+// OnCreateModel/OnDeleteModel/OnBeginScene export callbacks, not a PMM-save
+// seam; the saved bytes are identical.)
 void MmeAutoSaveEmmForPmm(const wchar_t* pmmPath);
 
 // [FUN_1800570D0] PMM-load hook (the LoadedPMMFile seam, called from the pass

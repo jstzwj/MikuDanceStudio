@@ -65,6 +65,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/timeline_selection_grid.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 
@@ -572,25 +573,15 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                     } while (--n);
                 }
                 // accessory grid rows x columns (0x4464A1..0x446534)
-                if (rowStart < rowEnd) {
-                    int* acc = app->state.rowHitAcc +
-                               (colStart + 200 * rowStart);
-                    int rows = rowEnd - rowStart;
-                    do {
-                        if (colStart < colEnd) {
-                            int* slots = app->state.jointLineMap + colStart;
-                            int cols = colEnd - colStart;
-                            do {
-                                if (*acc >= 0 && *slots >= 0)
-                                    SetAccessorySelected(
-                                        app, *slots, *acc, flag);
-                                ++acc;
-                                ++slots;
-                            } while (--cols);
-                        }
-                        acc += 200;
-                    } while (--rows);
-                }
+                // x64 0x7FF7CB459875 resets the column cursor for each row;
+                // only the row base advances by 0x320 at 0x7FF7CB4598BC.
+                VisitTimelineSelectionCells(rowStart, rowEnd, colStart, colEnd,
+                    [&](std::size_t cell, int column) {
+                        const int key = app->state.rowHitAcc[cell];
+                        const int slot = app->state.jointLineMap[column];
+                        if (key >= 0 && slot >= 0)
+                            SetAccessorySelected(app, slot, key, flag);
+                    });
             } else {
                 // ---- bone-edit mode hover (0x44653B) ----------------------
                 unsigned char* model = CurrentModel(app);
@@ -602,55 +593,16 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                     // (0x44653F..0x4467F0)
                     displayKeys[0].allocated = 0;
                     boneKeys[0].allocated = 0;
-                    int* map = app->state.rowHitMorph;
-                    for (int row_i = 0; row_i < 200; ++row_i) {
-                        for (int g = 0; g < 40; ++g, map += 5) {
-                            const int b0 = map[40000];  // bone map
-                            if (b0 > 0)
-                                displayKeys[b0].allocated = 0;
-                            const int m0 = map[0];      // morph map
-                            if (m0 > 0)
-                                morphKeys[m0].allocated = 0;
-                            const int i0 = map[-40000]; // IK map
-                            if (i0 > 0)
-                                boneKeys[i0].allocated = 0;
-                            const int b1 = map[40001];
-                            if (b1 > 0)
-                                displayKeys[b1].allocated = 0;
-                            const int m1 = map[1];
-                            if (m1 > 0)
-                                morphKeys[m1].allocated = 0;
-                            const int i1 = map[-39999];
-                            if (i1 > 0)
-                                boneKeys[i1].allocated = 0;
-                            const int b2 = map[40002];
-                            if (b2 > 0)
-                                displayKeys[b2].allocated = 0;
-                            const int m2 = map[2];
-                            if (m2 > 0)
-                                morphKeys[m2].allocated = 0;
-                            const int i2 = map[-39998];
-                            if (i2 > 0)
-                                boneKeys[i2].allocated = 0;
-                            const int b3 = map[40003];
-                            if (b3 > 0)
-                                displayKeys[b3].allocated = 0;
-                            const int m3 = map[3];
-                            if (m3 > 0)
-                                morphKeys[m3].allocated = 0;
-                            const int i3 = map[-39997];
-                            if (i3 > 0)
-                                boneKeys[i3].allocated = 0;
-                            const int b4 = map[40004];
-                            if (b4 > 0)
-                                displayKeys[b4].allocated = 0;
-                            const int m4 = map[4];
-                            if (m4 > 0)
-                                morphKeys[m4].allocated = 0;
-                            const int i4 = map[-39996];
-                            if (i4 > 0)
-                                boneKeys[i4].allocated = 0;
-                        }
+                    for (std::size_t cell = 0; cell < 200 * 200; ++cell) {
+                        const int display = app->state.rowHitIk[cell];
+                        if (display > 0)
+                            displayKeys[display].allocated = 0;
+                        const int morph = app->state.rowHitMorph[cell];
+                        if (morph > 0)
+                            morphKeys[morph].allocated = 0;
+                        const int bone = app->state.rowHitBone[cell];
+                        if (bone > 0)
+                            boneKeys[bone].allocated = 0;
                     }
                 }
                 // hovered-row highlight over the morph map grid
@@ -663,41 +615,26 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 int colEndB = (yBottom - kColY0Bone) / kColPitch;
                 if (yBottom - kColPitch * colEndB - kColY0Bone > 7)
                     colEndB += 1;
-                if (rowStart < rowEnd) {
-                    int* map = app->state.rowHitMorph +
-                               (colStartB + 200 * rowStart);
-                    int rows = rowEnd - rowStart;
-                    do {
-                        if (colStartB < colEndB) {
-                            int cols = colEndB - colStartB;
-                            do {
-                                const int bv = map[40000];  // bone map
-                                if (bv <= 0) {
-                                    if (bv == -10)
-                                        displayKeys[0].allocated = flag;
-                                } else {
-                                    displayKeys[bv].allocated = flag;
-                                }
-                                const int mv = map[0];      // morph map
-                                if (mv <= 0) {
-                                    if (mv == -10)
-                                        morphKeys[0].allocated = flag;
-                                } else {
-                                    morphKeys[mv].allocated = flag;
-                                }
-                                const int iv = map[-40000]; // IK map
-                                if (iv <= 0) {
-                                    if (iv == -10)
-                                        boneKeys[0].allocated = flag;
-                                } else {
-                                    boneKeys[iv].allocated = flag;
-                                }
-                                ++map;
-                            } while (--cols);
-                        }
-                        map += 200;
-                    } while (--rows);
-                }
+                // x64 0x7FF7CB459A6C reloads the row cursor; 0x459BB9
+                // advances the row base independently of the inner loop.
+                VisitTimelineSelectionCells(rowStart, rowEnd, colStartB, colEndB,
+                    [&](std::size_t cell, int) {
+                        const int display = app->state.rowHitIk[cell];
+                        if (display > 0)
+                            displayKeys[display].allocated = flag;
+                        else if (display == -10)
+                            displayKeys[0].allocated = flag;
+                        const int morph = app->state.rowHitMorph[cell];
+                        if (morph > 0)
+                            morphKeys[morph].allocated = flag;
+                        else if (morph == -10)
+                            morphKeys[0].allocated = flag;
+                        const int bone = app->state.rowHitBone[cell];
+                        if (bone > 0)
+                            boneKeys[bone].allocated = flag;
+                        else if (bone == -10)
+                            boneKeys[0].allocated = flag;
+                    });
                 // hover rect (0x446A13..0x446A25)
                 app->TimelineRangeFirstOffset() = rowStart;
                 app->TimelineRangeLastOffset() = rowEnd;

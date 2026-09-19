@@ -3,11 +3,10 @@
 // ===========================================================================
 // __thiscall on the APP block (not the model):
 //
-//   LoadVmdMotion(app, FileName)   FileName = ANSI path (the original's
-//                               GetOpenFileNameA buffer; the ported file
-//                               dialog hands over a wide path, so the
-//                               LoadVmdFile wrapper below converts with
-//                               CP_ACP first - documented deviation)
+//   LoadVmdMotion(app, FileName)   FileName = wide path, opened directly
+//                               via _wsopen_s (x64 original 0x7FF7CB48D1B7;
+//                               the x86 original's ANSI path + _sopen_s was
+//                               dropped in favor of the x64 behavior)
 //
 // Two file flavors share the entry: "Vocaloid Motion Data file" (old,
 // 10-byte model name, ver=1) and "Vocaloid Motion Data 0002" (20-byte
@@ -133,7 +132,7 @@ const char kJpModelMismatch[] =  // 0x52CB48 "... %s ..."
 }  // namespace
 
 // ---- VA 0x00434B60 --------------------------------------------------------
-int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
+int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) {  // VA 0x00434B60
     auto& s = *app;
     unsigned char* const model = app->SelectedModel();
 
@@ -147,15 +146,19 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
     const HWND hwnd = s.state.hwnd;
     const bool english = s.state.englishUI != 0;
 
+    // x64 @0x7FF7CB48D19B..0x7FF7CB48D1B7: wide path straight into
+    // _wsopen_s(fd, fileName, _O_BINARY, _SH_DENYNO, _S_IREAD)
     const errno_t openErr =
-        _sopen_s(&fileHandle, fileName,
-                 0x8000 /*_O_BINARY*/, 0x40 /*_O_RDONLY*/, 0x80 /*_S_IREAD*/);
-        if (openErr != 0) {
+        _wsopen_s(&fileHandle, fileName,
+                  0x8000 /*_O_BINARY*/, 0x40 /*_SH_DENYNO*/, 0x80 /*_S_IREAD*/);
+    if (openErr != 0) {
         if (english)
             sprintf_s(text, 0x100, "Cannot open file:%d", openErr);
         else
             sprintf_s(text, 0x100, kJpCannotOpen, openErr);
-        MessageBoxA(hwnd, text, kJpTitleMotionLoad, 0);
+        // Caption is the global empty Locale string in the reference
+        // (x64 0x7FF7CB48D1F1 -> 0x7FF7CB54A2B0), not a title constant.
+        MessageBoxA(hwnd, text, "", 0);
         return 0;
     }
 
@@ -298,7 +301,12 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
         RefreshLightPanel(app);
         RefreshSelfShadowPanel(app);
         ApplyGravityTrack(app);
-        return 0;  // original chains 0x412330's return value
+        // x64 @0x7FF7CB48E7ED chains: `call sub_7FF7CB47D320` then jumps
+        // straight to the common epilogue, returning its eax (key field /
+        // trailing EnableWindow BOOL).  The port's ApplyGravityTrack
+        // (track_apply.cpp) is void and its signature is linked as void
+        // across 15+ files, so the value cannot be taken here yet.
+        return 0;
     }
 
     // ==== model motion =====================================================
@@ -351,7 +359,7 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
     undo.dirty = 0;
     undo.frame = s.state.currentFrame;
     if (undo.bonePose != nullptr)
-        free(undo.bonePose);
+        operator delete(undo.bonePose);  // x64 @0x7FF7CB48DE1C ??3
     const int boneCnt = static_cast<int>(record.boneCount);
     // x64 @0x7FF7CB48DE70..0x7FF7CB48E013: 每骨骼一个 36 字节槽位
     // (boneIndex / trans / rotQuat / 物理标志)，源端等价于按
@@ -377,7 +385,7 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
         }
     }
     if (undo.auxiliaryPose != nullptr)
-        free(undo.auxiliaryPose);
+        operator delete(undo.auxiliaryPose);  // x64 @0x7FF7CB48E08F ??3
     unsigned char* const rawKeys = static_cast<unsigned char*>(
         operator new(192 * boneKeyCount));
     undo.auxiliaryPose = rawKeys;
@@ -465,7 +473,7 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
             unsigned char* entries = nullptr;
             if (n > 0)
                 entries = static_cast<unsigned char*>(
-                    operator new(21 * n));
+                    operator new(21 * n));  // x64 @0x7FF7CB48E6AD ??2
             for (int e = 0; e < n; ++e) {
                 _read(fileHandle, entries + 21 * e, 20);
                 _read(fileHandle, &word, 1);
@@ -478,7 +486,10 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
                                s.state.currentFrame))
                     ikOk = 0;
             }
-            if (entries) free(entries);
+            // Match the scalar raw-storage allocation above. The binary
+            // imports an array-delete thunk here; its allocator convention
+            // does not require reproducing mismatched C++ allocation APIs.
+            if (entries) operator delete(entries);
         }
         modelMax = record.maxFrame;
         if (s.LastRegisteredFrame() < modelMax)
@@ -492,13 +503,12 @@ int LoadVmdMotion(MMDApp* app, const char* fileName) {  // VA 0x00434B60
                      s.PlaybackPhysicsMode());
 }
 
-// Wide-path entry used by the ported file dialog (0x461300's GetOpenFileNameA
-// equivalent).  CP_ACP conversion matches what the ANSI dialog produced.
+// Wide-path entry used by the ported file dialog (0x461300's GetOpenFileNameW
+// buffer) and the drop handler.  The x64 original opens the wide path
+// directly via _wsopen_s (0x7FF7CB48D1B7) - no code-page conversion.
 void LoadVmdFile(const wchar_t* path) {
     if (g_Block == nullptr) return;
-    char ansi[MAX_PATH];
-    WideCharToMultiByte(CP_ACP, 0, path, -1, ansi, MAX_PATH, nullptr, nullptr);
-    LoadVmdMotion(g_Block, ansi);
+    LoadVmdMotion(g_Block, path);
 }
 
 }  // namespace mikudancestudio

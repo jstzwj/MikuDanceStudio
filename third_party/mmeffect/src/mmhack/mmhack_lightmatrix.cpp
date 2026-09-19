@@ -78,9 +78,14 @@ void MmhComputeLightViewProjMatrix(D3DMATRIX* outView, D3DMATRIX* outProj,
     D3DXMATRIX lightViewInv;
     D3DXMATRIX* invResult = D3DXMatrixInverse(&lightViewInv, nullptr, &lightView);
     if (invResult == nullptr) {
-        // Singular matrix: D3DXMatrixInverse returned NULL [0x180001330 check
-        // lVar5 == 0]; emit the degenerate projection
-        // row0..row2 = 0, row3 = (0, -1, 0, 1). [0x180001330+0x430..]
+        // Singular matrix: D3DXMatrixInverse returned NULL [0x1800015cb]; this
+        // branch first emits the degenerate triple — view = lightView,
+        // proj rows 0..2 = 0 / row3 = (0, -1, 0, 1), viewproj = lightView *
+        // degenerate [0x1800015e6..0x1800016be].
+        // NOTE: the original has NO return/goto after this block [0x1800016c8]
+        // — control falls straight into the common tail below, which
+        // unconditionally OVERWRITES these outputs. The dead stores are kept
+        // to replicate the original's write-then-overwrite behavior.
         D3DXMATRIX degenerate;
         memset(&degenerate, 0, sizeof(degenerate));
         degenerate.m[3][1] = -1.0f;
@@ -96,10 +101,17 @@ void MmhComputeLightViewProjMatrix(D3DMATRIX* outView, D3DMATRIX* outProj,
         }
     }
 
-    // Outputs [0x180001330+0x4f0..]:
+    // Common tail [0x1800016c8..0x18000173a], executed unconditionally (and
+    // clobbering the degenerate triple above in the singular case):
     //   outViewProj = matLightViewProj (possibly accessory-adjusted)
     //   outProj     = inv(lightView) * matLightViewProj
     //   outView     = lightView
+    // Uninitialized-stack equivalent: the original tail multiplies v49
+    // ([rsp+0x258]) — the out-buffer of the FAILED D3DXMatrixInverse call,
+    // whose contents are whatever the failed call left there (undefined). The
+    // port's equivalent is the local lightViewInv above: the same D3DX entry
+    // point is called with it, so it holds the same kind of failed-inverse
+    // leftover and the product below is undefined in exactly the same way.
     if (outViewProj)
         *outViewProj = lvp;
     if (outProj) {

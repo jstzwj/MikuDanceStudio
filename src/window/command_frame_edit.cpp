@@ -177,6 +177,7 @@
 #include <commdlg.h>
 #include <cstdarg>
 #include <cstdint>
+#include <new>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -281,9 +282,9 @@ void SnapshotSelectedKeysForUndo(unsigned char* model, int frame);  // VA 0x004A
 // ---------------------------------------------------------------------------
 // Cross-translation-unit dependencies.
 // ---------------------------------------------------------------------------
-void UndoModelEdit(unsigned char* model, std::int32_t* frame);  // VA 0x004A1870
+void UndoModelEdit(unsigned char* model, std::int32_t& frame);  // VA 0x004A1870
                                                             // model undo step
-void RedoModelEdit(unsigned char* model, std::int32_t* frame);  // VA 0x004A2490
+void RedoModelEdit(unsigned char* model, std::int32_t& frame);  // VA 0x004A2490
                                                             // model redo step
 void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode);  // VA 0x0041ACD0
 void StepFrame(MMDApp* app, bool forward);      // VA 0x00430F20 (fwd) / 0x004312E0
@@ -1088,8 +1089,7 @@ static void Cmd400_Undo(MMDApp* app, HWND hwnd) {
     app->SceneModified() = 1;
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord& record = *mdl::Mdl(model);
-    UndoModelEdit(model, reinterpret_cast<std::int32_t*>(
-                         app->state.currentFrame));
+    UndoModelEdit(model, app->state.currentFrame);
     const std::int32_t cnt = record.undoState[0];
     if (record.undoRings[0].slots[cnt].operation == 0) {
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
@@ -1122,8 +1122,7 @@ static void Cmd400_Redo(MMDApp* app, HWND hwnd) {
     app->SceneModified() = 1;
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord& record = *mdl::Mdl(model);
-    RedoModelEdit(model, reinterpret_cast<std::int32_t*>(
-                         app->state.currentFrame));
+    RedoModelEdit(model, app->state.currentFrame);
     if (record.undoState[0] == record.undoState[1]) {
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
         record.redoDirty = 0;
@@ -1181,7 +1180,8 @@ static void Cmd400_ViewResetReload(MMDApp* app) {
 // subsystem.  Otherwise read the 0x199 (start) / 0x19A (end) edits via
 // atol; frameA/30 (0x9E654) comes from dword 0x980 when byte 0x9ED99
 // != 0 (0x9EDB6 = 1) or from the 0x199 edit (0x9EDB6 = 1 only when the
-// edit differs from 0x980); frameB/30 (0x9E658) from the 0x19A edit
+// edit EQUALS 0x980 - x64 0x7FF7CB46B6DA cmp/jnz; the x86 jnz/jz was
+// transcribed inverted here before); frameB/30 (0x9E658) from the 0x19A edit
 // (fallback dword 0x9E16C when 0); 0x9E64C = frameA/30; snapshot
 // IsWindowEnabled of 0x1F1/0x1F2/0x1AF/0x1A5/0x1A6/0x190/0x191 into
 // 0x9EB77..0x9EB7D; byte 0x330 = 1; UpdateBoneFrames; then
@@ -1210,7 +1210,10 @@ static void Cmd400_PlayRangeEdits(MMDApp* app, HWND hwnd) {
         app->PlaybackFrameChanged() = 1;
     } else {
         app->PlaybackStartSeconds() = FrameToSeconds(start);
-        if (start != app->state.currentFrame) {
+        // x64 0x7FF7CB46B6DA: cmp start, currentFrame; jnz skip ->
+        // the changed-flag is set only when the typed start frame
+        // EQUALS the current frame (not "differs").
+        if (start == app->state.currentFrame) {
             app->PlaybackFrameChanged() = 1;
         }
     }
@@ -2034,12 +2037,12 @@ static void Cmd400_FramePaste(MMDApp* app, HWND hwnd) {
             // stride records)
             void* p = undo.bonePose;
             if (p != nullptr) {
-                free(p);
+                ::operator delete(p);
                 undo.bonePose = nullptr;
             }
             const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
             auto* undoBone = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-                malloc(static_cast<std::uint32_t>(boneCount) *
+                ::operator new(static_cast<std::uint32_t>(boneCount) *
                        sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
             if (undoBone != nullptr) {
                 ConstructArrayElements(undoBone,
@@ -2071,11 +2074,11 @@ static void Cmd400_FramePaste(MMDApp* app, HWND hwnd) {
             // boneSel bytes)
             p = undo.auxiliaryPose;
             if (p != nullptr) {
-                free(p);
+                ::operator delete(p);
                 undo.auxiliaryPose = nullptr;
             }
             unsigned char* undoLight = static_cast<unsigned char*>(
-                malloc(boneSel * 3 * 0x40));
+                ::operator new(boneSel * 3 * 0x40));
             if (undoLight != nullptr) {
                 ConstructArrayElements(undoLight, 0x40, boneSel * 3,
                                        reinterpret_cast<void*>(&IdentityCtor));

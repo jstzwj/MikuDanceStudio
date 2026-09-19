@@ -351,7 +351,7 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                     undo.frame = app->state.currentFrame;
                     auto*& bufSlot = undo.bonePose;
                     if (bufSlot != nullptr) {
-                        free(bufSlot);
+                        ::operator delete(bufSlot);
                         bufSlot = nullptr;
                     }
                     const std::int32_t boneN = mikudancestudio::mdl::Mdl(m)->boneCount;
@@ -373,7 +373,7 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                     undo.dirty = 0;
                     void*& dataSlot = undo.auxiliaryPose;
                     if (dataSlot != nullptr) {
-                        free(dataSlot);
+                        ::operator delete(dataSlot);
                         dataSlot = nullptr;
                     }
                     dataSlot = ::operator new(static_cast<std::size_t>(boneCnt) * 0x40);

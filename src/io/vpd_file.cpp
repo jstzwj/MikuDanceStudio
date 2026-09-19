@@ -169,7 +169,7 @@ void LoadVpdFile(const wchar_t* path) {
     undo.operation = 1;
     undo.dirty = count;
     if (undo.bonePose != nullptr) {
-        free(undo.bonePose);
+        ::operator delete(undo.bonePose);
         undo.bonePose = nullptr;
     }
     mdl::BonePoseSnapshot* const snap =

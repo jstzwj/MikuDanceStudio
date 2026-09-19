@@ -6,7 +6,9 @@
 //   1. release the 11 texture slots at this+650720..+650760
 //   2. texture slot 0: embedded PNG resource 0x67 via
 //      D3DXCreateTextureFromFileInMemoryEx (A8R8G8B8, MANAGED pool)
-//   3. edge-colour table at this+655632 (14 floats, exact values below)
+//   3. edge-colour table at this+655632 (30 floats, exact values below;
+//      x64 0x7FF7CB4BA24C..0x7FF7CB4BA388 writes all 30 dwords, literals
+//      below reproduce the original bit patterns, not n/256 values)
 //   4. slots 1..10: data\toon%02d.bmp via D3DXCreateTextureFromFileExA
 //      (fmt 21 = A8R8G8B8, pool 1 = MANAGED); on failure fall back to the
 //      embedded PNG resource (id+103); on success read the bottom-left

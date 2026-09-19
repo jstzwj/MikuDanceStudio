@@ -1,3 +1,4 @@
+#include "mme_resources.h"
 // mme_ui.cpp - see mme_ui.h
 //
 // Evidence (big-C):
@@ -183,7 +184,7 @@ INT_PTR CALLBACK MmeLogDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam)
                              reinterpret_cast<LPARAM>(existing.c_str()));
             }
         }
-        HICON icon = LoadIconA(g_hInst, MAKEINTRESOURCEA(0x68));
+        HICON icon = LoadIconA(g_hInst, MAKEINTRESOURCEA(IDI_MME_APP));
         if (icon != nullptr) {
             SendMessageA(dlg, WM_SETICON, 0, (LPARAM)icon);
             SendMessageA(dlg, WM_SETICON, 1, (LPARAM)icon);
@@ -313,9 +314,11 @@ void MmeMouseTail(HWND window, UINT msg, LPARAM lParam)
 
 // --- [FUN_180055b10] the main-window subclass proc --------------------------
 // Structure: the main window alone dispatches WM_COMMAND (0x104 -> menu
-// reinstall, 40001/40002/40003/40004/40005/40006/40022; 0x9c47..0x9c55 fall
-// through); the mouse tail runs for every subclassed window (the main window
-// and the BeginScene "drawn" window); everything reaches CallWindowProc.
+// reinstall, 40001/40002/40003/40004/40005/40006/40022; 0x9c47..0x9c55 -
+// including 40020, the EN "Enable Effect" id, which the original dispatch
+// ignores - fall through); the mouse tail runs for every subclassed window
+// (the main window and the BeginScene "drawn" window); everything reaches
+// CallWindowProc.
 LRESULT CALLBACK MmeMainWindowProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_COMMAND && window == g_mainWindow) {
@@ -339,7 +342,9 @@ LRESULT CALLBACK MmeMainWindowProc(HWND window, UINT msg, WPARAM wParam, LPARAM 
         case 40003: { // 0x9c43 - About MikuMikuEffect (MessageBoxIndirectA,
                       // MB_USERICON 0x68, DAT_1800b5708/b5740)
             std::string text = "MikuMikuEffect ver0.37 in MikuMikuDance\n(by ";
-            text += "\xce\xe8\xc1\xa6\xbd\xe9\xc8\xeb\xa3\xd0";  // GBK "舞力介入P"
+            // 0x1800b5708+32: Shift-JIS author name (95 91 97 CD 89 EE 93 FC
+            // 82 6F), byte-verified against the original About text.
+            text += "\x95\x91\x97\xcd\x89\xee\x93\xfc\x82\x6f";
             text += ")";
             MSGBOXPARAMSA params;
             memset(&params, 0, sizeof(params));
@@ -349,7 +354,7 @@ LRESULT CALLBACK MmeMainWindowProc(HWND window, UINT msg, WPARAM wParam, LPARAM 
             params.lpszText = text.c_str();
             params.lpszCaption = "About MikuMikuEffect";
             params.dwStyle = MB_USERICON;               // 0x80
-            params.lpszIcon = MAKEINTRESOURCEA(0x68);
+            params.lpszIcon = MAKEINTRESOURCEA(IDI_MME_APP);
             MessageBoxIndirectA(&params);
             return 0;
         }
@@ -369,13 +374,12 @@ LRESULT CALLBACK MmeMainWindowProc(HWND window, UINT msg, WPARAM wParam, LPARAM 
             SyncEffectToggleMenu();
             return 0;
         }
-        case 40020:   // 0x9c54 - Enable Effect (the EN menu id; the original
-                      // dispatch table ignores it - kept functional here)
-            if (ctx != nullptr) {
-                ctx->effectEnabled = (ctx->effectEnabled != 0) ? 0 : 1;
-            }
-            SyncEffectToggleMenu();
-            return 0;
+        case 40020:   // 0x9c54 - Enable Effect (the EN menu id): the original
+                      // sub_180055b10 dispatch (0x180055bf0 switch) has no
+                      // 0x9c54 case, so the command falls through to the mouse
+                      // tail and the stored proc untouched. Pass it through
+                      // (the menu item exists but the dispatch is a no-op).
+            break;
         case 40022: { // 0x9c56 - Auto Save Mapping File + the ini write-back
             UINT state = g_menuState != nullptr
                              ? GetMenuState(g_menuState, 40022, MF_BYCOMMAND)
@@ -408,25 +412,22 @@ LRESULT CALLBACK MmeMainWindowProc(HWND window, UINT msg, WPARAM wParam, LPARAM 
 
 } // namespace
 
-// --- DllMain [big-C 69501-69520] -------------------------------------------
-extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
+// Process lifetime is explicit now that the engine is linked into the host.
+void MmeUiInitializeRuntime(HINSTANCE instance)
 {
-    (void)reserved;
-    if (reason == DLL_PROCESS_DETACH) {
+    if (g_hInst != nullptr) return;
+    g_hInst = instance;
+    GdiplusStartupInput startupInput;
+    GdiplusStartup(&g_gdiplusToken, &startupInput, nullptr);
+}
+
+void MmeUiShutdownRuntime()
+{
+    if (g_gdiplusToken != 0) {
         GdiplusShutdown(g_gdiplusToken);
-    } else if (reason == DLL_PROCESS_ATTACH) {
-        // GdiplusStartup input: GdiplusStartupInput{1, NULL, FALSE, NULL}
-        // (the big-C local_28/local_20/local_18 triple).
-        GdiplusStartupInput startupInput;
-        startupInput.GdiplusVersion = 1;
-        startupInput.DebugEventCallback = nullptr;
-        startupInput.SuppressBackgroundThread = FALSE;
-        startupInput.SuppressExternalCodecs = FALSE;
-        g_hInst = instance;
-        GdiplusStartup(&g_gdiplusToken, &startupInput, nullptr);
-        return TRUE;
+        g_gdiplusToken = 0;
     }
-    return TRUE;
+    g_hInst = nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +472,22 @@ bool MmeUiInstallHooks(bool invertLanguageFlag)
     if (g_mainWindow == nullptr) {
         return true;
     }
+
+    // [Initialize 0x180056873-0x18005687a] subclass the main window with
+    // 0x180055b10 BEFORE the menu install runs (sub_180055890 is called at
+    // 0x180056882, after the SetWindowLongPtrA pair; the subclass also
+    // survives the menu-install early-outs, like the original). The original
+    // subclasses exactly once - the 0x104 language reinstall only re-runs the
+    // menu install - so the already-installed probe (the same pattern as
+    // MmeUiInstallOffscreenSubclass) keeps the reinstall path from chaining
+    // the proc onto itself.
+    if (GetWindowLongPtrA(g_mainWindow, GWLP_WNDPROC) !=
+        reinterpret_cast<LONG_PTR>(MmeMainWindowProc)) {
+        g_mainOriginalWndProc = SetWindowLongPtrA(
+            g_mainWindow, GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(MmeMainWindowProc));
+    }
+
     HMENU menu = GetMenu(g_mainWindow);
     if (menu == nullptr) {
         return true;   // [L69690] no menu bar: the install no-ops
@@ -483,15 +500,18 @@ bool MmeUiInstallHooks(bool invertLanguageFlag)
     } else {
         char text[32];
         memset(text, 0, sizeof(text));
-        // [L69724] GetMenuStringA(menu, 0x104, ...) + the "English" probe.
-        if (GetMenuStringA(menu, 0x104, text, 0x20, MF_BYCOMMAND) != 0 &&
-            strstr(text, "English") != nullptr) {
-            japanese = false;
+        // [0x180055938/0x180055960] GetMenuStringA(menu, 0x104, ..., 0x20, 0)
+        // 成功且 strstr 命中 "English" → v4=1=日文。MMD 的语言菜单显示的是
+        // “可切换到”的语言：显示 English 说明当前 UI 是日文，故装日文菜单
+        // 101/0x65；探针成功但不含 "English"（显示日文项 → 当前英文）才装
+        // 英文菜单 107/0x6b。方向与 v4（=byte_1800D99DD，1=日文）一致。
+        if (GetMenuStringA(menu, 0x104, text, 0x20, MF_BYCOMMAND) != 0) {
+            japanese = strstr(text, "English") != nullptr;
         }
         // Divergence guard: when the 0x104 probe is unavailable the original
-        // skips the install (LAB_180055a87); the port keeps the Japanese
-        // default and installs so a host without that menu still gets the
-        // MMEffect menu.
+        // returns 0 and skips the install entirely (0x180055940); the port
+        // keeps the Japanese default and installs so a host without that menu
+        // still gets the MMEffect menu.
     }
     if (invertLanguageFlag) {
         japanese = !japanese;                    // [L69733-69735]
@@ -499,7 +519,7 @@ bool MmeUiInstallHooks(bool invertLanguageFlag)
     g_uiJapaneseFlag = japanese ? 1 : 0;
 
     // [L69736-69745] LoadMenuA(0x65 = 101 JP / 0x6b = 107 EN).
-    unsigned int menuId = japanese ? 101 : 107;
+    unsigned int menuId = japanese ? IDR_MME_MENU_JP : IDR_MME_MENU_EN;
     g_menuState = LoadMenuA(g_hInst, MAKEINTRESOURCEA(menuId));
     if (g_menuState == nullptr) {
         return true;   // keep Initialize alive; the UI stays uninstalled
@@ -525,10 +545,6 @@ bool MmeUiInstallHooks(bool invertLanguageFlag)
     SyncAutoReloadMenu();     // 40001 <- DAT_1800d72e1 (g_autoReload)
     SyncAutoSaveMenu();       // 40022 <- g_bAutoSave (g_emmAutoSave)
     DrawMenuBar(g_mainWindow);
-
-    // [Initialize 70057] subclass the main window with 0x180055b10.
-    g_mainOriginalWndProc = SetWindowLongPtrA(
-        g_mainWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(MmeMainWindowProc));
 
     // [Initialize 70061] SetWindowsHookExA(2 /*WH_KEYBOARD*/, FUN_180055800,
     // NULL, current thread). (The analysis notes label it "WH_CBT"; hook id 2
@@ -574,7 +590,7 @@ void MmeUiOpenLogWindow()
         SetFocus(g_logWindow);
         return;
     }
-    g_logWindow = CreateDialogParamA(g_hInst, MAKEINTRESOURCEA(105), g_mainWindow,
+    g_logWindow = CreateDialogParamA(g_hInst, MAKEINTRESOURCEA(IDD_MME_LOG), g_mainWindow,
                                      MmeLogDlgProc, 0);
     if (g_logWindow == nullptr) {
         return;
@@ -597,54 +613,63 @@ void MmeUiOpenAssignmentDialog()
 
 void MmeUiReloadAllEffects()
 {
-    // [40004] force-reload every assigned effect: unload the engine cache
-    // entry, then re-assign through the emm manager (which reloads and
-    // re-applies). The "(default)" row effect re-attaches at the next pass
-    // plan rebuild through MmeFindEffectFileForModel.
-    MmeContext* ctx = g_context;
-    if (ctx == nullptr) {
-        return;
-    }
-    std::vector<std::string> paths;
-    for (size_t i = 0; i < ctx->models.size(); ++i) {
-        ModelData* model = ctx->models[i];
-        if (model != nullptr && !model->effectFile().empty()) {
-            if (std::find(paths.begin(), paths.end(), model->effectFile()) == paths.end()) {
-                paths.push_back(model->effectFile());
-            }
-        }
-    }
-    const std::string& defaultEffect = MmeEmmDefaultEffect();
-    if (!defaultEffect.empty() &&
-        std::find(paths.begin(), paths.end(), defaultEffect) == paths.end()) {
-        paths.push_back(defaultEffect);
-    }
-    for (size_t p = 0; p < paths.size(); ++p) {
-        MmeEngineUnloadEffectFile(paths[p]);
-    }
-    for (size_t i = 0; i < ctx->models.size(); ++i) {
-        ModelData* model = ctx->models[i];
-        if (model == nullptr || model->effectFile().empty()) {
-            continue;
-        }
-        MmeAssignEffect(model->objectId(), -1, model->effectFile());
-    }
+    // [40004 = FUN_18002DEF0] “全部重载”的打标记式语义（行为级移植）。
+    //
+    // 原版只做两件事（@0x18002def0-0x18002df6d）：
+    //   1. 逆序遍历管理器绑定树（qword_1800D9A40+0xA0），给每个活绑定的
+    //      0x1D8 对象打标记 *(WORD*)(binding+56)=0x100（@0x18002df0f）——
+    //      位义 loaded(+56)=0 / unloadRequest(+57)=1；工作映射（分配表）
+    //      一个字节不动；
+    //   2. sub_18000A990 清效果/纹理两棵缓存树（表头 0x1800D9C68 /
+    //      0x1800D9C88），只丢缓存侧 shared_ptr 引用。
+    // 各（owner=0, object, subset）绑定节点（含全部 [n] 子集节点）在下次
+    // apply 时经 sub_18000B880 消费标记（@0x18000b8e6-0x18000b930）：先
+    // sub_18000B210 释放旧条目引用，再因 loaded=0 走首装路径 sub_18000BC90
+    // 重编译（缓存已清空必失配），新条目入缓存后切回绑定。
+    //
+    // 移植绑定不逐帧轮询（分配时解析），故在此同步执行同一消费链：
+    //   MmeEngineClearCaches()            —— sub_18000A990；
+    //   MmeReleaseEffectBindings("")      —— 标记消费·引用释放半程（B210），
+    //                                         旧条目随最后一个 owner 引用死亡
+    //                                         打出 "Unload effect file" 日志；
+    //   MmeRebindEffectAssignments("")    —— 标记消费·重装载半程（BC90），
+    //                                         按当前分配表（effectFile +
+    //                                         subsetEffects）重建绑定。
+    // 绝不调用 MmeAssignEffect：整对象重派会 clearSubsetEffects() 抹掉全部
+    // [n] 材质子集分配且不重建（移植缺陷，本次消灭）。子集分配原样保留，
+    // 由重解析按原值重建各自的 (0, model, [n]) 绑定。
+    MmeEngineClearCaches();                     // [sub_18000A990]
+    MmeReleaseEffectBindings(std::string());    // unloadRequest 位的消费
+    MmeRebindEffectAssignments(std::string());  // loaded=0 位的消费
 }
 
 void MmeUiTickAutoReload()
 {
-    // [FUN_18000b880 L11036-11059] DAT_1800d72e1-gated GetTickCount check at
-    // most every 100 ms over the watched effect files.
+    // [sub_18000B880 @0x18000b93c-0x18000b9b2] 自动重载轮询。原版按绑定节点
+    // 逐个轮询：每个 (owner=0, object, subset) 节点自带 100ms 节流
+    // （binding+64）与 stamp/grace 状态，驱动链 = MME_RebuildRenderPassPlan
+    // (0x18005b9e0) → sub_18002BAA0 (@0x18002be1f) → sub_18002C910 →
+    // sub_18002CA80（整对象 @0x18002cede；[n] 子集 @0x18002d0ef，仅
+    // scriptOrder(+0x364)==0 的对象、按材质数(+0x38)逐个）→ sub_18000B880。
+    // 移植按“文件”聚合轮询（同一 .fx 的全部绑定共享一份 stamp/grace 状态），
+    // 受影响绑定集合由 MmeReleaseEffectBindings / MmeRebindEffectAssignments
+    // 以路径过滤——每 .fx 一次重编译、多绑定共享同一缓存条目，与原版
+    // (path,stamp) 缓存命中的可观察行为（日志各记一次）一致。
+    struct WatchState {
+        unsigned long stamp;   // binding+40：sub_18000B7F0 的文件时间戳
+        bool grace;            // binding+59：删文件宽限标记
+    };
     static DWORD s_lastCheck = 0;
-    static std::map<std::string, unsigned long> s_stamps;
+    static std::map<std::string, WatchState> s_stamps;
 
-    if (g_autoReload == 0) {
-        s_stamps.clear();
-        s_lastCheck = 0;
+    if (g_autoReload == 0) {                        // [0x18000b93c] byte_1800D72E1 门
+        // 原版门只跳过 stamp 检查（跳转 LABEL_22），绑定侧 stamp（+40）与
+        // 节流时刻（+64）原样保留——关闭期间改动过的文件在重新开启后的
+        // 首个轮询即重载。故此处不清状态，仅跳过。
         return;
     }
     DWORD now = GetTickCount();
-    if (s_lastCheck != 0 && now - s_lastCheck < 100) {
+    if (s_lastCheck != 0 && now - s_lastCheck < 100) {   // [0x18000b952] 100ms 节流
         return;
     }
     s_lastCheck = now;
@@ -653,43 +678,86 @@ void MmeUiTickAutoReload()
     if (ctx == nullptr) {
         return;
     }
+
+    // 监视集 = 活绑定持有的 .fx（B880 的 a1+88 路径非空门）：每模型的整对象
+    // effectFile + 全部 [n] 子集分配。EMM "Pmd<N>[k]" 行与 EMD "Obj[k]" 行
+    // 同栖 subsetEffects 表，均在原版轮询范围内（sub_18002C910 对
+    // scriptOrder==0 的对象逐子集驱动 CA80）。未被任何绑定引用的缓存条目
+    // （如未被采用的 (default) 行值——经 MmeFindEffectFileForModel 自动分配
+    // 的模型自带 effectFile，无需在此单列）不轮询，与原版一致。
     std::vector<std::string> watched;
     for (size_t i = 0; i < ctx->models.size(); ++i) {
         ModelData* model = ctx->models[i];
-        if (model != nullptr && !model->effectFile().empty() &&
-            std::find(watched.begin(), watched.end(), model->effectFile()) == watched.end()) {
-            watched.push_back(model->effectFile());
+        if (model == nullptr) {
+            continue;
         }
-    }
-    const std::string& defaultEffect = MmeEmmDefaultEffect();
-    if (!defaultEffect.empty() &&
-        std::find(watched.begin(), watched.end(), defaultEffect) == watched.end()) {
-        watched.push_back(defaultEffect);
+        const std::string& whole = model->effectFile();
+        if (!whole.empty() &&
+            std::find(watched.begin(), watched.end(), whole) == watched.end()) {
+            watched.push_back(whole);
+        }
+        for (std::map<int, std::string>::const_iterator it = model->subsetEffects().begin();
+             it != model->subsetEffects().end(); ++it) {
+            if (!it->second.empty() &&
+                std::find(watched.begin(), watched.end(), it->second) == watched.end()) {
+                watched.push_back(it->second);
+            }
+        }
     }
 
-    bool reloaded = false;
     for (size_t i = 0; i < watched.size(); ++i) {
-        unsigned long stamp = MmeEngineQueryFileStamp(watched[i]);
-        std::map<std::string, unsigned long>::iterator prev = s_stamps.find(watched[i]);
-        if (prev != s_stamps.end() && prev->second != 0 && stamp != 0 &&
-            stamp != prev->second) {
-            // Stamp changed: unload + reload + re-apply (the FUN_18000b880
-            // FUN_18000bc90 re-load path; the reload logs through the engine).
-            MmeEngineUnloadEffectFile(watched[i]);
-            reloaded = true;
+        const std::string& file = watched[i];
+        unsigned long stamp = MmeEngineQueryFileStamp(file);   // [sub_18000B7F0]
+        std::map<std::string, WatchState>::iterator prev = s_stamps.find(file);
+        if (prev == s_stamps.end()) {
+            // 首次观测只记录（绑定的 stamp 已在装载时由引擎写入条目）。
+            WatchState state;
+            state.stamp = stamp;
+            state.grace = false;
+            s_stamps[file] = state;
+            continue;
         }
-        s_stamps[watched[i]] = stamp;
+        if (stamp == prev->second.stamp) {
+            continue;   // [0x18000b99a] 未变
+        }
+        if (stamp != 0) {
+            // [0x18000b99c-0x18000b9b2] stamp 变化（含删后恢复）→ 立即重载：
+            // 缓存条目卸载 + 绑定旧引用释放 + 按当前分配表重解析（B210 +
+            // BC90 链，分配映射不动）。重载链必经 B210（尾部 WORD@+59=0x100）
+            // → 宽限标记复位。
+            prev->second.stamp = stamp;
+            prev->second.grace = false;
+            MmeEngineUnloadEffectFile(file);
+            MmeReleaseEffectBindings(file);
+            MmeRebindEffectAssignments(file);
+        } else if (!MmeAnyEffectBindingForPath(file)) {
+            // [0x18000b972 `if (!*(a1))`] 引用该文件的绑定全都没有效果
+            // （此前装载失败/已卸载）：原版静默返回，stamp/grace 状态均不
+            // 推进（+40 维持旧值，文件原样恢复时不重试——与原版一致）。
+            continue;
+        } else if (prev->second.grace) {
+            // [0x18000b978-0x18000b990] 第二个周期仍缺失：卸载（绑定转无
+            // 效果、分配保留）并把 stamp 清零（+40=0）；卸载链（B210 尾部）
+            // 清宽限标记。不重解析——文件仍缺失，重装载等于 sub_18000BC90
+            // 的 stamp==0 静默早退，绑定保持无效果等待文件恢复。
+            prev->second.stamp = 0;
+            prev->second.grace = false;
+            MmeEngineUnloadEffectFile(file);
+            MmeReleaseEffectBindings(file);
+        } else {
+            // [0x18000b97e] 首个缺失周期：只记宽限标记（stamp 保持旧值，
+            // 文件在下一周期内恢复则走上面的变化分支，不触发卸载）。
+            prev->second.grace = true;
+        }
     }
-    for (std::map<std::string, unsigned long>::iterator it = s_stamps.begin();
+    // 分配撤销/模型删除后收尾：监视项随原版工作映射节点的销毁一起消失。
+    for (std::map<std::string, WatchState>::iterator it = s_stamps.begin();
          it != s_stamps.end(); ) {
         if (std::find(watched.begin(), watched.end(), it->first) == watched.end()) {
             it = s_stamps.erase(it);
         } else {
             ++it;
         }
-    }
-    if (reloaded) {
-        MmeUiReloadAllEffects();
     }
 }
 

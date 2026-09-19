@@ -272,6 +272,9 @@ inline void LogPmmHeapState(int, const char*) {}
 // duplicated per-body only while the loader split is in flight; merge
 // into pmm_io_common.hpp afterwards.
 const char kJpQuoted[] = "\"%s\"";                               // 0x52DDB8
+// x64 0x7FF7CB550948 - the JP "This model structure is different from
+// pmm TOO" re-test text (r==3 re-load ring only; the first-pass gate
+// prints kJpQuoted, see LoadSceneV2_ModelBlock).
 const char kJpStructFmt[] =                                      // 0x52DBB8
     "\x82\xB1\x82\xCC\x83\x82\x83\x66\x83\x8B\x82\xCC\x8D\x5C\x91\xA2"
     "\x82\xE0\x70\x6D\x6D\x95\xDB\x91\xB6\x8E\x9E\x82\xCC\x22\x25\x73"
@@ -518,8 +521,12 @@ static void LoadSceneV2_SkipRecordConsumption(
                 }
                 Rd(fd, &workspace.displayOrder, 1);                         // 0x450AA3
                 } else {
-                    unsigned char discarded = 0;
-                    Rd(fd, &discarded, 1);                       // 0x452363
+                    // x64 0x7FF7CB49B2F3: the r==4 variant stores the byte
+                    // at the comboSelIndex file position into the record
+                    // (workspace +584) - it is not discarded; the
+                    // success-tail sweep compares every surviving model's
+                    // comboSelIndex against it.
+                    Rd(fd, &workspace.displayOrder, 1);
                 }
                 {
                     unsigned char b = 0;
@@ -607,8 +614,11 @@ static void LoadSceneV2_SkipRecordConsumption(
                     Rd(fd, &b, 1);                              // 0x4511AE
                     Rd(fd, &v, 4);                              // 0x4511BB
                     Rd(fd, &b, 1);                              // 0x4511C8
-                    unsigned char discarded = 0;
-                    Rd(fd, &discarded, 1);                       // 0x4511DB
+                    // x64 0x7FF7CB49A281 (LABEL_97 tail, shared by both
+                    // skip variants): the last byte lands in the record's
+                    // +588 slot (the comboSelIndex2 file position) and
+                    // feeds the success-tail comboSelIndex2 decrement.
+                    Rd(fd, &workspace.previousDisplayOrder, 1);
                 }
 }
 
@@ -744,8 +754,14 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                             for (std::int32_t j = mapping.frameOffset;
                                  j != 0;) {
                                 const std::int32_t next = keys[j].next;
+                                // x64 0x7FF7CB49C470..0x7FF7CB49C563:
+                                // the dead-key sweep also zeroes next
+                                // (+8) and seeds rotation w with the
+                                // 0x3F800000 literal; only then is the
+                                // saved next used to advance.
                                 keys[j].frame = 0;
                                 keys[j].previous = 0;
+                                keys[j].next = 0;
                                 keys[j].allocated = 0;
                                 keys[j].position[0] = keys[j].position[1] =
                                     keys[j].position[2] = 0.0f;
@@ -810,8 +826,13 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                             for (std::int32_t j = mapping.frameOffset;
                                  j != 0;) {
                                 const std::int32_t next = keys[j].next;
+                                // x64 0x7FF7CB49C8A1..0x7FF7CB49C8E8:
+                                // frame/previous/next (+0/+4/+8), the
+                                // value dword (+12) and the allocated
+                                // byte (+16) are all cleared.
                                 keys[j].frame = 0;
                                 keys[j].previous = 0;
+                                keys[j].next = 0;
                                 keys[j].allocated = 0;
                                 keys[j].value = 0.0f;
                                 j = next;
@@ -1145,7 +1166,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
             if (doSkip) {
                 if (model != nullptr) {
                     ModelDispose(model);                        // 0x450912
-                    free(model);
+                    ::operator delete(model);
                 }
                 slots[slotByte] = nullptr;
                 workspace.skipped = 1;                                     // 0x45093E
@@ -1161,6 +1182,8 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
             if (!doSkip) {
                 mdl::ModelRecord* const loadedModel = mdl::Mdl(model);
                 bool firstPass = true;  // counts/names are read only once;
+                bool reloaded = false;  // r==3 re-load switches the status
+                                        // text to the "too" variants
                 for (;;) {              // ring retries only re-map
                     if (firstPass) {
                     // disp count + translation array (0x4511F5..0x4514B9)
@@ -1257,7 +1280,13 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                                 }
                         }
                     }
-                    // IK remap array (0x451795..0x451886)
+                    // IK remap array (0x451795..0x451886).  x64
+                    // 0x7FF7CB49A87A..0x7FF7CB49A8C6: the stored IK number
+                    // is a bone index in the SAVED model's numbering - the
+                    // original maps it through the bone name translation
+                    // array first (movsxd rcx,[r11+rsi+4]; imul rcx,108h;
+                    // mov r9d,[rcx+rax+100h]; cmp r9d,[rax]) before
+                    // comparing with the loaded IK chain's bone index.
                     Rd(fd, &workspace.ikCount, 4);
                     LogPmmModelStage(fd, "ik-count", workspace.ikCount,
                                      loadedModel->ikChainCount,
@@ -1273,7 +1302,8 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                         for (std::int32_t j = 0;
                              j < static_cast<std::int32_t>(
                                      loadedModel->ikChainCount); ++j)
-                            if (mapping.sourceIndex ==
+                            if (boneMappings[mapping.sourceIndex]
+                                    .mappedIndex ==
                                 mdl::IkChains(model)[j].boneIndex) {
                                 mapping.mappedIndex = j;
                                 break;
@@ -1315,16 +1345,28 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
 
                     }  // firstPass guard
 
-                    // structure-difference gate (0x4519AF..0x451A44)
+                    // structure-difference gate (0x4519AF..0x451A44).
+                    // x64 0x7FF7CB49A9E4 (first pass): EN prints the plain
+                    // structure text against sourceName, JP a bare quoted
+                    // name (aS_8 "\"%s\"", x64 0x7FF7CB5508E0) - NOT the
+                    // long kJpStructFmt text.  Every re-test after an
+                    // r==3 re-load (x64 0x7FF7CB49B265..0x7FF7CB49B294)
+                    // switches to the "too" variants: EN "This model
+                    // structure is different from pmm too." (0x7FF7CB550910)
+                    // / JP kJpStructFmt (0x7FF7CB550948).
                     if (s->EnglishUI() != 0)
                         sprintf_s(s->state.statusText,
                                   0x100,
-                                  "Model structure is different from pmm."
-                                  " file:%s",
+                                  reloaded
+                                      ? "This model structure is different "
+                                        "from pmm too. file:%s"
+                                      : "Model structure is different from "
+                                        "pmm. file:%s",
                                   workspace.sourceName);
                     else
                         sprintf_s(s->state.statusText,
-                                  0x100, kJpQuoted,
+                                  0x100,
+                                  reloaded ? kJpStructFmt : kJpQuoted,
                                   workspace.modelName);
                     if (workspace.morphsMatch != 0 && workspace.displaysMatch != 0) break;
 
@@ -1343,7 +1385,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                     if (r == 4) {                                // 0x45231C
                         if (model != nullptr) {
                             ModelDispose(model);
-                            free(model);
+                            ::operator delete(model);
                         }
                         slots[slotByte] = nullptr;
                         workspace.skipped = 1;
@@ -1357,7 +1399,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                     // r == 3: re-load a different file
                     if (model != nullptr) {                      // 0x451A5A
                         ModelDispose(model);
-                        free(model);
+                        ::operator delete(model);
                     }
                     {
                         unsigned char* nm2 = static_cast<unsigned char*>(
@@ -1498,10 +1540,13 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                     for (std::int32_t i = 0; i < workspace.ikCount; ++i) {
                         IndexMapping& mapping = ikMappings[i];
                         mapping.mappedIndex = -1;
+                        // x64 0x7FF7CB49B186: same boneMappings
+                        // indirection as the first pass above.
                         for (std::int32_t j = 0;
                              j < static_cast<std::int32_t>(
                                      reloadedModel->ikChainCount); ++j)
-                            if (mapping.sourceIndex ==
+                            if (boneMappings[mapping.sourceIndex]
+                                    .mappedIndex ==
                                 mdl::IkChains(model)[j].boneIndex) {
                                 mapping.mappedIndex = j;
                                 break;
@@ -1531,6 +1576,8 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                         }
                     }
                     firstPass = false;
+                    reloaded = true;  // gate text switches to the "too"
+                                      // variants for every further re-test
                 }
             }
 

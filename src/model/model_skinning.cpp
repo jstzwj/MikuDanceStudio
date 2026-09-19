@@ -5,7 +5,7 @@
 // and dispatches one of the 0x4A9400-family OpenMP skinning workers. This
 // file closes the PMD path serially and the x64 PMX twin family in full:
 // the five stride workers selected by the additional-UV count (x64
-// 0x14011F3A0 / 0x140120D20 / 0x140122720 / 0x140124150 / 0x140125BF0),
+// 0x14013F3A0 / 0x140140D20 / 0x140142720 / 0x140144150 / 0x140145BF0),
 // the per-frame PMX vertex/UV morph restore+apply pass that feeds them
 // (x64 0x1400E1415..0x1400E2670), and the SDEF quaternion blend helper
 // (x64 0x1400E2D20). The PMD arithmetic keeps its x87 __asm bit-parity
@@ -173,7 +173,7 @@ const float* PmxSkinMatrix(const mdl::BoneRecord* bones, int boneCount,
         : kPmxZeroMatrix;
 }
 
-// x64 PMX worker 0x14011F991: BDEF1 transforms position with the full
+// x64 PMX worker 0x14013F991: BDEF1 transforms position with the full
 // matrix and normal without translation into the 32-byte base record.
 void SkinPmxBdef1(const mdl::PmxVertex& source,
                   const mdl::BoneRecord* bones, int boneCount,
@@ -244,7 +244,7 @@ no_translation_0:
 #endif
 }
 
-// x64 PMX worker 0x14011F513: BDEF2 uses bone 1 first with (1-weight),
+// x64 PMX worker 0x14013F513: BDEF2 uses bone 1 first with (1-weight),
 // then adds bone 0 scaled by weight. BlendTransformComponent preserves that
 // source order on the x64 path (and bit-exactly on the x87 path).
 void SkinPmxBdef2(const mdl::PmxVertex& source,
@@ -271,7 +271,7 @@ float TransformComponent(const float input[3], const float matrix[16],
     return value;
 }
 
-// x64 PMX worker 0x14011FB7F: BDEF4 retrieves all four matrices with the
+// x64 PMX worker 0x14013FB7F: BDEF4 retrieves all four matrices with the
 // same negative-index zero fallback. The scalar chains are ordered
 // differently for positions and normals in the original: the position
 // accumulates bone 1 first and then bones 0, 2 and 3, while the normal
@@ -600,15 +600,17 @@ float PmdEdgeDistance(MMDApp* app, unsigned char* model,
     float worldPoint[3];
     TransformPosition(worldPoint, modelPoint, frameWorld);
     const float* camera = app->CameraPosition();
-    const double dx = static_cast<double>(worldPoint[0] - camera[0]);
-    const double dy = static_cast<double>(worldPoint[1] - camera[1]);
-    const double dz = static_cast<double>(worldPoint[2] - camera[2]);
-    const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-    return static_cast<float>(distance * 0.00004500000068219379 *
-        (static_cast<double>(app->CameraFov()) *
-             0.6000000238418579 +
-         1.0) *
-        static_cast<double>(record.edgeScale));
+    // x64 0x7FF7CB4E29C2..0x7FF7CB4E2A56 is single-precision throughout:
+    // subss deltas, mulss squares, call sqrtf, then distance *
+    // 4.5e-05f * (fov * 0.6f + 1.0f) * edgeScale (the two constants are
+    // the .rdata floats 0x383CBE62 / 0x3F19999A - no double bit patterns).
+    const float dx = worldPoint[0] - camera[0];
+    const float dy = worldPoint[1] - camera[1];
+    const float dz = worldPoint[2] - camera[2];
+    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return distance * 0.00004500000068219379f *
+           (app->CameraFov() * 0.6000000238418579f + 1.0f) *
+           record.edgeScale;
 }
 
 void SkinPmd(unsigned char* model, float edgeDistance,

@@ -20,6 +20,8 @@ struct UndoRecord {
     std::int32_t dirty;
     std::int32_t reserved0;
     std::uint32_t frame;
+    // Owned raw storage: allocate with ::operator new, release with
+    // ::operator delete throughout edit/capture/disposal paths.
     BonePoseSnapshot* bonePose;
     void* auxiliaryPose;
     std::int32_t reserved1;

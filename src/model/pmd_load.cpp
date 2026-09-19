@@ -179,7 +179,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         return false;
     }
     _read(fh, text, 4);                                   // version
-    _read(fh, model.name, sizeof(model.name));
+    _read(fh, model.name, mdl::kPmdModelNameBytes);
     _read(fh, model.comment, sizeof(model.comment));
     if (!enData && boxGate &&
         MessageBoxA(hwnd, model.comment,
@@ -595,7 +595,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 strcpy_s(groups[i].nameEn, sizeof(groups[i].nameEn),
                          groups[i].name);
     } else {
-        _read(fh, model.nameEn, sizeof(model.nameEn));
+        _read(fh, model.nameEn, mdl::kPmdModelNameBytes);
         model.nameEn[19] = 0;
         _read(fh, model.commentEn, sizeof(model.commentEn));
         model.commentEn[255] = 0;

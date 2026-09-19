@@ -1,7 +1,6 @@
 // ===========================================================================
-// MikuDanceStudio - the per-model record (GENERATED - do not edit)
+// MikuDanceStudio - the per-model runtime record
 // ===========================================================================
-// Regenerate: python scripts/gen_model_layout.py
 // x86 layout pinned byte-exact (0x4CCF4); x64 architecture-specific
 // storage is pinned against independently binary-mined anchors.
 // Placeholder names (f<off>/v<off>/pad*) are promoted to real names as
@@ -14,6 +13,7 @@
 
 #include "mikudancestudio/raw_pad.hpp"
 #include "mikudancestudio/undo_layout.hpp"
+#include "mikudancestudio/skeleton_tracking.hpp"
 
 namespace mikudancestudio { class PhysicsScene; }
 
@@ -31,6 +31,17 @@ struct IkChain;
 struct PmdVertex;
 struct PmdVertexMorphEntry;
 struct PmxVertex;
+struct PmxUvMorphEntry;
+struct BoneMorphOffsetRecord;
+struct MaterialMorphPool;
+
+struct PmxUvMorphCounts { std::int32_t byFamily[5]; };
+struct PmxUvMorphTables { PmxUvMorphEntry* byFamily[5]; };
+struct PmxMaterialMorphPools {
+    MaterialMorphPool* base;
+    MaterialMorphPool* additive;
+    MaterialMorphPool* multiplicative;
+};
 
 using mikudancestudio::RawPad;
 
@@ -52,19 +63,10 @@ struct ModelRecord {
     unsigned char displayTrackActive;  // 56
     RawPad<3> gap0;  // 57..60 (unrecovered)
     ::mikudancestudio::PhysicsScene* scenePtr;  // 60  (shared Bullet/D3D physics scene)
-    float localTransforms[67];  // 64  (64..332 float block (0x4A8DC0))
-    RawPad<188> gap1;  // 332..520 (unrecovered)
-    std::int32_t pmmState;  // 520  (PMM per-model saved state block (520..568: dialog/accessory_paste + pmm_load_v2))
-    RawPad<44> gap2;  // 524..568 (unrecovered)
-    std::int32_t pmmStateTail[153];  // 568  (568..1180 opaque tail)
-    std::uint32_t pmmScale;  // 1180  (accessory_paste)
-    float pmmPosition[3];  // 1184
-    RawPad<7424> gap3;  // 1196..8620 (unrecovered)
-    // Misnomer: the 8620 slot is really the Kinect pose-trace buffer pointer
-    // (with the flag byte at 8616; x64 0x21E0/0x21E8).  Always reach it
-    // through mdl::PoseTraceBuffer/PoseTraceFlag (model.hpp) - the typed
-    // u32 view below exists only to keep the generated layout intact.
-    std::uint32_t pmxVertexCount;  // 8620  (misnomer; see model.hpp accessors)
+    StandardSkeletonPose standardPose;
+    SkeletonHistory skeletonHistory;
+    std::uint8_t poseTraceRecording;
+    void* poseTraceBuffer;
     std::uint8_t pmxTextEncoding;        // 8624  (0 UTF-16; x64 PMX loader)
     std::uint8_t pmxAdditionalUvCount;   // 8625
     std::uint8_t pmxVertexIndexSize;     // 8626
@@ -73,35 +75,31 @@ struct ModelRecord {
     std::uint8_t pmxMorphIndexSize;      // 8629
     std::uint8_t pmxMaterialIndexSize;   // 8630
     std::uint8_t pmxRigidIndexSize;      // 8631
-    RawPad<52> gap4;  // 8632..8684 (unrecovered)
+    // Unrecovered PMX bookkeeping before the flattened morph counts.
+#if defined(_M_X64)
+    RawPad<60> pmxReserved;
+#else
+    RawPad<52> pmxReserved;
+#endif
     std::uint32_t morph0Count;  // 8684  (model_skinning / dialog_helpers)
-    std::uint32_t physOffsetCount;  // 8688
-    std::uint32_t physLastFrame;  // 8692
-    RawPad<12> gap5;  // 8696..8708 (unrecovered)
+    PmxUvMorphCounts uvMorphCounts;
     std::int32_t boneMorphCount;  // 8708  (pmx_load boneMorphTotal store)
     RawPad<12> gap6;  // 8712..8724 (unrecovered)
     PmdVertexMorphEntry* morph0Table;  // 8724  (16-byte PMD morph entries)
-    void* boneMorphTable;  // 8728  (pmx_load 32-byte entries)
-    RawPad<36> gap7;  // 8732..8768 (unrecovered)
-#if defined(_M_X64)
-    // x64-only name metadata.  It must precede the SJIS name buffer: the x64
-    // select dialog (sub_7FF7CB4BA7B0, 0x7FF7CB4BAB5B/0x7FF7CB4BAB89) reads
-    // the JP name at +0x22C0 and the EN name at +0x22F2, i.e. name+50 apart
-    // exactly like the x86 pair - the 52-byte block sits before name, not
-    // between name and nameEn.  On x64 it also has to sit BEFORE the pinned
-    // keyframe search cursor at +0x22B8 so that name stays at 0x22C0.
-    RawPad<52> x64NameStorage;
-#endif
+    BoneMorphOffsetRecord* boneMorphTable;
+    // The reference destructor releases this slot, but no producer or
+    // element semantics have been established. Keep its ownership explicit.
+    void* reservedMorphTable;
+    PmxUvMorphTables uvMorphTables;
+    PmxMaterialMorphPools materialMorphPools;
     // Free keyframe-slot scan cursor.  x64: +0x22B8 = 8888, shared by the
     // bone-key pool (0x7FF7CB4E9958, 0x7FF7CB4EA46F), the morph-key pool
     // (0x7FF7CB48E416) and the display-key pool (0x7FF7CB48E5EA); the cursor
     // only ever advances.  8836 (0x2274) has zero x64 references.
     std::int32_t searchCursor;  // x86 8768; x64 8888 (0x22B8)
     std::int32_t maxBoneLayer;  // x86 8772; x64 8892 (maximum PMX bone transform layer)
-    char name[20];  // 8776 x86; x64 8896 (0x22C0, select-dialog combo fill)
-    RawPad<30> gap8;  // x86 8796..8826 (unrecovered)
-    char nameEn[20];  // 8826  (x64 anchor 8946 verified)
-    RawPad<30> gap9;  // 8846..8876 (unrecovered)
+    char name[50];  // Runtime capacity; PMD stores only 20 bytes on disk.
+    char nameEn[50];
     char comment[256];  // 8876
     char commentEn[256];  // 9132
 #if defined(_M_X64)
@@ -183,16 +181,8 @@ struct ModelRecord {
     unsigned char toonFlag;  // 14272  (post_load_init)
     RawPad<3> gap19;  // 14273..14276 (unrecovered)
     std::uint32_t toonShared;  // 14276  (model_renderers)
-    float matFloat;  // 14280
-    float matFloat2;  // 14284
-    float matFloat3;  // 14288
-    RawPad<16> gap20;  // 14292..14308 (unrecovered)
-    float matColumn[16];  // 14308  (14308..14371 step-16 model_init)
-    RawPad<76> gap21;  // 14372..14448 (unrecovered)
-    float matColumn2[3];  // 14448
-    RawPad<36> gap22;  // 14460..14496 (unrecovered)
-    float matColumn3[3];  // 14496
-    RawPad<60> gap23;  // 14508..14568 (unrecovered)
+    SkeletonJoints currentJoints;
+    RawPad<12> skeletonReserved;
     float lightDir[3];  // 14568
     float legIkXOffset;  // 14580 (height-normalized left/right leg IK X correction)
     std::int32_t matMisc;  // 14584
@@ -257,26 +247,10 @@ static_assert(offsetof(ModelRecord, displayTrackActive) == 56,
               "displayTrackActive x86");
 static_assert(offsetof(ModelRecord, scenePtr) == 60,
               "scenePtr x86");
-static_assert(offsetof(ModelRecord, localTransforms) == 64,
-              "localTransforms x86");
-static_assert(offsetof(ModelRecord, pmmState) == 520,
-              "pmmState x86");
-static_assert(offsetof(ModelRecord, pmmStateTail) == 568,
-              "pmmStateTail x86");
-static_assert(offsetof(ModelRecord, pmmScale) == 1180,
-              "pmmScale x86");
-static_assert(offsetof(ModelRecord, pmmPosition) == 1184,
-              "pmmPosition x86");
-static_assert(offsetof(ModelRecord, pmxVertexCount) == 8620,
-              "pmxVertexCount x86");
 static_assert(offsetof(ModelRecord, pmxTextEncoding) == 8624,
               "pmxTextEncoding x86");
 static_assert(offsetof(ModelRecord, morph0Count) == 8684,
               "morph0Count x86");
-static_assert(offsetof(ModelRecord, physOffsetCount) == 8688,
-              "physOffsetCount x86");
-static_assert(offsetof(ModelRecord, physLastFrame) == 8692,
-              "physLastFrame x86");
 static_assert(offsetof(ModelRecord, boneMorphCount) == 8708,
               "boneMorphCount x86");
 static_assert(offsetof(ModelRecord, morph0Table) == 8724,
@@ -395,18 +369,6 @@ static_assert(offsetof(ModelRecord, toonFlag) == 14272,
               "toonFlag x86");
 static_assert(offsetof(ModelRecord, toonShared) == 14276,
               "toonShared x86");
-static_assert(offsetof(ModelRecord, matFloat) == 14280,
-              "matFloat x86");
-static_assert(offsetof(ModelRecord, matFloat2) == 14284,
-              "matFloat2 x86");
-static_assert(offsetof(ModelRecord, matFloat3) == 14288,
-              "matFloat3 x86");
-static_assert(offsetof(ModelRecord, matColumn) == 14308,
-              "matColumn x86");
-static_assert(offsetof(ModelRecord, matColumn2) == 14448,
-              "matColumn2 x86");
-static_assert(offsetof(ModelRecord, matColumn3) == 14496,
-              "matColumn3 x86");
 static_assert(offsetof(ModelRecord, lightDir) == 14568,
               "lightDir x86");
 static_assert(offsetof(ModelRecord, legIkXOffset) == 14580,
@@ -528,6 +490,35 @@ static_assert(offsetof(ModelRecord, boneOrderTable) == 0x96470,
               "boneOrderTable x64");
 static_assert(offsetof(ModelRecord, boneOrderCount) == 0x96478,
               "boneOrderCount x64");
+#endif
+
+
+// Recovered tracking and PMX fields must never alias one another.
+#if defined(_M_X64)
+static_assert(offsetof(ModelRecord, standardPose) == 120);
+static_assert(offsetof(ModelRecord, skeletonHistory) == 392);
+static_assert(offsetof(ModelRecord, poseTraceRecording) == 8672);
+static_assert(offsetof(ModelRecord, poseTraceBuffer) == 8680);
+static_assert(offsetof(ModelRecord, pmxTextEncoding) == 8688);
+static_assert(offsetof(ModelRecord, morph0Count) == 8756);
+static_assert(offsetof(ModelRecord, uvMorphCounts) == 8760);
+static_assert(offsetof(ModelRecord, boneMorphCount) == 8780);
+static_assert(offsetof(ModelRecord, morph0Table) == 8800);
+static_assert(offsetof(ModelRecord, boneMorphTable) == 8808);
+static_assert(offsetof(ModelRecord, reservedMorphTable) == 8816);
+static_assert(offsetof(ModelRecord, uvMorphTables) == 8824);
+static_assert(offsetof(ModelRecord, materialMorphPools) == 8864);
+static_assert(offsetof(ModelRecord, currentJoints) == 15216);
+#else
+static_assert(offsetof(ModelRecord, standardPose) == 64);
+static_assert(offsetof(ModelRecord, skeletonHistory) == 336);
+static_assert(offsetof(ModelRecord, poseTraceRecording) == 8616);
+static_assert(offsetof(ModelRecord, poseTraceBuffer) == 8620);
+static_assert(offsetof(ModelRecord, uvMorphCounts) == 8688);
+static_assert(offsetof(ModelRecord, reservedMorphTable) == 8732);
+static_assert(offsetof(ModelRecord, uvMorphTables) == 8736);
+static_assert(offsetof(ModelRecord, materialMorphPools) == 8756);
+static_assert(offsetof(ModelRecord, currentJoints) == 14280);
 #endif
 
 }  // namespace mikudancestudio::mdl

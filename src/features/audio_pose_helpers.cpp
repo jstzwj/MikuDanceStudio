@@ -93,7 +93,6 @@ using kfa::RdI32;
 using kfa::RdF32;
 using kfa::Wr32;
 using kfa::WrF32;
-using kfa::RdPtr;
 
 // D3DXQuaternionRotationAxis / D3DXQuaternionInverse are not bound in the
 // shared d3dx_dyn.hpp Api (which must not be edited this session); resolve
@@ -397,10 +396,10 @@ void RegisterPhysicsPose(unsigned char* m, std::uint32_t frame) {
 
     const auto cleanup = [&]() {                                   // 0x4A60BF
         if (mikudancestudio::mdl::PoseTraceBuffer(m) != nullptr) {
-            free(mikudancestudio::mdl::PoseTraceBuffer(m));
+            ::operator delete(mikudancestudio::mdl::PoseTraceBuffer(m));
             mikudancestudio::mdl::PoseTraceBuffer(m) = nullptr;
         }
-        Wr32(m + 14584, 0);
+        mdl::Mdl(m)->matMisc = 0;
     };
 
     if (model.matMisc == 0) {                                    // 0x4A56FC
@@ -426,7 +425,7 @@ void RegisterPhysicsPose(unsigned char* m, std::uint32_t frame) {
     const int boneCnt = model.boneCount;
     auto*& pose = undo.bonePose;
     if (pose != nullptr) {                                         // 0x4A579C
-        free(pose);
+        ::operator delete(pose);
         pose = nullptr;
     }
     pose = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
@@ -448,7 +447,7 @@ void RegisterPhysicsPose(unsigned char* m, std::uint32_t frame) {
 
     auto*& poseSrc = undo.auxiliaryPose;
     if (poseSrc != nullptr) {                                      // 0x4A5939
-        free(poseSrc);
+        ::operator delete(poseSrc);
         poseSrc = nullptr;
     }
     poseSrc = static_cast<unsigned char*>(
@@ -686,9 +685,13 @@ void InitStandardSkeletonQuats(unsigned char* m, unsigned char flag) {
         d3->vec3Normalize == nullptr || d3->quatMultiply == nullptr)
         return;
 
-    const auto F = [m](std::size_t off) { return RdF32(m + off); };
-    const auto QOut = [m](std::size_t off) {
-        return reinterpret_cast<float*>(m + off);
+    auto& state = *mdl::Mdl(m);
+    auto& joints = state.currentJoints;
+    auto& pose = state.standardPose;
+    const auto normalizeComponents = [d3](float& x, float& y, float& z) {
+        float value[3] = {x, y, z};
+        d3->vec3Normalize(value, value);
+        x = value[0]; y = value[1]; z = value[2];
     };
     float qByVal[4];  // by-value quaternion reads (original passes 4 dwords)
     // The arm twist blocks rotate about (0, 0, 1) - the v139/v140 register
@@ -704,39 +707,39 @@ void InitStandardSkeletonQuats(unsigned char* m, unsigned char flag) {
     float q150[4] = {}, q155[4] = {}, q159[4] = {};
 
     // ---- leg length cache (0x4A6543..0x4A6814) ---------------------------
-    if (F(14568) == -1.0f) {
-        if (F(14440) != kSentinel && F(14452) != kSentinel &&
-            F(14428) != kSentinel) {
-            const float d1x = F(14448) - F(14436);
-            const float d1y = F(14452) - F(14440);
-            const float d1z = F(14456) - F(14444);
-            const float d2x = F(14436) - F(14424);
-            const float d2y = F(14440) - F(14428);
-            const float d2z = F(14444) - F(14432);
+    if (state.lightDir[0] == -1.0f) {
+        if (joints[mdl::TrackedJoint::RightKnee][1] != kSentinel && joints[mdl::TrackedJoint::RightAnkle][1] != kSentinel &&
+            joints[mdl::TrackedJoint::RightHip][1] != kSentinel) {
+            const float d1x = joints[mdl::TrackedJoint::RightAnkle][0] - joints[mdl::TrackedJoint::RightKnee][0];
+            const float d1y = joints[mdl::TrackedJoint::RightAnkle][1] - joints[mdl::TrackedJoint::RightKnee][1];
+            const float d1z = joints[mdl::TrackedJoint::RightAnkle][2] - joints[mdl::TrackedJoint::RightKnee][2];
+            const float d2x = joints[mdl::TrackedJoint::RightKnee][0] - joints[mdl::TrackedJoint::RightHip][0];
+            const float d2y = joints[mdl::TrackedJoint::RightKnee][1] - joints[mdl::TrackedJoint::RightHip][1];
+            const float d2z = joints[mdl::TrackedJoint::RightKnee][2] - joints[mdl::TrackedJoint::RightHip][2];
             const float len1 = sqrtf(d1y * d1y + d1x * d1x + d1z * d1z); // 0x4A6661
             const float len2 = sqrtf(d2x * d2x + d2y * d2y + d2z * d2z); // 0x4A6690
-            WrF32(m + 14568, len2 + len1);                         // 0x4A680E
-        } else if (F(14440) != kSentinel && F(14500) != kSentinel &&
-                   F(14476) != kSentinel) {
-            const float d1x = F(14496) - F(14484);
-            const float d1y = F(14500) - F(14488);
-            const float d1z = F(14504) - F(14492);
-            const float d2x = F(14484) - F(14472);
-            const float d2y = F(14488) - F(14476);
-            const float d2z = F(14492) - F(14480);
+            state.lightDir[0] = len2 + len1;                         // 0x4A680E
+        } else if (joints[mdl::TrackedJoint::RightKnee][1] != kSentinel && joints[mdl::TrackedJoint::LeftAnkle][1] != kSentinel &&
+                   joints[mdl::TrackedJoint::LeftHip][1] != kSentinel) {
+            const float d1x = joints[mdl::TrackedJoint::LeftAnkle][0] - joints[mdl::TrackedJoint::LeftKnee][0];
+            const float d1y = joints[mdl::TrackedJoint::LeftAnkle][1] - joints[mdl::TrackedJoint::LeftKnee][1];
+            const float d1z = joints[mdl::TrackedJoint::LeftAnkle][2] - joints[mdl::TrackedJoint::LeftKnee][2];
+            const float d2x = joints[mdl::TrackedJoint::LeftKnee][0] - joints[mdl::TrackedJoint::LeftHip][0];
+            const float d2y = joints[mdl::TrackedJoint::LeftKnee][1] - joints[mdl::TrackedJoint::LeftHip][1];
+            const float d2z = joints[mdl::TrackedJoint::LeftKnee][2] - joints[mdl::TrackedJoint::LeftHip][2];
             const float lenA = sqrtf(d1y * d1y + d1x * d1x + d1z * d1z); // 0x4A67C6
             const float lenB = sqrtf(d2x * d2x + d2y * d2y + d2z * d2z); // 0x4A67F5
-            WrF32(m + 14568, lenB + lenA);                         // 0x4A680E
+            state.lightDir[0] = lenB + lenA;                         // 0x4A680E
         }
     }
 
     // ---- head / upper-body base quat, model+64 (0x4A6827..0x4A6A5E) ------
-    if (F(14296) != kSentinel && F(14332) != kSentinel &&
-        F(14380) != kSentinel && F(14308) != kSentinel) {
-        float dx = F(14304) - F(14292);                            // 0x4A68AB
-        float dy = F(14308) - F(14296);                            // 0x4A68C8
-        float dz = F(14312) - F(14300);                            // 0x4A68E3
-        d3->vec3Normalize(&dx, &dx);                               // 0x4A68EF
+    if (joints[mdl::TrackedJoint::Torso][1] != kSentinel && joints[mdl::TrackedJoint::RightShoulder][1] != kSentinel &&
+        joints[mdl::TrackedJoint::LeftShoulder][1] != kSentinel && joints[mdl::TrackedJoint::Neck][1] != kSentinel) {
+        float dx = joints[mdl::TrackedJoint::Neck][0] - joints[mdl::TrackedJoint::Torso][0];                            // 0x4A68AB
+        float dy = joints[mdl::TrackedJoint::Neck][1] - joints[mdl::TrackedJoint::Torso][1];                            // 0x4A68C8
+        float dz = joints[mdl::TrackedJoint::Neck][2] - joints[mdl::TrackedJoint::Torso][2];                            // 0x4A68E3
+        normalizeComponents(dx, dy, dz);                               // 0x4A68EF
         float cx = dz * 1.0f - dy * 0.0f;                          // 0x4A6914
         float cy = dx * 0.0f - dz * 0.0f;                          // 0x4A6935
         float cz = dy * 0.0f - dx * 1.0f;                          // 0x4A6950
@@ -746,230 +749,230 @@ void InitStandardSkeletonQuats(unsigned char* m, unsigned char flag) {
         d3->vec3Normalize(axis, axis);                             // 0x4A6970
         const float ang = acosf(dot);                              // 0x4A697E
         quatRotationAxis(qA, axis, ang);                           // 0x4A6994
-        std::memcpy(qByVal, m + 64, 16);
-        BuildLookAtQuaternion(q150, qByVal, F(14376), F(14380), F(14384),
-                  F(14328), F(14332), F(14336), 4);                // 0x4A6A06
-        std::memcpy(QOut(64), q150, 16);                           // 0x4A6A0D..
-        d3->quatMultiply(t1, QOut(64), qA);                        // 0x4A6A30
-        std::memcpy(QOut(64), t1, 16);                             // 0x4A6A4B..
+        std::memcpy(qByVal, pose.upperBody, sizeof qByVal);
+        BuildLookAtQuaternion(q150, qByVal, joints[mdl::TrackedJoint::LeftShoulder][0], joints[mdl::TrackedJoint::LeftShoulder][1], joints[mdl::TrackedJoint::LeftShoulder][2],
+                  joints[mdl::TrackedJoint::RightShoulder][0], joints[mdl::TrackedJoint::RightShoulder][1], joints[mdl::TrackedJoint::RightShoulder][2], 4);                // 0x4A6A06
+        std::memcpy(pose.upperBody, q150, 16);                           // 0x4A6A0D..
+        d3->quatMultiply(t1, pose.upperBody, qA);                        // 0x4A6A30
+        std::memcpy(pose.upperBody, t1, 16);                             // 0x4A6A4B..
     } else if (flag != 0) {
-        WrF32(m + 76, 1.0f);                                       // 0x4A6A60
-        WrF32(m + 64, 0.0f);                                       // 0x4A6A65
-        WrF32(m + 68, 0.0f);                                       // 0x4A6A68
-        WrF32(m + 72, 0.0f);                                       // 0x4A6A6B
+        pose.upperBody[3] = 1.0f;                                       // 0x4A6A60
+        pose.upperBody[0] = 0.0f;                                       // 0x4A6A65
+        pose.upperBody[1] = 0.0f;                                       // 0x4A6A68
+        pose.upperBody[2] = 0.0f;                                       // 0x4A6A6B
     }
 
     // ---- neck quat, model+80 (0x4A6A7F..0x4A6C60) ------------------------
-    if (F(14284) != kSentinel && F(14320) != kSentinel &&
-        F(14308) != kSentinel) {
-        std::memcpy(qByVal, m + 64, 16);
-        BuildLookAtQuaternion(t1, qByVal, F(14316), F(14320), F(14324),
-                  F(14304), F(14308), F(14312), 1);                // 0x4A6B33
-        std::memcpy(QOut(80), t1, 16);                             // 0x4A6B4B..
-        if (F(14548) != kSentinel) {                               // 0x4A6B49
-            d3->quatMultiply(qB, QOut(80), QOut(64));              // 0x4A6B75
-            BuildLookAtQuaternion(qA, qB, F(14544), F(14548), F(14552),
-                      F(14316), F(14320), F(14324), 5);            // 0x4A6BE4
-            d3->quatMultiply(t1, qA, QOut(80));                    // 0x4A6C0F
-            std::memcpy(QOut(80), t1, 16);                         // 0x4A6C2C..
+    if (joints[mdl::TrackedJoint::Center][1] != kSentinel && joints[mdl::TrackedJoint::Head][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Neck][1] != kSentinel) {
+        std::memcpy(qByVal, pose.upperBody, sizeof qByVal);
+        BuildLookAtQuaternion(t1, qByVal, joints[mdl::TrackedJoint::Head][0], joints[mdl::TrackedJoint::Head][1], joints[mdl::TrackedJoint::Head][2],
+                  joints[mdl::TrackedJoint::Neck][0], joints[mdl::TrackedJoint::Neck][1], joints[mdl::TrackedJoint::Neck][2], 1);                // 0x4A6B33
+        std::memcpy(pose.neck, t1, 16);                             // 0x4A6B4B..
+        if (joints[mdl::TrackedJoint::HeadDirection][1] != kSentinel) {                               // 0x4A6B49
+            d3->quatMultiply(qB, pose.neck, pose.upperBody);              // 0x4A6B75
+            BuildLookAtQuaternion(qA, qB, joints[mdl::TrackedJoint::HeadDirection][0], joints[mdl::TrackedJoint::HeadDirection][1], joints[mdl::TrackedJoint::HeadDirection][2],
+                      joints[mdl::TrackedJoint::Head][0], joints[mdl::TrackedJoint::Head][1], joints[mdl::TrackedJoint::Head][2], 5);            // 0x4A6BE4
+            d3->quatMultiply(t1, qA, pose.neck);                    // 0x4A6C0F
+            std::memcpy(pose.neck, t1, 16);                         // 0x4A6C2C..
         }
     } else {
         // unconditional identity (v32/v36 are constant 0/1 here)
-        WrF32(m + 92, 1.0f);                                       // 0x4A6C55
-        WrF32(m + 80, 0.0f);                                       // 0x4A6C5A
-        WrF32(m + 84, 0.0f);                                       // 0x4A6C5D
-        WrF32(m + 88, 0.0f);                                       // 0x4A6C60
+        pose.neck[3] = 1.0f;                                       // 0x4A6C55
+        pose.neck[0] = 0.0f;                                       // 0x4A6C5A
+        pose.neck[1] = 0.0f;                                       // 0x4A6C5D
+        pose.neck[2] = 0.0f;                                       // 0x4A6C60
     }
 
     // ---- shoulder mid quat #1, model+320 (0x4A6C4A..0x4A6E2C) -----------
-    if (F(14380) != kSentinel && F(14524) != kSentinel &&
-        F(14332) != kSentinel) {
-        const float mx = (F(14328) + F(14376)) * 0.5f;             // 0x4A6CE9
-        const float my = (F(14380) + F(14332)) * 0.5f;             // 0x4A6CCF..
-        const float mz = (F(14384) + F(14336)) * 0.5f;             // 0x4A6CFB
-        float ax = F(14328) - mx, ay = F(14332) - my,
-              az = F(14336) - mz;                                  // 0x4A6D0F..
-        float bx = F(14520) - mx, by = F(14524) - my,
-              bz = F(14528) - mz;                                  // 0x4A6D5D..
-        d3->vec3Normalize(&ax, &ax);                               // 0x4A6D95
-        d3->vec3Normalize(&bx, &bx);                               // 0x4A6DA2
+    if (joints[mdl::TrackedJoint::LeftShoulder][1] != kSentinel && joints[mdl::TrackedJoint::RightClavicle][1] != kSentinel &&
+        joints[mdl::TrackedJoint::RightShoulder][1] != kSentinel) {
+        const float mx = (joints[mdl::TrackedJoint::RightShoulder][0] + joints[mdl::TrackedJoint::LeftShoulder][0]) * 0.5f;             // 0x4A6CE9
+        const float my = (joints[mdl::TrackedJoint::LeftShoulder][1] + joints[mdl::TrackedJoint::RightShoulder][1]) * 0.5f;             // 0x4A6CCF..
+        const float mz = (joints[mdl::TrackedJoint::LeftShoulder][2] + joints[mdl::TrackedJoint::RightShoulder][2]) * 0.5f;             // 0x4A6CFB
+        float ax = joints[mdl::TrackedJoint::RightShoulder][0] - mx, ay = joints[mdl::TrackedJoint::RightShoulder][1] - my,
+              az = joints[mdl::TrackedJoint::RightShoulder][2] - mz;                                  // 0x4A6D0F..
+        float bx = joints[mdl::TrackedJoint::RightClavicle][0] - mx, by = joints[mdl::TrackedJoint::RightClavicle][1] - my,
+              bz = joints[mdl::TrackedJoint::RightClavicle][2] - mz;                                  // 0x4A6D5D..
+        normalizeComponents(ax, ay, az);                               // 0x4A6D95
+        normalizeComponents(bx, by, bz);                               // 0x4A6DA2
         float cx = bz * ay - by * az;                              // 0x4A6DC7
         float cy = bx * az - bz * ax;                              // 0x4A6DE8
         float cz = by * ax - bx * ay;                              // 0x4A6E03
         const float dot = ay * by + bx * ax + az * bz;             // 0x4A6E1F
         float axis[3] = {cx, cy, cz};
         d3->vec3Normalize(axis, axis);                             // 0x4A6E23
-        quatRotationAxis(QOut(320), axis, acosf(dot));             // 0x4A6E49
+        quatRotationAxis(pose.rightShoulder, axis, acosf(dot));             // 0x4A6E49
     } else {
-        WrF32(m + 332, 1.0f);                                      // 0x4A6E64
-        WrF32(m + 320, 0.0f);                                      // 0x4A6E6C
-        WrF32(m + 324, 0.0f);                                      // 0x4A6E6F
-        WrF32(m + 328, 0.0f);                                      // 0x4A6E75
+        pose.rightShoulder[3] = 1.0f;                                      // 0x4A6E64
+        pose.rightShoulder[0] = 0.0f;                                      // 0x4A6E6C
+        pose.rightShoulder[1] = 0.0f;                                      // 0x4A6E6F
+        pose.rightShoulder[2] = 0.0f;                                      // 0x4A6E75
     }
 
     // ---- upper arm quat, model+144 (0x4A6E9C..0x4A7079) ------------------
-    if (F(14332) != kSentinel && F(14344) != kSentinel &&
-        F(14308) != kSentinel) {
+    if (joints[mdl::TrackedJoint::RightShoulder][1] != kSentinel && joints[mdl::TrackedJoint::RightElbow][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Neck][1] != kSentinel) {
         quatRotationAxis(qA, kAxisZ, -k35deg5311A4);               // 0x4A6EFB
-        if (F(14524) == kSentinel) {                               // 0x4A6F11
-            std::memcpy(qByVal, m + 64, 16);
-            BuildLookAtQuaternion(q150, qByVal, F(14328), F(14332), F(14336),
-                      F(14340), F(14344), F(14348), 0);            // 0x4A6FF2
+        if (joints[mdl::TrackedJoint::RightClavicle][1] == kSentinel) {                               // 0x4A6F11
+            std::memcpy(qByVal, pose.upperBody, sizeof qByVal);
+            BuildLookAtQuaternion(q150, qByVal, joints[mdl::TrackedJoint::RightShoulder][0], joints[mdl::TrackedJoint::RightShoulder][1], joints[mdl::TrackedJoint::RightShoulder][2],
+                      joints[mdl::TrackedJoint::RightElbow][0], joints[mdl::TrackedJoint::RightElbow][1], joints[mdl::TrackedJoint::RightElbow][2], 0);            // 0x4A6FF2
         } else {
-            d3->quatMultiply(qB, QOut(320), QOut(64));             // 0x4A6F1D
-            BuildLookAtQuaternion(q150, qB, F(14520), F(14524), F(14528),
-                      F(14340), F(14344), F(14348), 0);            // 0x4A6F8A
+            d3->quatMultiply(qB, pose.rightShoulder, pose.upperBody);             // 0x4A6F1D
+            BuildLookAtQuaternion(q150, qB, joints[mdl::TrackedJoint::RightClavicle][0], joints[mdl::TrackedJoint::RightClavicle][1], joints[mdl::TrackedJoint::RightClavicle][2],
+                      joints[mdl::TrackedJoint::RightElbow][0], joints[mdl::TrackedJoint::RightElbow][1], joints[mdl::TrackedJoint::RightElbow][2], 0);            // 0x4A6F8A
         }
-        d3->quatMultiply(QOut(144), qA, q150);                     // 0x4A7023
+        d3->quatMultiply(pose.rightArm, qA, q150);                     // 0x4A7023
     } else if (flag != 0) {                                        // 0x4A702C
         quatRotationAxis(qA, kAxisZ, k35deg5311A4);                // 0x4A7048
-        std::memcpy(QOut(144), qA, 16);                            // 0x4A7059..
+        std::memcpy(pose.rightArm, qA, 16);                            // 0x4A7059..
     }
 
     // ---- forearm quat, model+176 (0x4A7090..0x4A7211) --------------------
-    if (F(14344) != kSentinel && F(14356) != kSentinel &&
-        F(14332) != kSentinel) {
+    if (joints[mdl::TrackedJoint::RightElbow][1] != kSentinel && joints[mdl::TrackedJoint::RightWrist][1] != kSentinel &&
+        joints[mdl::TrackedJoint::RightShoulder][1] != kSentinel) {
         quatRotationAxis(qA, kAxisZ, -k30deg53119C);               // 0x4A70EF
-        d3->quatMultiply(t1, q150, QOut(320));                     // 0x4A70FF
-        d3->quatMultiply(t2, t1, QOut(64));                        // 0x4A7112
-        BuildLookAtQuaternion(q155, t2, F(14340), F(14344), F(14348),
-                  F(14352), F(14356), F(14360), 0);                // 0x4A7181
-        d3->quatMultiply(QOut(176), qA, q155);                     // 0x4A71C1
+        d3->quatMultiply(t1, q150, pose.rightShoulder);                     // 0x4A70FF
+        d3->quatMultiply(t2, t1, pose.upperBody);                        // 0x4A7112
+        BuildLookAtQuaternion(q155, t2, joints[mdl::TrackedJoint::RightElbow][0], joints[mdl::TrackedJoint::RightElbow][1], joints[mdl::TrackedJoint::RightElbow][2],
+                  joints[mdl::TrackedJoint::RightWrist][0], joints[mdl::TrackedJoint::RightWrist][1], joints[mdl::TrackedJoint::RightWrist][2], 0);                // 0x4A7181
+        d3->quatMultiply(pose.rightElbow, qA, q155);                     // 0x4A71C1
         quatRotationAxis(qA, kAxisZ, k30deg53119C);                // 0x4A71DA
-        d3->quatMultiply(QOut(176), QOut(176), qA);                // 0x4A71E6
+        d3->quatMultiply(pose.rightElbow, pose.rightElbow, qA);                // 0x4A71E6
     } else if (flag != 0) {                                        // 0x4A7211
-        WrF32(m + 188, 1.0f);                                      // 0x4A7213
-        WrF32(m + 176, 0.0f);                                      // 0x4A721B
-        WrF32(m + 180, 0.0f);                                      // 0x4A7221
-        WrF32(m + 184, 0.0f);                                      // 0x4A7227
+        pose.rightElbow[3] = 1.0f;                                      // 0x4A7213
+        pose.rightElbow[0] = 0.0f;                                      // 0x4A721B
+        pose.rightElbow[1] = 0.0f;                                      // 0x4A7221
+        pose.rightElbow[2] = 0.0f;                                      // 0x4A7227
     }
 
     // ---- wrist quat, model+160 (0x4A7206..0x4A743E) ----------------------
-    if (F(14356) != kSentinel && F(14368) != kSentinel &&
-        F(14344) != kSentinel) {
-        if (F(14364) == F(14352) && F(14368) == F(14356) &&
-            F(14372) == F(14360)) {                                // 0x4A72A8
-            WrF32(m + 172, 1.0f);                                  // 0x4A72AA
-            WrF32(m + 160, 0.0f);                                  // 0x4A72B2
-            WrF32(m + 164, 0.0f);                                  // 0x4A72B8
-            WrF32(m + 168, 0.0f);                                  // 0x4A72BE
+    if (joints[mdl::TrackedJoint::RightWrist][1] != kSentinel && joints[mdl::TrackedJoint::RightHand][1] != kSentinel &&
+        joints[mdl::TrackedJoint::RightElbow][1] != kSentinel) {
+        if (joints[mdl::TrackedJoint::RightHand][0] == joints[mdl::TrackedJoint::RightWrist][0] && joints[mdl::TrackedJoint::RightHand][1] == joints[mdl::TrackedJoint::RightWrist][1] &&
+            joints[mdl::TrackedJoint::RightHand][2] == joints[mdl::TrackedJoint::RightWrist][2]) {                                // 0x4A72A8
+            pose.rightWrist[3] = 1.0f;                                  // 0x4A72AA
+            pose.rightWrist[0] = 0.0f;                                  // 0x4A72B2
+            pose.rightWrist[1] = 0.0f;                                  // 0x4A72B8
+            pose.rightWrist[2] = 0.0f;                                  // 0x4A72BE
         } else {
             quatRotationAxis(qA, kAxisZ, -k30deg53119C);           // 0x4A72E3
             d3->quatMultiply(t1, q155, q150);                      // 0x4A72FA
-            d3->quatMultiply(t2, t1, QOut(320));                   // 0x4A730D
-            d3->quatMultiply(qB, t2, QOut(64));                    // 0x4A7323
-            BuildLookAtQuaternion(q159, qB, F(14352), F(14356), F(14360),
-                      F(14364), F(14368), F(14372), 0);            // 0x4A7392
-            d3->quatMultiply(QOut(160), qA, q159);                 // 0x4A73D2
+            d3->quatMultiply(t2, t1, pose.rightShoulder);                   // 0x4A730D
+            d3->quatMultiply(qB, t2, pose.upperBody);                    // 0x4A7323
+            BuildLookAtQuaternion(q159, qB, joints[mdl::TrackedJoint::RightWrist][0], joints[mdl::TrackedJoint::RightWrist][1], joints[mdl::TrackedJoint::RightWrist][2],
+                      joints[mdl::TrackedJoint::RightHand][0], joints[mdl::TrackedJoint::RightHand][1], joints[mdl::TrackedJoint::RightHand][2], 0);            // 0x4A7392
+            d3->quatMultiply(pose.rightWrist, qA, q159);                 // 0x4A73D2
             quatRotationAxis(qA, kAxisZ, k30deg53119C);            // 0x4A73EB
-            d3->quatMultiply(QOut(160), QOut(160), qA);            // 0x4A73F7
+            d3->quatMultiply(pose.rightWrist, pose.rightWrist, qA);            // 0x4A73F7
         }
     } else if (flag != 0) {                                        // 0x4A7420
-        WrF32(m + 172, 1.0f);                                      // 0x4A7422
-        WrF32(m + 160, 0.0f);                                      // 0x4A742A
-        WrF32(m + 164, 0.0f);                                      // 0x4A7430
-        WrF32(m + 168, 0.0f);                                      // 0x4A7436
+        pose.rightWrist[3] = 1.0f;                                      // 0x4A7422
+        pose.rightWrist[0] = 0.0f;                                      // 0x4A742A
+        pose.rightWrist[1] = 0.0f;                                      // 0x4A7430
+        pose.rightWrist[2] = 0.0f;                                      // 0x4A7436
     }
 
     // ---- shoulder mid quat #2, model+304 (0x4A7415..0x4A7668) -----------
-    if (F(14380) != kSentinel && F(14536) != kSentinel &&
-        F(14332) != kSentinel) {
-        const float mx = (F(14328) + F(14376)) * 0.5f;             // 0x4A7490
-        const float my = (F(14380) + F(14332)) * 0.5f;             // 0x4A74A0
-        const float mz = (F(14384) + F(14336)) * 0.5f;             // 0x4A74B0
-        float ax = F(14376) - mx, ay = F(14380) - my,
-              az = F(14384) - mz;                                  // 0x4A74E8..
-        float bx = F(14532) - mx, by = F(14536) - my,
-              bz = F(14540) - mz;                                  // 0x4A7536..
-        d3->vec3Normalize(&ax, &ax);                               // 0x4A756E
-        d3->vec3Normalize(&bx, &bx);                               // 0x4A757B
+    if (joints[mdl::TrackedJoint::LeftShoulder][1] != kSentinel && joints[mdl::TrackedJoint::LeftClavicle][1] != kSentinel &&
+        joints[mdl::TrackedJoint::RightShoulder][1] != kSentinel) {
+        const float mx = (joints[mdl::TrackedJoint::RightShoulder][0] + joints[mdl::TrackedJoint::LeftShoulder][0]) * 0.5f;             // 0x4A7490
+        const float my = (joints[mdl::TrackedJoint::LeftShoulder][1] + joints[mdl::TrackedJoint::RightShoulder][1]) * 0.5f;             // 0x4A74A0
+        const float mz = (joints[mdl::TrackedJoint::LeftShoulder][2] + joints[mdl::TrackedJoint::RightShoulder][2]) * 0.5f;             // 0x4A74B0
+        float ax = joints[mdl::TrackedJoint::LeftShoulder][0] - mx, ay = joints[mdl::TrackedJoint::LeftShoulder][1] - my,
+              az = joints[mdl::TrackedJoint::LeftShoulder][2] - mz;                                  // 0x4A74E8..
+        float bx = joints[mdl::TrackedJoint::LeftClavicle][0] - mx, by = joints[mdl::TrackedJoint::LeftClavicle][1] - my,
+              bz = joints[mdl::TrackedJoint::LeftClavicle][2] - mz;                                  // 0x4A7536..
+        normalizeComponents(ax, ay, az);                               // 0x4A756E
+        normalizeComponents(bx, by, bz);                               // 0x4A757B
         float cx = bz * ay - by * az;                              // 0x4A75A0
         float cy = bx * az - bz * ax;                              // 0x4A75C1
         float cz = by * ax - bx * ay;                              // 0x4A75DC
         const float dot = ay * by + bx * ax + az * bz;             // 0x4A75F8
         float axis[3] = {cx, cy, cz};
         d3->vec3Normalize(axis, axis);                             // 0x4A75FC
-        quatRotationAxis(QOut(304), axis, acosf(dot));             // 0x4A7622
+        quatRotationAxis(pose.leftShoulder, axis, acosf(dot));             // 0x4A7622
     } else {
-        WrF32(m + 316, 1.0f);                                      // 0x4A765F
-        WrF32(m + 304, 0.0f);                                      // 0x4A7667
-        WrF32(m + 308, 0.0f);                                      // 0x4A766A
-        WrF32(m + 312, 0.0f);                                      // 0x4A7670
+        pose.leftShoulder[3] = 1.0f;                                      // 0x4A765F
+        pose.leftShoulder[0] = 0.0f;                                      // 0x4A7667
+        pose.leftShoulder[1] = 0.0f;                                      // 0x4A766A
+        pose.leftShoulder[2] = 0.0f;                                      // 0x4A7670
     }
 
     // ---- lower arm quat, model+96 (0x4A764E..0x4A7835) -------------------
-    if (F(14380) != kSentinel && F(14392) != kSentinel &&
-        F(14308) != kSentinel) {
+    if (joints[mdl::TrackedJoint::LeftShoulder][1] != kSentinel && joints[mdl::TrackedJoint::LeftElbow][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Neck][1] != kSentinel) {
         quatRotationAxis(qA, kAxisZ, k35deg5311A4);                // 0x4A76CE
-        if (F(14536) == kSentinel) {                               // 0x4A76E4
-            std::memcpy(qByVal, m + 64, 16);
-            BuildLookAtQuaternion(q150, qByVal, F(14388), F(14392), F(14396),
-                      F(14376), F(14380), F(14384), 0);            // 0x4A77B7
+        if (joints[mdl::TrackedJoint::LeftClavicle][1] == kSentinel) {                               // 0x4A76E4
+            std::memcpy(qByVal, pose.upperBody, sizeof qByVal);
+            BuildLookAtQuaternion(q150, qByVal, joints[mdl::TrackedJoint::LeftElbow][0], joints[mdl::TrackedJoint::LeftElbow][1], joints[mdl::TrackedJoint::LeftElbow][2],
+                      joints[mdl::TrackedJoint::LeftShoulder][0], joints[mdl::TrackedJoint::LeftShoulder][1], joints[mdl::TrackedJoint::LeftShoulder][2], 0);            // 0x4A77B7
         } else {
-            d3->quatMultiply(qB, QOut(304), QOut(64));             // 0x4A76F0
-            BuildLookAtQuaternion(q150, qB, F(14388), F(14392), F(14396),
-                      F(14532), F(14536), F(14540), 0);            // 0x4A774F
+            d3->quatMultiply(qB, pose.leftShoulder, pose.upperBody);             // 0x4A76F0
+            BuildLookAtQuaternion(q150, qB, joints[mdl::TrackedJoint::LeftElbow][0], joints[mdl::TrackedJoint::LeftElbow][1], joints[mdl::TrackedJoint::LeftElbow][2],
+                      joints[mdl::TrackedJoint::LeftClavicle][0], joints[mdl::TrackedJoint::LeftClavicle][1], joints[mdl::TrackedJoint::LeftClavicle][2], 0);            // 0x4A774F
         }
-        d3->quatMultiply(QOut(96), qA, q150);                      // 0x4A77E5
+        d3->quatMultiply(pose.leftArm, qA, q150);                      // 0x4A77E5
     } else if (flag != 0) {                                        // 0x4A77EE
         quatRotationAxis(qA, kAxisZ, -k35deg5311A4);               // 0x4A780A
-        std::memcpy(QOut(96), qA, 16);                             // 0x4A781B..
+        std::memcpy(pose.leftArm, qA, 16);                             // 0x4A781B..
     }
 
     // ---- lower forearm quat, model+128 (0x4A7846..0x4A79CD) --------------
-    if (F(14392) != kSentinel && F(14404) != kSentinel &&
-        F(14380) != kSentinel) {
+    if (joints[mdl::TrackedJoint::LeftElbow][1] != kSentinel && joints[mdl::TrackedJoint::LeftWrist][1] != kSentinel &&
+        joints[mdl::TrackedJoint::LeftShoulder][1] != kSentinel) {
         quatRotationAxis(qA, kAxisZ, k30deg53119C);                // 0x4A78A5
-        d3->quatMultiply(t1, q150, QOut(304));                     // 0x4A78B8
-        d3->quatMultiply(t2, t1, QOut(64));                        // 0x4A78CE
-        BuildLookAtQuaternion(q155, t2, F(14400), F(14404), F(14408),
-                  F(14388), F(14392), F(14396), 0);                // 0x4A793D
-        d3->quatMultiply(QOut(128), qA, q155);                     // 0x4A797D
+        d3->quatMultiply(t1, q150, pose.leftShoulder);                     // 0x4A78B8
+        d3->quatMultiply(t2, t1, pose.upperBody);                        // 0x4A78CE
+        BuildLookAtQuaternion(q155, t2, joints[mdl::TrackedJoint::LeftWrist][0], joints[mdl::TrackedJoint::LeftWrist][1], joints[mdl::TrackedJoint::LeftWrist][2],
+                  joints[mdl::TrackedJoint::LeftElbow][0], joints[mdl::TrackedJoint::LeftElbow][1], joints[mdl::TrackedJoint::LeftElbow][2], 0);                // 0x4A793D
+        d3->quatMultiply(pose.leftElbow, qA, q155);                     // 0x4A797D
         quatRotationAxis(qA, kAxisZ, -k30deg53119C);               // 0x4A7996
-        d3->quatMultiply(QOut(128), QOut(128), qA);                // 0x4A79A2
+        d3->quatMultiply(pose.leftElbow, pose.leftElbow, qA);                // 0x4A79A2
     } else if (flag != 0) {                                        // 0x4A79CD
-        WrF32(m + 140, 1.0f);                                      // 0x4A79CF
-        WrF32(m + 128, 0.0f);                                      // 0x4A79D7
-        WrF32(m + 132, 0.0f);                                      // 0x4A79DD
-        WrF32(m + 136, 0.0f);                                      // 0x4A79E3
+        pose.leftElbow[3] = 1.0f;                                      // 0x4A79CF
+        pose.leftElbow[0] = 0.0f;                                      // 0x4A79D7
+        pose.leftElbow[1] = 0.0f;                                      // 0x4A79DD
+        pose.leftElbow[2] = 0.0f;                                      // 0x4A79E3
     }
 
     // ---- lower wrist quat, model+112 (0x4A79C2..0x4A7C21) ----------------
-    if (F(14404) != kSentinel && F(14416) != kSentinel &&
-        F(14392) != kSentinel) {
-        if (F(14412) == F(14400) && F(14416) == F(14404) &&
-            F(14420) == F(14408)) {                                // 0x4A7A64
-            WrF32(m + 124, 1.0f);                                  // 0x4A7A66
-            WrF32(m + 112, 0.0f);                                  // 0x4A7A6B
-            WrF32(m + 116, 0.0f);                                  // 0x4A7A6E
-            WrF32(m + 120, 0.0f);                                  // 0x4A7A71
+    if (joints[mdl::TrackedJoint::LeftWrist][1] != kSentinel && joints[mdl::TrackedJoint::LeftHand][1] != kSentinel &&
+        joints[mdl::TrackedJoint::LeftElbow][1] != kSentinel) {
+        if (joints[mdl::TrackedJoint::LeftHand][0] == joints[mdl::TrackedJoint::LeftWrist][0] && joints[mdl::TrackedJoint::LeftHand][1] == joints[mdl::TrackedJoint::LeftWrist][1] &&
+            joints[mdl::TrackedJoint::LeftHand][2] == joints[mdl::TrackedJoint::LeftWrist][2]) {                                // 0x4A7A64
+            pose.leftWrist[3] = 1.0f;                                  // 0x4A7A66
+            pose.leftWrist[0] = 0.0f;                                  // 0x4A7A6B
+            pose.leftWrist[1] = 0.0f;                                  // 0x4A7A6E
+            pose.leftWrist[2] = 0.0f;                                  // 0x4A7A71
         } else {
             quatRotationAxis(qA, kAxisZ, k30deg53119C);            // 0x4A7A93
             d3->quatMultiply(t1, q155, q150);                      // 0x4A7AAD
-            d3->quatMultiply(t2, t1, QOut(304));                   // 0x4A7AC0
-            d3->quatMultiply(qB, t2, QOut(64));                    // 0x4A7AD3
-            BuildLookAtQuaternion(q159, qB, F(14412), F(14416), F(14420),
-                      F(14400), F(14404), F(14408), 0);            // 0x4A7B42
-            d3->quatMultiply(QOut(112), qA, q159);                 // 0x4A7B7F
+            d3->quatMultiply(t2, t1, pose.leftShoulder);                   // 0x4A7AC0
+            d3->quatMultiply(qB, t2, pose.upperBody);                    // 0x4A7AD3
+            BuildLookAtQuaternion(q159, qB, joints[mdl::TrackedJoint::LeftHand][0], joints[mdl::TrackedJoint::LeftHand][1], joints[mdl::TrackedJoint::LeftHand][2],
+                      joints[mdl::TrackedJoint::LeftWrist][0], joints[mdl::TrackedJoint::LeftWrist][1], joints[mdl::TrackedJoint::LeftWrist][2], 0);            // 0x4A7B42
+            d3->quatMultiply(pose.leftWrist, qA, q159);                 // 0x4A7B7F
             quatRotationAxis(qA, kAxisZ, -k30deg53119C);           // 0x4A7B98
-            d3->quatMultiply(QOut(112), QOut(112), qA);            // 0x4A7BA4
+            d3->quatMultiply(pose.leftWrist, pose.leftWrist, qA);            // 0x4A7BA4
         }
     } else if (flag != 0) {                                        // 0x4A7C21
-        WrF32(m + 124, 1.0f);                                      // 0x4A7C23
-        WrF32(m + 112, 0.0f);                                      // 0x4A7C28
-        WrF32(m + 116, 0.0f);                                      // 0x4A7C2B
-        WrF32(m + 120, 0.0f);                                      // 0x4A7C2E
+        pose.leftWrist[3] = 1.0f;                                      // 0x4A7C23
+        pose.leftWrist[0] = 0.0f;                                      // 0x4A7C28
+        pose.leftWrist[1] = 0.0f;                                      // 0x4A7C2B
+        pose.leftWrist[2] = 0.0f;                                      // 0x4A7C2E
     }
 
     // ---- lower body base quat, model+192 (0x4A7BC1..0x4A7E7B) -----------
-    const float lmx = (F(14472) + F(14424)) * 0.5f;                // 0x4A7BC1
-    const float lmy = (F(14476) + F(14428)) * 0.5f;                // 0x4A7BD1
-    const float lmz = (F(14480) + F(14432)) * 0.5f;                // 0x4A7BE1
-    if (F(14296) != kSentinel && F(14428) != kSentinel &&
-        F(14476) != kSentinel && lmy != kSentinel) {               // 0x4A7C16
-        float ax = F(14292) - lmx, ay = F(14296) - lmy,
-              az = F(14300) - lmz;                                 // 0x4A7CAA..
-        d3->vec3Normalize(&ax, &ax);                               // 0x4A7CE6
+    const float lmx = (joints[mdl::TrackedJoint::LeftHip][0] + joints[mdl::TrackedJoint::RightHip][0]) * 0.5f;                // 0x4A7BC1
+    const float lmy = (joints[mdl::TrackedJoint::LeftHip][1] + joints[mdl::TrackedJoint::RightHip][1]) * 0.5f;                // 0x4A7BD1
+    const float lmz = (joints[mdl::TrackedJoint::LeftHip][2] + joints[mdl::TrackedJoint::RightHip][2]) * 0.5f;                // 0x4A7BE1
+    if (joints[mdl::TrackedJoint::Torso][1] != kSentinel && joints[mdl::TrackedJoint::RightHip][1] != kSentinel &&
+        joints[mdl::TrackedJoint::LeftHip][1] != kSentinel && lmy != kSentinel) {               // 0x4A7C16
+        float ax = joints[mdl::TrackedJoint::Torso][0] - lmx, ay = joints[mdl::TrackedJoint::Torso][1] - lmy,
+              az = joints[mdl::TrackedJoint::Torso][2] - lmz;                                 // 0x4A7CAA..
+        normalizeComponents(ax, ay, az);                               // 0x4A7CE6
         float cx = az * 1.0f - ay * 0.0f;                          // 0x4A7D0B
         float cy = ax * 0.0f - az * 0.0f;                          // 0x4A7D2C
         float cz = ay * 0.0f - ax * 1.0f;                          // 0x4A7D47
@@ -978,142 +981,142 @@ void InitStandardSkeletonQuats(unsigned char* m, unsigned char flag) {
         d3->vec3Normalize(axis, axis);                              // 0x4A7D67
         const float ang = acosf(dot);                              // 0x4A7D75
         quatRotationAxis(qA, axis, ang);                           // 0x4A7D8B
-        BuildLookAtQuaternion(t1, qA, F(14472), F(14476), F(14480),
-                  F(14424), F(14428), F(14432), 4);                // 0x4A7DFD
-        std::memcpy(QOut(192), t1, 16);                            // 0x4A7E04..
-        d3->quatMultiply(t2, QOut(192), qA);                       // 0x4A7E2D
-        std::memcpy(QOut(192), t2, 16);                            // 0x4A7E48..
+        BuildLookAtQuaternion(t1, qA, joints[mdl::TrackedJoint::LeftHip][0], joints[mdl::TrackedJoint::LeftHip][1], joints[mdl::TrackedJoint::LeftHip][2],
+                  joints[mdl::TrackedJoint::RightHip][0], joints[mdl::TrackedJoint::RightHip][1], joints[mdl::TrackedJoint::RightHip][2], 4);                // 0x4A7DFD
+        std::memcpy(pose.lowerBody, t1, 16);                            // 0x4A7E04..
+        d3->quatMultiply(t2, pose.lowerBody, qA);                       // 0x4A7E2D
+        std::memcpy(pose.lowerBody, t2, 16);                            // 0x4A7E48..
     } else if (flag != 0) {
-        WrF32(m + 204, 1.0f);                                      // 0x4A7E61
-        WrF32(m + 192, 0.0f);                                      // 0x4A7E69
-        WrF32(m + 196, 0.0f);                                      // 0x4A7E6F
-        WrF32(m + 200, 0.0f);                                      // 0x4A7E75
+        pose.lowerBody[3] = 1.0f;                                      // 0x4A7E61
+        pose.lowerBody[0] = 0.0f;                                      // 0x4A7E69
+        pose.lowerBody[1] = 0.0f;                                      // 0x4A7E6F
+        pose.lowerBody[2] = 0.0f;                                      // 0x4A7E75
     }
 
     // ---- hip quat, model+256 (0x4A7E8A..0x4A7F7D) ------------------------
-    if (F(14428) != kSentinel && F(14440) != kSentinel &&
-        F(14284) != kSentinel) {
-        std::memcpy(qByVal, m + 192, 16);
-        BuildLookAtQuaternion(t1, qByVal, F(14424), F(14428), F(14432),
-                  F(14436), F(14440), F(14444), 2);                // 0x4A7F47
-        std::memcpy(QOut(256), t1, 16);                            // 0x4A7F58..
+    if (joints[mdl::TrackedJoint::RightHip][1] != kSentinel && joints[mdl::TrackedJoint::RightKnee][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Center][1] != kSentinel) {
+        std::memcpy(qByVal, pose.lowerBody, sizeof qByVal);
+        BuildLookAtQuaternion(t1, qByVal, joints[mdl::TrackedJoint::RightHip][0], joints[mdl::TrackedJoint::RightHip][1], joints[mdl::TrackedJoint::RightHip][2],
+                  joints[mdl::TrackedJoint::RightKnee][0], joints[mdl::TrackedJoint::RightKnee][1], joints[mdl::TrackedJoint::RightKnee][2], 2);                // 0x4A7F47
+        std::memcpy(pose.rightLeg, t1, 16);                            // 0x4A7F58..
     } else if (flag != 0) {                                        // 0x4A7F7D
-        WrF32(m + 268, 1.0f);                                      // 0x4A7F81
-        WrF32(m + 256, 0.0f);                                      // 0x4A7F89
-        WrF32(m + 260, 0.0f);                                      // 0x4A7F8F
-        WrF32(m + 264, 0.0f);                                      // 0x4A7F95
+        pose.rightLeg[3] = 1.0f;                                      // 0x4A7F81
+        pose.rightLeg[0] = 0.0f;                                      // 0x4A7F89
+        pose.rightLeg[1] = 0.0f;                                      // 0x4A7F8F
+        pose.rightLeg[2] = 0.0f;                                      // 0x4A7F95
     }
 
     // ---- other hip quat, model+208 (0x4A7FAC..0x4A809F) ------------------
-    if (F(14476) != kSentinel && F(14488) != kSentinel &&
-        F(14284) != kSentinel) {
-        std::memcpy(qByVal, m + 192, 16);
-        BuildLookAtQuaternion(t1, qByVal, F(14472), F(14476), F(14480),
-                  F(14484), F(14488), F(14492), 3);                // 0x4A8069
-        std::memcpy(QOut(208), t1, 16);                            // 0x4A807A..
+    if (joints[mdl::TrackedJoint::LeftHip][1] != kSentinel && joints[mdl::TrackedJoint::LeftKnee][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Center][1] != kSentinel) {
+        std::memcpy(qByVal, pose.lowerBody, sizeof qByVal);
+        BuildLookAtQuaternion(t1, qByVal, joints[mdl::TrackedJoint::LeftHip][0], joints[mdl::TrackedJoint::LeftHip][1], joints[mdl::TrackedJoint::LeftHip][2],
+                  joints[mdl::TrackedJoint::LeftKnee][0], joints[mdl::TrackedJoint::LeftKnee][1], joints[mdl::TrackedJoint::LeftKnee][2], 3);                // 0x4A8069
+        std::memcpy(pose.leftLeg, t1, 16);                            // 0x4A807A..
     } else if (flag != 0) {                                        // 0x4A809F
-        WrF32(m + 220, 1.0f);                                      // 0x4A80A3
-        WrF32(m + 208, 0.0f);                                      // 0x4A80AB
-        WrF32(m + 212, 0.0f);                                      // 0x4A80B1
-        WrF32(m + 216, 0.0f);                                      // 0x4A80B7
+        pose.leftLeg[3] = 1.0f;                                      // 0x4A80A3
+        pose.leftLeg[0] = 0.0f;                                      // 0x4A80AB
+        pose.leftLeg[1] = 0.0f;                                      // 0x4A80B1
+        pose.leftLeg[2] = 0.0f;                                      // 0x4A80B7
     }
 
     // ---- knee quat #1, model+272 (0x4A80CE..0x4A81D1) --------------------
-    if (F(14440) != kSentinel && F(14452) != kSentinel &&
-        F(14284) != kSentinel) {
-        d3->quatMultiply(qB, QOut(256), QOut(192));                // 0x4A812C
-        BuildLookAtQuaternion(t1, qB, F(14436), F(14440), F(14444),
-                  F(14448), F(14452), F(14456), 1);                // 0x4A819B
-        std::memcpy(QOut(272), t1, 16);                            // 0x4A81AC..
+    if (joints[mdl::TrackedJoint::RightKnee][1] != kSentinel && joints[mdl::TrackedJoint::RightAnkle][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Center][1] != kSentinel) {
+        d3->quatMultiply(qB, pose.rightLeg, pose.lowerBody);                // 0x4A812C
+        BuildLookAtQuaternion(t1, qB, joints[mdl::TrackedJoint::RightKnee][0], joints[mdl::TrackedJoint::RightKnee][1], joints[mdl::TrackedJoint::RightKnee][2],
+                  joints[mdl::TrackedJoint::RightAnkle][0], joints[mdl::TrackedJoint::RightAnkle][1], joints[mdl::TrackedJoint::RightAnkle][2], 1);                // 0x4A819B
+        std::memcpy(pose.rightKnee, t1, 16);                            // 0x4A81AC..
     } else if (flag != 0) {                                        // 0x4A81D1
-        WrF32(m + 284, 1.0f);                                      // 0x4A81D5
-        WrF32(m + 272, 0.0f);                                      // 0x4A81DD
-        WrF32(m + 276, 0.0f);                                      // 0x4A81E3
-        WrF32(m + 280, 0.0f);                                      // 0x4A81E9
+        pose.rightKnee[3] = 1.0f;                                      // 0x4A81D5
+        pose.rightKnee[0] = 0.0f;                                      // 0x4A81DD
+        pose.rightKnee[1] = 0.0f;                                      // 0x4A81E3
+        pose.rightKnee[2] = 0.0f;                                      // 0x4A81E9
     }
 
     // ---- knee quat #2, model+224 (0x4A8200..0x4A831F) --------------------
-    if (F(14488) != kSentinel && F(14500) != kSentinel &&
-        F(14284) != kSentinel) {
-        d3->quatMultiply(qB, QOut(208), QOut(192));                // 0x4A825E
-        BuildLookAtQuaternion(t1, qB, F(14484), F(14488), F(14492),
-                  F(14496), F(14500), F(14504), 1);                // 0x4A82CD
-        std::memcpy(QOut(224), t1, 16);                            // 0x4A82DA..
+    if (joints[mdl::TrackedJoint::LeftKnee][1] != kSentinel && joints[mdl::TrackedJoint::LeftAnkle][1] != kSentinel &&
+        joints[mdl::TrackedJoint::Center][1] != kSentinel) {
+        d3->quatMultiply(qB, pose.leftLeg, pose.lowerBody);                // 0x4A825E
+        BuildLookAtQuaternion(t1, qB, joints[mdl::TrackedJoint::LeftKnee][0], joints[mdl::TrackedJoint::LeftKnee][1], joints[mdl::TrackedJoint::LeftKnee][2],
+                  joints[mdl::TrackedJoint::LeftAnkle][0], joints[mdl::TrackedJoint::LeftAnkle][1], joints[mdl::TrackedJoint::LeftAnkle][2], 1);                // 0x4A82CD
+        std::memcpy(pose.leftKnee, t1, 16);                            // 0x4A82DA..
     } else if (flag != 0) {                                        // 0x4A82FF
-        WrF32(m + 236, 1.0f);                                      // 0x4A8303
-        WrF32(m + 224, 0.0f);                                      // 0x4A8309
-        WrF32(m + 228, 0.0f);                                      // 0x4A830F
-        WrF32(m + 232, 0.0f);                                      // 0x4A8315
+        pose.leftKnee[3] = 1.0f;                                      // 0x4A8303
+        pose.leftKnee[0] = 0.0f;                                      // 0x4A8309
+        pose.leftKnee[1] = 0.0f;                                      // 0x4A830F
+        pose.leftKnee[2] = 0.0f;                                      // 0x4A8315
     }
 
     // ---- ankle/foot quat #1, model+288 (0x4A832E..0x4A864E) --------------
-    if (F(14464) != kSentinel && F(14452) != kSentinel) {
-        float ax = F(14448) - F(14436), ay = F(14452) - F(14440),
-              az = F(14456) - F(14444);                            // 0x4A8365..
-        d3->vec3Normalize(&ax, &ax);                               // 0x4A83A9
-        float bx = F(14460) - F(14448), by = F(14464) - F(14452),
-              bz = F(14468) - F(14456);                            // 0x4A83BA..
-        d3->vec3Normalize(&bx, &bx);                               // 0x4A83FE
+    if (joints[mdl::TrackedJoint::RightFoot][1] != kSentinel && joints[mdl::TrackedJoint::RightAnkle][1] != kSentinel) {
+        float ax = joints[mdl::TrackedJoint::RightAnkle][0] - joints[mdl::TrackedJoint::RightKnee][0], ay = joints[mdl::TrackedJoint::RightAnkle][1] - joints[mdl::TrackedJoint::RightKnee][1],
+              az = joints[mdl::TrackedJoint::RightAnkle][2] - joints[mdl::TrackedJoint::RightKnee][2];                            // 0x4A8365..
+        normalizeComponents(ax, ay, az);                               // 0x4A83A9
+        float bx = joints[mdl::TrackedJoint::RightFoot][0] - joints[mdl::TrackedJoint::RightAnkle][0], by = joints[mdl::TrackedJoint::RightFoot][1] - joints[mdl::TrackedJoint::RightAnkle][1],
+              bz = joints[mdl::TrackedJoint::RightFoot][2] - joints[mdl::TrackedJoint::RightAnkle][2];                            // 0x4A83BA..
+        normalizeComponents(bx, by, bz);                               // 0x4A83FE
         const float dot = by * ay + bx * ax + bz * az;             // 0x4A841F
         bool straight = false;                                     // 0x4A849B
-        if (F(14468) - F(14456) > 0.0f) {                          // 0x4A8458
-            const float w = fabsf(F(14460) - F(14448));            // 0x4A8470
+        if (joints[mdl::TrackedJoint::RightFoot][2] - joints[mdl::TrackedJoint::RightAnkle][2] > 0.0f) {                          // 0x4A8458
+            const float w = fabsf(joints[mdl::TrackedJoint::RightFoot][0] - joints[mdl::TrackedJoint::RightAnkle][0]);            // 0x4A8470
             if (w < k75f && dot > 0.5f) straight = true;           // 0x4A8490
         }
         if (dot < kNeg0d3 || straight) {                           // 0x4A849D
-            d3->quatMultiply(t1, QOut(272), QOut(256));            // 0x4A84B7
-            d3->quatMultiply(t2, t1, QOut(192));                   // 0x4A84D0
-            std::memcpy(QOut(288), t2, 16);                        // 0x4A84E1..
+            d3->quatMultiply(t1, pose.rightKnee, pose.rightLeg);            // 0x4A84B7
+            d3->quatMultiply(t2, t1, pose.lowerBody);                   // 0x4A84D0
+            std::memcpy(pose.rightFoot, t2, 16);                        // 0x4A84E1..
         } else {
             float ex = 0.0f, ey = kNeg0d7, ez = -1.0f;             // 0x4A8508..
-            d3->vec3Normalize(&ex, &ex);                           // 0x4A8524
+            normalizeComponents(ex, ey, ez);                           // 0x4A8524
             float cx = bz * ey - by * ez;                          // 0x4A8549
             float cy = bx * ez - bz * ex;                          // 0x4A856A
             float cz = by * ex - bx * ey;                          // 0x4A8585
             const float dot2 = ey * by + bx * ex + ez * bz;        // 0x4A85A1
             float axis[3] = {cx, cy, cz};
             d3->vec3Normalize(axis, axis);                         // 0x4A85A5
-            quatRotationAxis(QOut(288), axis, acosf(dot2));        // 0x4A85C9
+            quatRotationAxis(pose.rightFoot, axis, acosf(dot2));        // 0x4A85C9
         }
     } else {
-        d3->quatMultiply(t1, QOut(272), QOut(256));                // 0x4A860E
-        d3->quatMultiply(t2, t1, QOut(192));                       // 0x4A8627
-        std::memcpy(QOut(288), t2, 16);                            // 0x4A8638..
+        d3->quatMultiply(t1, pose.rightKnee, pose.rightLeg);                // 0x4A860E
+        d3->quatMultiply(t2, t1, pose.lowerBody);                       // 0x4A8627
+        std::memcpy(pose.rightFoot, t2, 16);                            // 0x4A8638..
     }
 
     // ---- ankle/foot quat #2, model+240 (0x4A8669..0x4A899D) --------------
-    if (F(14512) != kSentinel && F(14500) != kSentinel) {
-        float ax = F(14496) - F(14484), ay = F(14500) - F(14488),
-              az = F(14504) - F(14492);                            // 0x4A86A0..
-        d3->vec3Normalize(&ax, &ax);                               // 0x4A86E4
-        float bx = F(14508) - F(14496), by = F(14512) - F(14500),
-              bz = F(14516) - F(14504);                            // 0x4A86F5..
-        d3->vec3Normalize(&bx, &bx);                               // 0x4A8739
+    if (joints[mdl::TrackedJoint::LeftFoot][1] != kSentinel && joints[mdl::TrackedJoint::LeftAnkle][1] != kSentinel) {
+        float ax = joints[mdl::TrackedJoint::LeftAnkle][0] - joints[mdl::TrackedJoint::LeftKnee][0], ay = joints[mdl::TrackedJoint::LeftAnkle][1] - joints[mdl::TrackedJoint::LeftKnee][1],
+              az = joints[mdl::TrackedJoint::LeftAnkle][2] - joints[mdl::TrackedJoint::LeftKnee][2];                            // 0x4A86A0..
+        normalizeComponents(ax, ay, az);                               // 0x4A86E4
+        float bx = joints[mdl::TrackedJoint::LeftFoot][0] - joints[mdl::TrackedJoint::LeftAnkle][0], by = joints[mdl::TrackedJoint::LeftFoot][1] - joints[mdl::TrackedJoint::LeftAnkle][1],
+              bz = joints[mdl::TrackedJoint::LeftFoot][2] - joints[mdl::TrackedJoint::LeftAnkle][2];                            // 0x4A86F5..
+        normalizeComponents(bx, by, bz);                               // 0x4A8739
         const float dot = by * ay + bx * ax + bz * az;             // 0x4A875A
         bool straight = false;                                     // 0x4A87D6
-        if (F(14516) - F(14504) > 0.0f) {                          // 0x4A8793
-            const float w = fabsf(F(14508) - F(14496));            // 0x4A87AB
+        if (joints[mdl::TrackedJoint::LeftFoot][2] - joints[mdl::TrackedJoint::LeftAnkle][2] > 0.0f) {                          // 0x4A8793
+            const float w = fabsf(joints[mdl::TrackedJoint::LeftFoot][0] - joints[mdl::TrackedJoint::LeftAnkle][0]);            // 0x4A87AB
             if (w < k75f && dot > 0.5f) straight = true;           // 0x4A87CB
         }
         if (dot < kNeg0d3 || straight) {                           // 0x4A87D8
-            d3->quatMultiply(t1, QOut(224), QOut(208));            // 0x4A87F2
-            d3->quatMultiply(t2, t1, QOut(192));                   // 0x4A880B
-            std::memcpy(QOut(240), t2, 16);                        // 0x4A881C..
+            d3->quatMultiply(t1, pose.leftKnee, pose.leftLeg);            // 0x4A87F2
+            d3->quatMultiply(t2, t1, pose.lowerBody);                   // 0x4A880B
+            std::memcpy(pose.leftFoot, t2, 16);                        // 0x4A881C..
         } else {
             float ex = 0.0f, ey = kNeg0d7, ez = -1.0f;             // 0x4A884B..
-            d3->vec3Normalize(&ex, &ex);                           // 0x4A8867
+            normalizeComponents(ex, ey, ez);                           // 0x4A8867
             float cx = bz * ey - by * ez;                          // 0x4A888C
             float cy = bx * ez - bz * ex;                          // 0x4A88AD
             float cz = by * ex - bx * ey;                          // 0x4A88C8
             const float dot2 = ey * by + bx * ex + ez * bz;        // 0x4A88E4
             float axis[3] = {cx, cy, cz};
             d3->vec3Normalize(axis, axis);                         // 0x4A88E8
-            quatRotationAxis(QOut(240), axis, acosf(dot2));        // 0x4A890C
+            quatRotationAxis(pose.leftFoot, axis, acosf(dot2));        // 0x4A890C
         }
     } else {
-        d3->quatMultiply(t1, QOut(224), QOut(208));                // 0x4A895C
-        d3->quatMultiply(t2, t1, QOut(192));                       // 0x4A8975
-        std::memcpy(QOut(240), t2, 16);                            // 0x4A8986..
+        d3->quatMultiply(t1, pose.leftKnee, pose.leftLeg);                // 0x4A895C
+        d3->quatMultiply(t2, t1, pose.lowerBody);                       // 0x4A8975
+        std::memcpy(pose.leftFoot, t2, 16);                            // 0x4A8986..
     }
 }
 

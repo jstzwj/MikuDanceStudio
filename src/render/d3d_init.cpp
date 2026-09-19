@@ -150,11 +150,18 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     D3DRenderer* r = app->Renderer();                               // 657092
     if (r == nullptr)
         return false;
-    // d3dx9_32.dll is a load-time import in the original (exe would not
-    // start without it); the port treats it as optional - the SM3/effect
-    // path is skipped when absent instead of failing device creation.
+    // The original imports its D3DX runtime at load time (x64: _43,
+    // x86: _32). A runtime load failure must not start a partial renderer.
     auto* d3dx = &d3dx::Get();
     const bool haveD3dx = d3dx->Load();
+    if (!haveD3dx) {
+        MessageBoxA(hwnd,
+            sizeof(void*) == 8
+                ? "Cannot load the required d3dx9_43.dll runtime."
+                : "Cannot load the required d3dx9_32.dll runtime.",
+            "Direct3D::Init", MB_OK | MB_ICONERROR);
+        return false;
+    }
 
     r->hwnd = hwnd;
     EnumDisplayMonitors(nullptr, nullptr, EnumMonitorsMax,

@@ -155,7 +155,7 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) {      // 0x460430
         void* oldModel = app->ModelSlot(slot);
         if (oldModel != nullptr) {
             ModelDispose(static_cast<unsigned char*>(oldModel));    // 0x48F830
-            free(oldModel);
+            ::operator delete(oldModel);
             app->ModelSlot(slot) = nullptr;
         }
     }

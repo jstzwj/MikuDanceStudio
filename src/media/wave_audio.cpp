@@ -54,10 +54,14 @@
 //             dataOffset + (int)(avg*t) - (int)(avg*t)%nBlockAlign,
 //             FILE_BEGIN), _beginthread(WaveFeedThread, 0, this) -> +0x234.
 //   0x4C3530  WaveRestartAt(this, double t) - KillTimer(hwnd, 100),
-//             CloseDataFile, WaveStartPlayback, buffer->SetVolume(ctx+0x258)
-//             [IDirectSoundBuffer vtable slot 15; the 2026-09 audit note
-//             "SetCurrentPosition" was wrong - confirmed against both the
-//             x86 vtable offset 0x3C and the x64 twin slot +120], then
+//             CloseDataFile, WaveStartPlayback, then the ctx dword at
+//             +0x258 is passed to IDirectSoundBuffer vtable slot 15 -
+//             SetFrequency (0x3C x86 / 0x78 = +120 x64), NOT SetVolume
+//             (slot 17): the earlier audit note "SetVolume" was itself
+//             wrong (and the one before it, "SetCurrentPosition"); the
+//             -10000..0 volume value reaching SetFrequency is an invalid
+//             no-op call, so the original's WAV volume never took effect
+//             (replicated in src/app/subsystem_init.cpp), then
 //             WaveSeekAndFeed(this, t), SetTimer(hwnd, 100, 33 ms, null).
 // x64 twins (behavior basis): 0x7FF7CB4FAD40 / 0x7FF7CB4FAB80 /
 // 0x7FF7CB4FAC20.  Call sites (already wired): WaveSeekAndFeed from

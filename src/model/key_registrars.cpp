@@ -105,7 +105,6 @@ using kfa::RdI32;
 using kfa::RdF32;
 using kfa::Wr32;
 using kfa::WrF32;
-using kfa::RdPtr;
 
 // JP overflow strings (0x52B918 / 0x52B908, SJIS byte-exact)
 const char kJpOverflow[] =

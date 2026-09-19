@@ -228,6 +228,18 @@ __declspec(dllexport) char* ExpGetPmdFilename(int index) {
     return out;
 }
 
+// 内部直取（非导出）：模型的原始宽字符路径（model+0x24BC wchar_t[256]，即
+// D3DXLoadMeshFromXW 加载所用路径）。原版 MMHack 由 D3DXLoadMeshFromXW hook
+// [0x1800043b0] 把该宽路径原样登记进 ObjData+0x30（sub_18000f150 直接拷贝
+// 宽字符串参数），sub_18000f340 读回后交 FUN_18000e020 解析（wfopen_s 全程
+// 宽字符、无 ANSI 往返）。内置版 ObjData.modelName 须经本函数直取——
+// ExpGetPmdFilename 的 Wide→SJIS 转换对非 SJIS 字符有损，再经 CP_ACP 回宽
+// 会破坏材质表/toon 文件解析。
+const wchar_t* MmdModelPathW(int index) {
+    unsigned char* model = ModelByIndex(mikudancestudio::g_Block, index);
+    return (model != nullptr) ? mikudancestudio::mdl::Mdl(model)->path : nullptr;
+}
+
 // 0x4C35D0 -> 0x441000: order byte + min(AcsNum, PreAcsNum).
 __declspec(dllexport) int ExpGetPmdOrder(int index) {
     MMDApp* app = mikudancestudio::g_Block;
@@ -365,6 +377,14 @@ __declspec(dllexport) char* ExpGetAcsFilename(int index) {
     char* out = reinterpret_cast<char*>(app->state.sjisOut);
     mikudancestudio::WideToSjisPath(out, acc->sourcePath, 0x100);
     return out;
+}
+
+// 内部直取（非导出）：附件原始宽字符路径（acc+0x29C wchar_t[256]）；同
+// MmdModelPathW——原版宽路径直存直用，内置版不经 SJIS 往返。
+const wchar_t* MmdAcsPathW(int index) {
+    mikudancestudio::mdl::AccessoryRecord* acc =
+        AcsByIndex(mikudancestudio::g_Block, index);
+    return (acc != nullptr) ? acc->sourcePath : nullptr;
 }
 
 // 0x4C37B0 -> 0x42A6B0: -(order+1) for accessories ordered before the

@@ -291,7 +291,7 @@ void ConsumeLetterHotkeys(MMDApp* app) {
             // frame when the new ring head is not a pose-only record.
             // The original passes &app+0x980 so the redo can move the
             // current frame itself.
-            RedoModelEdit(model, &app->CurrentFrame());
+            RedoModelEdit(model, app->CurrentFrame());
             auto* record = mdl::Mdl(model);
             if (record->undoState[0] == record->undoState[1]) {
                 EnableWindow(GetDlgItem(main, panel::kRedoButton), FALSE);
@@ -323,7 +323,7 @@ void ConsumeLetterHotkeys(MMDApp* app) {
             // Undo one ring entry (0x4A1870), then the mirror-image button
             // tail of the X branch.  Like the redo, the frame pointer aims
             // straight at app+0x980.
-            UndoModelEdit(model, &app->CurrentFrame());
+            UndoModelEdit(model, app->CurrentFrame());
             auto* record = mdl::Mdl(model);
             if (record->undoRings[0].slots[record->undoState[0]].operation
                     == 0) {

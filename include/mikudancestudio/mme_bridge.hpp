@@ -27,7 +27,10 @@ void OnDeviceCreated(MMDApp* app, HWND hwnd);
 // 设备销毁前调用（应用关闭/设备释放路径）。
 void OnDeviceDestroyed(MMDApp* app);
 
-// 设备 Reset 前后（PostDeviceReset 内部）。
+// 设备 Reset 前后（PostDeviceReset 内部）。顺序约束：OnResetDevice 须紧贴
+// device->Reset、在 InitRenderStates 之前——对应原版 MMHack vtable 槽 16
+// Reset 拦截器 [0x180003d30] 的 OnLost→Reset→OnReset 结构（详见
+// mme_bridge.cpp 设备生命周期节头注释）。
 void OnLostDevice(MMDApp* app);
 void OnResetDevice(MMDApp* app);
 

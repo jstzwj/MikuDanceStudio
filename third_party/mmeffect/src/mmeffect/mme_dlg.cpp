@@ -1,3 +1,4 @@
+#include "mme_resources.h"
 // mme_dlg.cpp - the effect-assignment dialog, the WndProc port of
 // FUN_180044080 and its helper cluster (FUN_180041620 selected-row
 // collection, FUN_180041aa0 selection probes, FUN_180041b00 the effect-text
@@ -9,28 +10,57 @@
 // FUN_18003fff0 the row rebuild + menu sync, FUN_18003fb70 the WH_GETMESSAGE
 // keyboard router).
 //
-// Faithful behaviors (decompile-derived; audited 2026-08):
+// Faithful behaviors (decompile-derived; re-audited 2026-09):
 //   - The list keeps a parallel row table (the original DAT_1800d9ce8):
 //     {object pointer (null = the "(default)" row), subset index (-1 = whole
 //     object)}. The "(default)" row is always row 0 and carries NO checkbox
 //     (the original sets its state image to 0 in FUN_18003fff0).
-//   - FUN_180041620 excludes the "(default)" row from every selection
-//     collection while the tab control has a live item rect (its *param_2
-//     tab-rect gate). The port queries TCM_GETITEMRECT the same way.
+//   - The tab control 1002 is the render-target selector, and FUN_180041620's
+//     gate (*param_2) is the CURRENT SELECTED tab item's lParam, read via
+//     TCM_GETCURSEL + TCM_GETITEM(TCIF_PARAM) (0x130B + 0x1305 - the binary
+//     never sends TCM_GETITEMRECT there). WM_INITDIALOG inserts the sole
+//     fixed "Main" item with lParam 0, FUN_18003fff0 inserts one item per
+//     offscreen object (lParam = the object pointer, mask 9) and rebuilds
+//     them when the object set changes. With Main selected (gate 0) the
+//     "(default)" row JOINS every collection as {null, -1} whenever
+//     onlyWholeObjectRows (param_5) is false - the param_4 render-class
+//     filter never applies to row 0 - so it is selectable, enables the
+//     object-row commands, and FUN_180041b00 writes the picked path to the
+//     EMM default effect for it (gate != 0 skips row 0 entirely).
+//   - [2026-09 offscreen tabs] The port now carries the offscreen tab set
+//     (one tab per queued 0x2E resource, carried by the renderPassList item
+//     itself in renderPassList order - the original's manager
+//     +0x138 vector rebuilt by sub_18002BAA0): tab text = the resource NAME
+//     (the original wrapper +0x8), the 1004 caption = "Main Render Target"
+//     (0x1800b4e68) / the Description annotation (inner record +0x50), the
+//     per-tab effect column / checkbox read the resource's DefaultEffect
+//     rows (first row matching the object file, full path or basename+ext,
+//     case-insensitive), the "(default)" row shows the "key=value; "-joined
+//     rows or "*=none;", and edits (set/remove/reset/hide-show) write the
+//     SAME rows - the render-time offscreen resolver reads them each pass,
+//     so reassignments take effect immediately. Tab identity is a stable id
+//     in lParam (the original's wrapper pointer); the set is re-synced when
+//     the plan's offscreen associations change (the original: every plan
+//     rebuild with planDirty set, sub_18002BAA0's tail; the port: a
+//     per-frame signature poll).
 //   - LVN_ITEMCHANGED (-101), guarded by DAT_1800d99db while the list is
 //     being rebuilt: a state-image change runs the FUN_180042610 port (write
 //     shown, latch DAT_1800d9f4b); a selection/focus change (mask 3) runs the
 //     full menu/button sync.
 //   - The sync (FUN_180041aa0 probes): 40006/40007/40012/40008 + buttons
-//     1007/1008 <- "any selected normal-object row"; 40013 + button 1011 <-
-//     "any selected row"; 40016 <- count(whole-object normal rows) != 0;
-//     40017 <- count == 1; the 40006 checkmark <- FUN_1800429a0 (every
-//     selected row expanded); 40014 <- FUN_180043fd0 (the FIRST selected row
-//     carries an effect path; the "(default)" row disables it). The dialog
+//     1007/1008 <- FUN_180041aa0(1) "any selected normal-object row" (the
+//     "(default)" row counts toward this probe - see the gate note above);
+//     40013 + button 1011 <- FUN_180041aa0(0) "any selected row"; 40016 <-
+//     count(whole-object normal rows) != 0; 40017 <- count == 1; the 40006
+//     checkmark <- FUN_1800429a0 (every selected row expanded; null entries
+//     are skipped - only the lone "(default)" row keeps it off); 40014 <-
+//     FUN_180043fd0 (the FIRST selected row carries an effect path; the
+//     "(default)" row disables it). The dialog
 //     resource pre-marks the Edit items INACTIVE; the runtime MF_ENABLED
 //     overrides the preset.
 //   - NM_DBLCLK on a row runs the Set Effect flow (the original -3 handler;
-//     the "(default)" row collects to an empty set -> no-op).
+//     double-clicking the "(default)" row picks + writes the default
+//     effect).
 //   - Every edit enables the Apply button; Apply (1005) commits: refresh the
 //     default-effect snapshot + EMM auto-save + the button disables itself
 //     (the original 0x3ed case). Cancel (2) restores the default-effect
@@ -68,12 +98,15 @@
 
 #include "effect_engine.h"
 #include "emm_manager.h"
+#include "material_bind.h"   // MmeActiveModelBinding (offscreen tab rebuild)
 #include "mme_context.h"
 #include "mme_globals.h"
 #include "mme_log.h"
 #include "mme_ui.h"
 #include "mme_util.h"
 #include "model_data.h"
+#include "sas_exec.h"
+#include "sas_interpreter.h"
 
 #include "mmhack_api.h"
 #include "MMDExport.h"
@@ -109,6 +142,32 @@ std::vector<RowRef> g_rows;
 // row rebuild so per-material rows survive FUN_18003fff0 refreshes.
 std::set<ModelData*> g_expanded;
 
+// --- [sub_18003FFF0 0x1800400ce-0x18004043f] offscreen 渲染目标标签页集 ---
+// 原版为每个 offscreen 维护一个 0x48 字节的包装对象（+0 = 内层 SAS 记录、
+// +8 = 名字（标签页标题）、+0x38 = id、+0x50 在内层记录上 = Description 注解
+// （0x18004044e 处 `mov r8,[rbx]; add r8,50h` 的标签 1004 文本））。sub_18002CA80
+// 在计划构建时把它们注册进 manager 的 id 树，sub_18002BAA0 每次重建时从树里
+// 重灌 manager+0x138 向量，并在 planDirty（manager+0x90）置位且对话框打开时于
+// 尾部调 sub_18003FFF0(dlg,0)。
+// 移植端对应物：renderPassList 队列项直接携带的 0x2E 资源记录（wrapper+0 的
+// 2026-09-15 重构产物）—— 每个排队 offscreen 资源一个 {SasEffect*, 资源序号}；
+// 标签页顺序跟随 ctx->renderPassList（原版按队列顺序收集 id）。
+struct OffscreenTab {
+    SasEffect* sas;        // 持有该 offscreen 资源的效果
+    int        resIndex;   // sas->resources[] 槽位（OFFSCREENRENDERTARGET 记录）
+    size_t     id;         // 稳定身份（lParam），跨重建对应原版的包装对象指针
+};
+std::vector<OffscreenTab> g_offscreenTabs;
+// (效果, 资源) -> 稳定 id 的分配表（原版：id 树中复用的包装对象）。
+std::map<std::pair<SasEffect*, int>, size_t> g_offscreenIds;
+// (效果, 资源) -> 首次见到时的 DefaultEffect 行快照。原版在分配表里把
+// “路径”与“显示覆盖”存成两个独立字段（sub_180042610 写 +0x48/+0x49/+0x60）；
+// 移植端把两者都落在单一行值上，取消隐藏时用快照恢复注解原值（已文档化差异）。
+std::map<std::pair<SasEffect*, int>,
+         std::vector<std::pair<std::string, std::string>>> g_pristineRows;
+size_t g_offscreenSignature = static_cast<size_t>(-1);   // per-frame 轮询签名
+size_t g_nextOffscreenId = 1;
+
 HWND g_dlgWindow = nullptr;      // the modeless dialog handle (DAT_1800d9a48)
 size_t g_lastModelCount = 0;     // the per-frame list-refresh bookkeeping
 bool g_dirty = false;            // pending edits -> Apply enables
@@ -119,6 +178,18 @@ bool g_selectedObject = false;   // DAT_1800d9f48
 bool g_selectedAny = false;      // DAT_1800d9f49
 bool g_subsetCheck = false;      // DAT_1800d9f4a (the Subset-Extract checkmark)
 std::string g_lastFxDir;         // DAT_1800da130 (the open-dialog initial dir)
+std::string g_lastUserFileDir;   // DAT_1800d7528 (the EMD dialogs' shared
+                                 // dir; the original one-shot seeds it from
+                                 // the exe-dir global D7550 + the literal
+                                 // "UserFile" [a plain string concat via
+                                 // sub_180005760, NOT an ini read], then
+                                 // truncates to the dir after each pick;
+                                 // the port keeps the documented no-seed
+                                 // divergence here)
+std::string g_lastEmmDir;        // DAT_1800d7500 (the EMM open/save dialogs'
+                                 // InitialDir; same one-shot seed and
+                                 // post-pick truncation, shared by 40009
+                                 // and 40010 [FUN_180042F60/FUN_1800431E0])
 std::string g_defaultSnapshot;   // DAT_1800d74d8 (the default effect at open/Apply)
 
 // The WH_GETMESSAGE keyboard router state (DAT_1800d9a50 / DAT_1800d9a48 /
@@ -184,6 +255,362 @@ const char* EffectTextForModel(ModelData* model)
     return text.c_str();
 }
 
+// --- [sub_18003FFF0 标签页半 + sub_18002CA80/sub_18002BAA0 收集] offscreen 辅助 ---
+
+// 前置声明（定义在下方选中行收集一节）。
+LONG_PTR DlgTabSelParamGate();
+
+// 取路径的 basename+扩展名（行键匹配的第二规则）。
+const char* DlgBaseName(const char* path)
+{
+    const char* base = path;
+    for (const char* q = path; q != nullptr && *q != '\0'; ++q) {
+        if (*q == '\\' || *q == '/') {
+            base = q + 1;
+        }
+    }
+    return base;
+}
+
+// [sub_18002E8D0/sub_18002E6F0 匹配规则，见 material_bind.h] DefaultEffect 行键
+// 与对象文件的匹配：先全路径 _stricmp，再 basename+扩展名 _stricmp。
+bool DlgRowKeyMatchesObject(const std::string& key, ModelData* model)
+{
+    const char* file = model->filename();
+    if (file == nullptr || file[0] == '\0') {
+        return false;
+    }
+    if (_stricmp(key.c_str(), file) == 0) {
+        return true;
+    }
+    return _stricmp(DlgBaseName(key.c_str()), DlgBaseName(file)) == 0;
+}
+
+// [sub_18002CA80 收集 + sub_18002BAA0 0x18002badc-0x18002c60 重灌] 依当前
+// pass 计划重建 offscreen 标签页集：renderPassList 顺序，每条队列项携带的 0x2E
+// 资源关联一个条目，按 (效果, 资源) 去重（首个出现优先），并为新见到的 (效果,
+// 资源) 分配稳定 id、抓拍 DefaultEffect 行快照。
+void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
+{
+    out.clear();
+    MmeContext* ctx = MmeGetContext();
+    if (ctx == nullptr) {
+        return;
+    }
+    for (size_t i = 0; i < ctx->renderPassList.size(); ++i) {
+        const MmeRenderPassItem& item = ctx->renderPassList[i];
+        // [2026-09-15 per-resource queue rework] 队列项直接携带 0x2E 资源记
+        // 录（wrapper+0 等价物）；(效果, 资源下标) 由载体绑定反推。
+        SasResource* res = item.offscreen;
+        MaterialBinding* binding =
+            (item.carrier != nullptr) ? MmeActiveModelBinding(item.carrier)
+                                      : nullptr;
+        if (res == nullptr || binding == nullptr || binding->sas == nullptr) {
+            continue;
+        }
+        SasEffect* sas = binding->sas;
+        if (sas->resources.empty() ||
+            res < &sas->resources[0] ||
+            res >= &sas->resources[0] + sas->resources.size()) {
+            continue;
+        }
+        int resIndex = (int)(res - &sas->resources[0]);
+        if (sas->resources[resIndex].semanticId != 0x2E) {
+            continue;   // 仅 OFFSCREENRENDERTARGET 记录
+        }
+        bool dup = false;
+        for (size_t j = 0; j < out.size(); ++j) {
+            if (out[j].sas == sas && out[j].resIndex == resIndex) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) {
+            continue;
+        }
+        std::pair<SasEffect*, int> key(sas, resIndex);
+        size_t id;
+        std::map<std::pair<SasEffect*, int>, size_t>::iterator idIt =
+            g_offscreenIds.find(key);
+        if (idIt != g_offscreenIds.end()) {
+            id = idIt->second;
+        } else {
+            id = g_nextOffscreenId++;
+            g_offscreenIds[key] = id;
+            // 首次见到：抓拍注解行快照（恢复“显示”时还原注解原值）。
+            g_pristineRows[key] = sas->resources[resIndex].defaultEffectMap;
+        }
+        OffscreenTab tab;
+        tab.sas = sas;
+        tab.resIndex = resIndex;
+        tab.id = id;
+        out.push_back(tab);
+    }
+}
+
+// 当前选中标签页对应的 offscreen（Main / 失效选中 -> null）。lParam 即稳定 id
+// （原版为包装对象指针；0x1800400ce-0x180040104 处失效选中被折回 0 = Main）。
+OffscreenTab* DlgCurrentOffscreen()
+{
+    LONG_PTR gate = DlgTabSelParamGate();
+    if (gate <= 0) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < g_offscreenTabs.size(); ++i) {
+        if ((LONG_PTR)g_offscreenTabs[i].id == gate) {
+            return &g_offscreenTabs[i];
+        }
+    }
+    return nullptr;
+}
+
+// 当前标签页的 DefaultEffect 行集（可写 - 直接落在 SasEffect 的注解行上，
+// 运行期 offscreen 解析每 pass 都读它，改派即时生效）。
+std::vector<std::pair<std::string, std::string>>* DlgOffscreenRows(OffscreenTab* tab)
+{
+    if (tab == nullptr || tab->sas == nullptr ||
+        tab->resIndex < 0 || tab->resIndex >= (int)tab->sas->resources.size()) {
+        return nullptr;
+    }
+    return &tab->sas->resources[tab->resIndex].defaultEffectMap;
+}
+
+// [sub_18002DB80 读取路径] 首个与对象文件匹配的行。
+const std::pair<std::string, std::string>* DlgFindOffscreenRow(
+    std::vector<std::pair<std::string, std::string>>* rows, ModelData* model)
+{
+    if (rows == nullptr) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < rows->size(); ++i) {
+        if (DlgRowKeyMatchesObject((*rows)[i].first, model)) {
+            return &(*rows)[i];
+        }
+    }
+    return nullptr;
+}
+
+// [sub_1800424A0/sub_180042610 写入路径的移植落点] 改派 = 改写注解行；键用
+// 对象当前文件路径（运行期匹配器按全路径或 basename 命中）。
+void DlgUpsertOffscreenRow(OffscreenTab* tab, ModelData* model, const char* value)
+{
+    std::vector<std::pair<std::string, std::string>>* rows = DlgOffscreenRows(tab);
+    if (rows == nullptr) {
+        return;
+    }
+    const std::pair<std::string, std::string>* row = DlgFindOffscreenRow(rows, model);
+    if (row != nullptr) {
+        rows->at(row - &(*rows)[0]).second = value;
+        return;
+    }
+    rows->push_back(std::make_pair(std::string(model->filename()), std::string(value)));
+}
+
+// [sub_180033570 等值区间擦除] 移除对象在当前 offscreen 上的全部行
+// （40008 Reset with default / 清除改派）。
+void DlgRemoveOffscreenRows(OffscreenTab* tab, ModelData* model)
+{
+    std::vector<std::pair<std::string, std::string>>* rows = DlgOffscreenRows(tab);
+    if (rows == nullptr) {
+        return;
+    }
+    for (size_t i = rows->size(); i-- > 0;) {
+        if (DlgRowKeyMatchesObject((*rows)[i].first, model)) {
+            rows->erase(rows->begin() + i);
+        }
+    }
+}
+
+// [sub_18003FFF0 0x1800411a0-0x180041216] 对象行的效果列文本：命中行显示
+// 行值（none/hide/main_default/绝对路径），无行 -> "(none)"。
+const char* DlgOffscreenRowText(OffscreenTab* tab, ModelData* model)
+{
+    static std::string text;
+    const std::pair<std::string, std::string>* row =
+        DlgFindOffscreenRow(DlgOffscreenRows(tab), model);
+    if (row != nullptr) {
+        text = row->second;
+        return text.c_str();
+    }
+    text = "(none)";
+    return text.c_str();
+}
+
+// [sub_18003FFF0 0x180040ef5-0x18004101c] offscreen 页 "(default)" 行文本：
+// 注解行重组为 "key=value; "...（结尾保留 "; "），无任何行时为 "*=none;"。
+std::string DlgOffscreenDefaultRowText(OffscreenTab* tab)
+{
+    std::vector<std::pair<std::string, std::string>>* rows = DlgOffscreenRows(tab);
+    std::string text;
+    if (rows != nullptr) {
+        for (size_t i = 0; i < rows->size(); ++i) {
+            text += (*rows)[i].first;
+            text += "=";
+            text += (*rows)[i].second;
+            text += "; ";
+        }
+    }
+    if (text.empty()) {
+        text = "*=none;";
+    }
+    return text;
+}
+
+// [sub_180042610] offscreen 页显示/隐藏写：隐藏 = 行值置 "hide"；恢复显示 =
+// 从快照还原注解原值，注解本无行则整行移除（回落到 "(none)"）。
+void DlgSetOffscreenHidden(OffscreenTab* tab, ModelData* model, bool hidden)
+{
+    if (hidden) {
+        DlgUpsertOffscreenRow(tab, model, "hide");
+        return;
+    }
+    std::map<std::pair<SasEffect*, int>,
+             std::vector<std::pair<std::string, std::string>>>::const_iterator it =
+        g_pristineRows.find(std::make_pair(tab->sas, tab->resIndex));
+    if (it != g_pristineRows.end()) {
+        for (size_t i = 0; i < it->second.size(); ++i) {
+            if (DlgRowKeyMatchesObject(it->second[i].first, model)) {
+                DlgUpsertOffscreenRow(tab, model, it->second[i].second.c_str());
+                return;
+            }
+        }
+    }
+    DlgRemoveOffscreenRows(tab, model);
+}
+
+// 对象行复选框状态（0x1800413e1 处 (v108+1)<<12）：offscreen 页取行值是否
+// 非 "hide"；Main 页维持既有 shown() 语义。
+int DlgRowCheckState(ModelData* model)
+{
+    OffscreenTab* tab = DlgCurrentOffscreen();
+    if (tab == nullptr) {
+        return model->shown() ? 2 : 1;
+    }
+    const std::pair<std::string, std::string>* row =
+        DlgFindOffscreenRow(DlgOffscreenRows(tab), model);
+    if (row != nullptr && _stricmp(row->second.c_str(), "hide") == 0) {
+        return 1;
+    }
+    return 2;
+}
+
+// [sub_18003FFF0 0x4e 分支灰化判据] 效果列为 "(none)" 时灰显：offscreen 页看
+// 行是否缺失，Main 页维持既有 effectFile().empty()。
+bool DlgRowEffectIsNone(ModelData* model)
+{
+    OffscreenTab* off = DlgCurrentOffscreen();
+    if (off != nullptr) {
+        return _stricmp(DlgOffscreenRowText(off, model), "(none)") == 0;
+    }
+    return model->effectFile().empty();
+}
+
+// [sub_18003FFF0 0x180040445-0x18004046b] 标签页说明文字（1004 静态控件）：
+// Main 恒为 "Main Render Target"（0x1800b4e68，无语言分支）；offscreen 页为
+// 内层记录 +0x50 的 Description 注解。
+void DlgRefreshCaption()
+{
+    if (g_dlgWindow == nullptr) {
+        return;
+    }
+    OffscreenTab* tab = DlgCurrentOffscreen();
+    const char* text = "Main Render Target";
+    if (tab != nullptr && tab->sas != nullptr &&
+        tab->resIndex >= 0 && tab->resIndex < (int)tab->sas->resources.size()) {
+        text = tab->sas->resources[tab->resIndex].description.c_str();
+    }
+    SetDlgItemTextA(g_dlgWindow, kDlgTabCaption, text);
+}
+
+// [sub_18003FFF0 0x1800400ce-0x18004043f] 标签页重建：现存标签 lParam 集与
+// 新 offscreen 集不一致时删除 1..N-1 重插（文本 = 资源名 +0x8，mask 9），并
+// 恒等身份恢复选中（0x1800403e9 TCM_SETCURSEL；选中丢失回落 0 = Main，
+// 0x18004043f）。随后刷新说明文字。
+void DlgSyncTabs()
+{
+    if (g_dlgWindow == nullptr) {
+        return;
+    }
+    HWND tab = GetDlgItem(g_dlgWindow, kDlgTab);
+    if (tab == nullptr) {
+        return;
+    }
+    DlgCollectOffscreenTabs(g_offscreenTabs);
+
+    LRESULT count = SendMessageA(tab, TCM_GETITEMCOUNT, 0, 0);
+    bool same = count == (LRESULT)(g_offscreenTabs.size() + 1);
+    if (same) {
+        for (size_t i = 0; i < g_offscreenTabs.size(); ++i) {
+            TCITEMA item;
+            memset(&item, 0, sizeof(item));
+            item.mask = TCIF_PARAM;
+            if (SendMessageA(tab, TCM_GETITEMA, (WPARAM)(i + 1),
+                             (LPARAM)&item) == 0 ||
+                item.lParam != (LPARAM)g_offscreenTabs[i].id) {
+                same = false;
+                break;
+            }
+        }
+    }
+    if (!same) {
+        // 记住当前选中身份，重插后恢复（0x180040387-0x180040424）。
+        LRESULT cursel = SendMessageA(tab, TCM_GETCURSEL, 0, 0);
+        LONG_PTR wantedId = 0;
+        if (cursel > 0) {
+            TCITEMA item;
+            memset(&item, 0, sizeof(item));
+            item.mask = TCIF_PARAM;
+            if (cursel < count &&
+                SendMessageA(tab, TCM_GETITEMA, (WPARAM)cursel,
+                             (LPARAM)&item) != 0) {
+                wantedId = item.lParam;
+            }
+        }
+        while (SendMessageA(tab, TCM_GETITEMCOUNT, 0, 0) > 1) {
+            SendMessageA(tab, TCM_DELETEITEM, 1, 0);
+        }
+        LRESULT restore = 0;
+        for (size_t i = 0; i < g_offscreenTabs.size(); ++i) {
+            const SasResource& res = g_offscreenTabs[i].sas->resources[
+                g_offscreenTabs[i].resIndex];
+            TCITEMA item;
+            memset(&item, 0, sizeof(item));
+            item.mask = TCIF_TEXT | TCIF_PARAM;
+            item.pszText = const_cast<LPSTR>(res.name.c_str());
+            item.lParam = (LPARAM)g_offscreenTabs[i].id;
+            SendMessageA(tab, TCM_INSERTITEMA, (WPARAM)(i + 1), (LPARAM)&item);
+            if ((LONG_PTR)g_offscreenTabs[i].id == wantedId) {
+                restore = (LRESULT)(i + 1);
+            }
+        }
+        SendMessageA(tab, TCM_SETCURSEL, restore, 0);
+    }
+    // id / 快照表不随标签页消失而清理（原版的包装对象长存于 manager 的 id
+    // 树）：offscreen 暂时离开 pass 计划再回来（同一 SasEffect*，引擎缓存不
+    // 变）时 id 与“注解原值”快照仍可复用；效果重载产生新的 SasEffect*，
+    // 旧键自然闲置（量级：每 offscreen 一条，可忽略）。
+    DlgRefreshCaption();
+}
+
+// per-frame 轮询签名：offscreen 关联变化（计划重建 / 效果重载）时触发标签页
+// 与行文本重建（原版由 sub_18002BAA0 尾部的 planDirty 分支触发）。
+size_t DlgOffscreenSignature()
+{
+    MmeContext* ctx = MmeGetContext();
+    if (ctx == nullptr) {
+        return 0;
+    }
+    size_t hash = ctx->renderPassList.size() * 0x9E3779B97F4A7C15ULL;
+    for (size_t i = 0; i < ctx->renderPassList.size(); ++i) {
+        // [2026-09-15 per-resource queue rework] 队列项即 offscreen 关联：
+        // 哈希 (载体, 资源) 对。
+        const MmeRenderPassItem& item = ctx->renderPassList[i];
+        hash = hash * 0x9E3779B97F4A7C15ULL ^
+               (size_t)item.carrier ^ ((size_t)item.offscreen << 8);
+    }
+    return hash;
+}
+
 void DlgInsertColumn(HWND list, int index, const char* title, int width)
 {
     LVCOLUMNA column;
@@ -232,31 +659,37 @@ void DlgSetRowCheck(HWND list, int index, int stateImage)
 
 // [FUN_180041620] collect the selected rows as (object, subset) pairs.
 // filters: onlyNormalObject (param_4) / onlyWholeObjectRows (param_5).
-// The "(default)" row (row 0) collects as {null, -1} only while the tab
-// control's item rect gate (FUN_180041620's *param_2) is zero.
+// The "(default)" row (row 0) collects as {null, -1} when the tab gate (the
+// selected tab item's lParam; 0 = Main) is zero AND onlyWholeObjectRows is
+// false - param_4's render-class filter NEVER applies to row 0 in the
+// original (it only guards the object-row path at LABEL_8).
 struct SelectedRef {
     ModelData* model;   // null = the (default) row
     int subset;
 };
 
-LONG DlgTabRectGate()
+// [FUN_180041620 @0x180041670-0x1800416bc] the collection gate: the CURRENT
+// SELECTED tab item's lParam, read via TCM_GETCURSEL + TCM_GETITEM with
+// TCIF_PARAM. The original never queries TCM_GETITEMRECT here (no 0x130A
+// anywhere in the message flow). WM_INITDIALOG inserts the sole fixed "Main"
+// item with lParam 0, so Main leaves the gate 0; an object tab (lParam = the
+// offscreen object pointer, inserted by FUN_18003fff0) gates the "(default)"
+// row out of every collection. Returns 0 on any failure, matching the
+// original's zeroed-then-conditionally-filled TCITEM out value.
+LONG_PTR DlgTabSelParamGate()
 {
-    // [FUN_180041620] *param_2 = the TCM_GETITEMRECT result field: zero only
-    // when the retrieval fails, in which case row 0 joins the collections.
     HWND tab = GetDlgItem(g_dlgWindow, kDlgTab);
     if (tab == nullptr) {
         return 0;
     }
-    RECT rc;
-    rc.left = 8;
-    rc.top = 0;
-    rc.right = 0;
-    rc.bottom = 0;
     LRESULT cursel = SendMessageA(tab, TCM_GETCURSEL, 0, 0);
-    if (SendMessageA(tab, TCM_GETITEMRECT, (WPARAM)cursel, (LPARAM)&rc) == 0) {
+    TCITEMA item;
+    memset(&item, 0, sizeof(item));
+    item.mask = TCIF_PARAM;
+    if (SendMessageA(tab, TCM_GETITEMA, (WPARAM)cursel, (LPARAM)&item) == 0) {
         return 0;
     }
-    return rc.bottom;
+    return item.lParam;
 }
 
 bool DlgCollectSelected(bool onlyNormalObject, bool onlyWholeObjectRows,
@@ -267,14 +700,14 @@ bool DlgCollectSelected(bool onlyNormalObject, bool onlyWholeObjectRows,
     if (list == nullptr) {
         return false;
     }
-    bool defaultRowLive = DlgTabRectGate() == 0;
+    bool defaultRowLive = DlgTabSelParamGate() == 0;
     int index = (int)SendMessageA(list, LVM_GETNEXTITEM, (WPARAM)-1,
                                   MAKELPARAM(LVNI_SELECTED, 0));
     while (index != -1) {
         if (index >= 0 && index < (int)g_rows.size()) {
             const RowRef& row = g_rows[index];
             if (row.model == nullptr) {
-                if (defaultRowLive && !onlyNormalObject) {
+                if (defaultRowLive && !onlyWholeObjectRows) {
                     SelectedRef ref;
                     ref.model = nullptr;
                     ref.subset = -1;
@@ -304,6 +737,8 @@ bool DlgHasSelection(bool onlyNormalObject)
 
 // [FUN_180043fd0] the FIRST selected row's effect path ("" when none / the
 // "(default)" row / an empty mapping).
+// [sub_18003FFF0 0x18004149f] offscreen 页取行值：none/hide/main_default 与
+// "(none)" 不算路径，其余（绝对路径）作为 Disassemble 的输入。
 std::string DlgSelectedEffectPath()
 {
     HWND list = DlgList();
@@ -319,11 +754,25 @@ std::string DlgSelectedEffectPath()
     if (model == nullptr) {
         return std::string();
     }
+    OffscreenTab* off = DlgCurrentOffscreen();
+    if (off != nullptr) {
+        const char* value = DlgOffscreenRowText(off, model);
+        if (value == nullptr || value[0] == '\0' ||
+            _stricmp(value, "(none)") == 0 ||
+            _stricmp(value, "none") == 0 ||
+            _stricmp(value, "hide") == 0 ||
+            _stricmp(value, "main_default") == 0) {
+            return std::string();
+        }
+        return std::string(value);
+    }
     return model->effectFile();
 }
 
 // [FUN_1800429a0] the Subset-Extract checkmark: every selected row's object
-// is in the expanded set (an empty selection or the lone default row = off).
+// is in the expanded set. A null (default-row) entry is SKIPPED by the
+// original's loop - only a collection holding the lone "(default)" row
+// (single entry, null object) or an unexpanded object leaves it off.
 bool DlgExpandedProbe()
 {
     std::vector<SelectedRef> refs;
@@ -331,9 +780,12 @@ bool DlgExpandedProbe()
     if (refs.empty()) {
         return false;
     }
+    if (refs.size() == 1 && refs[0].model == nullptr) {
+        return false;
+    }
     for (size_t i = 0; i < refs.size(); ++i) {
         if (refs[i].model == nullptr) {
-            return false;
+            continue;
         }
         if (g_expanded.find(refs[i].model) == g_expanded.end()) {
             return false;
@@ -374,8 +826,12 @@ void DlgAfterEdit()
 // [FUN_180042610] the checkbox / hide-show applier: write the shown state of
 // every selected object (or the single `singleItem` row when >= 0). The
 // repaint is the 1x1 main-window rect of the original tail.
+// [sub_180042610 0x1800428a9-0x1800428f1 offscreen 分支] offscreen 页写的是
+// (targetId, obj, subset) 分配表上的显示覆盖标志；移植端落在行值上
+// （"hide" / 快照还原），对象主可见性不受影响。
 void DlgApplyShown(bool shown, int singleItem)
 {
+    OffscreenTab* off = DlgCurrentOffscreen();
     std::vector<SelectedRef> refs;
     DlgCollectSelected(false, false, refs);
     if (singleItem >= 0 && singleItem < (int)g_rows.size() &&
@@ -395,9 +851,14 @@ void DlgApplyShown(bool shown, int singleItem)
         }
     }
     for (size_t i = 0; i < refs.size(); ++i) {
-        if (refs[i].model != nullptr) {
-            refs[i].model->setShown(shown);
+        if (refs[i].model == nullptr) {
+            continue;
         }
+        if (off != nullptr) {
+            DlgSetOffscreenHidden(off, refs[i].model, !shown);
+            continue;
+        }
+        refs[i].model->setShown(shown);
     }
     if (!refs.empty() && g_mainWindow != nullptr) {
         RECT rect;
@@ -409,22 +870,53 @@ void DlgApplyShown(bool shown, int singleItem)
     }
 }
 
-// [FUN_180041b00] the effect-text writer: object rows write their assignment
-// (the default row only joins through the tab-gate, as in the original).
+// [FUN_180041b00] the effect-text writer: object rows write their assignment;
+// the "(default)" row writes the EMM default effect - the original only
+// reaches that branch while the tab gate is ZERO (0x180041b8c: gate != 0
+// skips the entry outright; collection above already enforces this), and
+// selecting Main + the (default) row then sets the default through the same
+// Set Effect File flow.
+// [sub_1800418b0/sub_180032FB0 0x1800428c3 offscreen 分支] offscreen 页的
+// 改派写 (targetId, obj, subset) 分配表（与 MME_EmmApply/MME_EmdApply 同表）；
+// 移植端直接改写该 offscreen 的 DefaultEffect 注解行（运行期解析的数据源，
+// 改派即时生效）：有路径 -> 更新/追加行；清除 -> 移除全部匹配行（显示回落
+// "(none)"）。子集行在注解行模型上无落点（原版经独立表支持 [n] 行），跳过。
 void DlgWriteEffectForSelection(const char* path)
 {
+    OffscreenTab* off = DlgCurrentOffscreen();
     std::vector<SelectedRef> refs;
-    DlgCollectSelected(true, false, refs);
+    DlgCollectSelected(false, false, refs);
+    bool touchedDefault = false;
+    bool touchedOffscreen = false;
     for (size_t i = 0; i < refs.size(); ++i) {
         ModelData* model = refs[i].model;
+        if (off != nullptr) {
+            if (model == nullptr) {
+                continue;   // offscreen 页 "(default)" 行已被收集门挡住，保险再挡一次
+            }
+            if (refs[i].subset >= 0) {
+                continue;   // 子集行无注解行落点
+            }
+            if (path != nullptr && path[0] != '\0') {
+                DlgUpsertOffscreenRow(off, model, path);
+            } else {
+                DlgRemoveOffscreenRows(off, model);
+            }
+            touchedOffscreen = true;
+            continue;
+        }
         if (model == nullptr) {
+            MmeEmmSetDefaultEffect(path != nullptr ? path : "");
+            touchedDefault = true;
             continue;
         }
         MmeAssignEffect(model->objectId(), refs[i].subset, path);
-        model->setEffectFile(path);
         if (path[0] != 0 && !model->shown()) {
             model->setShown(true);
         }
+    }
+    if (touchedDefault || touchedOffscreen) {
+        DlgRefreshTexts();
     }
     if (!refs.empty() && g_mainWindow != nullptr) {
         RECT rect;
@@ -455,9 +947,18 @@ void DlgAddDefaultRow(HWND list)
         return;
     }
     g_rows.push_back(row);
-    const std::string& defaultEffect = MmeEmmDefaultEffect();
-    DlgSetRowText(list, index, kColEffect,
-                  defaultEffect.empty() ? "(none)" : defaultEffect.c_str());
+    // [sub_18003FFF0 0x180040d5d-0x18004101c] "(default)" 行效果列：Main 页为
+    // 主默认效果（manager+8 字符串，此处维持既有 "(none)" 简化）；offscreen 页
+    // 为注解行重组文本 "key=value; "... / "*=none;"。
+    OffscreenTab* off = DlgCurrentOffscreen();
+    if (off != nullptr) {
+        std::string text = DlgOffscreenDefaultRowText(off);
+        DlgSetRowText(list, index, kColEffect, text.c_str());
+    } else {
+        const std::string& defaultEffect = MmeEmmDefaultEffect();
+        DlgSetRowText(list, index, kColEffect,
+                      defaultEffect.empty() ? "(none)" : defaultEffect.c_str());
+    }
     // FUN_18003fff0 sets the state image of row 0 to 0 - no checkbox.
     DlgSetRowCheck(list, index, 0);
 }
@@ -487,13 +988,7 @@ void DlgAddObjectRow(HWND list, ModelData* model)
     row.model = model;
     row.subset = -1;
 
-    const char* filename = model->filename();
-    const char* base = filename;
-    for (const char* q = filename; q != nullptr && *q != '\0'; ++q) {
-        if (*q == '\\' || *q == '/') {
-            base = q + 1;
-        }
-    }
+    const char* base = DlgBaseName(model->filename());
 
     LVITEMA item;
     memset(&item, 0, sizeof(item));
@@ -506,10 +1001,15 @@ void DlgAddObjectRow(HWND list, ModelData* model)
         return;
     }
     g_rows.push_back(row);
-    DlgSetRowText(list, index, kColEffect, EffectTextForModel(model));
+    // [sub_18003FFF0] 每个标签页的对象行集相同（sub_18002E5F0 不按目标过滤），
+    // 仅效果列/复选框随目标变化（sub_18002DB80 按 targetId 查询）。
+    OffscreenTab* off = DlgCurrentOffscreen();
+    DlgSetRowText(list, index, kColEffect,
+                  off != nullptr ? DlgOffscreenRowText(off, model)
+                                 : EffectTextForModel(model));
     // LVS_EX_CHECKBOXES re-initializes the state image at insert time; apply
     // the checked state after the insert (checked = shown).
-    DlgSetRowCheck(list, index, model->shown() ? 2 : 1);
+    DlgSetRowCheck(list, index, DlgRowCheckState(model));
 
     // The expanded-object rows (DAT_1800d9cc8): per-material entries follow.
     if (g_expanded.find(model) != g_expanded.end()) {
@@ -531,8 +1031,11 @@ void DlgAddObjectRow(HWND list, ModelData* model)
                 break;
             }
             g_rows.push_back(sub);
-            DlgSetRowText(list, subIndex, kColEffect, EffectTextForModel(model));
-            DlgSetRowCheck(list, subIndex, model->shown() ? 2 : 1);
+            // [sub_18002DB80 0x18002dbc1 回退] 子集行显示对象级值。
+            DlgSetRowText(list, subIndex, kColEffect,
+                          off != nullptr ? DlgOffscreenRowText(off, model)
+                                         : EffectTextForModel(model));
+            DlgSetRowCheck(list, subIndex, DlgRowCheckState(model));
         }
     }
 }
@@ -568,6 +1071,8 @@ void DlgRebuildList()
 // [FUN_18003fff0-lite] refresh the visible Effect File texts and the
 // checkbox images from the working state. Guarded by DAT_1800d99db so the
 // state writes cannot re-enter the checkbox handler (the hide/show flicker).
+// [sub_18003FFF0 0x180040bbc] 行集不变时（换页/改派后）仅按当前目标重写每行
+// 文本与状态图 —— 原版对每个既有条目重发 LVM_SETITEMTEXT(0x102E)。
 void DlgRefreshTexts()
 {
     HWND list = DlgList();
@@ -575,17 +1080,25 @@ void DlgRefreshTexts()
         return;
     }
     g_rebuilding = true;
+    OffscreenTab* off = DlgCurrentOffscreen();
     for (size_t i = 0; i < g_rows.size(); ++i) {
         ModelData* model = g_rows[i].model;
         if (model == nullptr) {
-            const std::string& defaultEffect = MmeEmmDefaultEffect();
-            DlgSetRowText(list, (int)i, kColEffect,
-                          defaultEffect.empty() ? "(none)" : defaultEffect.c_str());
+            if (off != nullptr) {
+                std::string text = DlgOffscreenDefaultRowText(off);
+                DlgSetRowText(list, (int)i, kColEffect, text.c_str());
+            } else {
+                const std::string& defaultEffect = MmeEmmDefaultEffect();
+                DlgSetRowText(list, (int)i, kColEffect,
+                              defaultEffect.empty() ? "(none)" : defaultEffect.c_str());
+            }
             DlgSetRowCheck(list, (int)i, 0);
             continue;
         }
-        DlgSetRowText(list, (int)i, kColEffect, EffectTextForModel(model));
-        DlgSetRowCheck(list, (int)i, model->shown() ? 2 : 1);
+        DlgSetRowText(list, (int)i, kColEffect,
+                      off != nullptr ? DlgOffscreenRowText(off, model)
+                                     : EffectTextForModel(model));
+        DlgSetRowCheck(list, (int)i, DlgRowCheckState(model));
     }
     g_rebuilding = false;
 }
@@ -600,6 +1113,10 @@ void DlgSyncSelectionState()
     if (g_dlgWindow == nullptr) {
         return;
     }
+    // [FUN_180041aa0(1) @0x180044707] the "(default)" row counts toward the
+    // same probe as the normal-object rows (FUN_180041620's param_4 filter
+    // never applies to row 0), so selecting it while Main is selected
+    // enables 40006/40007/40012/40008 + buttons 1007/1008 together.
     bool hasObject = DlgHasSelection(true);
     bool hasAny = DlgHasSelection(false);
     g_selectedObject = hasObject;
@@ -640,7 +1157,40 @@ void DlgSyncSelectionState()
 
 // --- file dialogs -----------------------------------------------------------
 
-bool DlgOpenFileDialog(const char* filter, const char* title, char* out, DWORD outLen)
+// [FUN_180042F60 / FUN_1800431E0 seed block] both EMM handlers one-shot seed
+// D7500 while its size field (D7510) is still zero: D7500 = the exe-dir
+// global (DAT_1800d7550) + the literal "UserFile" - a plain std::string
+// concat (sub_180005760 = append + append; there is no ini read anywhere in
+// the block, and MMEffect.dll imports no profile API). The first dialog's
+// InitialDir is therefore "<exedir>\UserFile", usually nonexistent, so the
+// common dialog falls back to the current directory.
+static const char* DlgEmmInitialDir()
+{
+    if (g_lastEmmDir.empty())
+        g_lastEmmDir = g_exeDir + "UserFile";
+    return g_lastEmmDir.c_str();
+}
+
+// [FUN_180042F60 / FUN_1800431E0 success tail] sub_180029CD0(assign the full
+// picked path) + sub_180005C30(erase at ofn.nFileOffset): the picked path
+// truncated to its directory, keeping the trailing backslash (the same
+// drive+dir result the EMD handlers reach via _splitpath_s/_makepath_s).
+static void DlgRememberPickDir(const char* path, std::string& dir)
+{
+    char drive[3] = { 0 };
+    char dirBuf[0x100] = { 0 };
+    if (_splitpath_s(path, drive, sizeof(drive), dirBuf, sizeof(dirBuf),
+                     nullptr, 0, nullptr, 0) == 0) {
+        char full[0x104];
+        if (_makepath_s(full, sizeof(full), drive, dirBuf,
+                        nullptr, nullptr) == 0) {
+            dir = full;
+        }
+    }
+}
+
+bool DlgOpenFileDialog(const char* filter, const char* title, char* out, DWORD outLen,
+                       const char* initialDir = nullptr)
 {
     OPENFILENAMEA ofn;
     memset(&ofn, 0, sizeof(ofn));
@@ -651,12 +1201,18 @@ bool DlgOpenFileDialog(const char* filter, const char* title, char* out, DWORD o
     ofn.lpstrFile = out;
     ofn.nMaxFile = outLen;
     ofn.lpstrTitle = title;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    ofn.lpstrInitialDir = initialDir;
+    // [FUN_180041D10 @0x18004212F / FUN_180042F60 @0x18004310C /
+    // FUN_180043420 @0x18004382D] Flags = 0x1004 with NO OFN_NOCHANGEDIR:
+    // the original lets the open dialog move the process CWD to the picked
+    // folder, and that side effect feeds every later relative-path
+    // resolution (MmeEmmSave's _fullpath absolutization included).
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
     return GetOpenFileNameA(&ofn) != FALSE;
 }
 
 bool DlgSaveFileDialog(const char* filter, const char* title, const char* defExt,
-                       char* out, DWORD outLen)
+                       char* out, DWORD outLen, const char* initialDir = nullptr)
 {
     OPENFILENAMEA ofn;
     memset(&ofn, 0, sizeof(ofn));
@@ -668,24 +1224,59 @@ bool DlgSaveFileDialog(const char* filter, const char* title, const char* defExt
     ofn.nMaxFile = outLen;
     ofn.lpstrTitle = title;
     ofn.lpstrDefExt = defExt;
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    ofn.lpstrInitialDir = initialDir;
+    // [FUN_1800431E0 @0x180043380 / FUN_180043B00 @0x180043F1D] Flags =
+    // 0x80A = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST:
+    // the original save dialogs DO carry OFN_NOCHANGEDIR (they never touch
+    // the CWD) and have no OFN_HIDEREADONLY.
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
     return GetSaveFileNameA(&ofn) != FALSE;
 }
 
 // [FUN_18001e4e0 + FUN_180041d10] load the effect through the engine (the
-// SkipValidation gate lives inside the engine); a failure reports and the
-// assignment is not written.
+// SkipValidation gate lives inside the engine); the failure path reports and
+// the assignment is not written. A load that SUCCEEDS but whose
+// ScriptOrder is not "standard" (the loader's +0x34 kind: 0 = object-
+// assignable, 1 = preprocess, 2 = postprocess) is REJECTED with the
+// "Pre/Post Effect cannot be specified: <path>" MessageBox (0x180041d10
+// @0x180042330-0x180042415): MessageBoxA(dlg, msg, "MikuMikuEffect",
+// MB_ICONERROR); the label is "Post " for kind 2 and "Pre" otherwise
+// (0x1800b4f90/0x1800b4f98; Japanese "ポスト"/"プリ" 0x1800b4f60/f68 and
+// "エフェクトは指定できません: " 0x1800b4f70).
 bool DlgValidateEffectPath(const char* path)
 {
     MmeContext* ctx = MmeGetContext();
     IDirect3DDevice9* device = (ctx != nullptr) ? ctx->device : nullptr;
     std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, path);
     if (loaded != nullptr && loaded->effect != nullptr) {
+        int scriptOrder = SasGetScriptOrder(loaded->sas);
+        if (scriptOrder != kSasOrderStandard) {
+            std::string message;
+            if (MmeIsEnglishUiMode()) {
+                message = (scriptOrder == kSasOrderPostprocess) ? "Post " : "Pre";
+                message += "Effect cannot be specified: ";
+            } else {
+                // Shift-JIS: "ポスト" / "プリ" + "エフェクトは指定できません: "
+                message = (scriptOrder == kSasOrderPostprocess)
+                              ? "\x83\x7C\x83\x58\x83\x67"
+                              : "\x83\x76\x83\x8A";
+                message += "\x83\x47\x83\x74\x83\x46\x83\x4E\x83\x67\x82\xCD"
+                           "\x8E\x77\x92\xE8\x82\xC5\x82\xAB\x82\xDC\x82\xB9"
+                           "\x82\xF1\x3A\x20";
+            }
+            message += path;
+            MessageBoxA(g_dlgWindow, message.c_str(), "MikuMikuEffect",
+                        MB_ICONERROR);
+            return false;
+        }
         return true;
     }
     const std::string& errors =
         (loaded != nullptr) ? loaded->errorText : std::string();
-    std::string message = "Failed to load effect file:\n";
+    // [FUN_180041d10 validate tail / 0x18000baac] prefix + path are directly
+    // concatenated (no newline after "Failed to load effect file:"), then
+    // "\n\n" + the error text.
+    std::string message = "Failed to load effect file:";
     message += path;
     message += "\n\n";
     message += errors;
@@ -698,17 +1289,18 @@ bool DlgValidateEffectPath(const char* path)
 void DlgSetEffectFlow()
 {
     std::vector<SelectedRef> refs;
-    DlgCollectSelected(true, false, refs);
+    DlgCollectSelected(false, false, refs);
     if (refs.empty()) {
         return;   // the original's empty-collection no-op
     }
 
     // The initial path: the first selected object's current assignment (the
     // original seeds the dialog with the row's text), else the last dir.
+    // [sub_18003FFF0 0x18004149f] offscreen 页取首个选中行的行值。
     char path[MAX_PATH];
     path[0] = '\0';
     if (!refs.empty() && refs[0].model != nullptr) {
-        const std::string& current = refs[0].model->effectFile();
+        const std::string current = DlgSelectedEffectPath();
         if (!current.empty()) {
             strncpy_s(path, current.c_str(), _TRUNCATE);
         }
@@ -755,6 +1347,12 @@ void DlgSetEffectFlow()
 void DlgAssignEffectFileDirect(const char* path)
 {
     if (!DlgValidateEffectPath(path)) {
+        // [FUN_180041d10 tail] the failure/rejection outcome still enables
+        // the Apply button (EnableWindow(1005, 1) runs for every result).
+        HWND apply = GetDlgItem(g_dlgWindow, kBtnRefresh);
+        if (apply != nullptr) {
+            EnableWindow(apply, TRUE);
+        }
         return;
     }
     DlgWriteEffectForSelection(path);
@@ -770,6 +1368,8 @@ void DlgRemoveEffectFlow()
 
 // [40013 Hide/Show / FUN_180042610 via 0x9c4d] uniform target across the
 // selection: any shown object -> hide all; otherwise show all.
+// [sub_180042610] offscreen 页的“显示”判据为行值非 "hide"（含无行对象，
+// 对应分配表默认可见）。
 void DlgToggleHideShowFlow()
 {
     std::vector<SelectedRef> refs;
@@ -777,9 +1377,18 @@ void DlgToggleHideShowFlow()
     if (refs.empty()) {
         return;
     }
+    OffscreenTab* off = DlgCurrentOffscreen();
     bool anyShown = false;
     for (size_t i = 0; i < refs.size(); ++i) {
-        if (refs[i].model != nullptr && refs[i].model->shown()) {
+        if (refs[i].model == nullptr) {
+            continue;
+        }
+        if (off != nullptr) {
+            if (DlgRowCheckState(refs[i].model) == 2) {
+                anyShown = true;
+                break;
+            }
+        } else if (refs[i].model->shown()) {
             anyShown = true;
             break;
         }
@@ -825,13 +1434,20 @@ void DlgSubsetExtractFlow()
 }
 
 // [40008 Reset with default / FUN_1800424a0]
+// [sub_1800424a0 0x18004254f] offscreen 页经 sub_180033570 擦除该
+// (targetId, obj) 的全部表项（含全部子集）；移植端移除全部匹配行。
 void DlgResetWithDefaultFlow()
 {
     std::vector<SelectedRef> refs;
     DlgCollectSelected(true, false, refs);
+    OffscreenTab* off = DlgCurrentOffscreen();
     for (size_t i = 0; i < refs.size(); ++i) {
         ModelData* model = refs[i].model;
         if (model == nullptr) {
+            continue;
+        }
+        if (off != nullptr) {
+            DlgRemoveOffscreenRows(off, model);
             continue;
         }
         MmeAssignEffect(model->objectId(), -1, "");
@@ -925,7 +1541,7 @@ void DlgDisassembleFlow()
     DisassembleDialogParams params;
     params.text = text;
     params.title = "Disassemble Effect";
-    DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(105), g_dlgWindow,
+    DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_MME_LOG), g_dlgWindow,
                     MmeDisassembleDlgProc, (LPARAM)&params);
 }
 
@@ -1102,10 +1718,19 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         }
         HWND tab = GetDlgItem(dlg, kDlgTab);
         if (tab != nullptr) {
+            // [FUN_180044080 @0x180044266-0x1800442ac] the sole fixed item,
+            // mask TCIF_TEXT only, lParam 0 (the TCITEM is zeroed first).
+            // The stored lParam 0 IS the collection gate's Main value - it is
+            // what DlgTabSelParamGate reads back via TCM_GETITEM(TCIF_PARAM).
+            // [sub_18003FFF0 0x180040350-0x180040424] Object tabs (mask 9 =
+            // TCIF_TEXT|TCIF_PARAM, lParam = the stable offscreen id, text =
+            // the resource name) are appended by the rebuild below; the port
+            // now carries the live offscreen set, so they appear here.
             TCITEMA tabItem;
             memset(&tabItem, 0, sizeof(tabItem));
             tabItem.mask = TCIF_TEXT;
             tabItem.pszText = const_cast<LPSTR>("Main");
+            tabItem.lParam = 0;
             SendMessageA(tab, TCM_INSERTITEMA, 0, (LPARAM)&tabItem);
         }
         HWND list = DlgList();
@@ -1116,12 +1741,12 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         }
         DlgInsertColumn(list, kColObject, "Object", 150);
         DlgInsertColumn(list, kColEffect, "Effect File", 345);
-        HMENU menu = LoadMenuA(g_hInst, MAKEINTRESOURCEA(japanese ? 0x6d : 0x6e));
+        HMENU menu = LoadMenuA(g_hInst, MAKEINTRESOURCEA(japanese ? IDR_MME_MAPPING_MENU_JP : IDR_MME_MAPPING_MENU_EN));
         if (menu != nullptr) {
             CheckMenuItem(menu, 40028, g_skipValidation ? MF_CHECKED : MF_UNCHECKED);
             SetMenu(dlg, menu);
         }
-        HICON icon = LoadIconA(g_hInst, MAKEINTRESOURCEA(0x68));
+        HICON icon = LoadIconA(g_hInst, MAKEINTRESOURCEA(IDI_MME_APP));
         if (icon != nullptr) {
             SendMessageA(dlg, WM_SETICON, 0, (LPARAM)icon);
             SendMessageA(dlg, WM_SETICON, 1, (LPARAM)icon);
@@ -1132,7 +1757,10 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         g_expanded.clear();
         g_colFraction[0] = 0.0;
         g_colFraction[1] = 0.0;
-        MmeLogWrite("Open the effect mapping dialog\n", 0);
+        // [sub_18003FFF0 @0x180044625 后的打开路径] 打开时按当前 offscreen 集
+        // 补建标签页并刷新 1004 说明文字。
+        g_offscreenSignature = DlgOffscreenSignature();
+        DlgSyncTabs();
         // The DAT_1800d7788 anchor table is built from the template layout.
         DlgBuildAnchors(dlg);
         if (g_hasSavedWindowRect &&
@@ -1175,10 +1803,12 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         NMHDR* header = reinterpret_cast<NMHDR*>(lParam);
         if (header != nullptr && header->idFrom == kDlgTab &&
             header->code == TCN_SELCHANGE) {
-            // [-551 from the 0x3ea tab control] DAT_1800d9f44 = cursel + the
-            // selection-state refresh (the original dispatches WM_NOTIFY by
-            // notification code, so the tab's TCN_SELCHANGE lands here even
-            // though idFrom is the tab).
+            // [-551 from the 0x3ea tab control, 0x180044b70-0x180044b99]
+            // DAT_1800d9f44 = TCM_GETCURSEL 结果 + sub_18003FFF0(dlg,0)：换页
+            // 时行集不变（sub_18002E5F0 不按目标过滤），但对每个既有条目重发
+            // LVM_SETITEMTEXT 刷新效果列/复选框，并重设 1004 说明文字。
+            DlgRefreshCaption();
+            DlgRefreshTexts();
             DlgSyncSelectionState();
             return TRUE;
         }
@@ -1195,6 +1825,8 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
                 if ((changed & LVIS_STATEIMAGEMASK) != 0) {
                     // The checkbox toggle runs the shown write
                     // (FUN_180042610) and latches the click latch.
+                    // [sub_180042610] offscreen 页写行值（hide/快照还原）而非
+                    // 对象主可见性 —— DlgApplyShown 内部分流。
                     unsigned int newState = info->uNewState & LVIS_STATEIMAGEMASK;
                     if (newState != 0 && info->iItem >= 0 &&
                         info->iItem < (int)g_rows.size() &&
@@ -1250,7 +1882,7 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
                     }
                     if (item >= 0 && item < (int)g_rows.size() &&
                         g_rows[item].model != nullptr &&
-                        g_rows[item].model->effectFile().empty()) {
+                        DlgRowEffectIsNone(g_rows[item].model)) {
                         SetWindowLongPtrA(dlg, DWLP_MSGRESULT,
                                           CDRF_NOTIFYITEMDRAW);
                         return TRUE;
@@ -1264,7 +1896,7 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
                     if (draw->iSubItem == kColEffect && item > 0 &&
                         item < (int)g_rows.size() &&
                         g_rows[item].model != nullptr &&
-                        g_rows[item].model->effectFile().empty()) {
+                        DlgRowEffectIsNone(g_rows[item].model)) {
                         // "(none)" rows gray the Effect File text.
                         draw->clrText = GetSysColor(COLOR_GRAYTEXT);
                         SetWindowLongPtrA(dlg, DWLP_MSGRESULT, CDRF_NEWFONT);
@@ -1303,8 +1935,12 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
             return TRUE;
         case 40009: {   // [FUN_180042f60]
             char path[MAX_PATH];
-            if (DlgOpenFileDialog("EMM Files (*.emm)\0*.emm\0All Files (*.*)\0*.*\0",
-                                  "Open", path, MAX_PATH)) {
+            // English filter blob 0x1800b4ff8 ("emm files(*.emm)"); no
+            // lpstrTitle in the original OFN; InitialDir = the D7500 global
+            // (one-shot "<exedir>\UserFile" seed, then the last pick's dir).
+            if (DlgOpenFileDialog("emm files(*.emm)\0*.emm\0All files(*.*)\0*.*\0",
+                                  nullptr, path, MAX_PATH, DlgEmmInitialDir())) {
+                DlgRememberPickDir(path, g_lastEmmDir);
                 MmeEmmLoad(path);
                 DlgRebuildList();
                 DlgAfterEdit();
@@ -1313,27 +1949,84 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         }
         case 40010: {   // [FUN_1800431e0]
             char path[MAX_PATH];
-            if (DlgSaveFileDialog("EMM Files (*.emm)\0*.emm\0All Files (*.*)\0*.*\0",
-                                  "Save", "emm", path, MAX_PATH)) {
+            // Same filter blob / no title / shared D7500 InitialDir as the
+            // open side; lpstrDefExt "emm" (0x1800b5024), Flags 0x80A.
+            if (DlgSaveFileDialog("emm files(*.emm)\0*.emm\0All files(*.*)\0*.*\0",
+                                  nullptr, "emm", path, MAX_PATH,
+                                  DlgEmmInitialDir())) {
+                DlgRememberPickDir(path, g_lastEmmDir);
                 MmeEmmSave(path);
             }
             return TRUE;
         }
-        case 40016: {   // [FUN_180043420]
+        case 40016: {   // [FUN_180043420] Open by Model (.emd)
+            // Gate: at least one selected whole-object normal row (the
+            // original collects them up front and silently no-ops on none).
+            std::vector<SelectedRef> wholeRows;
+            DlgCollectSelected(true, true, wholeRows);
+            if (wholeRows.empty()) {
+                return TRUE;
+            }
+            // No lpstrTitle in the original; filter "emd files(*.emd)";
+            // initial dir = the shared "UserFile" dir (DAT_1800d7528).
             char path[MAX_PATH];
-            if (DlgOpenFileDialog("EMD Files (*.emd)\0*.emd\0All Files (*.*)\0*.*\0",
-                                  "Open by Model", path, MAX_PATH)) {
-                MmeEmmLoad(path);
+            if (DlgOpenFileDialog(
+                    "emd files(*.emd)\0*.emd\0All files(*.*)\0*.*\0",
+                    nullptr, path, MAX_PATH, g_lastUserFileDir.c_str())) {
+                {
+                    char drive[3] = { 0 };
+                    char dir[0x100] = { 0 };
+                    if (_splitpath_s(path, drive, sizeof(drive), dir, sizeof(dir),
+                                     nullptr, 0, nullptr, 0) == 0) {
+                        char full[0x104];
+                        if (_makepath_s(full, sizeof(full), drive, dir,
+                                        nullptr, nullptr) == 0) {
+                            g_lastUserFileDir = full;
+                        }
+                    }
+                }
+                // Apply the per-model mapping to every selected whole-object
+                // row ([FUN_180031980] receives the collected objects).
+                std::vector<ModelData*> models;
+                for (size_t i = 0; i < wholeRows.size(); ++i) {
+                    if (wholeRows[i].model != nullptr) {
+                        models.push_back(wholeRows[i].model);
+                    }
+                }
+                MmeEmdLoad(path, models);
+                // EnableWindow(1005) + the FUN_18003FFF0 rebuild + the 1x1
+                // repaint of the original tail.
                 DlgRebuildList();
                 DlgAfterEdit();
             }
             return TRUE;
         }
-        case 40017: {   // [FUN_180043b00]
+        case 40017: {   // [FUN_180043B00] Save by Model (.emd)
+            // Gate: EXACTLY one selected whole-object normal row.
+            std::vector<SelectedRef> wholeRows;
+            DlgCollectSelected(true, true, wholeRows);
+            if (wholeRows.size() != 1 || wholeRows[0].model == nullptr) {
+                return TRUE;
+            }
+            // lpstrDefExt is "emm" in the original (0x1800b5024 - kept
+            // bug-compatible); no lpstrTitle.
             char path[MAX_PATH];
-            if (DlgSaveFileDialog("EMD Files (*.emd)\0*.emd\0All Files (*.*)\0*.*\0",
-                                  "Save by Model", "emd", path, MAX_PATH)) {
-                MmeEmmSave(path);
+            if (DlgSaveFileDialog(
+                    "emd files(*.emd)\0*.emd\0All files(*.*)\0*.*\0",
+                    nullptr, "emm", path, MAX_PATH, g_lastUserFileDir.c_str())) {
+                {
+                    char drive[3] = { 0 };
+                    char dir[0x100] = { 0 };
+                    if (_splitpath_s(path, drive, sizeof(drive), dir, sizeof(dir),
+                                     nullptr, 0, nullptr, 0) == 0) {
+                        char full[0x104];
+                        if (_makepath_s(full, sizeof(full), drive, dir,
+                                        nullptr, nullptr) == 0) {
+                            g_lastUserFileDir = full;
+                        }
+                    }
+                }
+                MmeEmdSave(path, wholeRows[0].model);
             }
             return TRUE;
         }
@@ -1396,15 +2089,18 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
             DlgAfterEdit();
         } else if (_stricmp(ext, ".fx") == 0 || _stricmp(ext, ".fxm") == 0 ||
                    _stricmp(ext, ".fxsub") == 0) {
-            // [FUN_180041d10 with a resolved path] validate, then assign.
+            // [FUN_180041d10 with a resolved path] validate, then assign. The
+            // dropped file's extension must survive the rebuild - stripping it
+            // produced "dir\name" paths the loader could never open.
             char drive[3] = { 0 };
             char dir[0x100] = { 0 };
             char fname[0x100] = { 0 };
-            char resolved[0x104];
+            char fext[0x40] = { 0 };
+            char resolved[0x204];
             if (_splitpath_s(path, drive, sizeof(drive), dir, sizeof(dir),
-                             fname, sizeof(fname), nullptr, 0) == 0 &&
+                             fname, sizeof(fname), fext, sizeof(fext)) == 0 &&
                 _makepath_s(resolved, sizeof(resolved), drive, dir, fname,
-                            nullptr) == 0) {
+                            fext) == 0) {
                 DlgAssignEffectFileDirect(resolved);
             } else {
                 DlgAssignEffectFileDirect(path);
@@ -1426,6 +2122,9 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
             g_dlgWindow = nullptr;
         }
         g_rows.clear();
+        // offscreen 标签页集随窗口销毁；id/快照表保留（SasEffect 行上的改派
+        // 在重开对话框后仍然可见，快照继续支撑 unhide 还原）。
+        g_offscreenTabs.clear();
         return 0;
     }
     default:
@@ -1447,7 +2146,7 @@ void MmeDlgOpenAssignmentDialog()
         return;
     }
     HWND owner = GetMMDMainWindow();
-    g_dlgWindow = CreateDialogParamA(g_hInst, MAKEINTRESOURCEA(108), owner,
+    g_dlgWindow = CreateDialogParamA(g_hInst, MAKEINTRESOURCEA(IDD_MME_MAPPING), owner,
                                      MmeAssignmentDlgProc, 0);
     if (g_dlgWindow != nullptr) {
         ShowWindow(g_dlgWindow, SW_SHOW);
@@ -1483,6 +2182,10 @@ void MmeDlgCommitAssignment()
 // [per-frame FUN_18003fff0(dlg,0) trigger] pick up models registered while
 // the dialog is open (the Hatsune-model-missing-from-the-list case); called
 // from the frame tick. The rebuild keeps the expanded set.
+// [sub_18002BAA0 尾部 0x180045dxx 计划重建触发] 原版在每次 pass 计划重建且
+// planDirty（manager+0x90）置位时刷新对话框（标签页集在重建里重灌）；移植端
+// 以 offscreen 关联签名轮询替代 —— 计划重建/效果重载后签名变化即同步标签页
+// 与行文本。
 void MmeDlgRefreshIfModelCountChanged()
 {
     if (g_dlgWindow == nullptr) {
@@ -1493,6 +2196,12 @@ void MmeDlgRefreshIfModelCountChanged()
     if (count != g_lastModelCount) {
         g_lastModelCount = count;
         DlgRebuildList();
+    }
+    size_t signature = DlgOffscreenSignature();
+    if (signature != g_offscreenSignature) {
+        g_offscreenSignature = signature;
+        DlgSyncTabs();
+        DlgRefreshTexts();
     }
 }
 

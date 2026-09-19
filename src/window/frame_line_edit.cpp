@@ -36,6 +36,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <new>
 #include <cstdlib>
 #include <cstring>
 
@@ -81,11 +82,11 @@ void SnapshotPose(unsigned char* model) {
     auto& undo = CurrentUndo(model);
     auto*& slot = undo.bonePose;
     if (slot != nullptr) {
-        std::free(slot);
+        ::operator delete(slot);
         slot = nullptr;
     }
     const std::int32_t count = mdl::Mdl(model)->boneCount;
-    slot = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(std::malloc(
+    slot = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(::operator new(
         static_cast<std::size_t>(count) *
         sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
     std::memset(slot, 0, static_cast<std::size_t>(count) * sizeof(*slot));
@@ -108,10 +109,10 @@ void AllocUndoKeys(unsigned char* model, std::size_t bytes) {
     undo.dirty = 0;
     void*& slot = undo.auxiliaryPose;
     if (slot != nullptr) {
-        std::free(slot);
+        ::operator delete(slot);
         slot = nullptr;
     }
-    slot = static_cast<unsigned char*>(std::malloc(bytes));
+    slot = static_cast<unsigned char*>(::operator new(bytes));
     std::memset(slot, 0, bytes);
 }
 
@@ -132,14 +133,16 @@ void ClearBoneKeyRecord(mdl::BoneKey& key) {
 // (0x43B2..0x43B6x merge-into-predecessor): the 16 interpolation bytes
 // (+0xC..+0x1B, copied as the original's individual byte/dword stores),
 // position, quaternion, used flag.  frame/prev/next are not copied.
+// x64 twin sub_7FF7CB4AA110 copies +0x0C..+0x27 (interp), +0x1C..+0x33
+// (pos/quat) and the +0x38 flag BYTE only - physics (+0x39) and the
+// +0x3A..+0x3B padding stay untouched (the x86 build's dword store at
+// +0x38 used to sweep them along).
 void CopyBoneKeyPayload(mdl::BoneKey& dst, const mdl::BoneKey& src) {
     std::memcpy(dst.interpolation, src.interpolation,
                 sizeof(dst.interpolation));
     std::memcpy(dst.position, src.position, sizeof(dst.position));
     std::memcpy(dst.rotation, src.rotation, sizeof(dst.rotation));
     dst.allocated = src.allocated;
-    dst.physicsDisabled = src.physicsDisabled;
-    std::memcpy(dst.reserved, src.reserved, sizeof(dst.reserved));
 }
 
 // Copy every payload field of an 84B camera record into another slot
@@ -538,15 +541,21 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
 
 // ---- SelectFrameGroup -------------------------------------------------------
 // Dispatcher inline blocks 0x4831EA (0xD9) / 0x4832C8 (0xDA) / 0x483258
-// (0xDC): clear the used-flag of every record, then mark it selected with
-// a full dword store when it is a head record (index < track count, bone
-// and facial variants) or carries a key (frame != 0).  The 0xDA variant
-// additionally forces record 0's flag after the loop.
+// (0xDC): clear the used-flag of every record, then mark it selected when
+// it is a head record (index < track count, bone and facial variants) or
+// carries a key (frame != 0).  The 0xDA variant additionally forces
+// record 0's flag after the loop.  x64 twins 0x7FF7CB465460 / 0x7FF7CB465540
+// / 0x7FF7CB4654D0 use BYTE stores on the flag only (the x86 build's dword
+// store also swept the physics byte and padding - not reproduced).
 void SelectFrameGroup(MMDApp* app, int group) {
     unsigned char* model = ActiveModel(app);
 
     if (group == 0) {
-        // 0xD9: all bone frames (0x26E0 table, 0x3C x kBoneKeyCapacity)
+        // 0xD9: all bone frames (0x26E0 table, 0x3C x kBoneKeyCapacity).
+        // x64 dispatcher 0x7FF7CB465460..0x7FF7CB4654BA touches ONLY the
+        // +0x38 flag byte (clear, then conditional byte store of 1); the
+        // x86 build's dword store used to sweep +0x39 (physics) and
+        // +0x3A..+0x3B along - keep them intact.
         mdl::BoneKey* keys = mdl::BoneKeys(model);
         const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
@@ -554,33 +563,29 @@ void SelectFrameGroup(MMDApp* app, int group) {
             key.allocated = 0;
             if (i < boneCount || key.frame != 0) {
                 key.allocated = 1;
-                key.physicsDisabled = 0;
-                std::memset(key.reserved, 0, sizeof(key.reserved));
             }
         }
     } else if (group == 1) {
-        // 0xDA: all disp/IK/OP frames (0x26E8 table, 0x1C x 1000)
+        // 0xDA: all disp/IK/OP frames (0x26E8 table, 0x28 x 1000 on x64).
+        // 0x7FF7CB465540..0x7FF7CB4655A2: byte stores at +0x18 only, plus
+        // the forced record-0 flag after the loop.
         mdl::DisplayKey* frames = mdl::DisplayKeys(model);
         for (int i = 0; i < 1000; ++i) {
-            mdl::DisplayKey& key = frames[i];
-            key.allocated = 0;
-            if (key.frame != 0) {
-                key.allocated = 1;
-                std::memset(key.reserved1, 0, sizeof(key.reserved1));
+            frames[i].allocated = 0;
+            if (frames[i].frame != 0) {
+                frames[i].allocated = 1;
             }
         }
         frames[0].allocated = 1;
-        std::memset(frames[0].reserved1, 0, sizeof(frames[0].reserved1));
     } else {
-        // 0xDC: all facial frames (0x26E4 table, 0x14 x 20000)
+        // 0xDC: all facial frames (0x26E4 table, 0x14 x 20000).
+        // 0x7FF7CB4654D0..0x7FF7CB46552E: byte stores at +0x10 only.
         mdl::MorphKey* frames = mdl::MorphKeys(model);
         const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
         for (int i = 0; i < 20000; ++i) {
-            mdl::MorphKey& key = frames[i];
-            key.allocated = 0;
-            if (i < morphCount || key.frame != 0) {
-                key.allocated = 1;
-                std::memset(key.reserved, 0, sizeof(key.reserved));
+            frames[i].allocated = 0;
+            if (i < morphCount || frames[i].frame != 0) {
+                frames[i].allocated = 1;
             }
         }
     }

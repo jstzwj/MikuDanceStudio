@@ -2,6 +2,10 @@
 
 [English](#english) | [中文](#中文) | [日本語](#日本語)
 
+MME is compiled directly into the EXE; see [integration](third_party/mmeffect/README.md).
+MME 已静态内置于 EXE；当前对齐状态、修复清单和验证边界见 [PORTING_STATUS](docs/PORTING_STATUS.md)。
+All builds require Python 3 / 所有构建均需要 Python 3 / Python 3 が必要です。
+
 ---
 
 ## English
@@ -38,15 +42,15 @@ the alignment target, rebuilt with a modern toolchain
 
 Dependencies: Windows 10/11, Visual Studio 2022 (v143 toolset + Desktop
 development with C++ workload), [CMake](https://cmake.org/) ≥ 3.21,
-[Conan](https://conan.io/) 2.x.
+[Conan](https://conan.io/) 2.x, and Python 3 (embedded MME icon resources).
 
 ```bat
 :: 1) Get the Bullet 2.75 sources (used by the local Conan recipe)
 ::    Download https://github.com/bulletphysics/bullet3/archive/refs/tags/2.75.zip
 ::    and extract to recipes/bullet275/bullet-src/
 
-:: 2) Install dependencies (x86 matches the original; x64 also builds)
-conan install . --profile:all profiles/x86 --build=missing -s build_type=Release
+:: 2) Install dependencies (profiles/x64 is the behavioral reference)
+conan install . --profile:all profiles/x64 --build=missing -s build_type=Release
 
 :: 3) Configure and build
 cmake --preset conan-release -S . -B build
@@ -111,8 +115,8 @@ VMD/VPD 动作数据，在 DirectX 9 视口中编辑骨骼/形态/相机/照明/
 ::    下载 https://github.com/bulletphysics/bullet3/archive/refs/tags/2.75.zip
 ::    解压到 recipes/bullet275/bullet-src/
 
-:: 2) 安装依赖（x86 与原版对齐；x64 亦可构建）
-conan install . --profile:all profiles/x86 --build=missing -s build_type=Release
+:: 2) 安装依赖（profiles/x64 对应本轮行为基准；x86 保留兼容构建）
+conan install . --profile:all profiles/x64 --build=missing -s build_type=Release
 
 :: 3) 配置并构建
 cmake --preset conan-release -S . -B build
@@ -182,8 +186,8 @@ Bullet 2.75 剛体物理、AVI 動画録画、VSQ 音源との同期、アニメ
 ::    https://github.com/bulletphysics/bullet3/archive/refs/tags/2.75.zip をダウンロードし、
 ::    recipes/bullet275/bullet-src/ に展開
 
-:: 2) 依存関係をインストール（x86 はオリジナルと同一。x64 もビルド可能）
-conan install . --profile:all profiles/x86 --build=missing -s build_type=Release
+:: 2) 依存関係をインストール（比較対象は x64。x86 ビルドも維持）
+conan install . --profile:all profiles/x64 --build=missing -s build_type=Release
 
 :: 3) 構成してビルド
 cmake --preset conan-release -S . -B build

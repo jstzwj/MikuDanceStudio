@@ -219,98 +219,12 @@ struct MMDAppState {
     RawPad<4> pad67b;
     std::int32_t timelineStartFrame;
     std::int32_t currentFrame;
-    std::int32_t rowHitBone[200];  // x64 pin 5204
-#if defined(_M_X64)
-    RawPad<2823> pad70;
-#else
-    RawPad<5388> pad70;
-#endif
-    unsigned char pmxEncoding;
-#if !defined(_M_X64)
-    RawPad<1> pad71;
-#endif
-    unsigned char pmxIdxVert;
-    RawPad<1> pad72;
-    unsigned char pmxIdxBone;
-#if !defined(_M_X64)
-    RawPad<2> pad73;
-#endif
-    unsigned char pmxIdxRigid;
-#if defined(_M_X64)
-    RawPad<32> pad74;
-#else
-    RawPad<52> pad74;
-#endif
-    std::uint32_t morph0Count;
-#if defined(_M_X64)
-    RawPad<8> pad75;
-#else
-    RawPad<20> pad75;
-#endif
-    std::uint32_t physOffsetCount;
-#if defined(_M_X64)
-    RawPad<8> pad76;
-#else
-    RawPad<12> pad76;
-#endif
-    void* morph0Table;
-    void* physOffsetRecords;
-#if defined(_M_X64)
-    RawPad<12> pad78;
-#else
-    RawPad<40> pad78;
-#endif
-    std::uint32_t physLastFrame;
-#if defined(_M_X64)
-    RawPad<3628> pad79;
-#else
-    RawPad<2872> pad79;
-#endif
-    short morphCount;
-#if defined(_M_X64)
-    RawPad<4> pad80;
-#else
-    RawPad<2> pad80;
-#endif
-    short boneCount;
-#if defined(_M_X64)
-    RawPad<4> pad81;
-#else
-    RawPad<2> pad81;
-#endif
-    short ikCount;
-#if defined(_M_X64)
-    RawPad<38> pad82;
-#else
-    RawPad<34> pad82;
-#endif
-    unsigned char facialFrameCount;
-    RawPad<3> pad83;
-    std::uint32_t rbGroupCount;
-#if defined(_M_X64)
-    RawPad<1068> pad84;
-#else
-    RawPad<1052> pad84;
-#endif
-    std::uint32_t rigidCount;
-    std::uint32_t jointCount;
-#if defined(_M_X64)
-    RawPad<1850> pad86;
-#else
-    RawPad<1830> pad86;
-#endif
-    unsigned char physicsMode;
-#if defined(_M_X64)
-    RawPad<149669> pad87;
-#else
-    RawPad<147845> pad87;
-#endif
-    std::int32_t rowHitMorph[200];  // x64 pin 165204
-    RawPad<151368> pad88;
-    float centerBoneIndex;
-    RawPad<7828> pad89;
-    std::int32_t rowHitIk[200];  // x64 pin 325204
-    RawPad<159200> pad90;
+    // Three independent 200 x 200 hit grids. Older reconstruction split
+    // their storage into 200-element heads and unrelated model-field names;
+    // those names had no App consumers and were not real application fields.
+    std::int32_t rowHitBone[40000];   // x64 5204
+    std::int32_t rowHitMorph[40000];  // x64 165204
+    std::int32_t rowHitIk[40000];     // x64 325204
     std::int32_t rowHitBand0[200];  // x64 pin 485204
     std::int32_t rowHitBand1[200];  // x64 pin 486004
     std::int32_t rowHitBand2[200];  // x64 pin 486804

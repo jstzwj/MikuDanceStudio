@@ -51,7 +51,7 @@ ModelData::ModelData(IDirect3DDevice9* device,
     , reserved_(nullptr)
     , cachedPerVertexValue_(-1)          // [180058c70 L77] +0x3c = -1
     , drawTypeIndex_(-1)                 // [L76] +0xe8 = -1
-    , field358_(0)                       // [L363] +0x358 = 0
+    , runState_(nullptr)                 // [L363] +0x358 = 0
     , unknownFlag360_(0)
     , renderClass_(0)                    // +0x364
     , flag368_(1)                        // [L79] +0x368 = 1
@@ -84,7 +84,7 @@ ModelData::ModelData(IDirect3DDevice9* device,
 
     // [L362] +0xec = 0 (the rest of the pass-plan scratch is reset per frame
     // by MME_RebuildRenderPassPlan).
-    passPlanScratch_.state0 = 0;
+    passPlanScratch_.renderOrder = 0;
     memset(&planMatrixCopy_, 0, sizeof(planMatrixCopy_));   // +0x190 copy
 }
 
@@ -93,6 +93,7 @@ ModelData::~ModelData()
     // [0x1800595a0] MME_ModelData_Destructor: the original releases the name
     // map/vector/string storage, then the reserved COM object (+0x40) and the
     // device (+0x10). std containers release themselves here.
+    ClearSasBinding();                 // a suspended run state must not leak
     if (reserved_ != nullptr) {
         reserved_->Release();      // [L29-31]
         reserved_ = nullptr;
@@ -101,6 +102,17 @@ ModelData::~ModelData()
         device_->Release();        // [L32-34]
         device_ = nullptr;
     }
+}
+
+void ModelData::ClearSasBinding()
+{
+    if (runState_ != nullptr) {
+        SasDestroyRunState(runState_);
+        runState_ = nullptr;
+    }
+    unknownFlag360_ = 0;
+    renderClass_ = 0;
+    flag368_ = 1;
 }
 
 void ModelData::BuildName()
@@ -129,9 +141,19 @@ void ModelData::BuildNameTable()
         // (-1, -2, ...) into the name map [L105-168].
         int modelCount = ExpGetPmdNum();
         for (int i = 0; i < modelCount; ++i) {
+            // 原版 [0x180058E80] 是 `mov edx,eax; cmp rdx,[rbx+18h]`——ID 在
+            // MMHack 注册侧（mov r14d,eax）与比较侧一致截成 32 位。本移植的
+            // 注册/查找/modelRegistry 全链用完整 64 位指针 ID（mme_host.cpp），
+            // 故此处必须全宽比较；原先的单边 32 位截断会让 x64 堆指针恒不等，
+            // 名字表恒空、CONTROLOBJECT 全部落默认值。
+            // 原版 [0x180058E80] 是 `mov edx,eax; cmp rdx,[rbx+18h]`——ID 在
+            // MMHack 注册侧（mov r14d,eax）与比较侧一致截成 32 位。本移植的
+            // 注册/查找/modelRegistry 全链用完整 64 位指针 ID（mme_host.cpp），
+            // 故此处必须全宽比较；原先的单边 32 位截断会让 x64 堆指针恒不等，
+            // 名字表恒空、CONTROLOBJECT 全部落默认值。
             unsigned long long hostId =
                 reinterpret_cast<unsigned long long>(ExpGetPmdID(i));
-            if (hostId != static_cast<unsigned int>(objectId_)) {
+            if (hostId != objectId_) {
                 continue;
             }
             if (i >= 0) {
@@ -196,17 +218,7 @@ void ModelData::ResetPassPlanScratch()
     // [0x18005b9e0 L84-97] per-model scratch reset performed by
     // MME_RebuildRenderPassPlan: +0xec = 0, +0xf0 = -1, +0xf4 = 0,
     // zero 0xf8..0x137 then set +0xf8/+0x10c/+0x120/+0x134 = 1.0f.
-    passPlanScratch_.state0 = 0;
-    passPlanScratch_.passKey = -1;
-    passPlanScratch_.flag = 0;
-    memset(&passPlanScratch_.color0, 0, sizeof(passPlanScratch_.color0));
-    memset(&passPlanScratch_.color1, 0, sizeof(passPlanScratch_.color1));
-    memset(&passPlanScratch_.color2, 0, sizeof(passPlanScratch_.color2));
-    memset(&passPlanScratch_.color3, 0, sizeof(passPlanScratch_.color3));
-    passPlanScratch_.color0[0] = 1.0f;   // +0xf8
-    passPlanScratch_.color1[0] = 1.0f;   // +0x10c
-    passPlanScratch_.color2[0] = 1.0f;   // +0x120
-    passPlanScratch_.color3[0] = 1.0f;   // +0x134
+    passPlanScratch_ = ObjectPlanState{};
 }
 
 } // namespace mme

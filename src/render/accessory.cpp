@@ -106,15 +106,6 @@ IDirect3DTexture9* CachedTexture(D3DRenderer* sub, const wchar_t* path) {
     return nullptr;
 }
 
-using MeshDrawSubset = HRESULT(__stdcall*)(void*, DWORD);
-
-void DrawSubset(void* accessory, DWORD index) {
-    void* mesh = mdl::Accessory(accessory)->mesh;
-    if (mesh != nullptr)
-        reinterpret_cast<MeshDrawSubset>(
-            (*reinterpret_cast<void***>(mesh))[3])(mesh, index);
-}
-
 void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
     auto& api = d3dx::Get();
     Matrix part;
@@ -151,8 +142,9 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
 // (0x4C4D86..0x4C4FFC).  The original runs NO preamble here - the device
 // cascade is restored by the post-draw reset in RenderAccessoryFixedOne.
 // Sphere/sub textures sample via CAMERASPACENORMAL (0x10000) through the
-// scale-only matrix diag(0.5, -0.5, 0) built once in the prologue; the
-// old reconstruction used CAMERASPACEREFLECTIONVECTOR and no transform.
+// half-texel matrix diag(0.5, -0.5, 0) + translation (0.5, 0.5) built once
+// in the prologue; the old reconstruction used CAMERASPACEREFLECTIONVECTOR
+// and no transform.
 void ConfigureFixedTexture(void* accessory, D3DRenderer* sub,
                            IDirect3DDevice9* device, DWORD material,
                            IDirect3DTexture9* screenTexture) {
@@ -165,10 +157,16 @@ void ConfigureFixedTexture(void* accessory, D3DRenderer* sub,
         ? reinterpret_cast<const wchar_t*>(paths + 2048 * material + 1024)
         : L"";
 
+    // x64 sub_7FF7CB4FD350 序言自 rdata 0x7FF7CB54A4F0 整体加载的常量矩阵：
+    // diag(0.5, -0.5, 0) 加平移 _41=0.5、_42=0.5（COUNT2 下 u'=0.5u+0.5、
+    // v'=-0.5v+0.5）；缺平移会差半单位并出现负坐标回绕。类型 4/5 写
+    // D3DTS_TEXTURE1 用的同一矩阵（0x...d9d0 / 0x...daa0）。
     D3DMATRIX sphereTexel{};
     sphereTexel._11 = 0.5f;
     sphereTexel._22 = -0.5f;
     sphereTexel._33 = 0.0f;
+    sphereTexel._41 = 0.5f;
+    sphereTexel._42 = 0.5f;
     sphereTexel._44 = 1.0f;
 
     switch (type) {
@@ -610,19 +608,12 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
 
     TraceAccessoryLoadStage("materials-complete", mesh);
 
-    using MeshGetDword = DWORD(__stdcall*)(void*);
-    using MeshCloneFvf = HRESULT(__stdcall*)(void*, DWORD, DWORD,
-                                              IDirect3DDevice9*, void**);
-    if (reinterpret_cast<MeshGetDword>(
-            (*reinterpret_cast<void***>(mesh))[6])(mesh) != 274) {
-        DWORD options = reinterpret_cast<MeshGetDword>(
-            (*reinterpret_cast<void***>(mesh))[9])(mesh);
-        void* clone = nullptr;
-        if (SUCCEEDED(reinterpret_cast<MeshCloneFvf>(
-                (*reinterpret_cast<void***>(mesh))[11])(
-                    mesh, options, 274, sub->device,
-                    &clone))) {
-            ReleaseCom(mesh);
+    auto* typedMesh = static_cast<ID3DXMesh*>(mesh);
+    if (typedMesh->GetFVF() != 274) {
+        const DWORD options = typedMesh->GetOptions();
+        ID3DXMesh* clone = nullptr;
+        if (SUCCEEDED(typedMesh->CloneMeshFVF(options, 274, sub->device, &clone))) {
+            typedMesh->Release();
             mdl::Accessory(accessory)->mesh = clone;
             api.computeNormals(clone, nullptr);
         }
@@ -836,40 +827,6 @@ void RenderAccessoriesFixedRange(MMDApp* app, int firstOrder,
         app->ActiveRenderObject() = nullptr;
     }
     SetAccessoryLight(app, device, false);
-}
-
-void RenderAccessoriesProjectedGroundShadow(MMDApp* app) {
-    const bool cameraGate = app->PlaybackActive() != 0 ||
-        app->UsesViewportTool();
-    if (app->GroundShadowEnabled() == 0 || !cameraGate ||
-        app->LightDirection()[1] >= 0.0f)
-        return;
-    D3DRenderer* sub = app->Renderer();
-    auto* device = sub->device;
-    if (device == nullptr || !d3dx::Get().Load())
-        return;
-
-    Matrix base;
-    Matrix projection{};
-    Matrix projected;
-    device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&base));
-    projection.m[0][0] = 1.0f;
-    projection.m[1][0] = -app->LightDirection()[0] /
-                          app->LightDirection()[1];
-    projection.m[1][2] = -app->LightDirection()[2] /
-                          app->LightDirection()[1];
-    projection.m[2][2] = 1.0f;
-    projection.m[3][1] = 0.10000000149011612f;
-    projection.m[3][3] = 1.0f;
-    d3dx::Get().multiply(&projected, &projection, &base);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&projected));
-    device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESS);
-    device->SetTexture(0, nullptr);
-    RenderAccessoriesProjectedGroundShadowGeometry(app);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&base));
 }
 
 void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp* app) {

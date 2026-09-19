@@ -28,12 +28,22 @@ struct WaveAudioContext {
     std::int32_t readCursor;
     std::int32_t dataOffset;
     HANDLE fileHandle;
-    std::uint32_t stopFlag;
+    // Shared 0=running, 1=stop requested, 2=worker completed protocol.
+    // Interlocked access preserves the original state machine while making
+    // publication of streamingBuffer=nullptr safe across the two threads.
+    LONG stopFlag;
     std::int32_t failureCount;
     std::int32_t waveformColumns;
     std::uint8_t englishUI;
     std::uint8_t reserved[3];
     LONG volume;
+
+    LONG ReadStopFlag() {
+        return InterlockedCompareExchange(&stopFlag, 0, 0);
+    }
+    void WriteStopFlag(LONG value) {
+        InterlockedExchange(&stopFlag, value);
+    }
 };
 
 #if !defined(_WIN64)

@@ -9,13 +9,17 @@
 //     (getcwd/_chdir pair, big-C 11258-11327), then D3DXCreateEffectFromFileW
 //     with the preprocessor defines {"_INDEX", "PSIZE15"} plus "MME_MIPMAP"
 //     when the engine mip filter is available (0x1800b3b68/70/78, big-C
-//     11296-11317). Failure appends "DirectX Error: <desc> [%08X]\n" to the
-//     effect's error text (big-C 11328-11364).
+//     11296-11317). On failure exactly one segment is appended to the error
+//     text: the compiler text when the error buffer is non-empty, otherwise
+//     "DirectX Error: <desc> [%08X]\n" (0x18000c1ab-0x18000c376). On success
+//     the error buffer is released unread (0x18000c3d3).
 //   - FUN_18000B880: apply entry. First use loads the file; load failure logs
-//     the error text, then "Failed to load effect file:<path>\n\n" (English) or
-//     the localized equivalent (GBK bytes at 0x1800b3ae8, see
-//     PHASE2_IMPLEMENTATION_NOTES.md) via MessageBoxA(main, ..., MB_ICONERROR)
-//     dedup-gated by DAT_1800d99d8, and unloads the failed effect.
+//     errorText + "\n" (0x18000ba10), unloads (0x18000ba43), then message-boxes
+//     "Failed to load effect file:<path>\n\n" (English 0x1800b3b18) or the
+//     localized equivalent (Shift-JIS bytes at 0x1800b3ae8 - ExpGetEnglishMode
+//     selects, fallback byte_1800D99DD=0 is Japanese) via MessageBoxA(main,
+//     ..., MB_ICONERROR) dedup-gated by DAT_1800d99d8. A fresh successful
+//     load/reload writes "done.\n\n" (0x1800b3ae0) at 0x18000bc36.
 //   - FUN_18000B210: unload. Logs "Unload effect file: <path>\n\n" (0x1800b3ac8)
 //     when the object holds a path, then releases the effect/texture objects.
 //   - FUN_18001EEB0: engine teardown (releases every cache entry + the pool).
@@ -43,6 +47,25 @@ struct LoadedEffect {
     std::string   errorText;          // last load error (logged by the apply path)
     unsigned long fileStamp = 0;      // FUN_18000B7F0 validity token (0 = invalid)
     SasEffect*    sas = nullptr;      // [FUN_18000c470] parsed SAS model (null when absent/invalid)
+    bool          doneLogged = false; // [0x18000bc10] sub_18000B880's "done.\n\n" latch:
+                                      // written once per actual load/reload of this
+                                      // file (v11 && *a1), not on cache hits (the
+                                      // stamp-unchanged path keeps v11 clear).
+
+    // [0x18000b210] FUN_18000B210 - 条目"卸载"语义的完整承载。原版在缓存条目
+    // 的最后一个持有者（绑定对象 +0x08/+0x10 的 boost::shared_ptr 控制块，
+    // 0x18000b5e9-0x18000b611 的 InterlockedDecrement 链）死亡时执行：
+    //   1. [0x18000b24b-0x18000b316] effect(+0x00) 非空 → 先记日志
+    //      "Unload effect file: <path>\n\n"（在一切资源释放之前；失败条目
+    //      effect==null 静默卸载）；
+    //   2. [0x18000b31b-0x18000b5de] 逐语义资源释放（0x26/0x27/0x28/0x2C/
+    //      0x2D/0x2E/0x33：资源对象、offscreen 深度、动画纹理 vtable 释放，
+    //      容器逐节点 erase）——移植等价物 = SasUnload(sas)；
+    //   3. [0x18000b614-0x18000b623] ID3DXEffect::Release()（IUnknown
+    //      vtable+0x10）并置空。
+    // 移植把这套语义放进最后一个 shared_ptr 引用死亡时的析构函数，引用
+    // 计数时序与原版控制块 1:1（cache 与 MaterialBinding 各持一份引用）。
+    ~LoadedEffect();
 };
 
 // [0x180093660] FUN_180093660: DXErr9 HRESULT description lookup (compact
@@ -86,6 +109,17 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
 // [0x18000b210] FUN_18000b210: drop the cache entry for `pathAnsi`, logging
 // "Unload effect file: <path>\n\n" first. No-op when the file is not cached.
 void MmeEngineUnloadEffectFile(const std::string& pathAnsi);
+
+// [0x18000a990] sub_18000A990（40004 Reload All = FUN_18002DEF0 的缓存侧）：
+// 清空效果缓存与纹理缓存两棵树（原版表头 0x1800D9C68 / 0x1800D9C88，逐节点
+// 销毁走 sub_1800203F0 / sub_180020580）。只丢弃缓存侧引用——仍被
+// MaterialBinding::owner 持有的条目活到该绑定重解析切换引用，最后一个引用
+// 死亡时经 ~LoadedEffect（FUN_18000B210 语义：Unload 日志 / SasUnload /
+// effect->Release）；无引用的条目当场死亡。缓存键差异说明：原版 DXEffectCache
+// 按 (path, stamp) 键控（sub_18000AB40 的查找键含 stamp，stamp 变化即失配
+// 重编译，旧条目滞留缓存直到本清理——原版的累积泄漏），移植按 path 键控、
+// 由卸载方显式 erase 补偿，可观察行为（变化即重载、Reload All 全清）一致。
+void MmeEngineClearCaches();
 
 // Texture-cache probe (the DXTextureCache half). Returns the cached texture or
 // nullptr when the file is not cached; loading lives with the SAS resource

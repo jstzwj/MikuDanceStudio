@@ -1,7 +1,8 @@
 // ===========================================================================
-// MikuDanceStudio - the per-bone record (GENERATED - do not edit)
+// MikuDanceStudio - the per-bone runtime record (maintained by hand)
 // ===========================================================================
-// Regenerate: python scripts/gen_bone_layout.py
+// No checked-in generator reconstructs this record. Change named members
+// alongside binary evidence and the architecture-specific assertions below.
 // x86 layout pinned byte-exact (604, the port's hardcoded stride);
 // x64 layout is the compiler's natural regrowth (624 = 0x270, the
 // stride mined from the x64 original), anchored at 11 twin-verified

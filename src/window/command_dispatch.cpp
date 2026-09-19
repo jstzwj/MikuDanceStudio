@@ -446,16 +446,26 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         // buffer - the Japanese branch carries the Shift-JIS bytes of the
         // author's name (樋口優, 0x7FF7CB54F980) - and pop it over the
         // floating viewport window when one exists (x64 app+0xA1DE0).
+        // 中段括注按构建架构选择：x64 参考二进制 0x7FF7CB54F930（EN）/
+        // 0x7FF7CB54F980（JP）为 "(64bitOS Version)"，x86 原版为
+        // "(DirectX9 Version)"（机制同 kModelSlotCount 的按架构取值，但括注
+        // 嵌在字面量中间，只能用预处理拼接而非 sizeof(void*) 三元）。
         s.state.dialogFlags[9] = 1;
         s.state.enterKeyState = 1;
         char text[256];
+#if defined(_M_X64)
+#define MDS_ABOUT_ARCH_TAG "(64bitOS Version)"
+#else
+#define MDS_ABOUT_ARCH_TAG "(DirectX9 Version)"
+#endif
         sprintf_s(text, 256,
                   s.EnglishUI() != 0
-                      ? "MikuDanceStudio Ver.%4.2f\n  (DirectX9 Version)\n\n"
+                      ? "MikuDanceStudio Ver.%4.2f\n  " MDS_ABOUT_ARCH_TAG "\n\n"
                         "programmed by Yu Higuchi"
-                      : "MikuDanceStudio Ver.%4.2f\n  (DirectX9 Version)\n\n"
+                      : "MikuDanceStudio Ver.%4.2f\n  " MDS_ABOUT_ARCH_TAG "\n\n"
                         "programmed by \x94\xF3\x8C\xFB\x97\x44",
                   9.32);
+#undef MDS_ABOUT_ARCH_TAG
         const HWND owner = s.state.floatingWindow != 0
                                ? reinterpret_cast<HWND>(s.state.floatingWindow)
                                : hwnd;

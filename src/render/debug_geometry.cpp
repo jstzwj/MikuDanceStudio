@@ -82,8 +82,12 @@ void DrawIndexedLines(PhysicsScene* scene, IDirect3DVertexBuffer9* vb,
     device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
     device->SetStreamSource(0, vb, 0, 16);
     device->SetIndices(ib);
-    device->DrawIndexedPrimitive(D3DPT_LINELIST, 0, 0, vertices, 0,
-                                 primitives);
+    // [0x7FF7CB426FD8 球 / 0x7FF7CB4272F4+0x7FF7CB4273E2+0x7FF7CB4274B2 胶囊]
+    // 经 MME 桥：ownerless DIP（无 ActiveRenderObject）→ drawType=0 背景
+    // 语义，效果激活时 MME 在此先跑后期链再转发，调试线画在后期合成结果
+    // 之上——与原版经包装设备虚表被 MMHack 拦截的行为一致。
+    mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, vertices, 0,
+                              primitives);
 }
 
 void DrawSphere(PhysicsScene* scene, float scale, const Matrix& transform) {
@@ -121,7 +125,8 @@ void DrawBox(PhysicsScene* scene, float x, float y, float z,
     device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
     device->SetStreamSource(0, scene->gizmoCubeVB, 0, 16);  // 12
     device->SetIndices(scene->gizmoCubeIB);                 // 16
-    device->DrawIndexedPrimitive(D3DPT_LINELIST, 0, 0, 8, 0, 12);
+    // [0x7FF7CB427150] 经 MME 桥转发，ownerless DIP 语义同 DrawIndexedLines。
+    mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, 8, 0, 12);
     device->SetTransform(D3DTS_WORLD,
                          reinterpret_cast<const D3DMATRIX*>(&oldWorld));
 }
@@ -172,7 +177,9 @@ void DrawSelectionBox(PhysicsScene* scene) {
     device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
     device->SetStreamSource(0, scene->gizmoBoxSelVB, 0, 16);  // 36
     device->SetIndices(scene->gizmoBoxSelIB);                 // 40
-    device->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, 72, 0, 24);
+    // [0x7FF7CB42771B] 选中盒（实心三角面）同样经 MME 桥转发，ownerless
+    // DIP 语义同 DrawIndexedLines。
+    mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0, 72, 0, 24);
 }
 
 void BulletTransformToMatrix(const btTransform& source, Matrix* out) {

@@ -433,7 +433,7 @@ void PurgeMorphFrames(MMDApp* app, std::uint8_t type) {
 int FillCodecCombo(DShowRecorder* recorder, HWND hCombo, char english);  // VA 0x00408F20
 void RebindCodecOnComboChange(DShowRecorder* recorder, int sel, HWND hButton, char english);  // VA 0x00409730
 void ShowCodecConfigDialog(DShowRecorder* recorder, HWND hDlg);  // VA 0x004092A0
-void ApplyCameraFrameMultiplyDialog(MMDApp* app, HWND hDlg);  // VA 0x0043DAD0
+void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043DAD0 (misc_dialogs.cpp)
 void BuildAccessoryOrderArray(MMDApp* app, int count);        // VA 0x00439C90
 void ApplyAccessorySettingsDialog(MMDApp* app, int count, HWND hDlg);  // VA 0x00439D00
 LRESULT __stdcall GroundShadowColorEditSubclassProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0040F730
@@ -652,8 +652,9 @@ INT_PTR __stdcall AviOutDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // tpl 0x291/0x26F).
 // WM_INITDIALOG: topmost; the 8 scale/edit pairs 0x2AE..0x2BD are
 // pre-filled ("1.0" on the even ids, "0.0" on the odd ids), focus +
-// select-all on 0x2AE.  OK: ApplyCameraFrameMultiplyDialog (reads the 16
-// edits into the camera frame transform scale/offset) then EndDialog(1).
+// select-all on 0x2AE.  OK: ApplyCameraFrameScaleAdd (0x43DAD0, in
+// misc_dialogs.cpp; reads the 16 edits into the camera frame transform
+// scale/offset) then EndDialog(1).
 // Cancel: EndDialog(2).
 INT_PTR __stdcall CameraFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                                              LPARAM lParam) {  // VA 0x0044D2D0
@@ -670,7 +671,7 @@ INT_PTR __stdcall CameraFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SelectAllEdit(hDlg, panel::kCamMulPosXScaleEdit);
     } else if (msg == WM_COMMAND) {
         if (LOWORD(wParam) == 1) {  // IDOK
-            ApplyCameraFrameMultiplyDialog(app, hDlg);
+            ApplyCameraFrameScaleAdd(app, hDlg);  // 0x43DAD0
             EndDialog(hDlg, 1);
             return 0;
         }
@@ -961,57 +962,10 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // 0x408F20 / 0x409730 / 0x4092A0 (AVI codec combo fill / bind / test) now
 // have real bodies in src/app/dshow_record_graph.cpp; the forward
 // declarations above are their only in-file reference.
-// VA 0x0043DAD0 - thiscall app method (this = Block): reads the 16
-// dialog edits (0x2AE..0x2BD) and applies the scale/offset pairs to every
-// used camera-frame record of the camera key table (0x54-stride over
-// 0xCD140 bytes, transform floats at +0x10..+0x24, frame-count int at
-// +0x44; the three rotation edits enter as -deg*pi/180), then
-// ReloadModels (0x42E640) + PostViewRefresh + dirty (app+0xA0B4D).
-void ApplyCameraFrameMultiplyDialog(MMDApp* app, HWND hDlg) {  // VA 0x0043DAD0
-    auto& s = *app;
-    char text[256];
-    float v[16];
-    static const int kEditIds[16] = {686, 687, 688, 689, 690, 691, 692, 693,
-                                     694, 695, 696, 697, 698, 699, 700, 701};
-    for (int i = 0; i < 16; ++i) {
-        GetWindowTextA(GetDlgItem(hDlg, kEditIds[i]), text, 20);
-        v[i] = static_cast<float>(atof(text));
-    }
-    // slot map from the decompile: 686..687 -> +0x10 tx scale/offset,
-    // 688..689 -> +0x14 ty, 690..691 -> +0x18 tz, 692..693 -> +0x1C rx
-    // (offset enters as -deg*pi/180), 694..695 -> +0x20 ry (+deg), 696..697
-    // -> +0x24 rz (+deg), 698..699 -> +0x0C scale/offset, 700..701 -> the
-    // frame-count int at +0x44 (scale in double, offset added in double).
-    const double kPi = 3.141592025756836;  // .rdata double 0x52BA60
-    unsigned char* base =
-        reinterpret_cast<unsigned char*>(app->CameraKeys());
-    for (std::size_t off = 0; off < 0xCD140; off += 84) {     // 0x54 stride
-        unsigned char* rec = base + off;
-        if (rec[72] == 0)
-            continue;                                          // 0x43B558
-        auto apply = [&](int field, float scale, float delta) {
-            if (scale != 1.0f || delta != 0.0f) {
-                float& f = *reinterpret_cast<float*>(rec + field);
-                f = f * scale + delta;
-            }
-        };
-        apply(16, v[0], v[1]);                                 // 0x10
-        apply(20, v[2], v[3]);                                 // 0x14
-        apply(24, v[4], v[5]);                                 // 0x18
-        apply(28, v[6], static_cast<float>(-v[7] * kPi / 180.0));  // 0x1C
-        apply(32, v[8], static_cast<float>(v[9] * kPi / 180.0));   // 0x20
-        apply(36, v[10], static_cast<float>(v[11] * kPi / 180.0)); // 0x24
-        apply(12, v[12], v[13]);                               // 0x0C
-        if (v[14] != 1.0f || v[15] != 0.0f) {                  // +0x44 int
-            std::int32_t& n = *reinterpret_cast<std::int32_t*>(rec + 68);
-            n = static_cast<std::int32_t>(
-                static_cast<double>(n) * v[14] + v[15]);
-        }
-    }
-    ReloadModels(app);                                          // 0x42E640
-    PostViewRefresh(app);                                       // 0x40D130
-    s.state.sceneModified = 1;                            // 0xA0B4D dirty
-}
+// VA 0x0043DAD0 (camera frame-scale apply) now lives in misc_dialogs.cpp as
+// ApplyCameraFrameScaleAdd (x64 sub_7FF7CB4BC330 semantics: float math and
+// a kTimelineKeyCapacity-wide scan); the forward declaration above is its
+// only in-file reference.
 // VA 0x00439C90 - thiscall app method (this = Block): rebuilds the
 // accessory order index array (app+0xA0B1C) from the 255 accessory
 // objects (table at app+0x9DD70, order byte at obj+1181), then
@@ -1070,13 +1024,47 @@ void ApplyAccessorySettingsDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x
     PostLanguageSweep(app);                                     // 0x42F1E0
     PostLanguageSweep2(app);                                    // 0x40D070
 }
-// VA 0x0040F730 - edit-box subclass wndproc installed on the modeless
-// dialog value edit (0x272) via SetWindowLongA.  Passthrough until the
-// original body is ported.
+// VA 0x0040F730 (x64 sub_7FF7CB476D30) - value-edit (0x272) subclass wndproc
+// installed by sub_42DFF0's WM_INITDIALOG (SetWindowLongPtrA GWLP_WNDPROC;
+// the original proc is first saved to app+0xA0B18).  Only WM_KEYDOWN
+// wParam==13 (VK_RETURN) arriving on the edit of the live dialog (guard:
+// hWnd == GetDlgItem(app dialog handle, 0x272)) takes the apply path;
+// everything else goes to CallWindowProcA with the saved proc.
+//   Apply path (disassembly verified):
+//     GetWindowTextA(hWnd, buf, 8)  // nMaxCount 8 (lea r8d,[rbx-5] with 13)
+//     -> atof -> float v -> the SAME v written to all four RGBA slots
+//     (x64 app+0xA1D88..0xA1D94 = the 4-float shadow colour, grayscale
+//     brightness, NOT four distinct semantic slots)
+//     -> SendMessageA(GetDlgItem(dialog, 0x1CA), TBM_SETPOS, 1,
+//                     (int)(v*100.0f))  // constant 0x42C80000 = 100.0f
+//     -> return 0 (Enter swallowed).
+//   Quirk kept 1:1: the trackbar message targets control 0x1CA (458),
+//   which does NOT exist in template 0x292/0x270 (controls are only two
+//   statics, edit 0x272 and trackbar 0x271 - verified against the original
+//   PE's DLGTEMPLATEEX resources).  GetDlgItem returns NULL and the
+//   SendMessage is a no-op: in the original, pressing Enter applies the
+//   four floats immediately but does NOT snap the trackbar back; the
+//   port's identical templates (res/templates/dialog/dialogs.rc 624/658)
+//   reproduce this behaviour exactly.
 LRESULT __stdcall GroundShadowColorEditSubclassProc(HWND hWnd, UINT uMsg,
                                                     WPARAM wParam,
                                                     LPARAM lParam) {  // VA 0x0040F730
-    return DefWindowProcA(hWnd, uMsg, wParam, lParam);
+    MMDApp* app = g_Block;
+    if (uMsg != WM_KEYDOWN || wParam != 13 ||  // VK_RETURN
+        hWnd != GetDlgItem(app->GroundShadowColorDialog(),
+                           panel::kGroundShadowEdit)) {
+        return CallWindowProcA(app->GroundShadowColorEditProc(), hWnd, uMsg,
+                               wParam, lParam);
+    }
+    char text[16];  // original stack buffer CHAR[16]
+    GetWindowTextA(hWnd, text, 8);
+    const float v = static_cast<float>(atof(text));
+    for (int c = 0; c < 4; ++c) {  // one value into all four RGBA floats
+        app->GroundShadowColor()[c] = v;
+    }
+    SendMessageA(GetDlgItem(app->GroundShadowColorDialog(), 0x1CA), TBM_SETPOS,
+                 1, static_cast<LPARAM>(static_cast<int>(v * 100.0f)));
+    return 0;
 }
 
 void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
@@ -1869,7 +1857,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             undo.operation = 2;
             undo.frame = app->state.currentFrame;
             if (undo.bonePose != nullptr) {
-                free(undo.bonePose);
+                ::operator delete(undo.bonePose);
                 undo.bonePose = nullptr;
             }
             const std::int32_t boneCount =
@@ -1899,7 +1887,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             model = ActiveModel(app);
             undo.dirty = 0;
             if (undo.auxiliaryPose != nullptr) {
-                free(undo.auxiliaryPose);
+                ::operator delete(undo.auxiliaryPose);
                 undo.auxiliaryPose = nullptr;
             }
             const std::int32_t recCount = static_cast<std::int32_t>(

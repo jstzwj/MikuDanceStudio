@@ -6,7 +6,9 @@
 
 namespace mme {
 
-extern HINSTANCE g_hInst;   // the original g_hInst (DllMain stores hinstDLL)
+extern HINSTANCE g_hInst;   // host module containing the embedded MME resources
+void MmeUiInitializeRuntime(HINSTANCE instance);
+void MmeUiShutdownRuntime();
 
 // [0x180055890] FUN_180055890 - menu install: LoadMenuA(101 JP / 107 EN) per
 // the ExpGetEnglishMode resolution, insert the "MMEffect" popup at the right

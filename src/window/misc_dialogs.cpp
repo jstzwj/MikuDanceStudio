@@ -6,7 +6,9 @@
 // Every function keeps its original x86 VA; behaviour notes live in the
 // per-function comments.  The x64 confirmation addresses (MikuMikuDance
 // v932x64) are recorded per function:
-//   ApplyCameraFrameScaleAdd  ->  sub_7FF7CB4BC330   (called by dialog proc sub_7FF7CB478860)
+//   ApplyCameraFrameScaleAdd  ->  sub_7FF7CB4BC330   (called by camera dialog proc sub_7FF7CB478860, x86 0x43DAD0)
+//   ApplyBoneFrameScaleAdd ->  sub_7FF7CB4BC9C0   (called by bone dialog proc sub_7FF7CB4789D0, x86 0x43E000)
+//   RegisterBoneUndoSnapshot  ->  sub_7FF7CB4EEBD0   (bone apply's pre-loop undo registration)
 //   ApplyMorphScaleAdd  ->  sub_7FF7CB4BD120   (called by dialog proc sub_7FF7CB478B40)
 //   InitModelOrderDialog  ->  sub_7FF7CB4A98C0   (array builder; the listbox fill + the
 //                                       allocation live in dialog proc
@@ -360,7 +362,7 @@ void MorphPanelRefresh(unsigned char* model) {  // x64 0x7FF7CB4ED750
 }
 
 // ===========================================================================
-// 0x0043E000 - case-251 "frame control" apply (x64 sub_7FF7CB4BC330)
+// 0x0043DAD0 - case-242 camera "frame control" apply (x64 sub_7FF7CB4BC330)
 // ===========================================================================
 // Reads the 16 edits 686..701 as eight (scale, add) pairs and applies each
 // pair to every selected camera key (camera track app+0x374, 84-byte
@@ -378,7 +380,7 @@ void MorphPanelRefresh(unsigned char* model) {  // x64 0x7FF7CB4ED750
 // prefill).  Tail: camera seek (x64 sub_7FF7CB479C30 == the ported 0x42E640
 // ReloadModels), PostViewRefresh, dirty 0xA0B0D = 1.
 // =========================================================================//
-void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E000
+void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043DAD0
     float scale[8];
     float add[8];
     char buf[20];
@@ -424,6 +426,211 @@ void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E000
     ReloadModels(app);      // 0x42E640 (x64 sub_7FF7CB479C30)
     PostViewRefresh(app);   // 0x40D130 (x64 sub_7FF7CB440DD0)
     app->SceneModified() = 1;
+}
+
+// ===========================================================================
+// x64 0x7FF7CB4EEBD0 - bone undo registration (RegisterBoneUndoSnapshot)
+// ===========================================================================
+// Shared pre-loop helper of the bone frame-control apply (six code call
+// sites in the original): counts the model's allocated bone keys (600000
+// 60-byte records, gate = allocated byte +56) and, when at least one
+// exists, rolls the model's undo ring - enable undo (400) / disable redo
+// (401), cursor = (cursor+1) mod 30 mirrored into redoState, undoDirty = 1
+// with redoDirty = 0 (one WORD store at model+0x3558 in the original), slot
+// operation 2 at `frame`, a 36-byte BonePoseSnapshot per bone (bone-table
+// trans/rotQuat plus the bonePhysicsState byte), then one 64-byte
+// auxiliary record {int recordIndex, 60-byte BoneKey copy} per allocated
+// key, deduped through keyVisitMap (model+0x3CAC) exactly like the physics
+// apply's chain walk below.
+// =========================================================================//
+void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
+                              int frame) {  // x64 0x7FF7CB4EEBD0
+    mdl::ModelRecord* model = mdl::Mdl(modelBytes);
+    mdl::BoneKey* keys = model->boneKeys;
+    if (keys == nullptr)
+        return;
+
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
+        if (keys[i].allocated != 0)
+            ++used;
+    }
+    if (used == 0)
+        return;
+
+    HWND window = static_cast<HWND>(model->hwnd);
+    EnableWindow(GetDlgItem(window, panel::kUndoButton), TRUE);
+    EnableWindow(GetDlgItem(window, panel::kRedoButton), FALSE);
+    std::uint32_t& cursor = model->undoState[0];
+    if (++cursor >= 30)
+        cursor = 0;
+    model->undoState[1] = cursor;
+    model->undoDirty = 1;
+    model->redoDirty = 0;
+    mdl::UndoRecord& undo = model->undoRings[0].slots[cursor];
+    undo.operation = 2;
+    undo.dirty = 0;
+    undo.frame = static_cast<std::uint32_t>(frame);
+
+    if (undo.bonePose != nullptr) {
+        ::operator delete(undo.bonePose);
+        undo.bonePose = nullptr;
+    }
+    const std::int32_t boneCount = model->boneCount;
+    auto* snapshot = static_cast<mdl::BonePoseSnapshot*>(::operator new(
+        sizeof(mdl::BonePoseSnapshot) * boneCount));
+    undo.bonePose = snapshot;
+    std::memset(snapshot, 0,
+                sizeof(mdl::BonePoseSnapshot) *
+                    static_cast<std::size_t>(boneCount));
+    mdl::BoneRecord* bones = model->boneTable;
+    for (int i = 0; i < boneCount; ++i) {
+        snapshot[i].boneIndex = i;
+        snapshot[i].position[0] = bones[i].trans[0];
+        snapshot[i].position[1] = bones[i].trans[1];
+        snapshot[i].position[2] = bones[i].trans[2];
+        snapshot[i].rotation[0] = bones[i].rotQuat[0];
+        snapshot[i].rotation[1] = bones[i].rotQuat[1];
+        snapshot[i].rotation[2] = bones[i].rotQuat[2];
+        snapshot[i].rotation[3] = bones[i].rotQuat[3];
+        snapshot[i].physicsDisabled =
+            model->bonePhysicsState != nullptr
+                ? model->bonePhysicsState[i]
+                : 0;
+    }
+
+    if (undo.auxiliaryPose != nullptr) {
+        ::operator delete(undo.auxiliaryPose);
+        undo.auxiliaryPose = nullptr;
+    }
+    undo.auxiliaryPose = ::operator new(used * 0x40);
+    std::memset(undo.auxiliaryPose, 0, used * 0x40);
+    std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
+
+    // 64-byte auxiliary record = {int recordIndex, 60-byte BoneKey copy};
+    // the append uses undo.dirty as its counter like the physics apply.
+    for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
+        if (keys[i].allocated == 0 || model->keyVisitMap[i] != 0)
+            continue;
+        model->keyVisitMap[i] = 1;
+        auto* records = static_cast<unsigned char*>(undo.auxiliaryPose);
+        *reinterpret_cast<std::int32_t*>(
+            records + 0x40 * static_cast<std::size_t>(undo.dirty)) =
+            static_cast<std::int32_t>(i);
+        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.dirty) + 4,
+                    &keys[i], 0x3C);
+        ++undo.dirty;
+    }
+}
+
+// ===========================================================================
+// 0x0043E000 - case-251 bone "frame control" apply (x64 sub_7FF7CB4BC9C0)
+// ===========================================================================
+// Reads the 12 edits 686..697 as six (scale, add) pairs and applies them to
+// every allocated bone key of the current model (model slot app+0x13E0,
+// bone-key table model+0x2790, 600000 60-byte records, gate = allocated
+// byte +56):
+//   pair  edits   field
+//   0     686/687 position.x (+0x1C)
+//   1     688/689 position.y (+0x20)
+//   2     690/691 position.z (+0x24)
+//   3     692/693 euler X angle (add enters as +deg * pi / 180)
+//   4     694/695 euler Y angle (add enters as -deg * pi / 180)
+//   5     696/697 euler Z angle (add enters as -deg * pi / 180)
+// A position pair is skipped when scale == 1.0 and add == 0.0.  Before the
+// loop the original registers the bone undo snapshot
+// (RegisterBoneUndoSnapshot above) unconditionally - even when every pair
+// is the identity.
+// The rotation block runs when any rotation scale != 1.0 or converted
+// add != 0.0: it builds the key quaternion's matrix (quat at +0x28) and
+// decomposes it as Rz*Rx*Ry, the same extraction as the select-dialog
+// display twin sub_7FF7CB4BB3E0 (RefreshSelectNavDisplay in
+// dialog_select_ops.cpp):
+//   z = atan2f(_12, _22); x = asinf(-_32); y = atan2f(_31, _33)
+//   gimbal patch when |cosf(x)| < 1e-6 (x64 0x7FF7CB4BCF3B..F84):
+//     z += _12 > 0 ? +3.141592 : -3.141592
+//     y += _31 > 0 ? +3.141592 : -3.141592
+// then scales + adds each angle (z takes pair 5, x pair 3, y pair 4),
+// rebuilds Rz * Rx * Ry (rotZ, mul rotX, mul rotY) and writes the
+// quaternion back via D3DXQuaternionRotationMatrix.
+// Tail: PanelPaint (x64 sub_7FF7CB480EA0), CurvePanelRepaint (x64
+// sub_7FF7CB482BB0), SeekModelFrame(model, currentFrame,
+// playbackPhysicsMode) (x64 sub_7FF7CB4EBD90), dirty 0xA0B0D = 1,
+// PostViewRefresh (x64 sub_7FF7CB440DD0).
+// =========================================================================//
+void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E000
+    unsigned char* modelBytes = app->ModelSlot(app->state.slotIdx);
+    if (modelBytes == nullptr)
+        return;
+
+    d3dx::Api& api = d3dx::Get();
+    // The original imports d3dx statically for the rotation rebuild; the
+    // runtime-resolved port resolves it once before the loop.
+    api.Load();
+
+    float scale[6];
+    float add[6];
+    char buf[20];
+    for (int pair = 0; pair < 6; ++pair) {
+        GetWindowTextA(
+            GetDlgItem(hDlg, panel::kBoneMulPosXScaleEdit + 2 * pair),
+            buf, 20);
+        scale[pair] = static_cast<float>(atof(buf));
+        GetWindowTextA(
+            GetDlgItem(hDlg, panel::kBoneMulPosXOffsetEdit + 2 * pair),
+            buf, 20);
+        add[pair] = static_cast<float>(atof(buf));
+    }
+    // degree -> radian on the three rotation adds (X positive, Y/Z negated)
+    add[3] = static_cast<float>(add[3] * 3.141592) / 180.0f;
+    add[4] = static_cast<float>(add[4] * -3.141592) / 180.0f;
+    add[5] = static_cast<float>(add[5] * -3.141592) / 180.0f;
+
+    RegisterBoneUndoSnapshot(modelBytes, app->state.currentFrame);
+
+    mdl::BoneKey* keys = mdl::BoneKeys(modelBytes);
+    d3dx::D3DXMATRIXF quatMatrix{};
+    d3dx::D3DXMATRIXF rotation{};
+    d3dx::D3DXMATRIXF axis{};
+    for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
+        mdl::BoneKey& key = keys[i];
+        if (key.allocated == 0)
+            continue;
+        if (scale[0] != 1.0f || add[0] != 0.0f)
+            key.position[0] =
+                static_cast<float>(scale[0] * key.position[0]) + add[0];
+        if (scale[1] != 1.0f || add[1] != 0.0f)
+            key.position[1] =
+                static_cast<float>(scale[1] * key.position[1]) + add[1];
+        if (scale[2] != 1.0f || add[2] != 0.0f)
+            key.position[2] =
+                static_cast<float>(scale[2] * key.position[2]) + add[2];
+        if (scale[3] != 1.0f || scale[4] != 1.0f || scale[5] != 1.0f ||
+            add[3] != 0.0f || add[4] != 0.0f || add[5] != 0.0f) {
+            api.matrixRotationQuaternion(&quatMatrix, key.rotation);
+            float zAngle = atan2f(quatMatrix.m[0][1], quatMatrix.m[1][1]);
+            float xAngle = asinf(-quatMatrix.m[2][1]);
+            float yAngle = atan2f(quatMatrix.m[2][0], quatMatrix.m[2][2]);
+            if (1e-6f > fabsf(cosf(xAngle))) {  // gimbal lock
+                zAngle +=
+                    quatMatrix.m[0][1] > 0.0f ? 3.141592f : -3.141592f;
+                yAngle +=
+                    quatMatrix.m[2][0] > 0.0f ? 3.141592f : -3.141592f;
+            }
+            api.rotZ(&rotation, zAngle * scale[5] + add[5]);
+            api.rotX(&axis, xAngle * scale[3] + add[3]);
+            api.multiply(&rotation, &rotation, &axis);
+            api.rotY(&axis, yAngle * scale[4] + add[4]);
+            api.multiply(&rotation, &rotation, &axis);
+            api.quatFromMatrix(key.rotation, &rotation);
+        }
+    }
+    PanelPaint(app);         // 0x414610 (x64 sub_7FF7CB480EA0)
+    CurvePanelRepaint(app);  // x64 sub_7FF7CB482BB0
+    SeekModelFrame(modelBytes, app->state.currentFrame,
+              app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
+    app->SceneModified() = 1;  // x64 0xA1B31 dirty byte
+    PostViewRefresh(app);   // 0x40D130 (x64 sub_7FF7CB440DD0)
 }
 
 // ===========================================================================
@@ -632,7 +839,7 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
     undo.frame = static_cast<std::uint32_t>(app->state.currentFrame);
 
     if (undo.bonePose != nullptr) {
-        std::free(undo.bonePose);
+        ::operator delete(undo.bonePose);
         undo.bonePose = nullptr;
     }
     auto* snapshot = static_cast<mdl::BonePoseSnapshot*>(::operator new(
@@ -657,7 +864,7 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
     }
     undo.dirty = 0;
     if (undo.auxiliaryPose != nullptr) {
-        std::free(undo.auxiliaryPose);
+        ::operator delete(undo.auxiliaryPose);
         undo.auxiliaryPose = nullptr;
     }
     undo.auxiliaryPose = ::operator new(

@@ -424,12 +424,30 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                 v = rec.value;
             } else {
                 const mdl::MorphKey& prev = keys[rec.previous];
+#if defined(_M_IX86)
+                // x86 0x4A3A31..0x4A3A8A: t and delta each round through a
+                // float stack slot (fstp/fld), then the product+add runs on
+                // the x87 stack (extended precision) and rounds once at the
+                // final store - modelled with doubles like the rest of the
+                // x86 branches in this port.
                 const float tF = (float)((frame - (double)prev.frame) /
                                          (double)(std::uint32_t)(
                                              rec.frame - prev.frame));
                 const float delta = rec.value - prev.value;
                 v = (float)((double)tF * (double)delta +
                             (double)prev.value);
+#else
+                // x64 sub_7FF7CB4F08C0 @ 0x7FF7CB4F10F3..0x7FF7CB4F114B:
+                // single precision end to end - subss for the value delta,
+                // cvtsi2ss/divss for the fraction (frame kept as float in
+                // xmm4), then mulss/addss; no double accumulation anywhere.
+                const float tF =
+                    (static_cast<float>(frame) -
+                     static_cast<float>(prev.frame)) /
+                    static_cast<float>(static_cast<int>(rec.frame) -
+                                       static_cast<int>(prev.frame));
+                v = tF * (rec.value - prev.value) + prev.value;
+#endif
             }
             vals[k].value = v;
         }
@@ -630,12 +648,27 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
             // full interpolation (LABEL_122, 0x4A433D)
             const float cq[4] = {rec.rotation[0], rec.rotation[1],
                                  rec.rotation[2], rec.rotation[3]};
-            // x64 0x7FF7CB4F1D34..DD: cvtsi2ss + subss + divss - the raw
-            // fraction divides in SINGLE precision on the float-cast frame.
+#if defined(_M_IX86)
+            // x86 0x4A4361..0x4A4398: fild m32int prevFrame (jge + fadd
+            // flt_52B9F0 = 2^32 when negative, i.e. unsigned) subtracted
+            // from the double frame by fsubp 0x4A4373, fild m32int
+            // (curFrame - prevFrame) with the same unsigned fixup as the
+            // fdivp 0x4A4389 divisor, and a single rounding at the
+            // fstp float 0x4A4390 - double intermediates like the morph
+            // section above (the float-cast frame would round early and
+            // skew tF once frame passes ~16000).
+            const float tF =
+                (float)((frame - (double)prevFrame) /
+                        (double)(curFrame - prevFrame));
+#else
+            // x64 0x7FF7CB4F1D30..61: cvtsi2ss + subss + divss - the raw
+            // fraction divides in SINGLE precision on the float-cast frame
+            // (frame kept as float in xmm4).
             const float tF =
                 (static_cast<float>(frame) - static_cast<float>(prevFrame)) /
                 static_cast<float>(static_cast<int>(curFrame) -
                                    static_cast<int>(prevFrame));
+#endif
             // EASED rotation fraction - the slerp below uses this value
             // (see the file header's decompiler-trap note)
             const float eRot = BoneEase(m, 3, cursorIdx, tF);

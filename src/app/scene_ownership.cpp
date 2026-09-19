@@ -3,6 +3,7 @@
 // ===========================================================================
 #include <cstdio>
 #include <cstdlib>
+#include <new>
 
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -44,26 +45,26 @@ void ReleaseSceneModels(MMDApp& app) {
         if (model == nullptr)
             continue;
         ModelDispose(model);
-        std::free(model);
+        ::operator delete(model);
         model = nullptr;
     }
 }
 
 void ReleaseGlobalTimelineTracks(MMDApp& app) {
     if (app.CameraKeys() != nullptr) {
-        std::free(app.CameraKeys());
+        ::operator delete(app.CameraKeys());
         app.CameraKeys() = nullptr;
     }
     if (app.LightKeys() != nullptr) {
-        std::free(app.LightKeys());
+        ::operator delete(app.LightKeys());
         app.LightKeys() = nullptr;
     }
     if (app.ShadowKeys() != nullptr) {
-        std::free(app.ShadowKeys());
+        ::operator delete(app.ShadowKeys());
         app.ShadowKeys() = nullptr;
     }
     if (app.GravityKeys() != nullptr) {
-        std::free(app.GravityKeys());
+        ::operator delete(app.GravityKeys());
         app.GravityKeys() = nullptr;
     }
 }
@@ -73,13 +74,13 @@ void ReleaseAccessoriesAndTracks(MMDApp& app) {
         mdl::AccessoryRecord*& accessory = app.AccessorySlot(slot);
         if (accessory != nullptr) {
             DisposeAccessory(accessory);
-            std::free(accessory);
+            ::operator delete(accessory);
             accessory = nullptr;
         }
         mdl::AccessoryKey*& track = app.AccessoryKeys(slot);
         if (track != nullptr) {
             TraceAccessoryRelease(slot, "before-free", track);
-            std::free(track);
+            ::operator delete(track);
             TraceAccessoryRelease(slot, "after-free", nullptr);
             track = nullptr;
         }

@@ -18,6 +18,27 @@
 
 #include "mmhack_state.h"
 #include "mme_abi.h"
+#include "mmeffect/mme_ui.h"
+
+extern "C" void __cdecl MmeHostInitializeRuntime(HINSTANCE instance) {
+    mme::MmeUiInitializeRuntime(instance);
+}
+
+extern "C" void __cdecl MmeHostShutdownRuntime() {
+    mme::MmeUiShutdownRuntime();
+}
+
+// src/exports/effect_api.cpp 的内部直取（非导出，C 链接）：模型/附件的原始
+// 宽字符路径（model+0x24BC / acc+0x29C，即加载所用 D3DXLoadMeshFromXW 宽路
+// 径）。原版 MMHack 全程保留该宽路径：[0x1800043b0] hook 把它原样登记进
+// ObjData+0x30（wstring，sub_18000f150 直接拷贝），[sub_18000f340] 读回后传
+// [FUN_18000e020]（wfopen_s 解析材质表/toon，无 ANSI 往返）。内置版同样直
+// 取——ExpGetPmdFilename 的 Wide→SJIS 输出再经 CP_ACP 回宽对非 SJIS 字符
+// 有损，会破坏材质表/toon 文件解析。MMEffect.dll 无法从 exe 导入库解析非
+// 导出符号，故由宿主桥经 MmeHostSetPathProviders 注入函数指针（等价于原
+// 版 MMHack 与 exe 间的进程内直连）。
+static const wchar_t* (__cdecl* g_mmdModelPathW)(int) = nullptr;
+static const wchar_t* (__cdecl* g_mmdAcsPathW)(int) = nullptr;
 
 namespace {
 
@@ -40,28 +61,26 @@ MmeHostDeviceState g_host;
 // toon 引用）；附件保持空表——GetMaterialName [0x180001130] 只服务
 // isPmd == 1 的对象。
 void MmhPopulateObjectData(unsigned long long id, bool isPmd, int hostIndex,
-                           const std::string& fileName)
+                           const wchar_t* modelPath)
 {
     (void)hostIndex;
     MmhObjData& d = g_mmh.objData[id];
     d.id = id;
     d.isPmd = isPmd;
     // 宽字符模型路径（原版: ObjData+0x30 wstring，FUN_18000f340 读回并传给
-    // FUN_18000e020）
-    int wlen = MultiByteToWideChar(CP_ACP, 0, fileName.c_str(), -1, nullptr, 0);
-    if (wlen > 1) {
-        d.modelName.resize((size_t)wlen);
-        MultiByteToWideChar(CP_ACP, 0, fileName.c_str(), -1, &d.modelName[0], wlen);
-        d.modelName.resize((size_t)wlen - 1);    // 去掉终止符
-    }
+    // FUN_18000e020）：直取宿主原始宽路径，不经窄字符往返。
+    d.modelName = (modelPath != nullptr) ? modelPath : L"";
     d.mats.clear();
     if (isPmd) {
         // [FUN_18000e020] 原版在 OnCreateModel 之前、以 &ObjData.materials
         // 为输出调用。
         MmhMaterialTableLoadFromFile(d.modelName.c_str(), &d.mats);
     }
-    // 附属信息 (+0x240/+0x244) 原版从 MMD 内部读取；宿主导出面未暴露。
-    // GetAcsAttachedPmd 经 EffectOwnerManager 的 CONTROLOBJECT 路径另行解析。
+    // 附属信息 (+0x240/+0x244)：原版 ObjData 从不写入这两个字段，宿主填充
+    // 亦不快照——GetAcsAttachedPmd [0x1800012d0] 每次调用时经 sub_18000F2B0
+    // 的借位分支 [0x18000f331] 直接读宿主附件对象内存（本工程等价实现见
+    // mmhack_getters.cpp：AccessoryRecord::parentModel/parentBone），保持关键
+    // 帧驱动的附属变化实时可见。此处保留 -1/0 构造默认仅作布局锚点。
     d.attachPmdIndex = -1;
     d.attachBoneIndex = 0;
 }
@@ -71,6 +90,13 @@ void MmhPopulateObjectData(unsigned long long id, bool isPmd, int hostIndex,
 // ---------------------------------------------------------------------------
 // 窗口 / 标准效果 / 文件通知（原 hook 侧记录路径）
 // ---------------------------------------------------------------------------
+void __cdecl MmeHostSetPathProviders(const wchar_t* (__cdecl* model_path)(int),
+                                     const wchar_t* (__cdecl* acs_path)(int))
+{
+    g_mmdModelPathW = model_path;
+    g_mmdAcsPathW = acs_path;
+}
+
 void __cdecl MmeHostSetMainWindow(HWND window)
 {
     g_mmh.mainWindow = window;
@@ -104,17 +130,25 @@ void __cdecl MmeHostSetMainWindow(HWND window)
 
 void __cdecl MmeHostSetStandardEffect(void* effect)
 {
-    // [0x180004440 Hooked_D3DXCreateEffectFromResourceA] 首次成功路径：登记
-    // 12 个已知技术句柄并缓存当前效果。宿主在设备初始化尾调用一次。
+    // [0x180004440 Hooked_D3DXCreateEffectFromResourceA] 仅当
+    // qword_18006E7A0（currentEffect）尚未设置且新建效果非空时登记一次
+    // [0x1800044b6 条件 !qword_18006E7A0 && v8 && *v8]；此后的调用直接返回，
+    // 不覆盖已缓存效果也不重登记 12 个技术句柄。宿主在设备初始化尾调用。
     if (effect == nullptr)
         return;
-    g_mmh.currentEffect = effect;
+    if (g_mmh.currentEffect != nullptr)
+        return;
+    // [0x1800044c7 sub_180006350] 登记前清空技术缓存图（原版 hash 图
+    // qword_18006CCD0/DAT_18006ccf0 族的节点释放）。
+    g_mmh.tecCache.clear();
     ID3DXEffect* fx = static_cast<ID3DXEffect*>(effect);
     for (int i = 0; i < MMH_TEC_COUNT; ++i) {
         D3DXHANDLE handle = fx->GetTechniqueByName(g_tecTable[i].name);
         if (handle != nullptr)
             MmhRecordTecHandle(handle, i);
     }
+    // [0x18000451d] 12 个句柄登记完成后才缓存当前效果。
+    g_mmh.currentEffect = effect;
 }
 
 void __cdecl MmeHostSetDrawnWindow(HWND window)
@@ -239,7 +273,8 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         char* fname = ExpGetPmdFilename(i);
         if (fname != nullptr)
             obj->fileName = fname;
-        MmhPopulateObjectData(id, true, i, obj->fileName);
+        MmhPopulateObjectData(id, true, i,
+                              (g_mmdModelPathW != nullptr) ? g_mmdModelPathW(i) : nullptr);
         obj->data = MmhGetObjectData(id);
         g_host.objectList.push_back(obj);
         g_host.objectById[id] = obj;
@@ -256,7 +291,8 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         char* fname = ExpGetAcsFilename(i);
         if (fname != nullptr)
             obj->fileName = fname;
-        MmhPopulateObjectData(id, false, i, obj->fileName);
+        MmhPopulateObjectData(id, false, i,
+                              (g_mmdAcsPathW != nullptr) ? g_mmdAcsPathW(i) : nullptr);
         obj->data = MmhGetObjectData(id);
         g_host.objectList.push_back(obj);
         g_host.objectById[id] = obj;

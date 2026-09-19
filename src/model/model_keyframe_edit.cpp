@@ -100,7 +100,7 @@ void AdvanceUndo(unsigned char* model) {
 
 void ReplaceBuffer(void*& slot, std::size_t bytes) {
     if (slot != nullptr) {
-        std::free(slot);
+        ::operator delete(slot);
         slot = nullptr;
     }
     slot = ::operator new(bytes);
@@ -601,8 +601,8 @@ void DeleteMarkedModelKeys(unsigned char* model, int frame) {  // VA 0x004A09E0
 
 // VA 0x004A1870: undo one ring entry, capturing the displaced state into the
 // parallel redo ring at 0x2A34. Type 4 entries are chained recursively by MMD.
-void UndoModelEdit(unsigned char* model, std::int32_t* frame) {  // VA 0x004A1870
-    if (model == nullptr || frame == nullptr) return;
+void UndoModelEdit(unsigned char* model, std::int32_t& frame) {  // VA 0x004A1870
+    if (model == nullptr) return;
     int cursor = static_cast<int>(mdl::Mdl(model)->undoState[0]);
     auto& undo = UndoAt(model, cursor);
     const int type = undo.operation;
@@ -622,8 +622,8 @@ void UndoModelEdit(unsigned char* model, std::int32_t* frame) {  // VA 0x004A187
                                     sizeof(mdl::BonePoseSnapshot));
         CaptureAndApplyPose(model, undo.bonePose, redo.bonePose, count);
         if (type == 3) {
-            *frame = static_cast<int>(undo.frame);
-            SetFrameEdit(model, *frame);
+            frame = static_cast<int>(undo.frame);
+            SetFrameEdit(model, frame);
         }
     } else if (type == 2 || type == 4) {
         redo.operation = 2;
@@ -635,8 +635,8 @@ void UndoModelEdit(unsigned char* model, std::int32_t* frame) {  // VA 0x004A187
         void*& redoPose = reinterpret_cast<void*&>(redo.bonePose);
         ReplaceBuffer(redoPose, static_cast<std::size_t>(boneCount) *
                                     sizeof(mdl::BonePoseSnapshot));
-        *frame = static_cast<int>(undo.frame);
-        SetFrameEdit(model, *frame);
+        frame = static_cast<int>(undo.frame);
+        SetFrameEdit(model, frame);
         CaptureAndApplyPose(model, undo.bonePose, redo.bonePose, boneCount);
         mdl::BoneKey* const keys = mdl::BoneKeys(model);
         const auto* source = static_cast<const unsigned char*>(
@@ -660,8 +660,8 @@ void UndoModelEdit(unsigned char* model, std::int32_t* frame) {  // VA 0x004A187
 
 // VA 0x004A2490: redo the parallel-ring entry selected by advancing the
 // cursor. Type 2/4 restores complete 60-byte key records byte-for-byte.
-void RedoModelEdit(unsigned char* model, std::int32_t* frame) {  // VA 0x004A2490
-    if (model == nullptr || frame == nullptr) return;
+void RedoModelEdit(unsigned char* model, std::int32_t& frame) {  // VA 0x004A2490
+    if (model == nullptr) return;
     int cursor = static_cast<int>(mdl::Mdl(model)->undoState[0]) + 1;
     if (cursor >= 30) cursor = 0;
     mdl::Mdl(model)->undoState[0] = cursor;
@@ -684,8 +684,8 @@ void RedoModelEdit(unsigned char* model, std::int32_t* frame) {  // VA 0x004A249
             const int index = At<std::int32_t>(const_cast<unsigned char*>(in), 0);
             std::memcpy(&keys[index], in + 4, sizeof(mdl::BoneKey));
         }
-        *frame = static_cast<int>(UndoAt(model, cursor).frame);
-        SetFrameEdit(model, *frame);
+        frame = static_cast<int>(UndoAt(model, cursor).frame);
+        SetFrameEdit(model, frame);
     }
     if (UndoAt(model, cursor).operation == 4)
         RedoModelEdit(model, frame);

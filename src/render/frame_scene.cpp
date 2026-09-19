@@ -67,9 +67,14 @@ void DrawLineOverlay(MMDApp* app, D3DRenderer* sub,
     if (count == 0 || vb == nullptr)
         return;
 
+    // 原版线批前显式解绑 stage 0（x64 0x7FF7CB44AF44 的 SetTexture(0,NULL)，
+    // 位于文本批之后、线批之前），否则线批会继承文本批的字体图集纹理。
+    device->SetTexture(0, nullptr);
     device->SetStreamSource(0, vb, 0, sizeof(ColoredScreenVertex));
     device->SetFVF(kColoredScreenVertexFvf);
-    device->DrawPrimitive(D3DPT_LINELIST, 0, count);
+    // MME: 原版线框批次（x64 @0x44AFB4）与文本/精灵 overlay 一样经设备虚表
+    // DrawPrimitive 槽发出（被 MMHack 包装可见），故同样过桥。
+    mme::DrawPrimitive(device, D3DPT_LINELIST, 0, count);
 }
 
 void DrawSpriteOverlay(MMDApp* app, IDirect3DDevice9* device) {

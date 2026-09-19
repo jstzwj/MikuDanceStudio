@@ -127,12 +127,8 @@ void MmeCaptureCurrentRenderState(ModelData* model, RenderSnapshot* snap)
             effect->GetMatrix(g_paramHandles[kParamMatLightViewProj], &m);
             memcpy(&snap->light_view_projection, &m, sizeof(D3DMATRIX));  // +0x158 [L107]
             if (model != nullptr && model->kind() == 0) {
-                // Accessory: model_world comes from ModelData+0xf8 (the
-                // per-accessory transform scratch, filled by the EMM
-                // assignment in Phase 2) [L108-110]. The original memcpy's
-                // 0x40 bytes from ModelData+0xf8, which spans the first
-                // three PassPlanScratch color vectors (they are contiguous).
-                memcpy(&snap->model_world, &model->passPlanScratch().color0, sizeof(D3DMATRIX));
+                // Accessory world matrix from the current render plan.
+                snap->model_world = model->planMatrix();
                 memset(&m, 0, sizeof(m));
                 effect->GetMatrix(g_paramHandles[kParamMatWorld], &m);
                 memcpy(&snap->effect_world, &m, sizeof(D3DMATRIX));           // +0x98 [L110]

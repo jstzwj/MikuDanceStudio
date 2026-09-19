@@ -18,7 +18,11 @@
 
 /////////////// _EXPORT definition ///////////////
 // (plugin side) imports from MikuMikuDance.exe
+#if defined(MIKUDANCESTUDIO_MME_EMBEDDED)
+#define _EXPORT
+#else
 #define _EXPORT __declspec(dllimport)
+#endif
 //#define _EXPORT __declspec(dllexport)   // (MMD main body side)
 
 ///////////// Export functions (37) ////////////////

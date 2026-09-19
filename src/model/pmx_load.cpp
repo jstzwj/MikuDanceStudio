@@ -305,7 +305,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
     };
     char* const sjisMirrors[] = {
         model.name, model.nameEn, model.comment, model.commentEn};
-    const rsize_t kSjisSizes[4] = {0x32, 0x32, 0x100, 0x100};
+    const rsize_t kSjisSizes[4] = {
+        sizeof model.name, sizeof model.nameEn,
+        sizeof model.comment, sizeof model.commentEn};
     for (int i = 0; i < 4; ++i) {
         std::uint32_t len = 0;
         _read(fh, &len, 4);
@@ -356,8 +358,10 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             model.pmxAdditionalUvCount < 5 ? model.pmxAdditionalUvCount : 0;
         const VbSpec& s = kSpec[uvLadder];
         IDirect3DVertexBuffer9* vb = nullptr;
+        // pool = D3DPOOL_MANAGED: every addl-UV ladder branch writes the
+        // 5th argument slot with 1 (x64 0x7FF7CB4CA1CF)
         if (FAILED(dev->CreateVertexBuffer(s.stride * vertCount, 8, s.fvf,
-                                           D3DPOOL_SYSTEMMEM, &vb, nullptr))
+                                           D3DPOOL_MANAGED, &vb, nullptr))
             || vb == nullptr) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
@@ -369,8 +373,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         }
         mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer) = vb;
         IDirect3DVertexBuffer9* vb2 = nullptr;
+        // edge VB: pool = 1 too (x64 0x7FF7CB4CA272)
         if (FAILED(dev->CreateVertexBuffer(16 * vertCount, 8, 66,
-                                           D3DPOOL_SYSTEMMEM, &vb2, nullptr))
+                                           D3DPOOL_MANAGED, &vb2, nullptr))
             || vb2 == nullptr) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
@@ -436,8 +441,15 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 }
                 break;
             }
-            default:                                        // BDEF1 (and original fallback)
+            case mdl::PmxWeightType::bdef1:
                 rec.bone[0] = readIdx(boneIdxSize);
+                break;
+            default:
+                // Illegal weight type: the reference has no reader here.
+                // x86 0x4B80A3/0x4B813E/0x4B833B all jump straight to the
+                // 0x4B85AB edge-scale read, consuming no bytes (x64 mirrors:
+                // 0x7FF7CB4CA536/CA5D5/CA7D4 -> 0x7FF7CB4CAA2B); the weight
+                // fields keep their zeroed state.
                 break;
             }
             _read(fh, &rec.edgeScale, 4);
@@ -515,7 +527,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         if (FAILED(dev->CreateIndexBuffer(
                 (wideIdx ? 4 : 2) * faceCount, 0,
                 wideIdx ? D3DFMT_INDEX32 : D3DFMT_INDEX16,
-                D3DPOOL_SYSTEMMEM, &ib, nullptr))) {
+                // x64 LoadPMX 0x7FF7CB4CB3D6: Pool immediate is 1
+                // (D3DPOOL_MANAGED), not SYSTEMMEM.
+                D3DPOOL_MANAGED, &ib, nullptr))) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
                 : "\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x91\xAB\x82\xE8"
@@ -588,10 +602,11 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
     // ---- materials -------------------------------------------------------------
     _read(fh, &model.materialCount, sizeof(model.materialCount));
     const std::int32_t matCount = static_cast<std::int32_t>(model.materialCount);
+    mdl::ModelMaterialRecord* materials = nullptr;
     if (matCount != 0) {
         model.materials = operator new(2292 * matCount);
         std::memset(model.materials, 0, 2292 * matCount);
-        auto* materials = static_cast<mdl::ModelMaterialRecord*>(
+        materials = static_cast<mdl::ModelMaterialRecord*>(
             model.materials);
         const int texIdxSize = model.pmxTextureIndexSize;
         auto readTexIdx = [fh, texIdxSize]() -> std::int32_t {
@@ -673,7 +688,12 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             SkipTextBuf(fh);                                // memo
             _read(fh, &mat.faceVertexCount, sizeof(mat.faceVertexCount));
         }
-        // per-vertex material assignment by smallest edge size
+    }
+    // per-vertex material assignment by smallest edge size.  Runs whenever
+    // the model has vertices, even with matCount == 0: vertMat stays zeroed
+    // and every vertex gets materialIndex 0 (x64 0x7FF7CB4CBFCC gates this
+    // whole block only on vertexCount; matCount gates the loop below).
+    if (vertCount > 0) {
         float* edgeKey = static_cast<float*>(
             operator new(sizeof(*edgeKey) * vertCount));
         std::int32_t* vertMat = static_cast<std::int32_t*>(
@@ -1063,7 +1083,26 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                     }
                     _read(fh, entry.translation, sizeof(entry.translation));
                     _read(fh, entry.rotation, sizeof(entry.rotation));
-                    ++boneMorphTotal;
+                    // load-time dedup: a bone already offered by an
+                    // EARLIER bone morph is not counted, so the baseline
+                    // count equals the fill and leaves no zeroed tail
+                    // records (x64 0x7FF7CB4CDD2E..CDD7E scans morphs
+                    // j < i before the counter increment)
+                    bool seen = false;
+                    for (std::int32_t j = 0; j < i && !seen; ++j) {
+                        const mdl::MorphRecord& prev = mdl::Morphs(m)[j];
+                        if (prev.type != 2)
+                            continue;
+                        for (int p = 0; p < prev.boneCount; ++p) {
+                            if (prev.boneEntries[p].boneIndex
+                                    == entry.boneIndex) {
+                                seen = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!seen)
+                        ++boneMorphTotal;
                 }
                 morph.offsetCount = 0;
                 break;
@@ -1083,6 +1122,26 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                     mdl::PmxUvMorphEntry& entry = morph.uvEntries[family][o];
                     entry.vertexIndex = readIdxS(vertIdxSize);
                     _read(fh, entry.offset, sizeof(entry.offset));
+                    // load-time dedup within the family: a vertex
+                    // already offered by an earlier same-family morph
+                    // is not counted (x64 0x7FF7CB4CDF5F..CDFAF scans
+                    // morphs j < i of the same type before the family
+                    // counter increment)
+                    bool seen = false;
+                    for (std::int32_t j = 0; j < i && !seen; ++j) {
+                        const mdl::MorphRecord& prev = mdl::Morphs(m)[j];
+                        if (prev.type != type)
+                            continue;
+                        for (int p = 0; p < prev.uvCounts[family]; ++p) {
+                            if (prev.uvEntries[family][p].vertexIndex
+                                    == entry.vertexIndex) {
+                                seen = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (seen)
+                        continue;
                     switch (type) {
                     case 3: ++uvMorphTotal; break;
                     case 4: ++uv2Total; break;
@@ -1270,10 +1329,23 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 mdl::PmxUvMorphEntry& rec = records[w];
                 rec.vertexIndex = vi;
                 const mdl::PmxVertex& vertex = model.pmxVertices[vi];
-                rec.offset[0] = vertex.uv[0];
-                rec.offset[1] = vertex.uv[1];
-                rec.offset[2] = vertex.uvMorphBaseZW[0];
-                rec.offset[3] = vertex.uvMorphBaseZW[1];
+                if (fam == 0) {
+                    // base-UV family: uv.xy plus the ZW morph base (x64
+                    // 0x7FF7CB4CF242..CF2DF reads vertex +0x18/+0x1C/
+                    // +0xB0/+0xB4)
+                    rec.offset[0] = vertex.uv[0];
+                    rec.offset[1] = vertex.uv[1];
+                    rec.offset[2] = vertex.uvMorphBaseZW[0];
+                    rec.offset[3] = vertex.uvMorphBaseZW[1];
+                } else {
+                    // additional-UV families: the four components of UV
+                    // fam-1 out of the component-major block (x64
+                    // 0x7FF7CB4CF472..CF505 steps +0x20/+0x30/+0x40/
+                    // +0x50, +4 per family)
+                    for (int c = 0; c < 4; ++c)
+                        rec.offset[c] =
+                            vertex.additionalUvByComponent[c][fam - 1];
+                }
                 ++w;
             }
         }
@@ -1354,10 +1426,10 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         }
     }
 
-    // facial group records (m+9948): morph entries of the first two frames
-    const int morphGroupCount = (frameCount > 0 && frames[0].special)
-                                    ? morphEntryTotal
-                                    : 0;
+    // facial group records (m+9948): morph entries of ALL frames; the count
+    // is stored byte-truncated with no special gate (x64 0x7FF7CB4D0234)
+    const int morphGroupCount =
+        static_cast<unsigned char>(morphEntryTotal);
     model.facialFrameCount = static_cast<std::uint8_t>(morphGroupCount);
     if (morphGroupCount != 0) {
         model.displayFrames = static_cast<mdl::FrameGroup*>(
@@ -1365,8 +1437,10 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         std::memset(model.displayFrames, 0,
                     sizeof(mdl::FrameGroup) * morphGroupCount);
         int w = 0;
-        for (std::uint32_t f = 0; f < frameCount && f < 2; ++f) {
+        for (std::uint32_t f = 0; f < frameCount; ++f) {
             for (int e = 0; e < frames[f].count; ++e) {
+                if (w >= morphGroupCount)
+                    break;  // >255 morph entries overflow in the reference
                 const mdl::PmxDisplayFrameEntry& entry = frames[f].entries[e];
                 if (entry.type != 1)
                     continue;
@@ -1380,8 +1454,11 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             }
         }
     }
-    // Root bone from the first PMX display frame's first bone entry.
-    if (frameCount > 0 && frames[0].count > 0 && !frames[0].special) {
+    // Root bone from the first PMX display frame's first entry, taken only
+    // when that entry is a bone entry (type==0); the special flag byte is
+    // never consulted (x64 0x7FF7CB4D03A7..0x4D03B9).
+    if (frameCount > 0 && frames[0].count > 0
+        && frames[0].entries[0].type == 0) {
         model.displayRootBone = frames[0].entries[0].index;
     }
     // group name table (m+9936)
@@ -1504,12 +1581,12 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 rb.kinematicFlag = 1;
             if (rb.mode == 0)
                 rb.staticFlag = 1;
-            // PMX positions are bone-relative - subtract the bone pos
+            // PMX positions are bone-relative - subtract the bone pos.
+            // 负 boneIndex 时原版同样以 bones[0].position 做重定基并在正向
+            // 平移加回：sub_7FF7CB4C9AC0 @0x7FF7CB4D0DF4..0x7FF7CB4D0E9D
+            // （重定基三分量 +13Ch/+140h/+144h）、@0x7FF7CB4D0FEA（正向平移）
             const std::int32_t bi = rb.boneIndex;
-            float origin[3] = {0, 0, 0};
-            if (bi >= 0)
-                std::memcpy(origin, bones[bi].position, 12);
-            const float* bp = origin;
+            const float* bp = bones[bi >= 0 ? bi : 0].position;
             rb.position[0] -= bp[0];
             rb.position[1] -= bp[1];
             rb.position[2] -= bp[2];

@@ -1884,10 +1884,12 @@ STDMETHODIMP CBasePin::QueryInternalConnections(IPin** /*apPin*/, ULONG* /*nPin*
 }
 
 // VA 0x10003370 - IPin::EndOfStream / BeginFlush / EndFlush: the same
-// eight-byte E_NOTIMPL stub shared with the default GetMediaType1.
-STDMETHODIMP CBasePin::EndOfStream()  { return E_NOTIMPL; }   // 0x8000FFFF
-STDMETHODIMP CBasePin::BeginFlush()   { return E_NOTIMPL; }
-STDMETHODIMP CBasePin::EndFlush()     { return E_NOTIMPL; }
+// E_UNEXPECTED body shared with the default GetMediaType1.
+// x64 original 0x180003C90: mov eax,8000FFFFh; ret; IPin slots
+// 0x1800083C8/3D0/3D8 and CSourceStream slot 0x180008BD0.
+STDMETHODIMP CBasePin::EndOfStream()  { return E_UNEXPECTED; }
+STDMETHODIMP CBasePin::BeginFlush()   { return E_UNEXPECTED; }
+STDMETHODIMP CBasePin::EndFlush()     { return E_UNEXPECTED; }
 
 // VA 0x10003090 - IPin::NewSegment: cache the segment in the pin
 // (+0x80/+0x88/+0x90) — nothing is forwarded here (DeliverNewSegment forwards).
@@ -1985,11 +1987,11 @@ HRESULT CSourceStream::CheckMediaType(const AM_MEDIA_TYPE* pmt)
 }
 
 // VA 0x10003370 - CSourceStream default GetMediaType1 (root vtable +0x1C):
-// eight-byte E_NOTIMPL stub (0x8000FFFF); the binary shares this one body
+// E_UNEXPECTED body (x64 0x180003C90); the binary shares this one body
 // with IPin::EndOfStream/BeginFlush/EndFlush.  CPushPinDIBSq overrides it
 // with 0x100011F0.
 HRESULT CSourceStream::GetMediaType1(AM_MEDIA_TYPE* pmt)
 {
     (void)pmt;                 // the original ignores the argument entirely
-    return E_NOTIMPL;          // mov eax, 0x8000FFFF; ret 4
+    return E_UNEXPECTED;       // mov eax, 0x8000FFFF; ret
 }

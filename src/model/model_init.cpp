@@ -4,9 +4,8 @@
 // ===========================================================================
 // Default-state initializer of the freshly allocated 0x4CCF4 model block
 // (called from 0x460430 add-model, 0x450000 and 0x458F80 scene load).
-// Every store below mirrors the original one-to-one; only the 21 identity
-// matrices and the 30x23 morph-slot zeroing loops are expressed as loops
-// instead of unrolled stores (deviation noted in docs/ARCHITECTURE.md).
+// Initial values recovered from the x64 constructor and tracking reset.
+// Runtime members keep tracking state separate from model-owned resources.
 // =========================================================================//
 #include <cstdint>
 #include <cstring>
@@ -18,15 +17,13 @@ namespace mikudancestudio {
 void ModelInitMorphSlots(unsigned char* m);                  // 0x4A89B0
 
 void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
-    using mdl::At;
-    static const std::size_t kZ1[] = {9388, 9392, 9396, 9400};
-    static const std::size_t kNeg999[] = {14296, 14404, 14416, 14428, 14440,
-                                          14452, 14464, 14476, 14488, 14500,
-                                          14512, 14524, 14536, 14548};
-    mikudancestudio::mdl::Mdl(m)->physicsMode = 0;
-    for (std::size_t off : kZ1)
-        At<std::uint32_t>(m, off) = 0;
     mdl::ModelRecord& model = *mdl::Mdl(m);
+    model.physicsMode = 0;
+    for (auto& text : model.pmxTextBuffers)
+        text = nullptr;
+    std::memset(&model.pmxReserved, 0, sizeof model.pmxReserved);
+    std::memset(&model.gap6, 0, sizeof model.gap6);
+    model.reservedMorphTable = nullptr;
     for (std::int32_t& count : mdl::UvMorphCounts(m).byFamily)
         count = 0;
     for (auto& table : mdl::UvMorphTables(m).byFamily)
@@ -50,105 +47,91 @@ void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
     model.pmxVertices = nullptr;
     model.vertexBuffer2 = nullptr;
     model.vertexBuffer = nullptr;
-    mdl::Mdl(m)->boneKeyCursors = nullptr;
-    mdl::Mdl(m)->boneTrackActive = nullptr;
-    mdl::Mdl(m)->morphKeyCursors = nullptr;
-    mdl::Mdl(m)->morphTrackActive = nullptr;
-    mdl::Mdl(m)->displayKeyCursor = 0;
-    mdl::Mdl(m)->displayTrackActive = 0;
-    mikudancestudio::mdl::Mdl(m)->displayState = 0;
-    mikudancestudio::mdl::Mdl(m)->selectedBone = 0;
-    mdl::Mdl(m)->boneSelection = nullptr;
-    mdl::Mdl(m)->bonePhysicsState = nullptr;
-    mikudancestudio::mdl::Mdl(m)->loadComplete = 1;
-    for (std::int32_t& selectedMorph : mdl::Mdl(m)->selectedMorphs)
+    model.boneKeyCursors = nullptr;
+    model.boneTrackActive = nullptr;
+    model.morphKeyCursors = nullptr;
+    model.morphTrackActive = nullptr;
+    model.displayKeyCursor = 0;
+    model.displayTrackActive = 0;
+    model.displayState = 0;
+    model.selectedBone = 0;
+    model.boneSelection = nullptr;
+    model.bonePhysicsState = nullptr;
+    model.loadComplete = 1;
+    for (std::int32_t& selectedMorph : model.selectedMorphs)
         selectedMorph = -1;
-    mikudancestudio::mdl::Mdl(m)->edgeScale = 1.0f;
+    model.edgeScale = 1.0f;
     mdl::BoneKeys(m) = nullptr;
     mdl::MorphKeys(m) = nullptr;
     mdl::DisplayKeys(m) = nullptr;
     mdl::BoneKeyIndices(m) = nullptr;
     mdl::MorphKeyIndices(m) = nullptr;
-    mikudancestudio::mdl::Mdl(m)->boneListPos = 0;
-    mikudancestudio::mdl::Mdl(m)->maxFrame = 0;
-    mikudancestudio::mdl::Mdl(m)->undoState[0] = 0;
-    mikudancestudio::mdl::Mdl(m)->undoState[1] = 0;
-    mikudancestudio::mdl::Mdl(m)->postLoadFlag2 = 0;
-    std::memset(mikudancestudio::mdl::Mdl(m)->undoRings, 0,
-                sizeof(mikudancestudio::mdl::Mdl(m)->undoRings));
-    std::memset(m + 10804, 0, 0x348);
-    mdl::Mdl(m)->undoDirty = 0;
-    mdl::Mdl(m)->redoDirty = 0;
-    mikudancestudio::mdl::Mdl(m)->physicsFlags = 0;
-    mdl::Mdl(m)->rigidTable = nullptr;
-    mikudancestudio::mdl::Mdl(m)->rigidCount = 0;
-    mikudancestudio::mdl::Mdl(m)->jointCount = 0;
-    mdl::Mdl(m)->jointTable = nullptr;
-    mdl::Mdl(m)->indexBuffer = nullptr;
-    mikudancestudio::mdl::Mdl(m)->toonFlag = 1;
-    mikudancestudio::mdl::Mdl(m)->toonShared = 0xFFFFFFFFu;
+    model.boneListPos = 0;
+    model.maxFrame = 0;
+    model.undoState[0] = 0;
+    model.undoState[1] = 0;
+    model.postLoadFlag2 = 0;
+    std::memset(model.undoRings, 0,
+                sizeof(model.undoRings));
+    model.undoDirty = 0;
+    model.redoDirty = 0;
+    model.physicsFlags = 0;
+    model.rigidTable = nullptr;
+    model.rigidCount = 0;
+    model.jointCount = 0;
+    model.jointTable = nullptr;
+    model.indexBuffer = nullptr;
+    model.toonFlag = 1;
+    model.toonShared = 0xFFFFFFFFu;
     model.displayKeyframesPresent = 0;
-    std::memset(m + 8632, 0, 0x88);
-    mikudancestudio::mdl::Mdl(m)->matFloat2 = -999.0f;
-    mikudancestudio::mdl::Mdl(m)->boneCount = 0;
-    mikudancestudio::mdl::Mdl(m)->matColumn[0] = -999.0f;
-    mikudancestudio::mdl::Mdl(m)->morphCount = 0;
-    mikudancestudio::mdl::Mdl(m)->matColumn[3] = -999.0f;
-    mikudancestudio::mdl::Mdl(m)->ikChainCount = 0;
-    mikudancestudio::mdl::Mdl(m)->matColumn[6] = -999.0f;
-    mikudancestudio::mdl::Mdl(m)->displayRootBone = 0;
-    mikudancestudio::mdl::Mdl(m)->matColumn[9] = -999.0f;
-    mikudancestudio::mdl::Mdl(m)->pmxAdditionalUvCount = 0;
-    mikudancestudio::mdl::Mdl(m)->matColumn[12] = -999.0f;
-    mdl::Mdl(m)->maxBoneLayer = 0;
-    mikudancestudio::mdl::Mdl(m)->matColumn[15] = -999.0f;
-    mdl::Mdl(m)->boneOrderTable = nullptr;
-    At<float>(m, 14380) = -999.0f;
-    mikudancestudio::mdl::Mdl(m)->centerBone = 0;
-    At<float>(m, 14392) = -999.0f;
-    mdl::Mdl(m)->frameRegistrationSelection = 3;
-    for (std::size_t off : kNeg999)
-        At<float>(m, off) = -999.0f;
+    model.boneCount = 0;
+    model.morphCount = 0;
+    model.ikChainCount = 0;
+    model.displayRootBone = 0;
+    model.pmxAdditionalUvCount = 0;
+    model.maxBoneLayer = 0;
+    model.boneOrderTable = nullptr;
+    model.centerBone = 0;
+    model.frameRegistrationSelection = 3;
+    for (auto& position : model.currentJoints.positions)
+        position[1] = -999.0f;
 
-    // 17 identity quaternions {0,0,0,1} at 64..332 (4 floats per slot)
-    for (int i = 0; i < 17; ++i) {
-        float* q = reinterpret_cast<float*>(m + 64 + 16 * i);
-        q[0] = 0.0f;
-        q[1] = 0.0f;
-        q[2] = 0.0f;
-        q[3] = 1.0f;
+    auto& pose = model.standardPose;
+    float* const quaternions[] = {
+        pose.upperBody, pose.neck, pose.leftArm, pose.leftWrist,
+        pose.leftElbow, pose.rightArm, pose.rightWrist, pose.rightElbow,
+        pose.lowerBody, pose.leftLeg, pose.leftKnee, pose.leftFoot,
+        pose.rightLeg, pose.rightKnee, pose.rightFoot,
+        pose.leftShoulder, pose.rightShoulder,
+    };
+    for (auto* quaternion : quaternions) {
+        quaternion[0] = quaternion[1] = quaternion[2] = 0.0f;
+        quaternion[3] = 1.0f;
     }
 
     ModelInitMorphSlots(m);                                // 0x4A89B0
 
     mdl::PoseTraceFlag(m) = 0;
-    mikudancestudio::mdl::Mdl(m)->lightDir[0] = -1.0f;
-    mikudancestudio::mdl::Mdl(m)->lightDir[1] = 90.0f;
-    mikudancestudio::mdl::Mdl(m)->lightDir[2] = 10.0f;
-    mdl::Mdl(m)->legIkXOffset = 1.0f;
+    model.lightDir[0] = -1.0f;
+    model.lightDir[1] = 90.0f;
+    model.lightDir[2] = 10.0f;
+    model.legIkXOffset = 1.0f;
     mdl::PoseTraceBuffer(m) = nullptr;
-    mikudancestudio::mdl::Mdl(m)->matMisc = 0;
+    model.matMisc = 0;
 }
 
 void ModelInitMorphSlots(unsigned char* m) {               // 0x4A89B0
-    // 30 iterations x 23 slots (float stride 90): the original's unrolled
-    // store list spans result-180 .. result+1800 floats, i.e. slot k sits
-    // at p + 90*k - 180 - the table is this+336..this+8616.  (Ported with
-    // k*90 instead of k*90-180 in an earlier phase, shifting the table
-    // 720 bytes right into the IK pointer singles at this+8724..8764 -
-    // the comment-box cancel crash of phase 14, fixed in phase 19.)
-    float* base = reinterpret_cast<float*>(m + 1056);
-    for (int i = 0; i < 30; ++i) {
-        float* p = base + 3 * i;  // result advanced by 3 floats each pass
-        for (int k = 0; k < 23; ++k) {
-            float* slot = p + (90 * k - 180);
-            slot[0] = 0.0f;    // (result-180 .. result+1800 pattern)
-            slot[1] = -999.0f;
-            slot[2] = 0.0f;
+    // Thirty samples for each of the twenty-three sensor joints.
+    // Missing samples use the original y = -999 sentinel.
+    for (auto& joint : mdl::Mdl(m)->skeletonHistory.positions) {
+        for (std::size_t sample = 0; sample < mdl::kSkeletonHistoryLength; ++sample) {
+            joint[sample * 3] = 0.0f;
+            joint[sample * 3 + 1] = -999.0f;
+            joint[sample * 3 + 2] = 0.0f;
         }
     }
     mikudancestudio::mdl::Mdl(m)->lightDir[0] = -1.0f;
-    m[8616] = 0;
+    mdl::PoseTraceFlag(m) = 0;
     mikudancestudio::mdl::Mdl(m)->lightDir[1] = 90.0f;
     mikudancestudio::mdl::Mdl(m)->lightDir[2] = 10.0f;
     mdl::Mdl(m)->legIkXOffset = 1.0f;

@@ -387,6 +387,14 @@ void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
     case 500: {
         // (0x48026F) dirty flag, then the frame-register helper
         // sub_4C2080(model, frame, app+0xA0CC4).
+        // 原版（x64 0x7FF7CB461045..54）对空槽同样无守卫；它靠键盘轮询
+        // （每帧把非按下键写 0/2，sub_140012090 对应原版同类扫描）在 G3
+        // 读到之前清掉对话路径遗留的 1。内置 MME 的帧内消息分发会让该
+        // 清理窗口偶发失效（幽灵 0x1F4/0x1F5，crashdump/ray_*），故此处
+        // 按空模型语义（无操作）防御——与原版可观察行为一致。
+        if (ActiveModel(app) == nullptr) {
+            break;
+        }
         app->SceneModified() = 1;
         RegisterSelectedBoneKeys(
             ActiveModel(app),
@@ -407,6 +415,10 @@ void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // (0x47F93D) check the 0x1EA checkbox, re-dispatch WM_COMMAND
         // 0x1EA, then copy the per-bone selection flags 0x2D98 into the
         // 0x2D94 byte array and reset the selected index 0x2D90 to -1.
+        // 同 case 500：空槽防御（原版 0x7FF7CB4610AA 同样裸解引用）。
+        if (ActiveModel(app) == nullptr) {
+            break;
+        }
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
         SendMessageA(hwnd, WM_COMMAND, 0x1EA, 0);
         mdl::Mdl(ActiveModel(app))->selectedBone = -1;

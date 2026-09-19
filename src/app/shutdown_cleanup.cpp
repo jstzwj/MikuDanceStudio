@@ -43,10 +43,8 @@
 //              (IMediaEvent::GetEvent loop + message pump) then Release()
 //              every COM interface of the 0x6C recorder object
 //   0x004096C0 TeardownDShowGraphCoUninit - 0x409320 + CoUninitialize
-//   0x004030F0 DisposePhysicsWorld - bullet world teardown through raw
-//              vtable slots (constraint list, collision-object list,
-//              deleting destructors), see src/model/model_dispose.cpp for
-//              the slot map (the same binary Bullet build)
+//   0x004030F0 DisposePhysicsWorld - typed Bullet world teardown,
+//              implemented in src/physics/scene_dispose.cpp
 //   0x004C2C40 DisposeAudioContext - CloseDataFile (0x4C2680) + Release()
 //              of the two COM members + free of the two path buffers
 //   0x00406BE0 DisposeRenderSubsystem - Release() run over the render
@@ -66,6 +64,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <new>
 
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
@@ -79,31 +78,6 @@ namespace mikudancestudio {
 void DisposeAccessory(void* accessory);
 
 namespace {
-
-// ---- helpers (same conventions as src/model/model_dispose.cpp) ------------
-inline void** Vt(void* obj) { return *reinterpret_cast<void***>(obj); }
-
-inline void** FieldPtr(unsigned char* base, std::size_t off) {
-    return reinterpret_cast<void**>(base + off);
-}
-
-// IUnknown::Release is vtable slot 2 (byte +8); the call compiles to the
-// original's `push obj; call [vtable+8]`.
-inline void ReleaseField(unsigned char* base, std::size_t off) {
-    void** p = FieldPtr(base, off);
-    if (*p != nullptr) {
-        reinterpret_cast<IUnknown*>(*p)->Release();      // vtable+8
-        *p = nullptr;
-    }
-}
-
-inline void FreeField(unsigned char* base, std::size_t off) {
-    void** p = FieldPtr(base, off);
-    if (*p != nullptr) {
-        std::free(*p);
-        *p = nullptr;
-    }
-}
 
 inline void FreeTimelineSelectionRecords(MMDApp& app,
                                          TimelineSelectionBand band) {
@@ -126,7 +100,6 @@ inline void ReleaseSlot(ComSlot& slot) {
     }
 }
 
-using FnDelDtor = void(__thiscall*)(void*, unsigned);
 
 template <typename ComSlot>
 void ReleaseRecorderCom(ComSlot& slot) {
@@ -141,81 +114,6 @@ void ReleaseRecorderCom(ComSlot& slot) {
 // TeardownDShowGraphCoUninit now live at mikudancestudio:: scope below (the graph
 // builder in src/app/dshow_record_graph.cpp calls the teardown too).
 // =========================================================================//
-
-// ===========================================================================
-// VA 0x004030F0 - DisposePhysicsWorld  (original: sub_4030F0, __thiscall)
-// ===========================================================================
-// this = the 0x48-byte physics-scene wrapper at app+0x9EDB0 (kPtrSub048),
-// restored as PhysicsScene (physics_scene.hpp); this->world (slot 64) is
-// the btDynamicsWorld (same layout the model disposers walk - see
-// model_dispose.cpp).  Slot map of the binary Bullet build: world vtable
-// +80 = constraint count, +88 = constraint(i), +40 = removeConstraint,
-// +20 = removeCollisionObject; rigid bodies are tagged +244==2 with motion
-// state at +516 and collision shape at +204 (kept as raw byte offsets).
-// =========================================================================//
-void DisposePhysicsWorld(PhysicsScene* scene) {
-    using FnCount = int(__thiscall*)(void*);
-    using FnItem = void*(__thiscall*)(void*, int);
-    using FnRemoveConstraint = void(__thiscall*)(void*, void*);
-    using FnRemoveObject = void(__thiscall*)(void*, void*);
-
-    unsigned char* world = reinterpret_cast<unsigned char*>(scene->world);
-    if (world != nullptr) {
-        // 0x40310F: detach and delete every constraint
-        const int n = reinterpret_cast<FnCount>(Vt(world)[20])(world);
-        for (int i = n - 1; i >= 0; --i) {
-            unsigned char* item = static_cast<unsigned char*>(
-                reinterpret_cast<FnItem>(Vt(world)[22])(world, i));
-            reinterpret_cast<FnRemoveConstraint>(Vt(world)[10])(world, item);
-            if (item != nullptr)
-                reinterpret_cast<FnDelDtor>(Vt(item)[0])(item, 1);
-        }
-        // 0x403145: detach and delete every collision object
-        const int nObj = *reinterpret_cast<std::int32_t*>(world + 8);
-        void** arr = *reinterpret_cast<void***>(world + 16);
-        for (int j = nObj - 1; j >= 0; --j) {
-            unsigned char* obj = static_cast<unsigned char*>(arr[j]);
-            if (*reinterpret_cast<std::int32_t*>(obj + 244) == 2) {
-                if (void* motion = *FieldPtr(obj, 516))
-                    reinterpret_cast<FnDelDtor>(Vt(motion)[0])(motion, 1);
-                if (void* shape = *FieldPtr(obj, 204))
-                    reinterpret_cast<FnDelDtor>(Vt(shape)[0])(shape, 1);
-            }
-            reinterpret_cast<FnRemoveObject>(Vt(world)[5])(world, obj);
-            reinterpret_cast<FnDelDtor>(Vt(obj)[1])(obj, 1);
-        }
-    }
-
-    // 0x40319A: scalar deleting destructors (slot 0, flag 1) on the world
-    // and the four Bullet sub-objects, then Release() (vtable+8) on the
-    // COM-facing members, in the original's exact order (offset comments
-    // are the x86 scene slots of the original 0x48 object).
-    // kDelDtorOffsets {64, 60, 52, 48, 44}:
-    void** const delDtorSlots[] = {
-        reinterpret_cast<void**>(&scene->world),            // 64
-        reinterpret_cast<void**>(&scene->solver),           // 60
-        reinterpret_cast<void**>(&scene->broadphase),       // 52
-        reinterpret_cast<void**>(&scene->dispatcher),       // 48
-        reinterpret_cast<void**>(&scene->collisionConfig)}; // 44
-    for (void** p : delDtorSlots) {
-        if (*p != nullptr) {
-            reinterpret_cast<FnDelDtor>(Vt(*p)[0])(*p, 1);
-            *p = nullptr;
-        }
-    }
-    // kReleaseOffsets {36, 4, 12, 20, 28, 8, 16, 24, 32, 40} - the ten
-    // gizmo buffers, Released and nulled in the original's order.
-    ReleaseSlot(scene->gizmoBoxSelVB);    // 36
-    ReleaseSlot(scene->gizmoSphereVB);    // 4
-    ReleaseSlot(scene->gizmoCubeVB);      // 12
-    ReleaseSlot(scene->gizmoSphere33VB);  // 20
-    ReleaseSlot(scene->gizmoArrowVB);     // 28
-    ReleaseSlot(scene->gizmoSphereIB);    // 8
-    ReleaseSlot(scene->gizmoCubeIB);      // 16
-    ReleaseSlot(scene->gizmoSphere33IB);  // 24
-    ReleaseSlot(scene->gizmoIdentityIB);  // 32
-    ReleaseSlot(scene->gizmoBoxSelIB);    // 40
-}
 
 // ===========================================================================
 // VA 0x004C2C40 - DisposeAudioContext  (original: sub_4C2C40, __thiscall)
@@ -485,13 +383,13 @@ void ShutdownCleanup(MMDApp* app) {
     }
 
     // ---- 9: four global keyframe tracks -----------------------------------
-    std::free(s.CameraKeys());                                  // 0x462F2D
+    ::operator delete(s.CameraKeys());                                  // 0x462F2D
     s.CameraKeys() = nullptr;
-    std::free(s.LightKeys());                                   // 0x462F46
+    ::operator delete(s.LightKeys());                                   // 0x462F46
     s.LightKeys() = nullptr;
-    std::free(s.ShadowKeys());                                  // 0x462F5F
+    ::operator delete(s.ShadowKeys());                                  // 0x462F5F
     s.ShadowKeys() = nullptr;
-    std::free(s.GravityKeys());                                 // 0x462F78
+    ::operator delete(s.GravityKeys());                                 // 0x462F78
     s.GravityKeys() = nullptr;
 
     // ---- 10: 255 accessory slots + twin track array ------------------------
@@ -499,12 +397,12 @@ void ShutdownCleanup(MMDApp* app) {
         mdl::AccessoryRecord*& accessory = s.AccessorySlot(i);  // 0x462F94
         if (accessory != nullptr) {
             DisposeAccessory(accessory);                        // 0x462F9C
-            std::free(accessory);                               // 0x462FA2
+            ::operator delete(accessory);                               // 0x462FA2
             accessory = nullptr;
         }
         mdl::AccessoryKey*& track = s.AccessoryKeys(i);
         if (track != nullptr) {
-            std::free(track);                                   // 0x462FB7
+            ::operator delete(track);                                   // 0x462FB7
             track = nullptr;
         }
     }
@@ -514,7 +412,7 @@ void ShutdownCleanup(MMDApp* app) {
         unsigned char*& model = s.ModelSlot(i);
         if (model != nullptr) {                                 // 0x462FE0
             ModelDispose(model);                                // 0x462FE9
-            std::free(model);                                   // 0x462FEF
+            ::operator delete(model);                                   // 0x462FEF
             model = nullptr;
         }
     }
@@ -569,22 +467,22 @@ void ShutdownCleanup(MMDApp* app) {
     // ---- 15: subsystem objects ----------------------------------------------
     if (PhysicsScene* phys = s.Physics()) {                    // 0x463221
         DisposePhysicsWorld(phys);                              // 0x46322D
-        std::free(phys);                                        // 0x463233
+        ::operator delete(phys);                                        // 0x463233
         s.Physics() = nullptr;
     }
     if (void* acc = s.AxisMeshObject()) {                              // 0x463241
         DisposeAccessory(acc);                                  // 0x46324D
-        std::free(acc);                                         // 0x463253
+        ::operator delete(acc);                                         // 0x463253
         s.AxisMeshObject() = nullptr;
     }
     if (DShowRecorder* rec = s.Recorder()) {                    // 0x463261
         TeardownDShowGraphCoUninit(rec);                         // 0x46326D
-        std::free(rec);                                         // 0x463273
+        ::operator delete(rec);                                         // 0x463273
         s.Recorder() = nullptr;
     }
     if (WaveAudioContext* audio = s.Audio()) {                  // 0x463281
         DisposeAudioContext(audio);                             // 0x46328D
-        std::free(audio);                                       // 0x463293
+        ::operator delete(audio);                                       // 0x463293
         s.Audio() = nullptr;
     }
     if (D3DRenderer* render = s.Renderer()) {                   // 0x4632A1
@@ -592,7 +490,7 @@ void ShutdownCleanup(MMDApp* app) {
         // 路径上的 MMHack 销毁钩子）。
         mme::OnDeviceDestroyed(app);
         DisposeRenderSubsystem(render);                         // 0x4632AD
-        std::free(render);                                      // 0x4632B3
+        ::operator delete(render);                                      // 0x4632B3
         s.Renderer() = nullptr;
     }
 

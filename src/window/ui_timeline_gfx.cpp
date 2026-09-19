@@ -131,8 +131,9 @@ void TimelineDrawTicks(int frameOffset, int width) {
 //           sub+0x258 = -10000                -- 0xFFFFD8F0
 //   else:
 //       sub+0x258 = 0
-//   every path then calls vtable slot +0x3C (index 15) of the playback
-//   object at sub+0x14, __stdcall(obj, sub+0x258), and returns its result;
+//   every path then calls vtable slot +0x3C (index 15 = SetFrequency, not
+//   SetVolume which is slot 17) of the playback object at sub+0x14,
+//   __stdcall(obj, sub+0x258), and returns its result;
 //   if sub+0x14 == 0 the original returns undefined garbage (port returns).
 //
 // Reference: ../translated/MikuMikuDance/fcn_004c2b80.cpp
@@ -162,15 +163,21 @@ void SetFrameNormalized(int frame) {
                 static_cast<int>(static_cast<double>(log10Val) *
                                  33.20000076293945 *          // (double)33.2f = 0x40409999A0000000
                                  100.0);
-            // vtable slot +0x3C (index 15) of the playback object, __stdcall(obj, pos)
-            player->SetVolume(audio->volume);
+            // vtable slot +0x3C x86 / +0x78 x64 (index 15) of the playback
+            // object, __stdcall(obj, dword).  x64 twin 0x7FF7CB4FB260 makes
+            // one such call at 0x7FF7CB4FB2DC (call [rax+0x78]) for all
+            // three branches: slot 15 = SetFrequency, NOT SetVolume (slot
+            // 17) - the original's mis-slotted invalid no-op (its WAV
+            // volume never took effect), replicated verbatim below and in
+            // both sibling branches; DWORD cast = mov edx bit semantics.
+            player->SetFrequency(static_cast<DWORD>(audio->volume));
         } else {
             audio->volume = -10000;                         // 0xFFFFD8F0
-            player->SetVolume(audio->volume);
+            player->SetFrequency(static_cast<DWORD>(audio->volume)); // slot 15 no-op, see above
         }
     } else {
         audio->volume = 0;                                   // position >= 1.0
-        player->SetVolume(audio->volume);
+        player->SetFrequency(static_cast<DWORD>(audio->volume)); // slot 15 no-op, see above
     }
 }
 

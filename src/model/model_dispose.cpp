@@ -55,7 +55,7 @@
 #include <unknwn.h>
 
 #include <cstdint>
-#include <cstdlib>
+#include <new>
 
 #include "btBulletDynamicsCommon.h"
 
@@ -66,21 +66,10 @@
 namespace mikudancestudio {
 namespace {
 
-inline void** FieldPtr(unsigned char* base, std::size_t off) {
-    return reinterpret_cast<void**>(base + off);
-}
-
-inline void FreeField(unsigned char* base, std::size_t off) {
-    void** p = FieldPtr(base, off);
-    if (*p != nullptr) {
-        std::free(*p);
-        *p = nullptr;
-    }
-}
-
+// Model-owned tables are raw storage from scalar ::operator new.
 template <typename T>
-inline void FreeOwned(T*& pointer) {
-    std::free(pointer);
+inline void DeleteOwnedStorage(T*& pointer) {
+    ::operator delete(pointer);
     pointer = nullptr;
 }
 
@@ -95,16 +84,13 @@ inline void ReleaseCom(void*& storage) {
 // Remove scene objects through Bullet's public API.  The former x86 port
 // walked Bullet's private vectors and virtual-table slots; those layouts do
 // not survive the x64 ABI and left freed bodies in the world.
-void ReleasePhysConstraint(void* scene, void* constraint) {
-    auto* physics = static_cast<PhysicsScene*>(scene);
+void ReleasePhysConstraint(PhysicsScene* physics, int constraintId) {
     if (physics == nullptr || physics->world == nullptr)
         return;
     btDiscreteDynamicsWorld* const world = physics->world;
-    const int wantId = static_cast<int>(
-        reinterpret_cast<std::intptr_t>(constraint));
     for (int i = world->getNumConstraints() - 1; i >= 0; --i) {
         btTypedConstraint* const item = world->getConstraint(i);
-        if (item != nullptr && item->getUid() == wantId) {
+        if (item != nullptr && item->getUid() == constraintId) {
             world->removeConstraint(item);
             delete item;
             return;
@@ -112,8 +98,7 @@ void ReleasePhysConstraint(void* scene, void* constraint) {
     }
 }
 
-void ReleasePhysRigid(void* scene, void* bodyPointer) {
-    auto* physics = static_cast<PhysicsScene*>(scene);
+void ReleasePhysRigid(PhysicsScene* physics, void* bodyPointer) {
     auto* body = static_cast<btRigidBody*>(bodyPointer);
     if (physics == nullptr || physics->world == nullptr || body == nullptr)
         return;
@@ -128,20 +113,18 @@ void ReleasePhysRigid(void* scene, void* bodyPointer) {
 // VA 0x0048F830
 void ModelDispose(unsigned char* m) {
     mdl::ModelRecord& model = *mdl::Mdl(m);
-    void* scene = model.scenePtr;
+    PhysicsScene* scene = model.scenePtr;
 
     // ---- joints -----------------------------------------------------------
     if (model.jointCount > 0) {
         for (std::uint32_t i = 0; i < model.jointCount; ++i) {
             mdl::JointRecord* jt = &model.jointTable[i];
-            ReleasePhysConstraint(
-                scene, reinterpret_cast<void*>(
-                           static_cast<std::intptr_t>(jt->constraint)));
-            FreeOwned(jt->jpText);
-            FreeOwned(jt->enText);
+            ReleasePhysConstraint(scene, jt->constraint);
+            DeleteOwnedStorage(jt->jpText);
+            DeleteOwnedStorage(jt->enText);
         }
     }
-    FreeOwned(model.jointTable);
+    DeleteOwnedStorage(model.jointTable);
 
     // ---- rigid bodies -----------------------------------------------------
     if (model.rigidCount > 0) {
@@ -149,119 +132,117 @@ void ModelDispose(unsigned char* m) {
             mdl::RigidRecord* rb = &model.rigidTable[i];
             ReleasePhysRigid(scene, rb->body);
             rb->body = nullptr;
-            FreeOwned(rb->jpText);
-            FreeOwned(rb->enText);
+            DeleteOwnedStorage(rb->jpText);
+            DeleteOwnedStorage(rb->enText);
         }
     }
-    FreeOwned(model.rigidTable);
+    DeleteOwnedStorage(model.rigidTable);
 
     // ---- two consecutive 30-slot undo rings -------------------------------
     for (auto& ring : mikudancestudio::mdl::Mdl(m)->undoRings) {
         for (auto& undo : ring.slots) {
             if (undo.auxiliaryPose != nullptr) {
-                std::free(undo.auxiliaryPose);
+                ::operator delete(undo.auxiliaryPose);
                 undo.auxiliaryPose = nullptr;
             }
             if (undo.bonePose != nullptr) {
-                std::free(undo.bonePose);
+                ::operator delete(undo.bonePose);
                 undo.bonePose = nullptr;
             }
         }
     }
 
-    FreeOwned(mdl::MorphKeyIndices(m));
-    FreeOwned(mdl::BoneKeyIndices(m));
+    DeleteOwnedStorage(mdl::MorphKeyIndices(m));
+    DeleteOwnedStorage(mdl::BoneKeyIndices(m));
 
     // ---- animation pools --------------------------------------------------
     if (mdl::DisplayKeys(m) != nullptr) {
         for (int i = 0; i < 1000; ++i) {
-            FreeOwned(mdl::IkStates(mdl::DisplayKeys(m)[i]));
-            FreeOwned(mdl::SelectorStates(mdl::DisplayKeys(m)[i]));
+            DeleteOwnedStorage(mdl::IkStates(mdl::DisplayKeys(m)[i]));
+            DeleteOwnedStorage(mdl::SelectorStates(mdl::DisplayKeys(m)[i]));
         }
     }
-    std::free(mdl::DisplayKeys(m));
+    ::operator delete(mdl::DisplayKeys(m));
     mdl::DisplayKeys(m) = nullptr;
-    std::free(mdl::MorphKeys(m));
+    ::operator delete(mdl::MorphKeys(m));
     mdl::MorphKeys(m) = nullptr;
-    std::free(mdl::BoneKeys(m));
+    ::operator delete(mdl::BoneKeys(m));
     mdl::BoneKeys(m) = nullptr;
 
-    FreeOwned(mdl::Mdl(m)->boneSelection);
-    FreeOwned(mdl::Mdl(m)->bonePhysicsState);
-    FreeOwned(mdl::Mdl(m)->rbGroups);
-    FreeOwned(mdl::Mdl(m)->groupNames);
-    FreeOwned(mdl::Mdl(m)->displayFrames);
+    DeleteOwnedStorage(mdl::Mdl(m)->boneSelection);
+    DeleteOwnedStorage(mdl::Mdl(m)->bonePhysicsState);
+    DeleteOwnedStorage(mdl::Mdl(m)->rbGroups);
+    DeleteOwnedStorage(mdl::Mdl(m)->groupNames);
+    DeleteOwnedStorage(mdl::Mdl(m)->displayFrames);
 
     // ---- IK records --------------------------------------------------------
     if (model.morphs != nullptr && model.morphCount > 0) {
         const std::uint32_t n = model.morphCount;
         for (std::uint32_t i = 0; i < n; ++i) {
             mdl::MorphRecord& morph = model.morphs[i];
-            FreeOwned(morph.jpText);
-            FreeOwned(morph.enText);
-            FreeOwned(morph.vertexEntries);
+            DeleteOwnedStorage(morph.jpText);
+            DeleteOwnedStorage(morph.enText);
+            DeleteOwnedStorage(morph.vertexEntries);
             for (auto& entries : morph.uvEntries)
-                FreeOwned(entries);
-            FreeOwned(morph.boneEntries);
-            FreeOwned(morph.groupEntries);
-            FreeOwned(morph.materialEntries);
+                DeleteOwnedStorage(entries);
+            DeleteOwnedStorage(morph.boneEntries);
+            DeleteOwnedStorage(morph.groupEntries);
+            DeleteOwnedStorage(morph.materialEntries);
         }
     }
 
-    FreeOwned(mdl::BaseVertexMorphTable(m));
+    DeleteOwnedStorage(mdl::BaseVertexMorphTable(m));
     for (auto& table : mdl::UvMorphTables(m).byFamily)
-        FreeOwned(table);
-    FreeOwned(mdl::BoneMorphOffsets(m));
-    static const std::size_t kUnknownMorphTables2[] = {8732};
-    for (std::size_t offset : kUnknownMorphTables2)
-        FreeField(m, offset);
-    FreeOwned(mdl::MaterialMorphBase(m));
-    FreeOwned(mdl::MaterialMorphAdd(m));
-    FreeOwned(mdl::MaterialMorphMul(m));
+        DeleteOwnedStorage(table);
+    DeleteOwnedStorage(mdl::BoneMorphOffsets(m));
+    DeleteOwnedStorage(model.reservedMorphTable);
+    DeleteOwnedStorage(mdl::MaterialMorphBase(m));
+    DeleteOwnedStorage(mdl::MaterialMorphAdd(m));
+    DeleteOwnedStorage(mdl::MaterialMorphMul(m));
 
-    FreeOwned(model.morphs);
+    DeleteOwnedStorage(model.morphs);
 
     // ---- IK chains ---------------------------------------------------------
     if (mdl::Mdl(m)->ikChains != nullptr &&
         mikudancestudio::mdl::Mdl(m)->ikChainCount > 0) {
         const int n = mikudancestudio::mdl::Mdl(m)->ikChainCount;
         for (int i = 0; i < n; ++i)
-            FreeOwned(mdl::IkChains(m)[i].links);
+            DeleteOwnedStorage(mdl::IkChains(m)[i].links);
     }
-    FreeOwned(mdl::Mdl(m)->ikChains);
+    DeleteOwnedStorage(mdl::Mdl(m)->ikChains);
 
-    FreeOwned(mdl::Mdl(m)->morphKeyCursors);
-    FreeOwned(mdl::Mdl(m)->morphTrackActive);
-    FreeOwned(mdl::Mdl(m)->boneKeyCursors);
-    FreeOwned(mdl::Mdl(m)->boneTrackActive);
+    DeleteOwnedStorage(mdl::Mdl(m)->morphKeyCursors);
+    DeleteOwnedStorage(mdl::Mdl(m)->morphTrackActive);
+    DeleteOwnedStorage(mdl::Mdl(m)->boneKeyCursors);
+    DeleteOwnedStorage(mdl::Mdl(m)->boneTrackActive);
 
     // ---- bones -------------------------------------------------------------
     if (mikudancestudio::mdl::Mdl(m)->boneCount > 0) {
         mikudancestudio::mdl::BoneRecord* bones = mdl::Mdl(m)->boneTable;
         for (std::uint32_t i = 0; i < mikudancestudio::mdl::Mdl(m)->boneCount; ++i) {
             mikudancestudio::mdl::BoneRecord* bone = &bones[i];
-            FreeOwned(bone->jpText);
-            FreeOwned(bone->enText);
-            FreeOwned(bone->ikLinks);
+            DeleteOwnedStorage(bone->jpText);
+            DeleteOwnedStorage(bone->enText);
+            DeleteOwnedStorage(bone->ikLinks);
         }
     }
-    FreeOwned(mdl::Mdl(m)->boneTable);
+    DeleteOwnedStorage(mdl::Mdl(m)->boneTable);
 
-    FreeOwned(mdl::Mdl(m)->materials);
-    FreeOwned(mdl::Mdl(m)->indices);
-    FreeOwned(mdl::Mdl(m)->rawVertices);
-    FreeOwned(mdl::Mdl(m)->pmxVertices);
-    FreeOwned(mdl::Mdl(m)->boneOrderTable);
+    DeleteOwnedStorage(mdl::Mdl(m)->materials);
+    DeleteOwnedStorage(mdl::Mdl(m)->indices);
+    DeleteOwnedStorage(mdl::Mdl(m)->rawVertices);
+    DeleteOwnedStorage(mdl::Mdl(m)->pmxVertices);
+    DeleteOwnedStorage(mdl::Mdl(m)->boneOrderTable);
 
     // ---- D3D pool objects (vertex/index buffers) ---------------------------
     ReleaseCom(mdl::Mdl(m)->vertexBuffer2);
     ReleaseCom(mdl::Mdl(m)->vertexBuffer);
     ReleaseCom(mdl::Mdl(m)->indexBuffer);
 
-    FreeOwned(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::japaneseName));
-    FreeOwned(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::englishName));
-    FreeOwned(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::japaneseComment));
-    FreeOwned(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::englishComment));
+    DeleteOwnedStorage(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::japaneseName));
+    DeleteOwnedStorage(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::englishName));
+    DeleteOwnedStorage(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::japaneseComment));
+    DeleteOwnedStorage(mdl::PmxTextBuffer(m, mdl::PmxTextBufferSlot::englishComment));
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +254,7 @@ void ModelDispose(unsigned char* m) {
 void DeleteModel(unsigned char* model, int freeFlag) {
     ModelDispose(model);                                    // 0x40A713
     if ((freeFlag & 1) != 0)
-        std::free(model);                                   // 0x40A720
+        ::operator delete(model);                                   // 0x40A720
 }
 
 }  // namespace mikudancestudio

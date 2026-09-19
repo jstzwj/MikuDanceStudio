@@ -1077,12 +1077,12 @@ void CommitPhysicsEdits(HWND hDlg) {  // VA 0x004220F0
     // ---- tear the old physics objects out of the world --------------------
     for (std::uint32_t i = 0; i < model->jointCount; ++i)
         RemovePhysJointByUid(scene, model->jointTable[i].constraint);
-    delete[] model->jointTable;
+    ::operator delete(model->jointTable);
     model->jointTable = nullptr;
     for (std::uint32_t i = 0; i < model->rigidCount; ++i)
         RemovePhysRigidBody(
             scene, static_cast<btRigidBody*>(model->rigidTable[i].body));
-    delete[] model->rigidTable;
+    ::operator delete(model->rigidTable);
     model->rigidTable = nullptr;
 
     // ---- compacted rigid table --------------------------------------------
@@ -1091,7 +1091,8 @@ void CommitPhysicsEdits(HWND hDlg) {  // VA 0x004220F0
         if (BodyComboIndex(bodies[i]) >= 0)
             ++liveBodies;
     model->rigidCount = static_cast<std::uint32_t>(liveBodies);
-    model->rigidTable = new Rigid[liveBodies > 0 ? liveBodies : 1];
+    model->rigidTable = static_cast<Rigid*>(::operator new(
+        sizeof(Rigid) * (liveBodies > 0 ? liveBodies : 1)));
     std::memset(model->rigidTable, 0,
                 sizeof(Rigid) * static_cast<std::size_t>(liveBodies));
 
@@ -1165,7 +1166,8 @@ void CommitPhysicsEdits(HWND hDlg) {  // VA 0x004220F0
         if (joints[i].constraint >= 0)
             ++liveJoints;
     model->jointCount = static_cast<std::uint32_t>(liveJoints);
-    model->jointTable = new Joint[liveJoints > 0 ? liveJoints : 1];
+    model->jointTable = static_cast<Joint*>(::operator new(
+        sizeof(Joint) * (liveJoints > 0 ? liveJoints : 1)));
     std::memset(model->jointTable, 0,
                 sizeof(Joint) * static_cast<std::size_t>(liveJoints));
 

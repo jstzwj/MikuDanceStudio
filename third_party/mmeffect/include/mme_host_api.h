@@ -36,8 +36,21 @@
 extern "C" {
 #endif
 
+// Process lifetime, separate from per-device Initialize/Cleanup.
+void __cdecl MmeHostInitializeRuntime(HINSTANCE instance);
+void __cdecl MmeHostShutdownRuntime();
+
 // 记录 MMD 主窗口（MME 菜单注入与子类化目标）。在设备创建后、首帧前调用。
 void __cdecl MmeHostSetMainWindow(HWND window);
+
+// 注册宿主侧模型/附件原始宽字符路径直取函数（src/exports/effect_api.cpp
+// 的内部 MmdModelPathW/MmdAcsPathW，非导出）。等价于原版 MMHack 的
+// D3DXLoadMeshFromXW hook [0x1800043b0] 把宽路径原样登记进 ObjData+0x30
+// （材质表/toon 解析全程宽字符、无 SJIS 往返）；MMEffect.dll 无法从 exe
+// 导入库解析非导出符号，故经此指针注入。在设备创建后、首帧前调用。
+typedef const wchar_t* (__cdecl* MmeHostPathProviderFn)(int index);
+void __cdecl MmeHostSetPathProviders(MmeHostPathProviderFn model_path,
+                                     MmeHostPathProviderFn acs_path);
 
 // 记录宿主内置标准效果（资源 117/118 编译的 ID3DXEffect*，以不透明指针传
 // 入）并注册 12 个 MME 标准技术句柄。等价于原版对

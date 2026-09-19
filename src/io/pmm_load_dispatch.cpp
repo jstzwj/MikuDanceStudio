@@ -18,7 +18,7 @@
 //             (0x45908A: jnz continue - Ghidra prints the polarity
 //             backwards); on miss MessageBoxA "This isn't the data for
 //             Polygon Movie Maker!" / JP 0x52DF78 + _close + return.
-//   0x4590D3  version field at hdr+0x14: "0001" -> inline v1 loader body
+//   0x4590D3  version field at strstr match + 0x14: "0001" -> inline v1 loader body
 //             (0x45916D..0x45E7F7, fully ported as LoadSceneV1 in
 //             pmm_load_v1.cpp; that body owns the fd and the _close on
 //             every path.  Verified 2026-08-28: all three stock v1 scenes
@@ -126,7 +126,12 @@ void LoadSceneFile() {
 
     char hdr[0x1E];
     _read(fd, hdr, 0x1E);                                       // 0x459070
-    if (strstr(hdr, "Polygon Movie maker") == nullptr) {
+    // x64 @0x7FF7CB4A2D1E: the signature is located via strstr, and the
+    // version field sits at the match point + 0x14 (0x7FF7CB4A2D91/DA5
+    // `lea rsi,[rax+14h]`), not at the buffer head - tolerant of any
+    // leading garbage before "Polygon Movie maker".
+    char* const signature = strstr(hdr, "Polygon Movie maker");
+    if (signature == nullptr) {
         MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
                     app->EnglishUI() != 0
                         ? "This isn't the data for Polygon Movie Maker!"
@@ -136,14 +141,15 @@ void LoadSceneFile() {
         return;
     }
 
-    // version field at hdr+0x14 (5-byte compare incl. NUL as the original).
-    if (strncmp(hdr + 0x14, "0001", 5) == 0) {
+    // version field at signature+0x14 (5-byte compare incl. NUL as the
+    // original's `repe cmpsb ecx,5`).
+    if (strncmp(signature + 0x14, "0001", 5) == 0) {
         // The inline v1 loader body (0x45916D..0x45E7F7) owns the fd and
         // closes it on every path itself (pmm_load_v1.cpp).
         LoadSceneV1(app, fd);
         return;
     }
-    if (strncmp(hdr + 0x14, "0002", 5) == 0) {
+    if (strncmp(signature + 0x14, "0002", 5) == 0) {
         LoadSceneV2(app, fd);                                     // 0x459106
         return;                                                 // 0x45E7F7
     }

@@ -40,6 +40,12 @@ struct MmhObjData {
     bool isPmd = false;
     std::wstring modelName;              // FUN_18000f340: value+0x30 wstring
     std::vector<MmhMaterialEntry> mats;  // 原版 0x78 字节表项
+    // 附属信息字段（原版 ObjData +0x240/+0x244）。原版全库无任何写入者——
+    // GetAcsAttachedPmd [0x1800012d0] 的真实数据源是 sub_18000F2B0 未命中时
+    // [0x18000f331] 的借位返回：把 id 当宿主附件对象指针，实时读其
+    // +0x240 attachPmdIndex（-1 = 未附属）/+0x244 attachBoneIndex。本工程由
+    // mmhack_getters.cpp 直接从宿主 AccessoryRecord 同偏移抽取（x64 下
+    // 576/580 与原版一致），这两个成员仅作布局锚点保留、无人读取。
     int attachPmdIndex = -1;             // +0x240 (-1 = 未附属)
     int attachBoneIndex = 0;             // +0x244
 };

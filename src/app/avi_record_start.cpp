@@ -73,7 +73,6 @@ void KickRecordPhysics(MMDApp* app) {
 bool BuildRecordingGraph(DShowRecorder* recorder, HWND hwnd,
                          unsigned char english,
                          void* recStruct, void* config, float fps,
-                         std::uint32_t one,
                          const wchar_t* wavPath, float seconds);
 
 namespace {
@@ -257,7 +256,7 @@ bool StartRecordGraph(MMDApp* app, std::int32_t outW, std::int32_t outH) {
     return BuildRecordingGraph(recorder,
                      static_cast<HWND>(s.state.hwnd),
                      static_cast<unsigned char>(s.EnglishUI() != 0),
-                     s.AviOutputPath(), &config, fpsF, 1, wavPath,
+                     s.AviOutputPath(), &config, fpsF, wavPath,
                      seconds);
 }
 

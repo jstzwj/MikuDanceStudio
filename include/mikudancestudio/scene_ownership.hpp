@@ -8,7 +8,7 @@ namespace mikudancestudio {
 class MMDApp;
 
 // Preserve the reference executable's release order.  These are raw,
-// zero-initialized blocks, so their matching release operation is free().
+// zero-initialized blocks allocated with operator new and released with operator delete.
 void ReleaseSceneModels(MMDApp& app);
 void ReleaseGlobalTimelineTracks(MMDApp& app);
 void ReleaseAccessoriesAndTracks(MMDApp& app);

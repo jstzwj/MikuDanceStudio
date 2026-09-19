@@ -25,8 +25,14 @@
 //       "IK" in early notes - it is the morph application pass; the CCD IK
 //       solve runs inside BoneFrameTransform 0x493A60 phase D, reached via
 //       SetPhysicsMode.)
-//     0x46F7FF: while not playing (app+0xA03E8==0) app+0x9EDB5 is set
-//       every frame, so idle frames also settle (hair stays crisp).
+//     0x46F7DB..0x46F808: inside the selection gate (var_14A1 selActive &&
+//       app+0x2F8==0 && app+0x9ED90==0), `cmp byte [app+0xA03E8],0 / jnz`
+//       guards `mov byte [app+0x9EDB5],1`.  0xA03E8 is NOT a "not playing"
+//       flag - it is the x86 twin of the x64 0xA137C stay-behind latch: the
+//       pump tail (0x47985A..0x47985E) writes this pump's var_14A1 back
+//       into it, so the settle request fires on the selActive RISING EDGE
+//       only, exactly like x64 0x7FF7CB44C12E (`cmp [0xA137C],0 / jnz /
+//       mov [0x9FCC1],1`).
 //   stepSimulation is reached through vtable slot 7 (+0x1C) loaded into
 //   eax ("call eax" - byte pattern search for FF/2 disp8 finds nothing);
 //   parameters timeStep == fixedTimeStep == 1/60f, maxSubSteps = 10.
@@ -50,22 +56,33 @@
 //     touched (write sequence 0x7FF7CB4E4856..0x7FF7CB4E4927).  The port
 //     uses the matching public Bullet setters rather than writing
 //     implementation-private members.
-//   - The original guards the "not playing -> settle" set with a
-//     selection-UI local (var_14A1 && app+0x2F8==0 && app+0x9ED90==0);
-//     the port applies it unconditionally at section entry.
+//   - The settle request latches on the selActive rising edge in BOTH
+//     originals (x86 `cmp byte [0xA03E8],0` at 0x46F7FF, x64
+//     `cmp [0xA137C],r15b` at 0x7FF7CB44C12E; layout_pins.hpp pins
+//     selectionActiveLatch to 0xA03E8 / 0xA137C).  The only per-arch delta
+//     is the pump-tail latch write-back: x86 0x47985E sits inside the
+//     "model selection present && not playing" gate (0x4797C2
+//     `jz 0x479ADC` skips the write when model+0x2D90<0 or app+0x330!=0,
+//     so during playback the latch keeps its old value and the request
+//     re-fires per pass), while x64 0x7FF7CB456F21 writes it back
+//     unconditionally.  That write-back lives in frame_driver.cpp (which
+//     follows x64); physics_frame.cpp itself is arch-identical here.
 //   - x64 gates the flow twice where x86 (the outline above) gates once:
 //     gate A 0x7FF7CB44B8E7 (pump counter app+0xA1E18 == 0) skips the
 //     whole section, gate B 0x7FF7CB44C65B (accessory dialog app+0xA166D
 //     != 0) skips only the pose passes / world pass / readback / moved
-//     clear.  On x64 the readback loop and the moved clear sit INSIDE the
-//     settle gate (0x7FF7CB44C73D jumps past them to 0x7FF7CB44C85F),
-//     unlike the x86 0x46FE34 layout above; the port follows x64.
+//     clear.  The readback loop and the moved clear sit INSIDE the settle
+//     gate in BOTH layouts: x86 0x46FD39 `jz loc_46FE5F` and x64
+//     0x7FF7CB44C73D `jz 0x7FF7CB44C85F` both jump past them straight to
+//     the second pose pass (the only xrefs into x86 0x46FE34 are the
+//     in-gate entries 0x46FDD3/0x46FE2D).  The port matches both.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
 
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/physics_world.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -1039,10 +1056,19 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     if (selActive != 0 &&
         s.state.optflag[0] == 0 &&        // 0x2F8 model-mode flag
         s.state.frameStepPlayback == 0) {     // 0x9ED90 frame-step flag
-        // 0x46F7FF / x64 0x7FF7CB44C12E: `cmp [app+0xA137C],0 / jnz` -
-        // 0xA137C 是上一趟泵的 selActive 滞留闩锁（泵尾 0x7FF7CB456F21
-        // 写回，App 初始化 0x7FF7CB42CA4C 清零）。settle 只在上升沿
-        // （上一趟未激活）请求一次；跟踪持续激活期间闩锁抑制重复请求。
+        // 0x46F7FF..0x46F808 / x64 0x7FF7CB44C12E..0x7FF7CB44C138：
+        // 两版同一上升沿闩锁语义。x86 `cmp byte [app+0xA03E8],0 /
+        // jnz 0x46F80F / mov byte [app+0x9EDB5],1`，x64 `cmp
+        // [app+0xA137C],r15b / jnz / mov byte [app+0x9FCC1],1`。
+        // 0xA03E8 与 0xA137C 都是上一趟泵的 selActive 滞留闩锁（x86 泵尾
+        // 0x47985A..0x47985E、x64 泵尾 0x7FF7CB456F1C..0x7FF7CB456F21 把
+        // 本趟 selActive 写回；初始化 x86 0x40ABDE / x64 0x7FF7CB42CA4C
+        // 清零；layout_pins.hpp 把 selectionActiveLatch 钉在
+        // 0xA03E8/0xA137C）。0xA03E8 不是"未播放"独立条件——2026-09 审计
+        // 把闩锁本身误读成了第三个丢失条件。settle 只在 selActive 上升沿
+        // （上一趟未激活）请求一次；持续激活期间闩锁抑制重复请求。两版
+        // 唯一差异在泵尾写回的外围门（x86 0x4797C2 套 model+0x2D90>=0 &&
+        // app+0x330==0，x64 无条件），见文件头注释与 frame_driver.cpp。
         if (s.state.selectionActiveLatch == 0)
             s.PhysicsResetPending() = 1;
     }
@@ -1063,10 +1089,9 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     const bool traceSteps = getenv("MIKUDANCESTUDIO_TRACE_STEPS") != nullptr;
     if (traceSteps) {
         // m_localTime = the stepSimulation substep accumulator (protected
-        // member of btDiscreteDynamicsWorld); read raw for diagnostics.
+        // member of btDiscreteDynamicsWorld); use the owned world interface.
         const float localTime =
-            *reinterpret_cast<const float*>(
-                reinterpret_cast<const unsigned char*>(world) + 0x2C);
+            static_cast<const PhysicsWorld*>(world)->SubstepRemainder();
         unsigned localBits = 0;
         std::memcpy(&localBits, &localTime, 4);
         fprintf(stderr,
@@ -1130,9 +1155,11 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
         DumpFrameEntryState(app, "physics_pose0.json", false);
 #endif
 
-    // Settle section gate (0x46FCEF; x64 0x7FF7CB44C6E5..0x7FF7CB44C73D,
+    // Settle section gate (0x46FCEF..0x46FD39 `test eax,ecx /
+    // jz loc_46FE5F`; x64 0x7FF7CB44C6E5..0x7FF7CB44C73D,
     // `test eax,edx / jz 0x7FF7CB44C85F`): moved | settle | frame advanced,
-    // model count 1..3, no seek pending (frameCopyDialog app+0xA1BC8 == 0).
+    // model count 1..3, no seek pending (x86 0xA0B74 / x64
+    // app+0xA1BC8 == 0).
     const bool moved = s.state.physicsBodiesMoved != 0;
     const bool settle = s.PhysicsResetPending() != 0;
     const bool frameAdv = s.PlaybackActive() != 0;           // 0x330
@@ -1219,13 +1246,19 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
             DumpFrameEntryState(app, "physics_settle.json", false);
 #endif
 
-        // 0x46FE34..0x46FE58: on x86 the readback loop and the 0xA066C
-        // clear sit AFTER the world-pass gate (label 0x46FE34) and run
-        // even when the gate skipped every step.  x64 MOVED both inside:
-        // the settle-gate failure at 0x7FF7CB44C73D jumps to
-        // 0x7FF7CB44C85F - PAST the 255-slot readback walk (mov edi,0FFh
-        // at 0x7FF7CB44C83C, sub_7FF7CB4E3470 per model) and past the
-        // moved clear (`mov byte [app+0xA1678],0` at 0x7FF7CB44C857).
+        // 0x46FE34..0x46FE58 / x64 0x7FF7CB44C834..0x7FF7CB44C857: the
+        // readback walk and the moved clear sit INSIDE the settle gate in
+        // BOTH layouts.  The x86 gate failure 0x46FD39 `jz loc_46FE5F`
+        // and the x64 0x7FF7CB44C73D `jz 0x7FF7CB44C85F` both land on
+        // the second pose pass, PAST the readback walk (x86 100-slot walk
+        // 0x46FE42..0x46FE56, sub_4B25D0 per model; x64 255-slot walk at
+        // 0x7FF7CB44C83C, sub_7FF7CB4E3470 per model) and past the moved
+        // clear (x86 `mov byte [app+0xA066Ch],0` at 0x46FE58; x64
+        // `mov [app+0xA1678h],r15b` at 0x7FF7CB44C857).  The only entries
+        // into x86 0x46FE34 are the in-gate branches 0x46FDD3 (settle
+        // skip) and 0x46FE2D (settle-loop exit).  (The old comment here
+        // claimed x86 ran them outside the gate - a misread; no per-arch
+        // branch is needed.)
         for (int j = 0; j < kModelSlotCount; ++j)
             if (models[j] != nullptr)
                 ModelPhysicsReadback(models[j]);            // 0x46FE49
@@ -1265,8 +1298,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     }
 #ifdef MIKUDANCESTUDIO_DIAG
     if (zeroLocalTimeAfterLoad) {
-        *reinterpret_cast<float*>(
-            reinterpret_cast<unsigned char*>(world) + 0xF0) = 0.0f;
+        static_cast<PhysicsWorld*>(world)->ClearSubstepRemainder();
         zeroLocalTimeAfterLoad = false;
     }
     if (captureStages)

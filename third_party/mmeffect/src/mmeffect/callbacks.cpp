@@ -10,10 +10,12 @@
 //
 // Documented divergence: the original talks to a device whose vtable is
 // shifted by +0x20 relative to the standard IDirect3DDevice9 (the original
-// MMHack wrapper adds 4 leading slots) except one call at GetMaterial with a
-// +0x10 shift (see PHASE1_IMPLEMENTATION_NOTES.md). The rebuilt suite has no
+// MMHack wrapper adds 4 leading slots). The rebuilt suite has no
 // such wrapper yet, so every device interaction uses the standard interface
 // with identical arguments; MMHack must hand MMEffect a standard-shaped device.
+// (The former "GetMaterial at a +0x10 shift" special case was a misread of
+// 0x180056bd5/0x18005753c `call [vtable+0x180]`: on the standard interface
+// slot 0x180 IS GetViewport, which is what the original calls there.)
 #include "mme_abi.h"     // fixed ABI (include/)
 
 #include <d3dx9.h>
@@ -27,6 +29,7 @@
 #include "effect_engine.h"
 #include "emm_manager.h"
 #include "material_bind.h"
+#include "anime_texture.h"  // MmeAnimeOnDeviceLost / MmeAnimeOnDeviceReset
 #include "ini_file.h"
 #include "mme_context.h"
 #include "mme_globals.h"
@@ -36,6 +39,7 @@
 #include "model_data.h"
 #include "pass_planner.h"
 #include "render_snapshot.h"
+#include "sas_exec.h"     // SasExecuteTechnique + the host geometry-draw record
 
 namespace {
 
@@ -146,8 +150,39 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
             if (!model->shown()) {
                 return;
             }
+            // [sub_18002CA80 @0x18002ce6e / FUN_18002DB10] the [n].show=false
+            // subset gate: the original inserts a NULL LoadedEffect node for
+            // the (owner, object, subset) key at binding rebuild, so the
+            // subset's draw lookup hits the null binding and is swallowed
+            // while effects drive the frame (effects disabled forwards it
+            // again). Effective visibility resolves subset-first with the
+            // whole-object row as fallback, defaulting to visible.  The gate
+            // must read the CURRENT subset index, which only
+            // MmeUpdateModelRenderSnapshot -> MmeCaptureCurrentRenderState
+            // (GetCurrentSubsetIndex) fills in - snap was just zeroed above,
+            // so checking before the update would always test subset 0.
             // [L94] snapshot update runs whenever the model resolved.
             MmeUpdateModelRenderSnapshot(model, &snap);
+            if (snap.subset_index >= 0 &&
+                !MmeEmmEffectiveSubsetShown(model, snap.subset_index)) {
+                return;
+            }
+            // [offscreen DefaultEffect "hide" gate; sub_18002CA80/
+            // sub_18002DB10/sub_18005A1E0] A "hide" row of the offscreen the
+            // suspended scene technique renders into resolves the model to
+            // NO binding: the owner-keyed entry is inserted with a null
+            // binding pointer (sub_18002DB10 returns the record+48 hide
+            // flag), sub_18002D910 returns null and sub_18005A1E0 never
+            // invokes the model+8 draw callback - the draw is dropped
+            // before the draw-type gate, so every pass (object/ss/shadow/
+            // edge/zplot) of the model is swallowed for the whole window.
+            // The staging pointer is non-null exactly inside that window
+            // (scene step/repeat-boundary apply stage it, the resume walk
+            // clears it), so the main pass is unaffected.
+            if (ctx->offscreenDefaultEffect != nullptr &&
+                MmeOffscreenDefaultEffectHides(model)) {
+                return;
+            }
             // [L93-97] apply gate: draw types 1/2 always; others only when
             // the model is a normal object (unknownFlag360 != 1 && class 0).
             if (drawType == 1 || drawType == 2 ||
@@ -167,68 +202,124 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
                     }
                 }
             }
-            // The technique-pass draw wrapper [the original FUN_18005a9c0
-            // draw op]: render the draw through the assigned effect's
-            // selected technique - Begin(&passes, 0) / FUN_18001b5b0 parameter
-            // walk (the standard apply above) / BeginPass / the recorded draw /
-            // EndPass / End, exactly like the original op-0 executor.
+            // [fcn_18005d340 L118-127] scene-effect carriers (renderClass 1/2)
+            // never draw as objects - their record drives the frame through
+            // the pass planner instead (no technique draw, no raw forward).
+            if (model->renderClass() == 1 || model->renderClass() == 2) {
+                return;
+            }
+            // The technique-pass draw wrapper [FUN_18001b940 -> the SAS walk
+            // FUN_18001bbc0]: every object draw goes through the assigned
+            // effect's technique walk, exactly like the original - the walk
+            // executes the technique/pass Script annotations (Pass= ordering,
+            // RenderColorTarget=/RenderDepthStencilTarget=, ClearSetColor/
+            // ClearSetDepth/Clear=, Draw=Buffer, LoopByCount/LoopGetIndex/
+            // LoopEnd) and draws the recorded geometry per pass through the
+            // host kind-0 callback (the ModelData+0x08 slot-0 op
+            // FUN_18005a740: Begin / BeginPass / the recorded DIP / EndPass /
+            // End, SetTechnique already ran in the walk).
             bool drewThroughEffect = false;
-            if (drawType == 1 || drawType == 2) {
-                MaterialBinding* binding = MmeActiveModelBinding(model);
-                {
-                    static unsigned long long loggedId = 0;
-                    static int loggedType = -1;
-                    if (loggedId != id || loggedType != drawType) {
-                        loggedId = id;
-                        loggedType = drawType;
-                        char line[0x220];
-                        sprintf_s(line, sizeof(line),
-                                  "DrawWrap: id=%I64u type=%d binding=%p path='%s'\n",
-                                  id, drawType, (void*)binding,
-                                  (binding != nullptr ? binding->effectPath.c_str() : ""));
-                        MmeLogWrite(line, 0);
+            if (drawType == 1 || drawType == 2 || drawType == 3 ||
+                drawType == 4 || drawType == 5) {
+                // [sub_18005A1E0 0x18005a24c-0x18005a2a4 + sub_18002D910]
+                // 离屏渲染回合（原版 wrapper 非 null，turn id != 0）内的
+                // 绑定查找以当前回合的 turn id 为 owner 键首字段，能命中的
+                // 只有两类条目：
+                //   1) carrier 的 (turnId, carrier, -1)——子轮 drain
+                //      （sub_18002CA80 0x18002d1a0-0x18002d69c）建立，value
+                //      即 carrier 自身绑定，照常绘制/驱动（下方
+                //      MmeModelOwnsOffscreenTurn 的资源名判据——同名 0x2E
+                //      声明——等价于该 turn 条目的命中）；
+                //   2) DefaultEffect 行展开的 (turnId, model, -1)
+                //      （sub_18002ACE0 读 0x98 记录 +0x78 行向量 →
+                //      sub_18002CA80 创建段）：行值 path/main_default → 行
+                //      效果；"none"/未列出 → 空 binding（FUN_18001b940 的
+                //      effect==null 裸 DIP）；"hide" 已被上方的 gate 吞。
+                // 其余对象（含当前 0x2E 目标根本没有 DefaultEffect 注解的
+                // 回合里的全部普通对象）对 turn 键全部 miss——
+                // sub_18002D910 返回 0，sub_18005A1E0 不调 FUN_18001b940，
+                // 该次绘制整体被吞（连裸 DIP 都不走）。模型自身的
+                // (0, model, -1) 绑定与逐材质赋值对 turn 键不可见，
+                // 绝不可作为回退（"main_default" 是显式行拼写）。
+                MaterialBinding* binding = nullptr;
+                bool swallowOffscreenDraw = false;
+                const bool offscreenWindow = MmeInOffscreenRenderTurn();
+                if (offscreenWindow) {
+                    if (MmeModelOwnsOffscreenTurn(model)) {
+                        binding = MmeActiveModelBinding(model);
+                    } else if (ctx->offscreenDefaultEffect != nullptr) {
+                        binding = MmeResolveOffscreenDefaultBinding(model);
+                    } else {
+                        // 无 DefaultEffect 行的离屏回合：turn 键 miss → 吞
+                        swallowOffscreenDraw = true;
+                    }
+                } else {
+                    binding = MmeFindMaterialBinding(
+                        0, model, snap.subset_index, true);
+                    if (binding == nullptr && snap.subset_index >= 0) {
+                        const auto& subsets = model->subsetEffects();
+                        auto assigned = subsets.find(snap.subset_index);
+                        if (assigned != subsets.end() && !assigned->second.empty()) {
+                            binding = MmeResolveSubsetEffectBinding(
+                                model, snap.subset_index, assigned->second);
+                        }
+                    }
+                    if (binding == nullptr) {
+                        binding = MmeActiveModelBinding(model);
                     }
                 }
+                if (swallowOffscreenDraw) {
+                    // [0x18005a270/0x18005a2a4] 查找返回 0：不调绘制回调，
+                    // 该次绘制整体吞掉（不走效果、也不走裸 DIP）。
+                    return;
+                }
+                D3DXHANDLE technique = nullptr;
                 if (binding != nullptr && binding->effect != nullptr &&
-                    binding->technique != nullptr && binding->passCount > 0) {
-                    UINT passes = 0;
-                    HRESULT beginHr = binding->effect->SetTechnique(binding->technique);
-                    if (SUCCEEDED(beginHr)) {
-                        beginHr = binding->effect->Begin(&passes, 0);
-                    }
-                    if (SUCCEEDED(beginHr)) {
-                        static int loggedBegin = 0;
-                        if (loggedBegin == 0) {
-                            loggedBegin = 1;
-                            char line[0x220];
-                            sprintf_s(line, sizeof(line),
-                                      "DrawWrap Begin ok: passes=%u\n", passes);
-                            MmeLogWrite(line, 0);
-                        }
-                    } else {
-                        static int loggedFail = 0;
-                        if (loggedFail == 0) {
-                            loggedFail = 1;
-                            char line[0x220];
-                            sprintf_s(line, sizeof(line),
-                                      "DrawWrap Begin FAILED hr=0x%08X\n",
-                                      (unsigned int)beginHr);
-                            MmeLogWrite(line, 0);
-                        }
-                    }
-                    if (SUCCEEDED(beginHr)) {
-                        for (UINT passIndex = 0; passIndex < passes; ++passIndex) {
-                            if (SUCCEEDED(binding->effect->BeginPass(passIndex))) {
-                                if (device != nullptr) {
-                                    device->DrawIndexedPrimitive(
-                                        static_cast<D3DPRIMITIVETYPE>(type),
-                                        baseVertexIndex, minVertexIndex, vertexCount,
-                                        startIndex, primitiveCount);
-                                }
-                                binding->effect->EndPass();
-                            }
-                        }
-                        binding->effect->End();
+                    drawType >= 1 && drawType <= 5) {
+                    // The per-draw selection table slot (MmeRefreshDrawTechnique
+                    // installed it from MmeApplyModelRenderSnapshot above). The
+                    // legacy binding->technique slot is always null by design
+                    // (material_bind.h) - a null selection is the original's
+                    // "no technique" and forwards the raw host draw below.
+                    technique = binding->techniques[drawType];
+                }
+                // [FUN_18001B940 0x18001b9ec `*a1 && v8 && !a1+57`] exactly
+                // three conditions fall back to the host slot-0 plain draw
+                // `(**a7)(a7, 0, 0)`: no effect, no technique handle, or the
+                // latched run-failed flag. A NON-NULL technique with ZERO
+                // passes is NOT one of them - the walk runs zero passes, the
+                // draw callback never fires and the subset stays HIDDEN (the
+                // MME "empty technique hides the subset" mechanism; the old
+                // expectedPasses > 0 gate here broke it by un-hiding such
+                // subsets through the raw host draw).
+                const bool sasRunFailed =
+                    (binding != nullptr && binding->sas != nullptr &&
+                     binding->sas->runFailed);
+                if (!sasRunFailed &&
+                    binding != nullptr && binding->effect != nullptr &&
+                    binding->sas != nullptr && technique != nullptr) {
+                    int techIndex = SasFindTechniqueIndex(binding->sas,
+                                                          technique);
+                    if (techIndex >= 0) {
+                        // Stage the recorded DIP for the walk's kind-0 host
+                        // callback [FUN_18005a740 replays the ModelData+0x138
+                        // record]. The standard parameters were applied by
+                        // MmeApplyModelRenderSnapshot above (the original
+                        // re-applies them per pass inside slot 0 via
+                        // sub_18001B5B0 - equivalent here, the D3DX parameters
+                        // stay bound on the effect between Begin/End).
+                        SasHostDrawRecord drawRecord;
+                        drawRecord.device = device;
+                        drawRecord.primitiveType = type;
+                        drawRecord.baseVertexIndex = baseVertexIndex;
+                        drawRecord.minVertexIndex = minVertexIndex;
+                        drawRecord.vertexCount = vertexCount;
+                        drawRecord.startIndex = startIndex;
+                        drawRecord.primitiveCount = primitiveCount;
+                        SasSetHostDrawRecord(&drawRecord);
+                        SasExecuteTechnique(binding->sas, device, techIndex,
+                                            snap.subset_index);
+                        SasSetHostDrawRecord(nullptr);
                         drewThroughEffect = true;
                     }
                 }
@@ -468,15 +559,18 @@ int __cdecl Initialize(IDirect3DDevice9* device)
     }
     g_currentEffect = effect;                      // [L222] DAT_1800d9918
 
-    // [L223-229] cache D3DMATERIAL9 and force Diffuse.b / Diffuse.a >= 1.
+    // [0x180056bba-0x180056bf9] cache the viewport (vtable+0x180
+    // GetViewport into DAT_1800d9878) and coerce zero Width/Height to 1
+    // (the FUN_180055b10 mouse tail and the ViewportPixelSize binding
+    // sub_18005edd0 divide by the extents).
     if (device != nullptr) {
-        device->GetMaterial(&g_cachedMaterial);
-    }
-    if (g_cachedMaterial.Diffuse.b == 0) {
-        g_cachedMaterial.Diffuse.b = 1;            // DAT_1800d9880
-    }
-    if (g_cachedMaterial.Diffuse.a == 0) {
-        g_cachedMaterial.Diffuse.a = 1;            // DAT_1800d9884
+        device->GetViewport(&g_beginViewport);
+        if (g_beginViewport.Width == 0) {
+            g_beginViewport.Width = 1;              // DAT_1800d9880
+        }
+        if (g_beginViewport.Height == 0) {
+            g_beginViewport.Height = 1;             // DAT_1800d9884
+        }
     }
 
     return 0;                                      // [L230]
@@ -593,20 +687,9 @@ void __cdecl OnBeginScene(IDirect3DDevice9* device)
 
     MmeUpdateFrameTime();                          // [L38] FUN_180056f80
 
-    // [L39-45] cache D3DMATERIAL9, force Diffuse.b / Diffuse.a >= 1.
-    if (device != nullptr) {
-        device->GetMaterial(&g_cachedMaterial);
-        if (g_cachedMaterial.Diffuse.b == 0) {
-            g_cachedMaterial.Diffuse.b = 1;
-        }
-        if (g_cachedMaterial.Diffuse.a == 0) {
-            g_cachedMaterial.Diffuse.a = 1;
-        }
-    }
-
-    // [L46-49] cache the BeginScene viewport (vtable+0x180 GetViewport into
-    // DAT_1800d9878); the FUN_180055b10 mouse tail divides by its extents,
-    // so a zero extent is coerced to 1.
+    // [0x180057532-0x180057568] cache the BeginScene viewport (vtable+0x180
+    // GetViewport into DAT_1800d9878); the FUN_180055b10 mouse tail divides
+    // by its extents, so a zero extent is coerced to 1.
     if (device != nullptr) {
         device->GetViewport(&g_beginViewport);
         if (g_beginViewport.Width == 0) {
@@ -734,11 +817,66 @@ void __cdecl OnLostDevice(IDirect3DDevice9* /*device*/)
 {
     MmeLogWrite("Resetting MME...", 0);            // [L29-32]
 
-    // [L40] release device-dependent resources (FUN_18005e640): the loaded
-    // effects' OnLostDevice, then the binding-context state-block pool
-    // (FUN_180055780 on ctx+0x68).
+    // [L40] FUN_18005e640's device-dependent release walk, in the original
+    // order:
+    //   1) sub_180067680(ctx+0x18) - the cached target set: mask = 0 and
+    //      release the saved GetRenderTarget(0..3)/GetDepthStencilSurface
+    //      refs (FUN_18005c510's ==N boundary refills them, so at loss they
+    //      can be live device-dependent surfaces).
+    //   2) sub_180001660(ctx+0x240) - the snapshot manager: the persistent
+    //      set (mgr+0x08), the saved main set (mgr+0x50) and both cached
+    //      surface families (POOL_DEFAULT render targets).
+    //   3) sub_180055780(ctx+0x68) - the binding-context state-block pool.
+    if (g_context != nullptr) {
+        MmeReleaseTargetSet(g_context->cachedTargetSet);   // 1)
+        g_context->ReleaseMainSnapshotCache();             // 2)
+        g_context->ReleaseStateBlockPool();                // 3)
+    }
+
+    //   4) the per-model run-state destruction (model+0x358,
+    //      0x18005e66f-0x18005e6be; sub_180059a30 = SasDestroyRunState).
+    //      Suspended scene runs retain the old back-buffer/depth surfaces;
+    //      they must be abandoned before Reset or those references make
+    //      Reset fail.
+    if (g_context != nullptr) {
+        for (ModelData* model : g_context->models) {
+            if (model != nullptr && model->runState() != nullptr) {
+                SasDestroyRunState(model->runState());
+                model->setRunState(nullptr);
+            }
+        }
+    }
+
+    //   4.5) [sub_1800164C0 case 45 @0x18001654d-0x18001656a] the 0x2D
+    //        ANIMATEDTEXTURE records: per record the original FIRST clears
+    //        the texture parameter (effect->SetTexture(param, NULL)
+    //        @0x18001655d) and THEN calls the anime object's vtbl+0x18 slot
+    //        (@0x18001656a; CAnimeGIF sub_1800054D0 / CAnimePNG
+    //        sub_180008290: release the DYNAMIC/D3DPOOL_DEFAULT upload
+    //        texture, create nothing). That walk runs INSIDE sub_18002DD40
+    //        before each effect's OnLostDevice (sub_1800164C0 tail vtbl+552),
+    //        so the whole animated set must drop before step 5 below - the
+    //        port's registry lives on the context (mme_context.h ctx+0x48),
+    //        the per-effect interleave is structurally impossible and this
+    //        whole-set pass preserves the observable ordering (every
+    //        SetTexture(param, NULL) precedes every effect OnLostDevice).
+    if (g_context != nullptr && g_context->animatedTextures != nullptr) {
+        MmeAnimeOnDeviceLost(static_cast<MmeAnimatedTextureSet*>(
+            g_context->animatedTextures));
+    }
+
+    //   5) sub_18002dd40 - the loaded effects' OnLostDevice (the engine-side
+    //      walk over the effect cache).
     MmeEngineOnLostDevice();
-    MmeReleaseBindingContextPool(g_context);
+
+    // PORT ADDITION: the background-quad fixup cache (ctx+0x190) holds
+    // device-dependent vertex buffers. The original's device-lost walk never
+    // frees that map (the context dtor and FUN_18005b9e0's viewport-change
+    // branch own it); the port releases the copies here so a Reset cannot
+    // leave dangling POOL_DEFAULT pointers in the cache.
+    if (g_context != nullptr) {
+        g_context->ReleaseBackgroundFixedVbs();
+    }
 
     // [L41] FUN_18000a990 - clear the engine-side container pair
     // (DAT_1800d9c60/DAT_1800d9c80). PHASE 2 seam (effect_engine state).
@@ -757,6 +895,25 @@ void __cdecl OnResetDevice(IDirect3DDevice9* device)
     // [L44] FUN_18002de40 - reacquire effect engine state: the loaded
     // effects' OnResetDevice (first failure wins, like the original chain).
     HRESULT reacquire = MmeEngineOnResetDevice(device);
+
+    // [sub_180016660 case 45 @0x1800166cb-0x1800166d8] the 0x2D
+    // ANIMATEDTEXTURE records re-create their upload textures IMMEDIATELY:
+    // each entry's vtbl+0x20 slot (CAnimeGIF sub_180005500 / CAnimePNG
+    // sub_1800082C0: release the remnant, D3DXCreateTexture(dev, w, h, 1,
+    // DYNAMIC, A8R8G8B8, DEFAULT)). Inside sub_18002de40 this walk runs AFTER
+    // the effects' OnResetDevice (sub_180016660 head vtbl+560) and BEFORE the
+    // 16x16 probe, and a failed re-create overrides the walk's earlier
+    // result (last non-zero wins: sub_180016660 `if (v8) v3 = v8` ->
+    // sub_18002de40 `if (v5) v1 = v5`) into the failure chain below. No lazy
+    // rebuild: the original's SetFrame never creates a texture, so a paused
+    // animation must find a live one here.
+    if (g_context != nullptr && g_context->animatedTextures != nullptr) {
+        HRESULT animeStep = MmeAnimeOnDeviceReset(
+            static_cast<MmeAnimatedTextureSet*>(g_context->animatedTextures));
+        if (animeStep != S_OK) {
+            reacquire = animeStep;
+        }
+    }
 
     // [L54] re-create the 16x16 device-pool render target (slot 0xe0).
     HRESULT recreate = E_FAIL;
@@ -795,9 +952,16 @@ void __cdecl OnResetDevice(IDirect3DDevice9* device)
         ? "Failed to reset MikuMikuEffect"                 // 0x1800b5900
         : "\xB3\xF5\xCA\xBB\xCB\xAF" "MikuMikuEffect" "\xCA\xA7\xB0\xDC";  // 0x1800b58d8
 
-    static std::string shownResetMessage;   // DAT_1800d99d8-gated shown list (approximate)
-    if (shownResetMessage != message) {
-        shownResetMessage = message;
+    // [0x180058b4a-0x180058bf7] the dedup gate keyed by the message text:
+    // while the flush phase byte (DAT_1800d99d8) is set - inside a scene -
+    // the text is matched against the shared shown-message set
+    // (sub_180009c20 equal_range + count; hit skips the box, miss inserts
+    // via sub_180009750) and the set drains at every scene boundary
+    // (FUN_1800094e0); outside a scene the box shows unconditionally. The
+    // set/phase are shared with MmeLogWrite, like the original's single
+    // global set. (A completed Reset can only happen outside a scene, so in
+    // practice the box shows every time.)
+    if (MmeLogShouldShowMessageBox(message)) {
         MessageBoxA(g_mainWindow, message, "MikuMikuEffect", MB_ICONERROR);
     }
 }

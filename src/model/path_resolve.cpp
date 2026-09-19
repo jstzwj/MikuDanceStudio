@@ -212,6 +212,12 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
             return 1;
         ++used;
     }
+    // Pool exhausted: the original fell through and wrote entry[10000],
+    // spilling name/texture pointers into localeTable[0..2] (the entries
+    // right behind the pool).  10000 distinct textures are unreachable in
+    // practice; refuse the cache instead of corrupting the locale pointers.
+    if (used >= 10000)
+        return 0;
     // The RGB sample occupies the low three bytes of this entry's tag.
     // Do not retain the original x86 wrapper-relative +0xC/+0xE offsets:
     // x64 pointer widening would otherwise overwrite the next cache entry.
@@ -257,7 +263,9 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
     mme::RecordTexture(path, *entryTex);
 
     D3DLOCKED_RECT lr;
-    if (SUCCEEDED((*entryTex)->LockRect(0, &lr, nullptr, 0))) {
+    // bottom-row probe locks read-only (x64 0x7FF7CB428E31 passes 0x10)
+    if (SUCCEEDED((*entryTex)->LockRect(0, &lr, nullptr,
+                                        D3DLOCK_READONLY))) {
         const unsigned char* px =
             static_cast<const unsigned char*>(lr.pBits) +
             lr.Pitch * (info.Height ? info.Height - 1 : 0);

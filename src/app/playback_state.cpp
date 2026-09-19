@@ -8,6 +8,7 @@
 #include <d3d9.h>
 
 #include <cstdint>
+#include <new>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -282,9 +283,9 @@ void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
     undo.dirty = boneCount;
     undo.frame = app->state.currentFrame;
     auto*& buffer = undo.bonePose;
-    std::free(buffer);
+    ::operator delete(buffer);
     buffer = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-        std::malloc(sizeof(*buffer) * boneCount));
+        ::operator new(sizeof(*buffer) * boneCount));
     std::memset(buffer, 0, static_cast<std::size_t>(36) * boneCount);
     auto* records = buffer;
     mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);

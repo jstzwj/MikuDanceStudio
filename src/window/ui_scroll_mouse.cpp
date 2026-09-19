@@ -34,10 +34,9 @@
 
 namespace mikudancestudio {
 
-// Forward declarations for functions ported in this wave whose bodies live
-// in ui_refresh.cpp / ui_timeline_gfx.cpp (not yet added to
-// ported_funcs.hpp; declared here with their original VAs).
-void RefreshRequest(int area);        // VA 0x00440AC0
+// Forward declaration for a function ported in this wave whose body lives
+// in ui_timeline_gfx.cpp (not yet added to ported_funcs.hpp; declared here
+// with its original VA).
 void SetFrameNormalized(int frame);   // VA 0x004C2B80
 
 void HandleVScroll(LPARAM lParam, WPARAM wParam) {
@@ -146,8 +145,15 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
 //       this+672812 = 1; this+656850 = 1; then PostViewRefresh (0x40D130)
 //       and return
 //   otherwise -> this+657628 (0xA08DC)
-//   tail (non-special): RefreshRequest(-1) (0x440AC0) then
-//       PostViewRefresh (0x40D130).
+//   camera-row switch (x64 0x7FF7CB45F36F / 0x7FF7CB45F434, on both the
+//       distance and the angle branch): when the camera track flag
+//       this+656356 (0xA03E4) is already set the tail reduces to
+//       PostViewRefresh (0x40D130) only; otherwise a DWORD store sets
+//       656356 = 1 and clears the light / self-shadow / gravity flags
+//       656357..656359, the rowSelected byte (x86 +0x4AC / x64 +0x4BC)
+//       of all 255 display-object slots is cleared, and the tail runs
+//       PostLanguageSweep (0x42F1E0) + PostViewRefresh (0x40D130).  The
+//       x64 original never calls RefreshRequest from this handler.
 //
 // Reference: ../translated/MikuMikuDance/fcn_0044bd70.cpp
 // =========================================================================//
@@ -179,6 +185,20 @@ void HandleMouseWheel(int delta) {
         // (x64 0x7FF7CB45F340: cvtdq2ps/mulss 0.05f/addss/movss)
         app->CameraPosition()[2] =
             static_cast<float>(wheel) * 0.05f + app->CameraPosition()[2];
+        if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
+            // switch the edit selection to the camera row (x64 0x7FF7CB45F36F:
+            // DWORD store - camera 656356 = 1, light / self-shadow / gravity
+            // 656357..656359 = 0), drop every accessory rowSelected mark
+            // (byte +0x4AC x86 / +0x4BC x64, 255 slots, 0x7FF7CB45F379) and
+            // sweep the label column.
+            app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
+            for (int slot = 0; slot < 0xFF; ++slot) {
+                mdl::AccessoryRecord* accessory = app->AccessorySlot(slot);
+                if (accessory != nullptr)
+                    accessory->rowSelected = 0;
+            }
+            PostLanguageSweep(app);                             // 0x42F1E0
+        }
     } else {
         const bool morphFollow =
             mode == 0 &&
@@ -199,9 +219,19 @@ void HandleMouseWheel(int delta) {
         // (x64 0x7FF7CB45F410: same single-precision chain)
         app->CameraDistance() =
             static_cast<float>(wheel) * 0.05f + app->CameraDistance();
+        if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
+            // same camera-row switch on the angle branch (x64 DWORD store
+            // 0x7FF7CB45F434, slot loop 0x7FF7CB45F43E)
+            app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
+            for (int slot = 0; slot < 0xFF; ++slot) {
+                mdl::AccessoryRecord* accessory = app->AccessorySlot(slot);
+                if (accessory != nullptr)
+                    accessory->rowSelected = 0;
+            }
+            PostLanguageSweep(app);                             // 0x42F1E0
+        }
     }
-    RefreshRequest(-1);       // 0x440AC0
-    PostViewRefresh(app);     // 0x40D130
+    PostViewRefresh(app);     // 0x40D130 (x64 sub_7FF7CB440DD0)
 }
 
 }  // namespace mikudancestudio

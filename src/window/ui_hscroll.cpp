@@ -37,8 +37,9 @@
 //     WM_SETTEXT); fovRad = float(fov * 0.01745329238474369) (double mul
 //     dbl_52BB20); D3DXMatrixPerspectiveFovLH(&proj, fovRad, aspect, 1.0f,
 //     100000.0f) with aspect = locale+0x1D4EC (float), near = fld1,
-//     far = flt_52BB28 = 100000.0f; scene vtable slot 0xB0 called
-//     __stdcall(obj, 3 /*D3DTS_PROJECTION*/, &proj); RefreshRequest(-1).
+//     far = flt_52BB28 = 100000.0f; device->SetTransform(D3DTS_PROJECTION,
+//     &proj) (x64 sub_7FF7CB45E060: vtable+0x160 = slot 44; x86 +0xB0/4 =
+//     slot 44); RefreshRequest(-1).
 //   560  physics-interval ratio slider (0x230)
 //     this+0xA0D2C (658732) = (double)(10000-pos)/100000.0 (dbl_52BA00);
 //     echo "%d" (raw pos) into 561 via SetWindowTextA; this+0xA0B0D
@@ -267,13 +268,15 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
             d3dx::D3DXMATRIXF proj;
             // near = fld1 (1.0f), far = flt_52BB28 (100000.0f)
             d3dx->perspectiveFovLH(&proj, fovRad, aspect, 1.0f, 100000.0f);
-            // scene object vtable slot 0xB0: __stdcall(obj, 3, &proj)
-            void* scene = locale->device;  // 0x1D4E0
-            using SetProj = void(__stdcall*)(void*, int, void*);
-            SetProj setProj = *reinterpret_cast<SetProj*>(
-                static_cast<unsigned char*>(*reinterpret_cast<void**>(scene)) +
-                0xB0);
-            setProj(scene, 3 /*D3DTS_PROJECTION*/, &proj);
+            // 原版 sub_7FF7CB45E060 @ 0x7FF7CB45EE03: `call [rax+160h]` ——
+            // x64 vtable 偏移 +0x160（352 = 8×44，槽 44），即
+            // IDirect3DDevice9::SetTransform(dev, 3 /*D3DTS_PROJECTION*/,
+            // &proj)；x86 原版偏移 +0xB0（176 = 4×44，同为槽 44）。裸字节
+            // 偏移在 x64 移植构建下会落到槽 22（CreateVolumeTexture），
+            // 故用类型化虚调用保证架构无关。
+            locale->device->SetTransform(
+                D3DTS_PROJECTION,
+                reinterpret_cast<const D3DMATRIX*>(&proj));
         }
         RefreshRequest(-1);
     }

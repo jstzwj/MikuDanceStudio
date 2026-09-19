@@ -182,7 +182,10 @@ void CopyLightKey(MMDApp* app, const mdl::LightKey& key, bool apply) {
 // state-producing core shared by frame stepping, delete/paste refresh and the
 // camera register button.  The original function also echoes every value to
 // the camera controls; those controls are already refreshed by the panel/UI
-// paths that call this function.
+// paths that call this function.  The camera-PARENT switch refresh
+// (x64 0x479B00 = RefillBoneRegisterCombo) is NOT deferred - all three of
+// the original's branches run it before storing the new parent pair, so it
+// is inlined at both assignment sites below.
 void ReloadModels(MMDApp* app) {
     if (app == nullptr)
         return;
@@ -209,58 +212,70 @@ void ReloadModels(MMDApp* app) {
         // 0x7FF7CB479EF9; x86 0x308/0x30C).
         s.state.viewOffsetX = 0.0f;
         s.state.viewOffsetY = 0.0f;
+        // Camera-parent switch refresh (x64 0x7FF7CB479D2F / terminal
+        // 0x7FF7CB479F2C; x86 0x42E710 / 0x42E8EC): when the incoming
+        // parent model differs from the live camera parent, the original
+        // rebuilds the bone-register combobox (0x479B00 = x86 sub_410040)
+        // BEFORE overwriting the pair.
+        if (current.parentModel != s.CameraParentModel())
+            RefillBoneRegisterCombo(app, current.parentModel);
         s.CameraParentModel() = current.parentModel;
         s.CameraParentBone() = current.parentBone;
     } else {
         const mdl::CameraKey& previous = keys[current.previous];
         const std::uint32_t previousFrame = previous.frame;
-        if (currentFrame - 1 == previousFrame) {
-            CopyCameraKey(app, previous);
-            // x64 runs this case through the interpolator, whose view-
-            // offset clear (0x7FF7CB47A537) applies unchanged here.
-            s.state.viewOffsetX = 0.0f;
-            s.state.viewOffsetY = 0.0f;
-        } else {
-            const float t = static_cast<float>(
-                static_cast<double>(frame - previousFrame) /
-                static_cast<double>(currentFrame - previousFrame));
-            s.CameraPerspective() = previous.perspective;
-            float* output[6] = {
-                &s.CameraPosition()[0], &s.CameraPosition()[1],
-                &s.CameraPosition()[2], &s.CameraRotation()[0],
-                &s.CameraDistance(), &s.CameraFov()};
-            for (int channel = 0; channel < 6; ++channel) {
-                const float eased = CameraEase(keys, channel,
-                                                static_cast<int>(index), t);
-                const double a = channel < 3 ? previous.eye[channel]
-                    : channel == 3 ? previous.target[0]
-                    : channel == 4 ? previous.distance
-                                   : static_cast<double>(previous.fov);
-                const double b = channel < 3 ? current.eye[channel]
-                    : channel == 3 ? current.target[0]
-                    : channel == 4 ? current.distance
-                                   : static_cast<double>(current.fov);
-                *output[channel] = static_cast<float>(eased * (b - a) + a);
-            }
-            // Camera channel 3 is one easing curve shared by all three
-            // Euler components.  Hex-Rays exposes only the first store when
-            // the x87 value is kept live; the following Y/Z stores are part
-            // of the same original branch.
-            const float rotationEase = CameraEase(
-                keys, 3, static_cast<int>(index), t);
-            for (int axis = 0; axis < 3; ++axis) {
-                const float a = previous.target[axis];
-                const float b = current.target[axis];
-                s.CameraRotation()[axis] = static_cast<float>(
-                    static_cast<double>(rotationEase) *
-                        (static_cast<double>(b) - static_cast<double>(a)) +
-                    static_cast<double>(a));
-            }
-            // View offset clear inside the interpolation stores
-            // (x64 0x7FF7CB47A537; x86 0x308/0x30C).
-            s.state.viewOffsetX = 0.0f;
-            s.state.viewOffsetY = 0.0f;
+        // No adjacent-frame snap here: the between branch of the original
+        // (x64 0x7FF7CB47A3CE / x86 0x42ED24) goes straight to the eased
+        // fraction - unlike the playback path below, whose double-valued
+        // frame can land between consecutive integer keys (snap at
+        // 0x4177F1).  With ReloadModels' integer app frame the walk
+        // guarantees previousFrame < frame < currentFrame, i.e. a span of
+        // at least 2, so cur-1 == prev is unreachable and the branch that
+        // used to sit here was dead code copied from the playback path.
+        const float t = static_cast<float>(
+            static_cast<double>(frame - previousFrame) /
+            static_cast<double>(currentFrame - previousFrame));
+        s.CameraPerspective() = previous.perspective;
+        float* output[6] = {
+            &s.CameraPosition()[0], &s.CameraPosition()[1],
+            &s.CameraPosition()[2], &s.CameraRotation()[0],
+            &s.CameraDistance(), &s.CameraFov()};
+        for (int channel = 0; channel < 6; ++channel) {
+            const float eased = CameraEase(keys, channel,
+                                            static_cast<int>(index), t);
+            const double a = channel < 3 ? previous.eye[channel]
+                : channel == 3 ? previous.target[0]
+                : channel == 4 ? previous.distance
+                               : static_cast<double>(previous.fov);
+            const double b = channel < 3 ? current.eye[channel]
+                : channel == 3 ? current.target[0]
+                : channel == 4 ? current.distance
+                               : static_cast<double>(current.fov);
+            *output[channel] = static_cast<float>(eased * (b - a) + a);
         }
+        // Camera channel 3 is one easing curve shared by all three
+        // Euler components.  Hex-Rays exposes only the first store when
+        // the x87 value is kept live; the following Y/Z stores are part
+        // of the same original branch.
+        const float rotationEase = CameraEase(
+            keys, 3, static_cast<int>(index), t);
+        for (int axis = 0; axis < 3; ++axis) {
+            const float a = previous.target[axis];
+            const float b = current.target[axis];
+            s.CameraRotation()[axis] = static_cast<float>(
+                static_cast<double>(rotationEase) *
+                    (static_cast<double>(b) - static_cast<double>(a)) +
+                static_cast<double>(a));
+        }
+        // View offset clear inside the interpolation stores
+        // (x64 0x7FF7CB47A537; x86 0x308/0x30C).
+        s.state.viewOffsetX = 0.0f;
+        s.state.viewOffsetY = 0.0f;
+        // Same refresh gate as the exact branch, against the PREVIOUS
+        // record's parent (x64 0x7FF7CB47A401; x86 0x42ED62) - the
+        // between branch inherits the parent pair from the earlier key.
+        if (previous.parentModel != s.CameraParentModel())
+            RefillBoneRegisterCombo(app, previous.parentModel);
         s.CameraParentModel() = previous.parentModel;
         s.CameraParentBone() = previous.parentBone;
     }
@@ -347,40 +362,42 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                     CopyCameraKey(app, previous);         // 0x4177F1
                 } else {
                     const std::uint32_t framePrev = previous.frame;
-                    const float t = static_cast<float>(
-                        (frame - static_cast<double>(framePrev)) /
-                        static_cast<double>(frameCur - framePrev));
+                    // x64 0x7FF7CB489D2A..0x7FF7CB489D4D: the fraction is
+                    // single-precision throughout - (float)frame minus
+                    // cvtsi2ss(prev.frame), divided by cvtsi2ss(cur-prev).
+                    const float t =
+                        (static_cast<float>(frame) -
+                         static_cast<float>(framePrev)) /
+                        static_cast<float>(frameCur - framePrev);
                     s.CameraPerspective() = previous.perspective;
-                    // Per-channel eased lerp (0x41789E..0x4179CA).  The
-                    // eased fraction from sub_410140 stays in st0 and
-                    // multiplies the delta - the decompiler drops this
-                    // (labels it the raw t); the disasm is authoritative.
+                    // Per-channel eased lerp (0x41789E..0x4179CA; x64
+                    // 0x7FF7CB489D59..0x7FF7CB489E60 keeps every channel
+                    // in mulss/addss floats).  The eased fraction from
+                    // sub_410140 stays in st0 and multiplies the delta -
+                    // the decompiler drops this (labels it the raw t); the
+                    // disasm is authoritative.
                     float* output[6] = {
                         &s.CameraPosition()[0], &s.CameraPosition()[1],
                         &s.CameraPosition()[2], &s.CameraRotation()[0],
                         &s.CameraDistance(), &s.CameraFov()};
                     for (int ch = 0; ch < 6; ++ch) {
                         const float e = CameraEase(keys, ch, cur, t);
-                        const double curV = ch < 3 ? current.eye[ch]
+                        const float curV = ch < 3 ? current.eye[ch]
                             : ch == 3 ? current.target[0]
                             : ch == 4 ? current.distance
-                                      : static_cast<double>(current.fov);
-                        const double prevV = ch < 3 ? previous.eye[ch]
+                                      : static_cast<float>(current.fov);
+                        const float prevV = ch < 3 ? previous.eye[ch]
                             : ch == 3 ? previous.target[0]
                             : ch == 4 ? previous.distance
-                                      : static_cast<double>(previous.fov);
-                        *output[ch] = static_cast<float>(
-                            static_cast<double>(e) * (curV - prevV) + prevV);
+                                      : static_cast<float>(previous.fov);
+                        *output[ch] = e * (curV - prevV) + prevV;
                     }
                     const float rotationEase = CameraEase(keys, 3, cur, t);
                     for (int axis = 0; axis < 3; ++axis) {
                         const float curV = current.target[axis];
                         const float prevV = previous.target[axis];
-                        s.CameraRotation()[axis] = static_cast<float>(
-                            static_cast<double>(rotationEase) *
-                                (static_cast<double>(curV) -
-                                 static_cast<double>(prevV)) +
-                            static_cast<double>(prevV));
+                        s.CameraRotation()[axis] =
+                            rotationEase * (curV - prevV) + prevV;
                     }
                 }
                 s.CameraParentModel() = previous.parentModel;
@@ -432,9 +449,12 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             } else {
                 const mdl::LightKey& previous = keys[current.previous];
                 const std::uint32_t framePrev = previous.frame;
-                const float t = static_cast<float>(
-                    (frame - static_cast<double>(framePrev)) /
-                    static_cast<double>(frameCur - framePrev));
+                // Single-precision fraction, x64 0x7FF7CB48A126..0x7FF7CB48A14D
+                // (cvtsi2ss/subss/divss); the lerps below are mulss/addss.
+                const float t =
+                    (static_cast<float>(frame) -
+                     static_cast<float>(framePrev)) /
+                    static_cast<float>(frameCur - framePrev);
                 for (int c = 0; c < 3; ++c) {             // 0x417CC0..F2
                     const float curV = current.direction[c];
                     const float prevV = previous.direction[c];
@@ -524,22 +544,29 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             } else {
                 const mdl::GravityKey& previous = keys[current.previous];
                 const std::uint32_t framePrev = previous.frame;
-                const double t =
-                    (frame - static_cast<double>(framePrev)) /
-                    static_cast<double>(frameCur - framePrev);
+                // Single-precision fraction, x64 0x7FF7CB48A4A9..0x7FF7CB48A4C9.
+                const float t =
+                    (static_cast<float>(frame) -
+                     static_cast<float>(framePrev)) /
+                    static_cast<float>(frameCur - framePrev);
                 s.GravityNoiseEnabled() = previous.noiseEnabled;
+                // Noise iteration count (x64 0x7FF7CB48A4CD..0x7FF7CB48A4E4):
+                // cvtdq2ps turns (cur - prev) into a FLOAT, mulss applies t,
+                // cvttss2si truncates, then prev.noise is added in integer.
+                // A double product can cross the integer boundary one frame
+                // later and shift the Bullet solver iteration count, so the
+                // float domain here is behavior-critical.
                 s.GravityNoise() = previous.noise +
-                    static_cast<int>(static_cast<double>(
+                    static_cast<int>(static_cast<float>(
                         current.noise - previous.noise) * t);
-                s.GravityMagnitude() = static_cast<float>(
-                    static_cast<double>(current.acceleration -
-                                        previous.acceleration) * t +
-                    previous.acceleration);
+                s.GravityMagnitude() =
+                    (current.acceleration - previous.acceleration) * t +
+                    previous.acceleration;
                 for (int axis = 0; axis < 3; ++axis) {
-                    s.GravityDirection()[axis] = static_cast<float>(
-                        static_cast<double>(current.direction[axis] -
-                                            previous.direction[axis]) * t +
-                        previous.direction[axis]);
+                    s.GravityDirection()[axis] =
+                        (current.direction[axis] -
+                         previous.direction[axis]) * t +
+                        previous.direction[axis];
                 }
             }
         }

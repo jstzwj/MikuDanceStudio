@@ -80,8 +80,9 @@ const GUID kMmdxShowClsid = {
 // 0x529980: MMDxShow frame-push interface (ECFAB031-...)
 const GUID kIidPushSource = {
     0xecfab031, 0x72ba, 0x4120, {0xb9, 0xf7, 0x8a, 0x3d, 0x5f, 0xd3, 0x8d, 0xec}};
-// 0x53CEE0: ARGB32-ish subtype used whenever a compressor is selected
-// (byte-identical to the baseclasses MEDIASUBTYPE_ARGB32).
+// 0x53CEE0: MEDIASUBTYPE_ARGB32 (byte-identical to the baseclasses
+// constant; x64 copy at 0x7FF7CB549E28).  Fed to ISampleGrabber::
+// SetMediaType unconditionally (x64 0x7FF7CB42ADC5).
 const GUID kSubtypeArgb32 = {
     0x773c9ac0, 0x3274, 0x11d0, {0xb7, 0x24, 0x00, 0xaa, 0x00, 0x6c, 0x1a, 0x01}};
 // 0x53CE50: SampleGrabber CLSID (qedit.h is not shipped with modern SDKs,
@@ -243,11 +244,16 @@ void BindSelectedCompressor(DShowRecorder* rec) {
 // ===========================================================================
 // VA 0x00408F20 - FillCodecCombo: codec combo fill
 // (; original: sub_408F20, method of the recorder object)
-// ===========================================================================
+// =========================================================================//
+// Uncompressed-codec row label 「無圧縮」(UTF-16LE 2A 67 27 57 2E 7E at
+// x64 0x7FF7CB54A620 / x86 0x529880; IDA's narrow-string view renders the
+// bytes as the mojibake "*g'W.~" - do not copy that back in).
+static const wchar_t kJpNoCompression[] = {0x672A, 0x5727, 0x7E2E, 0x0000};
+// =========================================================================//
 // Clears the combo (CB_RESETCONTENT), walks the video-compressor category,
 // BindToStorage -> IPropertyBag -> Read(L"FriendlyName"), converts the BSTR
 // to Shift-JIS (WideCharToMultiByte CP 3) and CB_ADDSTRINGs it, then appends
-// the uncompressed row ("AVI Raw" EN / the odd wide literal "*g'W.~" JP -
+// the uncompressed row ("AVI Raw" EN / 「無圧縮」 JP via SendMessageW -
 // byte-exact from 0x529880) and CB_SETCURSELs it.  Returns the "AVI Raw"
 // row index (saved by the dialog to app+0xA0CD8).
 // =========================================================================//
@@ -306,7 +312,7 @@ int FillCodecCombo(DShowRecorder* /*rec*/, HWND hCombo, char english) {
                              reinterpret_cast<LPARAM>("AVI Raw"));
     else
         index = SendMessageW(hCombo, CB_ADDSTRING, 0,
-                             reinterpret_cast<LPARAM>(L"*g'W.~"));
+                             reinterpret_cast<LPARAM>(kJpNoCompression));
     SendMessageA(hCombo, CB_SETCURSEL, index, 0);
     enumMon->Release();
     devEnum->Release();
@@ -469,7 +475,7 @@ void ShowCodecConfigDialog(DShowRecorder* rec, HWND hDlg) {
 //   3. IPushSource QI -> [26]; GetRate must be >= 1.02 or "dll is too old";
 //      SetBitmapInfo(recStruct, 40, fps)
 //   4. SampleGrabber -> [5]; ISampleGrabber::SetMediaType(video,
-//      ARGB32-when-compressed / RGB24-when-raw); AddFilter "Sample Grabber"
+//      ARGB32 unconditionally); AddFilter "Sample Grabber"
 //   5. CaptureGraphBuilder2: SetFiltergraph + SetOutputFileName(Avi,
 //      outPath, -> [6] mux, [7] writer)
 //   6. compressor AddFilter "Compressor"; pin web through 0x4096D0/0x409700;
@@ -484,7 +490,7 @@ void ShowCodecConfigDialog(DShowRecorder* rec, HWND hDlg) {
 // =========================================================================//
 bool BuildRecordingGraph(DShowRecorder* rec, HWND hwnd, unsigned char english,
                          void* outPath,
-               void* config, float fps, std::uint32_t forceArgb,
+               void* config, float fps,
                const wchar_t* wavPath, float seconds) {
     ReleaseCom(rec->compressorInput);
     ReleaseCom(rec->sourceOutput);
@@ -572,10 +578,10 @@ bool BuildRecordingGraph(DShowRecorder* rec, HWND hwnd, unsigned char english,
         mt.bFixedSizeSamples = TRUE;
         mt.lSampleSize = 1;
         mt.majortype = MEDIATYPE_Video;                          // "vids"
-        if (rec->compressor != nullptr || forceArgb != 0)
-            mt.subtype = kSubtypeArgb32;                         // 0x53CEE0
-        else
-            mt.subtype = MEDIASUBTYPE_RGB24;                     // 0x53CEF0
+        // x64 0x7FF7CB42ADC5: SetSubtype is fed a single GUID
+        // (0x7FF7CB549E28 = ARGB32) on every path - no RGB24 variant
+        // exists in the x64 image.
+        mt.subtype = kSubtypeArgb32;                             // 0x53CEE0
         if (sg->SetMediaType(&mt) < 0) {                         // SetMediaType
             MessageBoxA(hwnd, english ? "Failed insert a SampleGrabber"
                                       : JP_SG_INSERT, "DirectShow", 0);
@@ -737,9 +743,11 @@ bool BuildRecordingGraph(DShowRecorder* rec, HWND hwnd, unsigned char english,
                         reinterpret_cast<void**>(&stream));
                 if (stream != nullptr) {
                     stream->StartAt(nullptr, 0);                  // 0x40A43B
+                    // x64 0x7FF7CB42B664..74: movss arg_38, mulss by the
+                    // 1e7f slot at 0x7FF7CB552BF8, then cvttss2si r64 -
+                    // float math and truncation, not double.
                     REFERENCE_TIME stop =
-                        static_cast<REFERENCE_TIME>(
-                            static_cast<double>(seconds) * 10000000.0);
+                        static_cast<REFERENCE_TIME>(seconds * 1e7f);
                     stream->StopAt(&stop, 0, 0);                  // 0x40A46B
                     stream->Release();
                 }

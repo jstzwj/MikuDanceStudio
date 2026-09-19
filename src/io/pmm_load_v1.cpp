@@ -154,10 +154,10 @@ inline unsigned char*& MP(unsigned char* m, std::size_t o) {
     return *reinterpret_cast<unsigned char**>(m + o);
 }
 
-// 0x4C6889 allocation helper of the original (malloc-family; the tracks it
-// returns are released with free() on the next load / shutdown).
+// Tracks share the same ownership as initial/v2/rebuilt scene tracks.
+// Pair the raw allocation with operator delete at scene teardown.
 inline unsigned char* AllocBytes(std::size_t n) {
-    return static_cast<unsigned char*>(std::malloc(n));
+    return static_cast<unsigned char*>(::operator new(n));
 }
 
 // ---- UI strings: see pmm_io_common.hpp (byte-identical halves; the wide

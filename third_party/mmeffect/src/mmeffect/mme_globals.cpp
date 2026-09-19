@@ -51,6 +51,12 @@ HWND         g_offscreenWindow = nullptr;          // DAT_1800d9b10
 LONG_PTR     g_offscreenOriginalWndProc = 0;       // DAT_1800d9b18
 HMENU        g_menuState = nullptr;                // DAT_1800d9b20
 HHOOK        g_cbtHook = nullptr;                  // DAT_1800d9b28
+// DAT_1800d72e1: NOT BSS - it lives in the file-backed .data image (RVA
+// 0xD72E1 -> raw file offset 0xD56E1) and is initialized to 0x01 there, so
+// the original ships with auto-reload ON and needs no startup write. The only
+// 4 code xrefs are the CheckMenuItem read (0x180055a30), the menu-40001
+// toggle writes (0x180055bba = 0 / 0x180055bc9 = 1) and the poll read
+// (0x18000b935); nothing at Initialize/DllMain touches it.
 unsigned int g_autoReload = 1;                     // DAT_1800d72e1 (auto-reload default ON)
 ExpGetEnglishModeFn g_englishModeFn = nullptr;     // DAT_1800d9bf8
 unsigned char g_uiJapaneseFlag = 1;                // DAT_1800d99dd (Japanese default)
@@ -69,7 +75,6 @@ ID3DXEffect* g_currentEffect = nullptr;                      // DAT_1800d9918
 D3DXHANDLE   g_paramHandles[kParamCount] = { 0 };            // DAT_1800d9b30..DAT_1800d9bb0
 
 // --- cached render state ---
-D3DMATERIAL9 g_cachedMaterial;      // DAT_1800d9878
 D3DLIGHT9    g_cachedLight;         // DAT_1800d9890
 D3DMATRIX    g_worldAtBegin;        // DAT_1800d9d30
 D3DMATRIX    g_invWorldAtBegin;     // DAT_1800d9d70

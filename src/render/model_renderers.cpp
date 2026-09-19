@@ -242,6 +242,22 @@ void Identity(Matrix* out) {
     out->m[0][0] = out->m[1][1] = out->m[2][2] = out->m[3][3] = 1.0f;
 }
 
+// The half-texel matrix the original loads from flt_7FF7CB54A4F0..A520
+// ([0.5,0,0,0 / 0,-0.5,0,0 / 0,0,0,0 / 0.5,0.5,0,1]).  sub_7FF7CB4D6D70
+// binds it to D3DTS_TEXTURE1 once per model at the loop head
+// (0x7FF7CB4D6E0A) and re-reads the same stack copy for every sphere
+// cascade that leaves the transform flags in COUNT2 mode.
+Matrix HalfTexelMatrix() {
+    Matrix m;
+    Identity(&m);
+    m.m[0][0] = 0.5f;
+    m.m[1][1] = -0.5f;
+    m.m[2][2] = 0.0f;
+    m.m[3][0] = 0.5f;
+    m.m[3][1] = 0.5f;
+    return m;
+}
+
 void Multiply(Matrix* out, const Matrix* a, const Matrix* b) {
     d3dx::Get().multiply(out, a, b);
 }
@@ -436,17 +452,25 @@ void BuildToonTransform(MMDApp* app, Matrix* result) {
 // bound textures persist across materials - unbinding stage 1 or overriding
 // ALPHAOP here would deviate (the shadow/live capture diffs of 2026-08-25
 // traced back to exactly that).
+// All sphere/toon TCI writes below use the literal 0x10000 - the exact
+// immediate of the original's four physical call sites (0x7FF7CB4D70C9 /
+// 0x4D7283 / 0x4D75E4 / 0x4D795C, shared tails of the eight logical branches
+// transcribed here); the binary contains no 0x30000 (SPHEREMAP) TCI immediate.
 void DisableSphereTextureStage(IDirect3DDevice9* device) {
-    // Stage 2 is a per-material sphere-map cascade.  An inactive cascade is
-    // not merely COLOROP-disabled: the original also leaves it unbound with
-    // vertex UV set 2 and texture transformation disabled.  Keeping the
-    // camera-space-normal state from a previous sphere map changes later
-    // materials on some D3D9 drivers even while COLOROP is disabled.
-    device->SetTexture(2, nullptr);
+    // Stage 2 is a per-material sphere-map cascade, and the original closes
+    // an inactive cascade with a SINGLE call: every no-sphere path
+    // converges on TSS(2, COLOROP, DISABLE) - LABEL_45 0x7FF7CB4D767B
+    // (mov r9d,1 / lea edx,[r9+1] / mov r8d,r9d / call [rax+218h]) for the
+    // PMX textured / PMD empty-main / PMD suffix paths and the stage-1
+    // promoted twin at 0x7FF7CB4D73D8 (LABEL_29).  The stage-2 texture
+    // binding, TEXTURETRANSFORMFLAGS and TEXCOORDINDEX keep whatever the
+    // previous material left behind (InitRenderStates 0x406E90 values at
+    // frame start); the stale binding is inert under the disabled COLOROP.
+    // Unbinding stage 2 or rewriting TTF/TCI here would emit device calls
+    // the original never makes (2026-09-14 verdict; the earlier claim that
+    // the original also unbinds/UV-2/disables the transform misread the
+    // LABEL_45 tail).
     device->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                 D3DTTFF_DISABLE);
-    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2);
 }
 
 void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
@@ -460,13 +484,7 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
 
     if (mdl::Mdl(model)->physicsMode == 2) {
         // half-texel / identity stage transforms (v103 / v79 at 0x491353..)
-        Matrix halfTexel;
-        Identity(&halfTexel);
-        halfTexel.m[0][0] = 0.5f;
-        halfTexel.m[1][1] = -0.5f;
-        halfTexel.m[2][2] = 0.0f;
-        halfTexel.m[3][0] = 0.5f;
-        halfTexel.m[3][1] = 0.5f;
+        const Matrix halfTexel = HalfTexelMatrix();
         Matrix identityTexel;
         Identity(&identityTexel);
         const auto setStageTransform = [&](DWORD stage, const Matrix& m) {
@@ -491,9 +509,8 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
                     device->SetTextureStageState(2,
                                                  D3DTSS_TEXTURETRANSFORMFLAGS,
                                                  D3DTTFF_COUNT2);
-                    device->SetTextureStageState(
-                        2, D3DTSS_TEXCOORDINDEX,
-                        D3DTSS_TCI_CAMERASPACENORMAL);
+                    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
+                                                 0x10000);
                     break;
                 case 2:
                     setStageTransform(2, halfTexel);
@@ -502,9 +519,8 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
                     device->SetTextureStageState(2,
                                                  D3DTSS_TEXTURETRANSFORMFLAGS,
                                                  D3DTTFF_COUNT2);
-                    device->SetTextureStageState(
-                        2, D3DTSS_TEXCOORDINDEX,
-                        D3DTSS_TCI_CAMERASPACENORMAL);
+                    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
+                                                 0x10000);
                     break;
                 case 3:
                     setStageTransform(2, identityTexel);
@@ -530,16 +546,16 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
                                              D3DTOP_MODULATE);
                 device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
                                              D3DTTFF_COUNT2);
-                device->SetTextureStageState(
-                    1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACENORMAL);
+                device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
+                                             0x10000);
                 break;
             case 2:
                 setStageTransform(1, halfTexel);
                 device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_ADD);
                 device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
                                              D3DTTFF_COUNT2);
-                device->SetTextureStageState(
-                    1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACENORMAL);
+                device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
+                                             0x10000);
                 break;
             case 3:
                 setStageTransform(1, identityTexel);
@@ -565,15 +581,13 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_MODULATE);
         device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
                                      D3DTTFF_COUNT2);
-        device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
-                                     D3DTSS_TCI_CAMERASPACENORMAL);
+        device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTexture(1, FindCachedTexture(sub, mainPath));
     } else if (HasSuffix(mainPath, L".spa", L".SPA")) {
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_ADD);
         device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
                                      D3DTTFF_COUNT2);
-        device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
-                                     D3DTSS_TCI_CAMERASPACENORMAL);
+        device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTexture(1, FindCachedTexture(sub, mainPath));
     } else {
         // Generic texture (incl. the ".tga"/toon check that lands here too):
@@ -584,18 +598,25 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
         device->SetTexture(1, FindCachedTexture(sub, mainPath));
     }
 
-    // Sphere field (PMD): 0x491901..0x491B38 / LABEL_45 0x491B23.  With no
-    // sphere texture the original ONLY disables stage 2 COLOROP - TCI/TF
-    // keep their InitRenderStates values.
+    // Sphere field (PMD): 0x7FF7CB4D74CB..0x7FF7CB4D755C + shared tail
+    // LABEL_11 (0x7FF7CB4D70AD).  The COLOROP test at 0x7FF7CB4D750F..0x7FF7CB4D753D
+    // keeps MODULATE(4) only when the path contains ".sph"/".SPH" (setnz on
+    // both wcsstr results, or'd, jnz skips the lea r9d,[rdx+5]=7) and selects
+    // ADD(7) otherwise - ".spa" and every other suffix alike.  0x7FF7CB4D7556
+    // then binds the half-texel matrix to TEXTURE2 ahead of the COUNT2/TCI
+    // tail.  With no sphere texture the original ONLY disables stage 2
+    // COLOROP - TCI/TF keep their InitRenderStates values.
     if (mdl::Mdl(model)->physicsMode != 2) {
         if (spherePath[0] != L'\0') {
             device->SetTextureStageState(2, D3DTSS_COLOROP,
-                HasSuffix(spherePath, L".spa", L".SPA") ? D3DTOP_ADD
-                                                        : D3DTOP_MODULATE);
+                HasSuffix(spherePath, L".sph", L".SPH") ? D3DTOP_MODULATE
+                                                        : D3DTOP_ADD);
+            const Matrix halfTexel = HalfTexelMatrix();
+            device->SetTransform(D3DTS_TEXTURE2,
+                                 reinterpret_cast<const D3DMATRIX*>(&halfTexel));
             device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS,
                                          D3DTTFF_COUNT2);
-            device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
-                                         D3DTSS_TCI_CAMERASPACENORMAL);
+            device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
             device->SetTexture(2, FindCachedTexture(sub, spherePath));
         }
     }
@@ -607,8 +628,7 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
                           reinterpret_cast<const D3DMATRIX*>(&toonTransform));
     device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
                                  D3DTTFF_COUNT2);
-    device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX,
-                                 D3DTSS_TCI_CAMERASPACENORMAL);
+    device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0x10000);
     device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
     device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
     device->SetTexture(0, ToonTexture(app, sub, model, material));
@@ -855,6 +875,19 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
     DWORD fvf;
     UINT stride;
     ModelVertexFormat(model, &fvf, &stride);
+    if (!effectPass && !shadowOnly) {
+        // x64 sub_7FF7CB4D6D70 per-model header, before the material loop:
+        // 0x7FF7CB4D6DC5 re-enables LIGHTING(137) and 0x7FF7CB4D6E0A binds
+        // the half-texel matrix to TEXTURE1 as the standing default for
+        // every sphere cascade that sets TTF=COUNT2 without touching the
+        // transform itself (PMD ".sph"/".spa" main textures most notably).
+        // Without this reset the PMX sphere-promoted case 3 identity matrix
+        // would leak into the next model's stage 1.
+        device->SetRenderState(D3DRS_LIGHTING, TRUE);
+        const Matrix halfTexel = HalfTexelMatrix();
+        device->SetTransform(D3DTS_TEXTURE1,
+                             reinterpret_cast<const D3DMATRIX*>(&halfTexel));
+    }
     UINT firstIndex = 0;
     state.toonShared = static_cast<std::uint32_t>(-1);
     for (UINT i = 0; i < state.materialCount; ++i) {
@@ -867,7 +900,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
 
         bool draw = true;
         if (shadowOnly) {
-            if (mdl::Mdl(model)->physicsMode == 2 && record.edgeSize <= 0.0f)
+            // 0x4D8593: the gate reads edgeColor[3] (mat+1208, the same
+            // float EgColor uploads as its 4th component), not edgeSize.
+            if (mdl::Mdl(model)->physicsMode == 2 && record.edgeColor[3] <= 0.0f)
                 draw = false;
             if (record.diffuse[3] == 0.9800000190734863f)
                 draw = false;
@@ -963,7 +998,16 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                     if (effectPass && effect != nullptr)
                         fx::BeginPass(effect, 0);
                 } else {
-                    device->SetMaterial(&d3dMaterial);
+                    // x64 sub_7FF7CB4D87C0 (effect-frame material loop)
+                    // never calls SetMaterial - its whole device surface is
+                    // SetRenderState/SetTexture/SetFVF/SetStreamSource/
+                    // SetIndices/DrawIndexedPrimitive only (SetMaterial
+                    // vtable slot 0x188 appears zero times; the three
+                    // fixed-function sites live in sub_7FF7CB4D6D70).  The
+                    // device therefore keeps the stale material the
+                    // fixed-function frame last set, which is exactly what
+                    // MME's live GetMaterial EgColor/SpcColor/DifColor
+                    // synthesis (material_bind.cpp) reads at draw time.
                 }
                 if (effectPass && effect != nullptr && !shadowOnly) {
                     device->SetRenderState(D3DRS_CULLMODE,
@@ -1011,7 +1055,7 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
 }
 
 void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
-                           bool projectedShadow, bool effectEdge) {
+                           bool projectedShadow) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
@@ -1040,11 +1084,27 @@ void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
         const bool pmx = mdl::Mdl(model)->physicsMode == 2;
         if (pmx && projectedShadow && (record.flags & 2) == 0)
             draw = false;
+        // 0x4D839E: same gate field as the shadow map - edgeColor[3]
+        // (mat+1208), not edgeSize.
         if (pmx && projectedShadow && sub->postProcessEnabled != 0 &&
-            record.edgeSize <= 0.0f)
+            record.edgeColor[3] <= 0.0f)
             draw = false;
         if (draw) {
-            if (effectEdge && pmx && sub->postProcessEnabled != 0) {
+            // x64 0x7FF7CB4D83AD gate: (physicsMode == 2) &&
+            // *(renderer+240196) && a3 == 0.  renderer+240196 (+0x3AA44) is
+            // the one-shot "HDR texture + dds9 effect created" flag written
+            // only during D3D init (0x7FF7CB428147 sets 1 before the HDR
+            // block; the HDR-surface and effect failure paths
+            // 0x7FF7CB42829F/0x7FF7CB4283CD clear it) - NOT an effect-frame
+            // selector.  The fixed frame's outline call (0x7FF7CB4C0A66,
+            // a3=0) therefore takes this branch too whenever the
+            // post-process pipeline initialised, and so does the effect
+            // frame's (0x7FF7CB4C38D5); only the projected calls (a3=1,
+            // 0x4C0766/0x4C3376) stay out.  postProcessEnabled != 0 implies
+            // effect != nullptr (d3d_init clears both together), and
+            // EndPass/BeginPass without an active Begin just return an
+            // error the original ignores.
+            if (pmx && !projectedShadow && sub->postProcessEnabled != 0) {
                 fx::EndPass(effect);
                 fx::SetFloatArray(effect, "EgColor", record.edgeColor, 4);
                 fx::BeginPass(effect, 0);
@@ -1061,15 +1121,17 @@ void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
 }
 
 void DrawModelsProjectedShadow(MMDApp* app) {
-    // x64 inlined twin sub_7FF7CB4BFB20+0x4C0880..0x4C0916: both walks run
-    // to 0xFF (cmp edx,0FFh / cmp edi,0FFh) - kModelSlotCount wide.
+    // x64 inlined twin sub_7FF7CB4BFB20+0x4C0710..0x4C077A - the silhouette
+    // walk inside the ground-shadow matrix block (per-order call of the edge
+    // draw sub_7FF7CB4D82A0 with flag 1 at 0x4C0766): both loops run to 0xFF
+    // (cmp edx,0FFh @0x4C073C / cmp edi,0FFh @0x4C0774) - kModelSlotCount wide.
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
             if (model == nullptr || mdl::Mdl(model)->comboSelIndex != order)
                 continue;
             app->ActiveRenderObject() = model;
-            DrawModelEdgeGeometry(app, model, true, false);
+            DrawModelEdgeGeometry(app, model, true);
             app->ActiveRenderObject() = nullptr;
             break;
         }
@@ -1083,6 +1145,32 @@ bool BeginProjectedGroundShadow(MMDApp* app, IDirect3DDevice9* device,
     if (app->GroundShadowEnabled() == 0 || !cameraGate ||
         app->LightDirection()[1] >= 0.0f)
         return false;
+    // Bit-level verdict (2026-09-14): this matrix reproduces the x64 binary
+    // word for word; an earlier audit note claiming row2=(0,1,0,1) /
+    // row3=(0,0,0,0.1) had misread the constant pools.  Fixed-frame twin
+    // sub_7FF7CB4BFB20 head 0x7FF7CB4BFB5F..0x7FF7CB4BFBE3 and effect-frame
+    // twin sub_7FF7CB4C1E60 head 0x7FF7CB4C1E9E..0x7FF7CB4C1F30 build the
+    // same stack matrix M (row-major, D3DX row-vector convention):
+    //   row0 <- xmmword_7FF7CB54A540          = (1, 0, 0, 0)
+    //   row1  = (-(Lx/Ly), 0, -(Lz/Ly), 0)    (divss by [rcx+0x9F044]=Ly,
+    //          then xorps sign mask xmmword_7FF7CB552B80 = 0x80000000 x4 -
+    //          divide first, negate second; Lx=[rcx+0x9F040], Lz=[rcx+0x9F048])
+    //   row2 <- xmmword_7FF7CB54A560          = (0, 0, 1, 0)
+    //   row3 <- xmmword_7FF7CB54A550          = (0, 0.1f, 0, 1)
+    // (0.1f = 0x3DCCCCCD = 0.10000000149011612f below).  Then
+    // D3DXMatrixMultiply(&M, &M, a2): a2 is the caller's stack copy of the
+    // base WORLD matrix - sub_7FF7CB4474F0 sets it once via
+    // SetTransform(D3DTS_WORLD, var_12B0) @0x7FF7CB447EA0 and both call
+    // sites (0x7FF7CB44A587..5B8 fixed, 0x7FF7CB44A54F..580 effect) splice
+    // {var_12B0, var_12A0, var_1290, var_1280} into rdx.  Consumption:
+    // SetTransform(D3DTS_WORLD, &M) @0x7FF7CB4C04A0 (fixed) /
+    // 0x7FF7CB4C3080 (effect), silhouette walk sub_7FF7CB4D82A0 flag=1
+    // contains no SetTransform, then WORLD is restored to a2 @0x7FF7CB4C0795
+    // / 0x7FF7CB4C33A8; VIEW/PROJECTION are never touched inside the twins.
+    // The port reads the same base via GetTransform(D3DTS_WORLD), so the
+    // Multiply below matches D3DXMatrixMultiply(pOut, pM1=P, pM2=frame)
+    // element for element; (-Lx)/Ly is bit-identical to -(Lx/Ly) because
+    // IEEE negate only flips the sign bit and rounding is sign-symmetric.
     Matrix projection{};
     Matrix projected;
     device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(base));
@@ -1202,7 +1290,7 @@ void DrawModelOutlines(MMDApp* app, bool effectEdge) {
             fx::SetFloatArray(effect, "EgColor", edge, 4);
             fx::BeginPass(effect, 0);
         }
-        DrawModelEdgeGeometry(app, model, false, effectEdge);
+        DrawModelEdgeGeometry(app, model, false);
         if (effectEdge)
             fx::EndPass(effect);
         app->ActiveRenderObject() = nullptr;
@@ -1254,7 +1342,10 @@ void DrawPreModelQuad(IDirect3DDevice9* device,
     device->SetTexture(0, texture);
     device->SetStreamSource(0, vertices, 0, 28);
     device->SetFVF(324);
-    mme::DrawPrimitive(device, D3DPT_TRIANGLESTRIP, 0, 2);
+    // 原版两处背景四边形均为 DrawPrimitive(TRIANGLELIST, 0, 2)（图片
+    // 0x7FF7CB4BFD24 / AVI 0x7FF7CB4BFDFA：edx=4、r8d=0、r9d=2，6 顶点 LIST
+    // 布局）；STRIP 只消费 4 顶点会漏画一半。
+    mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     device->SetRenderState(D3DRS_ZENABLE, TRUE);
 }
 
@@ -1272,22 +1363,16 @@ void DrawPreModelQuads(MMDApp* app, IDirect3DDevice9* device) {
 }
 
 bool EffectRenderEnabled(const MMDApp* app) {
+    // x64 gate 0x7FF7CB44A427..0x7FF7CB44A459 (cmp/setnl/setnle/test):
+    //   ([13E4]=editMode >= 2 signed || [368]=playbackActive != 0)
+    //   && [A1DD0]=selfShadowMode > 0 && [A10F8]=selfShadowEnabled != 0.
+    // The >= 2 comparison matters: editMode 1 (BoneBox) keeps the
+    // fixed-function renderer, and UsesViewportTool implements exactly
+    // "EditMode() >= ViewportEditMode::None (= 2)".
     const bool cameraGate = app->PlaybackActive() != 0 ||
         app->UsesViewportTool();
-    return cameraGate && app->state.selfShadowMode > 0 &&    // 0xA0D30
-           app->state.selfShadowEnabled != 0;            // 0xA0188
-}
-
-void RestoreTextureStages(IDirect3DDevice9* device) {
-    for (DWORD stage = 0; stage < 3; ++stage)
-        device->SetTexture(stage, nullptr);
-    device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                 D3DTTFF_DISABLE);
-    device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
-    device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    device->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
-    device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+    return cameraGate && app->state.selfShadowMode > 0 &&    // 0xA1DD0
+           app->state.selfShadowEnabled != 0;            // 0xA10F8
 }
 
 }  // namespace
@@ -1300,11 +1385,11 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     // x64 帧头 0x7FF7CB4BFC08 仅一条 SetTextureStageState(2, TEXCOORDINDEX,
-    // D3DTSS_TCI_CAMERASPACENORMAL)：不解绑纹理 2、不写 COLOROP/TTF。完整的
-    // 球面贴图级联关闭保留在 ConfigureMaterialStages 的逐材质循环里
-    // （0x491470.. 的逐材质行为）。
-    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
-                                 D3DTSS_TCI_CAMERASPACENORMAL);
+    // 0x10000)（= D3DTSS_TCI_CAMERASPACENORMAL，原版立即数，与 accessory.cpp
+    // 一致写字面量）：不解绑纹理 2、不写 COLOROP/TTF。完整的球面贴图级联
+    // 关闭保留在 ConfigureMaterialStages 的逐材质循环里（0x491470.. 的逐材质
+    // 行为）。
+    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
     if (sub->d3dInitialized != 0) {
         device->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_ALWAYS);
         device->SetRenderState(D3DRS_STENCILREF, 1);
@@ -1328,8 +1413,10 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     RestoreModelMaterialPass(app, sub, device);
 
     const bool materialCapture = BeginMaterialStateCapture();
-    // x64 twin sub_7FF7CB4BFB20+0x4C0710..0x4C077A: order and slot both run
-    // to 0xFF (cmp edi,0FFh @0x4C0774 / cmp edx,0FFh @0x4C073C).
+    // x64 twin sub_7FF7CB4BFB20+0x4C0880..0x4C0916 - the main body walk
+    // calling sub_7FF7CB4D6D70 at 0x4C0902 (gated by model loadComplete
+    // @0x4C08E7): order and slot both run to 0xFF (cmp edi,0FFh @0x4C0910 /
+    // cmp edx,0FFh @0x4C08AC).
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
@@ -1526,14 +1613,17 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
     device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
     RenderAccessoriesEffectRange(app, accessorySplit, 255);
-    device->SetVertexShader(nullptr);
-    device->SetPixelShader(nullptr);
-    device->SetTexture(0, nullptr);
-    RestoreTextureStages(device);
     // Frame tail, x64 sub_7FF7CB4C1E60 @0x7FF7CB4C461F/0x7FF7CB4C463D (after
     // the accessory-light restore SetLight at 0x7FF7CB4C4601):
     // DESTBLEND(20)=INVSRCALPHA then FILLMODE(8)=SOLID - the same closing
-    // pair as the fixed frame (0x7FF7CB4C0FC3/0x7FF7CB4C0FE3).
+    // pair as the fixed frame (0x7FF7CB4C0FC3/0x7FF7CB4C0FE3) - and nothing
+    // else.  The accessory loop (cmp r12d,0FFh @0x7FF7CB4C458C) drops
+    // straight into the light update and the two render states; there is no
+    // trailing shader clear, no SetTexture(0,null) and no texture-stage
+    // teardown anywhere in the tail (2026-09-14 verdict).  The only
+    // SetVertexShader/SetPixelShader(nullptr) pairs of this frame live in
+    // DrawModelOutlines' wireframe-gated fx::End block and the per-accessory
+    // effect tails; the previous port-only cascade teardown is removed.
     device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
     device->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
     app->ActiveRenderPass() = AccessoryRenderPass::None;

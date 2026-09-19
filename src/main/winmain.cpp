@@ -25,6 +25,7 @@
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mme_host_api.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd) {
@@ -32,13 +33,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     (void)hPrevInstance;
 
-    // operator new(0xA4530) with the original's null-check (VC9 new
-    // semantics), then ctor 0x42AE60 and the global Block assignment.
-    MMDApp* app = new (std::nothrow) MMDApp();
+    struct EffectRuntime {
+        explicit EffectRuntime(HINSTANCE instance) { MmeHostInitializeRuntime(instance); }
+        ~EffectRuntime() { MmeHostShutdownRuntime(); }
+    } effectRuntime(hInstance);
+
+    // operator new(0xA4530), then ctor 0x42AE60 and the global Block
+    // assignment.  The x64 original calls THROWING operator new
+    // (__imp_??2@YAPEAX_K@Z at 0x7FF7CB4FB31F, size 0xA55E0) and never
+    // null-checks - an OOM propagates bad_alloc.
+    MMDApp* app = new MMDApp();
     g_Block = app;
-    if (app == nullptr)
-        return 0;  // original would proceed on null only if new failed;
-                   // ctor/defaults below are guarded by early exit.
     app->state = MMDAppState{};  // original: memset(p, 0, 0xA4530)
     app->InitDefaults();                                          // 0x40A730
 

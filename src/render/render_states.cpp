@@ -71,15 +71,23 @@ void InitRenderStates(MMDApp* app) {
 
     // Sampler filters, x64 0x7FF7CB4286E9..0x7FF7CB428951: the original
     // groups the writes by sampler STATE, not by stage - all three
-    // MINFILTER writes first, then MAGFILTER, then MIPFILTER - and only
-    // samplers 0/1 receive MAXANISOTROPY from the caps mirror; the two
-    // branches then converge on a constant write for sampler 2.
+    // MINFILTER writes first, then MAGFILTER, then MIPFILTER, then
+    // MAXANISOTROPY for all three samplers.  With the toggle on the
+    // value is the caps mirror for EVERY sampler: x86 re-reads
+    // [this+120024] three times (0x40709B / 0x4070BF / 0x4070D3), x64
+    // loads r9d=[this+3A9B0] for samplers 0/1 (0x7FF7CB4287D8 /
+    // 0x7FF7CB4287F5) and once more before jmping into the shared
+    // sampler-2 tail at 0x7FF7CB42893D (0x7FF7CB42880E).  With the
+    // toggle off every write is constant 1: x86 0x4071C3 / 0x4071D4 /
+    // 0x4071F1; x64's mov r9d,1 at 0x7FF7CB428937 is only the AF-off
+    // operand falling through into that same 0x7FF7CB42893D tail.
+    // Identical behavior on both architectures - no per-arch split.
     const DWORD maxAniso = static_cast<DWORD>(sub->shaderModelCaps);
     const DWORD minMagFilter = sub->runtimeToggle != 0 ? D3DTEXF_ANISOTROPIC
                                                        : D3DTEXF_LINEAR;
     const DWORD mipFilter = sub->runtimeToggle != 0 ? D3DTEXF_ANISOTROPIC
                                                     : D3DTEXF_NONE;
-    const DWORD maxAniso01 = sub->runtimeToggle != 0 ? maxAniso : 1;
+    const DWORD maxAnisoAll = sub->runtimeToggle != 0 ? maxAniso : 1;
     for (DWORD s = 0; s < 3; ++s) {
         dev->SetSamplerState(s, D3DSAMP_MINFILTER, minMagFilter);   // (s,6)
     }
@@ -89,9 +97,9 @@ void InitRenderStates(MMDApp* app) {
     for (DWORD s = 0; s < 3; ++s) {
         dev->SetSamplerState(s, D3DSAMP_MIPFILTER, mipFilter);      // (s,7)
     }
-    dev->SetSamplerState(0, D3DSAMP_MAXANISOTROPY, maxAniso01);     // (0,10)
-    dev->SetSamplerState(1, D3DSAMP_MAXANISOTROPY, maxAniso01);     // (1,10)
-    dev->SetSamplerState(2, D3DSAMP_MAXANISOTROPY, 1);              // (2,10,1)
+    dev->SetSamplerState(0, D3DSAMP_MAXANISOTROPY, maxAnisoAll);    // (0,10)
+    dev->SetSamplerState(1, D3DSAMP_MAXANISOTROPY, maxAnisoAll);    // (1,10)
+    dev->SetSamplerState(2, D3DSAMP_MAXANISOTROPY, maxAnisoAll);    // (2,10)
 
     // half-texel matrix for stages 1/2 (D3DTS_TEXTURE1=17, D3DTS_TEXTURE2=18)
     D3DMATRIX halfTexel = {
@@ -108,8 +116,11 @@ void InitRenderStates(MMDApp* app) {
     dev->SetTransform(D3DTS_TEXTURE2, &halfTexel);                   // (18, m)
     dev->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS,
                               D3DTTFF_COUNT2);                       // (2,24,2)
-    dev->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
-                              D3DTSS_TCI_CAMERASPACENORMAL);         // (2,11,0x10000)
+    // TCI written as the literal 0x10000 (= D3DTSS_TCI_CAMERASPACENORMAL):
+    // that is the exact immediate at 0x7FF7CB428A5C, and the binary contains
+    // no 0x30000 (SPHEREMAP) TCI immediate anywhere.  Spelled like
+    // accessory.cpp to pin the quirk value.
+    dev->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);      // (2,11,0x10000)
 
     if (sub->d3dInitialized != 0) {  // stencil shadow setup
         dev->SetRenderState(D3DRS_STENCILENABLE, TRUE);              // state 52

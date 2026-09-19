@@ -57,7 +57,7 @@ void PushBoneEditUndo(MMDApp* app) {  // VA 0x0042D6E0
     undo.dirty = selectedCount;
     auto*& oldSnapshot = undo.bonePose;
     if (oldSnapshot != nullptr) {
-        std::free(oldSnapshot);
+        ::operator delete(oldSnapshot);
         oldSnapshot = nullptr;
     }
 

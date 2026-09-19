@@ -67,6 +67,18 @@ private:
     char* previous_;
 };
 
+// [0x18000c08e / 0x18000c0fa] 原版 flags 立即数对应的 SDK 具名常量
+// （d3dx9shader.h；移植 d3dx9.h 只定义了 D3DXFX_* 族，未含 D3DXSHADER_*，
+// 故按 SDK 数值在此局部具名）：
+//   0x1000 = D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY (1<<12)——并非
+//            D3DXFX_NOT_CLONEABLE（=1<<11=0x800，与 DXSDK/Wine/ReactOS 头一致）；
+//   0xC0   = D3DXSHADER_FORCE_VS_SOFTWARE_NOOPT(0x40) |
+//            D3DXSHADER_FORCE_PS_SOFTWARE_NOOPT(0x80)——并非
+//            SKIPVALIDATION|SKIPOPTIMIZATION（那两者是 0x2|0x4=0x6）。
+const unsigned long kD3dxShaderEnableBackwardsCompatibility = 1u << 12; // 0x1000
+const unsigned long kD3dxShaderForceVsSoftwareNoOpt = 1u << 6;          // 0x40
+const unsigned long kD3dxShaderForcePsSoftwareNoOpt = 1u << 7;          // 0x80
+
 } // namespace
 
 // [0x180093660] FUN_180093660 - the DXErr9 HRESULT description lookup. The
@@ -130,20 +142,46 @@ void MmeEngineInit(IDirect3DDevice9* device, bool mipFilterAvailable)
     }
 }
 
+LoadedEffect::~LoadedEffect()
+{
+    // [0x18000b210] FUN_18000B210 完整卸载语义，锚定原版地址级顺序：
+    //
+    // 1. [0x18000b24b-0x18000b316] 日志先行：仅当 effect(+0x00) 非空时记录
+    //    "Unload effect file: <path>\n\n"（sub_180009080(x, 0) 纯写日志行），
+    //    失败加载条目（effect == null）静默卸载——原版 `if (*a1)` 门。
+    if (effect != nullptr) {
+        MmeLogWrite(("Unload effect file: " + path + "\n\n").c_str(), 0);
+    }
+    // 2. [0x18000b31b-0x18000b5de] 逐语义资源释放：原版遍历语义数组
+    //    （每项 0x28 字节，tag 0x26/0x27/0x28/0x2C/0x2D/0x2E/0x33）销毁资源
+    //    对象（sub_18000B660）、offscreen 深度（sub_18000B750）、动画纹理
+    //    （vtable 调用）、并清空 render-turn vector(+0x1B8) 与两个句柄
+    //    map(+0xB8/+0xD8)。移植的全部语义资源（offscreen surface/depth/
+    //    texture、CONTROLOBJECT 表、technique 模型）都在 SasEffect 里，
+    //    SasUnload 是它们的等价析构链。
+    if (sas != nullptr) {
+        SasUnload(sas);
+        sas = nullptr;
+    }
+    // 3. [0x18000b614-0x18000b623] ID3DXEffect::Release()（(*a1)->vtbl+0x10）
+    //    并置空——原版链的最后一步。
+    if (effect != nullptr) {
+        effect->Release();
+        effect = nullptr;
+    }
+}
+
 void MmeEngineTerm()
 {
     // [0x18001eeb0] FUN_18001eeb0: release every cache entry, then drop the
-    // containers (the originals' shared_ptr refcounts reach zero here).
-    EffectCache& effects = EffectCacheRef();
-    for (EffectCache::iterator it = effects.begin(); it != effects.end(); ++it) {
-        // [PHASE3 wiring] release the parsed SAS model with each entry.
-        if (it->second != nullptr && it->second->sas != nullptr) {
-            SasUnload(it->second->sas);
-            it->second->sas = nullptr;
-        }
-        it->second.reset();
-    }
-    effects.clear();
+    // containers。引用计数语义：cache.clear() 丢弃缓存侧引用，条目在
+    // “最后一个持有者”（仍存活的全量 MaterialBinding owner 引用）死亡时
+    // 经 ~LoadedEffect 执行 FUN_18000B210 语义（日志 / SasUnload /
+    // effect->Release）——与原版 boost shared_ptr 控制块的 dispose 时序
+    // 1:1。Cleanup 的调用顺序（callbacks.cpp：先 delete g_ownerManager /
+    // g_context，后 MmeEngineTerm）保证 term 时引用已归零，条目在此处
+    // 立即析构，与原版 term 立即逐条目 unload 的可观察行为一致。
+    EffectCacheRef().clear();
 
     TextureCache& textures = TextureCacheRef();
     for (TextureCache::iterator it = textures.begin(); it != textures.end(); ++it) {
@@ -161,6 +199,9 @@ void MmeEngineOnLostDevice()
     EffectCache& effects = EffectCacheRef();
     for (EffectCache::iterator it = effects.begin(); it != effects.end(); ++it) {
         LoadedEffect& entry = *it->second;
+        if (entry.sas != nullptr) {
+            SasReleaseDeviceResources(entry.sas);
+        }
         if (entry.effect != nullptr) {
             entry.effect->OnLostDevice();
         }
@@ -181,6 +222,12 @@ HRESULT MmeEngineOnResetDevice(IDirect3DDevice9* device)
             if (SUCCEEDED(hr) && FAILED(step)) {
                 hr = step;   // first failure wins, like OnResetDevice's chain
             }
+        }
+        // D3DPOOL_DEFAULT SAS resources (offscreen render targets / depth
+        // stencils) do not survive the reset - drop and re-create them, then
+        // re-bind the texture parameters (PHASE3 note #7).
+        if (entry.sas != nullptr && device != nullptr) {
+            SasRecreateResources(entry.sas, device);
         }
     }
     return hr;
@@ -241,67 +288,124 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     // (FUN_180006610 = CP 0 ansi->wide, same as MmeAnsiToWide).
     std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
 
-    // [big-C 11296-11305] the preprocessor define block:
-    //   "_INDEX", "PSIZE15", plus "MME_MIPMAP" when DAT_1800d99da is set.
+    // [big-C 11296-11305 / 0x18000c0a4-0x18000c0f3] 宏数组只有两项：
+    //   defines[0] = {"_INDEX", "PSIZE15"}——_INDEX 的*值*是字符串
+    //     "PSIZE15"（0x18000c0b2），PSIZE15 本身不是独立宏名；
+    //   defines[1] = {"MME_MIPMAP", ""} 仅当 DAT_1800d99da（引擎初始化的
+    //     mip 锁存，0x18000c0d5 判 !=0）时填入，Definition 指向 NUL 空串
+    //     unk_1800b3b83（0x18000c0f3）。剩余槽位由清零形成 {NULL,NULL} 终止符。
     D3DXMACRO defines[4];
     memset(&defines, 0, sizeof(defines));
     int defineCount = 0;
     defines[defineCount].Name = "_INDEX";
-    defines[defineCount].Definition = "1";
+    defines[defineCount].Definition = "PSIZE15";   // [0x18000c0b2]
     ++defineCount;
-    defines[defineCount].Name = "PSIZE15";
-    defines[defineCount].Definition = "1";
-    ++defineCount;
-    if (g_engineMipFilterOk != 0) {
+    if (g_engineMipFilterOk != 0) {                // [0x18000c0d5] DAT_1800d99da
         defines[defineCount].Name = "MME_MIPMAP";
-        defines[defineCount].Definition = "1";   // [big-C 11303-11304] DAT_1800b3b83
+        defines[defineCount].Definition = "";      // [0x18000c0f3] unk_1800b3b83（空串）
         ++defineCount;
     }
 
     // [big-C 11258-11327] CWD switch around the load (relative resources).
     ScopedChdir chdirScope(pathAnsi);
 
-    ID3DXBuffer* errors = nullptr;
-    HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines,
-                                           nullptr, D3DXFX_NOT_CLONEABLE,
-                                           g_effectPool, &entry->effect, &errors);
-    if (errors != nullptr) {
-        const char* text = static_cast<const char*>(errors->GetBufferPointer());
-        if (text != nullptr) {
-            entry->errorText += text;
-            SIZE_T len = errors->GetBufferSize();
-            if (len > 0 && entry->errorText.size() > 0 &&
-                entry->errorText[entry->errorText.size() - 1] != '\n') {
-                entry->errorText += "\n";
-            }
-        }
-        errors->Release();
-        errors = nullptr;
+    // [0x18000c08e-0x18000c0fa] 原版 flags = 0x1000 | (byte_1800D99DE ? 0xC0 : 0)：
+    //   bit12 恒置（bts edi,0Ch）= D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY，
+    //   0xC0 仅调试模式置入（cmovnz），byte_1800D99DE = g_debugMode
+    //   （Initialize 0x1800564f3 由 MMHack 导入 IsDebugMode() 一次性锁存，
+    //   即宿主 exe 目录 MMEffect.debug 文件存在）。
+    unsigned long loadFlags = kD3dxShaderEnableBackwardsCompatibility;   // 0x1000
+    if (g_debugMode != 0) {
+        loadFlags |= kD3dxShaderForceVsSoftwareNoOpt |
+                     kD3dxShaderForcePsSoftwareNoOpt;                    // 0xC0
     }
 
+    ID3DXBuffer* errors = nullptr;
+    HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines,
+                                           nullptr, loadFlags,
+                                           g_effectPool, &entry->effect, &errors);
+    // [0x18000c1ab-0x18000c376] on failure exactly ONE segment is appended to
+    // the error text: the compiler text when the error buffer carries bytes,
+    // otherwise "DirectX Error: <desc> [%08X]\n" (the !errors ||
+    // !GetBufferSize() branch at 0x18000c1be). On success the buffer is
+    // released unread (0x18000c3d3).
     if (FAILED(hr)) {
-        // [big-C 11328-11364] "DirectX Error: <desc> [%08X]\n" into the error
-        // text; the apply path (FUN_18000B880) logs + message-boxes it.
-        const char* desc = MmeDxErrDescription(static_cast<unsigned long>(hr));
-        char hex[16];
-        sprintf_s(hex, sizeof(hex), "%08X", static_cast<unsigned int>(hr));
-        entry->errorText += "DirectX Error: ";
-        entry->errorText += (desc != nullptr ? desc : "");
-        entry->errorText += " [";
-        entry->errorText += hex;
-        entry->errorText += "]\n";
+        if (errors != nullptr && errors->GetBufferSize() != 0) {
+            // [0x18000c1cd] compiler error text only, appended verbatim.
+            const char* text = static_cast<const char*>(errors->GetBufferPointer());
+            if (text != nullptr) {
+                entry->errorText += text;
+            }
+        } else {
+            // [0x18000c21c-0x18000c29f] "DirectX Error: <%s> [%08X]\n" into the
+            // error text; the apply path (FUN_18000B880) logs + message-boxes it.
+            const char* desc = MmeDxErrDescription(static_cast<unsigned long>(hr));
+            char hex[16];
+            sprintf_s(hex, sizeof(hex), "%08X", static_cast<unsigned int>(hr));
+            entry->errorText += "DirectX Error: ";
+            entry->errorText += (desc != nullptr ? desc : "");
+            entry->errorText += " [";
+            entry->errorText += hex;
+            entry->errorText += "]\n";
+        }
         if (entry->effect != nullptr) {
             entry->effect->Release();
             entry->effect = nullptr;
         }
     }
+    if (errors != nullptr) {
+        errors->Release();
+        errors = nullptr;
+    }
 
-    // [PHASE3 wiring; original: SAS parse right after the effect is usable]
-    // FUN_18000c470 runs once per loaded effect; its log text goes to the
-    // effect log exactly like the original's per-effect log string (sas+0x70).
+    // [0x18000c417-0x18000c432] SAS parse right after the compile succeeds,
+    // exactly like FUN_18000BC90's load chain: the original calls
+    // MME_SasParseStandardsGlobal (0x18000c470) then sub_180016900 and treats
+    // ANY nonzero result as a load failure - the code returns straight to
+    // FUN_18000B880 at 0x18000c41e/0x18000c42a, which logs errorText + "\n"
+    // (0x18000ba10), unloads (sub_18000B210 at 0x18000ba43) and message-boxes
+    // "Failed to load effect file:" + path + "\n\n" + errorText (0x18000bbcf,
+    // dedup-gated). The host-side apply path (emm_manager.cpp) implements that
+    // half and gates on effect == nullptr with a non-empty errorText - the
+    // same entry shape the compile failure above leaves behind - so rejecting
+    // here reproduces the original's popup + reject without adding a
+    // MessageBox at this layer.
     if (entry->effect != nullptr) {
-        entry->sas = SasParse(entry->effect, pathAnsi, device);
-        if (entry->sas != nullptr) {
+        std::string parseFailureLog;
+        entry->sas = SasParse(entry->effect, pathAnsi, device, &parseFailureLog);
+        if (entry->sas == nullptr) {
+            // Hard parse failure (invalid SAS version / ScriptClass /
+            // ScriptOrder / Script annotation / technique scan - the
+            // 0x18000e435 / 0x18000e364 / 0x18000c940 / 0x18000ea41 family).
+            // SasParse hands out the exact "Error: ..." lines it appended to
+            // the destroyed parse model's log (the a1+0x70 report the
+            // original's loader shows verbatim); the stand-in only covers a
+            // pathological empty log.
+            if (!parseFailureLog.empty()) {
+                entry->errorText += parseFailureLog;
+            } else {
+                entry->errorText += "Error: failed to parse the effect.\n";
+            }
+            entry->effect->Release();
+            entry->effect = nullptr;
+        } else if (SasHadErrors(entry->sas)) {
+            // [0x18000c41e] any error recorded during the parse walk made the
+            // original fail the load: parameter validation, the resource
+            // build (FUN_180011960 via sub_18000F3A0 - e.g. "Error: failed
+            // to open file: ..." for a moved ResourceName asset, the RayMMD
+            // killer), ANIMATEDTEXTURE construction, or the eager texture
+            // creation whose failure only sets the sas+0x38 error flag. The
+            // error lines sit in the per-effect log (a1+0x70) which
+            // FUN_18000B880 shows verbatim in the failure report, so the
+            // whole accumulated log becomes the error text.
+            entry->errorText += SasGetLog(entry->sas);
+            SasUnload(entry->sas);
+            entry->sas = nullptr;
+            entry->effect->Release();
+            entry->effect = nullptr;
+        } else {
+            // Clean parse: the per-effect log (Info/Warning lines) goes to
+            // MMEffect.txt like the original's sas+0x70 dump.
             const char* sasLog = SasGetLog(entry->sas);
             if (sasLog != nullptr && sasLog[0] != '\0') {
                 MmeLogWrite(sasLog, 0);
@@ -315,19 +419,34 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
 
 void MmeEngineUnloadEffectFile(const std::string& pathAnsi)
 {
-    // [0x18000b210] "Unload effect file: <path>\n\n" then release.
-    EffectCache& cache = EffectCacheRef();
-    EffectCache::iterator it = cache.find(pathAnsi);
-    if (it == cache.end()) {
-        return;
-    }
-    MmeLogWrite(("Unload effect file: " + pathAnsi + "\n\n").c_str(), 0);
-    // [PHASE3 wiring] FUN_18000b210 releases the parsed SAS model too.
-    if (it->second != nullptr && it->second->sas != nullptr) {
-        SasUnload(it->second->sas);
-        it->second->sas = nullptr;
-    }
-    cache.erase(it);
+    // [0x18000b210] FUN_18000b210 的引用计数等价物：原版“卸载效果文件”=
+    // 让缓存条目的 shared_ptr 引用链收敛——缓存 map erase 掉自己的那份，
+    // 条目本身活到“最后一个引用它的绑定对象销毁”（0x18000b5e9-0x18000b611
+    // 控制块 InterlockedDecrement → dispose）。移植由 cache.erase 丢弃缓存
+    // 侧引用，真正的资源释放（日志 "Unload effect file: <path>\n\n"、
+    // SasUnload、effect->Release）发生在最后一个 MaterialBinding 的 owner
+    // 引用死亡时的 ~LoadedEffect——与原版时序 1:1。
+    //
+    // 调用方（emm_manager.cpp 加载失败清理 / mme_ui.cpp Reload-All 与自动
+    // 热重载）在卸载后立即重新分配效果：重新加载产生新条目，绑定在
+    // MmeEnsureMaterialBinding 里切换 owner 引用，旧条目随即经析构链死亡。
+    // 卸载与重分配之间不存在渲染帧（同一消息处理内同步执行），绑定侧
+    // 的 effect/sas 借用指针在旧条目死亡前就已刷新为新条目。
+    EffectCacheRef().erase(pathAnsi);
+}
+
+void MmeEngineClearCaches()
+{
+    // [0x18000a990] sub_18000A990：sub_1800203F0 逐节点销毁效果缓存树
+    // （表头 0x1800D9C68、计数 0x1800D9C70），sub_180020580 销毁纹理缓存树
+    // （表头 0x1800D9C88、计数 0x1800D9C90）。两棵树的清空只丢缓存侧引用：
+    // 无绑定引用的条目当场经 ~LoadedEffect 死亡（卸载日志 / SasUnload /
+    // effect->Release），仍被 MaterialBinding::owner 引用的条目活到该绑定
+    // 重解析切换 owner——与原版 boost::shared_ptr 控制块的 dispose 时序
+    // 一致。纹理缓存当前没有绑定侧持有者（MmeEngineCacheTexture 仅注册/
+    // 查询），清空即全部释放，等价于原版 DXTextureCache 的逐节点销毁。
+    EffectCacheRef().clear();
+    TextureCacheRef().clear();
 }
 
 IDirect3DBaseTexture9* MmeEngineFindCachedTexture(const std::string& pathAnsi)

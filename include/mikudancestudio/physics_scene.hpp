@@ -92,4 +92,6 @@ MIKUDANCESTUDIO_SCENE_OFF(groundBody, 68, 136);
 
 #undef MIKUDANCESTUDIO_SCENE_OFF
 
+void DisposePhysicsWorld(PhysicsScene* scene);
+
 }  // namespace mikudancestudio

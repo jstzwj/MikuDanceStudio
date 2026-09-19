@@ -85,6 +85,7 @@ add_library(mikudancestudio_core STATIC
     src/physics/physics_create.cpp
     src/physics/physics_frame.cpp
     src/physics/scene_create.cpp
+    src/physics/scene_dispose.cpp
     src/render/d3d_init.cpp
     src/render/render_states.cpp
     src/render/stereo_nvapi.cpp
@@ -289,39 +290,8 @@ set_target_properties(MMDxShow PROPERTIES
     OUTPUT_NAME "MMDxShow"
 )
 
-# ---------------------------------------------------------------------------
-# 内置 MMEffect.dll - MikuMikuEffect v0.37 效果引擎的直接内置
-# (third_party/mmeffect，逆向重建源码的去 hook 化移植)。
-#
-# 原版经由 d3d9.dll 代理 + IAT/vtable 拦截注入 MMD；本工程的宿主导出
-# (37 个 Exp*)与渲染重复计数循环等价存在，故引擎以 DLL 形式链接进进程，
-# 由宿主在管线对应点直接调用 MmeHost* 导出（见 mme_bridge）。
-#
-# 链接方向：MMEffect.dll 导入宿主 37 个 Exp*。exe 的导入库在 exe 链接时
-# 才生成，直接相互链接构成文件级循环，故先用 lib /def 预生成一份同名导
-# 入库（/NAME:MikuMikuDanceE.exe 与 exe 实际导出模块名一致，加载器按名
-# 对已映射的 exe 解析导入）。
-# ---------------------------------------------------------------------------
-set(MME_HOST_IMPORT_DIR ${CMAKE_CURRENT_BINARY_DIR}/mme_host_import)
-set(MME_HOST_IMPORT_LIB ${MME_HOST_IMPORT_DIR}/MikuMikuDanceE.lib)
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(MME_HOST_MACHINE x64)
-else()
-    set(MME_HOST_MACHINE x86)
-endif()
-add_custom_command(
-    OUTPUT ${MME_HOST_IMPORT_LIB}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${MME_HOST_IMPORT_DIR}
-    COMMAND ${CMAKE_AR} /NOLOGO
-            /DEF:${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
-            /NAME:MikuMikuDanceE.exe
-            /MACHINE:${MME_HOST_MACHINE}
-            /OUT:${MME_HOST_IMPORT_LIB}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
-    VERBATIM)
-add_custom_target(mme_host_importlib DEPENDS ${MME_HOST_IMPORT_LIB})
-
-add_library(MMEffect SHARED
+# Effect engine linked directly into the host; no proxy or injection DLL.
+add_library(MMEffect STATIC
     third_party/mmeffect/src/d3dx9_dyn.cpp
     third_party/mmeffect/src/mme_host.cpp
     third_party/mmeffect/src/mmhack/mmhack_registry.cpp
@@ -346,16 +316,15 @@ add_library(MMEffect SHARED
     third_party/mmeffect/src/mmeffect/render_snapshot.cpp
     third_party/mmeffect/src/mmeffect/sas_exec.cpp
     third_party/mmeffect/src/mmeffect/sas_interpreter.cpp
-    third_party/mmeffect/res/MMEffect.rc
 )
-target_include_directories(MMEffect PRIVATE
+target_include_directories(MMEffect PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include
+    PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/src/mmhack   # mmhack_state.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp（运行时 d3dx9 转发）
 )
-add_dependencies(MMEffect mme_host_importlib)
+target_compile_definitions(MMEffect PUBLIC MIKUDANCESTUDIO_MME_EMBEDDED=1)
 target_link_libraries(MMEffect PRIVATE
-    ${MME_HOST_IMPORT_LIB}
     user32       # 窗口/菜单/消息
     gdi32        # GDI+ 底层
     gdiplus      # 动画纹理（GIF/APNG 解码）
@@ -367,11 +336,56 @@ target_link_libraries(MMEffect PRIVATE
     shlwapi
     advapi32
 )
-target_link_options(MMEffect PRIVATE
-    "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/MMEffect.def")
-set_target_properties(MMEffect PROPERTIES
-    OUTPUT_NAME "MMEffect"
-)
-
-# 宿主 exe 静态链接内置 MMEffect.dll（无任何运行时注入）。
 target_link_libraries(MikuDanceStudio PRIVATE MMEffect)
+
+# Resource IDs are distinct from the host. Icon child IDs are explicit too.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(MME_ICON_RES ${CMAKE_CURRENT_BINARY_DIR}/mme_icon.res)
+add_custom_command(
+    OUTPUT ${MME_ICON_RES}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_mme_icon.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/res/res_mme.ico
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include/mme_resources.h
+            ${MME_ICON_RES}
+    DEPENDS scripts/gen_mme_icon.py scripts/gen_resources.py
+            third_party/mmeffect/res/res_mme.ico
+            third_party/mmeffect/include/mme_resources.h
+    VERBATIM)
+target_sources(MikuDanceStudio PRIVATE
+    third_party/mmeffect/res/MMEffect.rc ${MME_ICON_RES})
+target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(model_initialization_test tests/model_initialization_test.cpp
+        src/model/model_init.cpp)
+    add_executable(model_lifetime_test tests/model_lifetime_test.cpp
+        src/model/model_init.cpp src/model/model_dispose.cpp)
+    target_link_libraries(model_lifetime_test PRIVATE BULLET275::BULLET275)
+    add_executable(skeleton_tracking_test tests/skeleton_tracking_test.cpp)
+    add_executable(ui_protocol_test tests/ui_protocol_test.cpp)
+    add_executable(undo_frame_test tests/undo_frame_test.cpp
+        src/model/model_keyframe_edit.cpp)
+    target_compile_options(undo_frame_test PRIVATE /Gy)
+    target_link_options(undo_frame_test PRIVATE /OPT:REF)
+    target_link_libraries(undo_frame_test PRIVATE user32)
+    add_executable(physics_scene_dispose_test tests/physics_scene_dispose_test.cpp
+        src/physics/scene_dispose.cpp)
+    target_compile_definitions(physics_scene_dispose_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
+    target_link_libraries(physics_scene_dispose_test PRIVATE BULLET275::BULLET275)
+    add_executable(mme_regression tests/mme_regression.cpp)
+    target_include_directories(mme_regression PRIVATE third_party/mmeffect/include)
+    target_link_libraries(mme_regression PRIVATE d3d9 user32)
+    foreach(test IN ITEMS model_initialization_test model_lifetime_test
+            skeleton_tracking_test ui_protocol_test undo_frame_test physics_scene_dispose_test mme_regression)
+        target_include_directories(${test} PRIVATE include)
+        add_test(NAME ${test} COMMAND ${test})
+    endforeach()
+    # Requires the Microsoft D3DX9 runtime installed for the target architecture.
+    add_test(NAME mme_d3dx_runtime COMMAND mme_regression --runtime)
+    add_executable(embedded_mme_resources_test tests/embedded_mme_resources_test.cpp)
+    target_include_directories(embedded_mme_resources_test PRIVATE third_party/mmeffect/include)
+    add_dependencies(embedded_mme_resources_test MikuDanceStudio)
+    add_test(NAME embedded_mme_resources
+        COMMAND embedded_mme_resources_test $<TARGET_FILE:MikuDanceStudio>)
+endif()

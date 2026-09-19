@@ -1,7 +1,8 @@
 // material_bind.cpp - see material_bind.h
 #include "material_bind.h"
 
-#include <cstdio>
+#include <cctype>
+#include <cmath>
 #include <cstring>
 #include <memory>
 
@@ -9,25 +10,33 @@
 #include "mmhack_api.h"  // GetBlendMode / GetCurrentEffect
 
 #include "effect_engine.h"
+#include "emm_manager.h"   // MmeEmmDefaultEffect (offscreen DefaultEffect "main_default")
 #include "mme_context.h"
-#include "mme_log.h"
 #include "mme_globals.h"
+#include "mme_log.h"       // MmeLogWrite (the name-table shape-error report)
 #include "model_data.h"
+#include "sas_exec.h"     // SasEffect/SasTechnique + the control list
 
 namespace mme {
 
 namespace {
 
-// [0x18005ee60] FUN_18005ee60 - fixed-function edge-color read: walks
-// index[start_index] of the bound index buffer, then reads the first DWORD of
-// that vertex from stream 0 (MMD edge vertices carry the edge color as the
-// vertex diffuse). Ported with the standard device calls
-// (GetIndices/GetStreamSource + Lock with D3DLOCK_READONLY|NOSYSLOCK = 0x1010,
-// matching big-C 76042-76067). Returns 0 when the read is impossible.
+// [0x18005ee60] FUN_18005ee60 - fixed-function edge-color read: requires the
+// current FVF to be exactly 66 (D3DFVF_XYZ | D3DFVF_DIFFUSE), then walks
+// index[start_index] of the bound index buffer and reads the DWORD at vertex
+// offset +12 (the diffuse slot of that 16-byte XYZ+DIFFUSE layout). Ported
+// with the standard device calls (GetIndices/GetStreamSource + Lock with
+// D3DLOCK_READONLY|NOSYSLOCK = 0x1010, matching big-C 76042-76067). Returns
+// 0 when the read is impossible.
 unsigned int MmeReadVertexDiffuseColor(IDirect3DDevice9* device, int baseVertexIndex,
                                        int startIndex)
 {
     if (device == nullptr) {
+        return 0;
+    }
+    DWORD fvf = 0;
+    if (FAILED(device->GetFVF(&fvf)) ||
+        fvf != (D3DFVF_XYZ | D3DFVF_DIFFUSE)) {   // [big-C 76036-76038] FVF != 66
         return 0;
     }
     IDirect3DIndexBuffer9* indexBuffer = nullptr;
@@ -85,7 +94,9 @@ unsigned int MmeReadVertexDiffuseColor(IDirect3DDevice9* device, int baseVertexI
             vertexBuffer->Release();
             return 0;
         }
-        value = *static_cast<unsigned int*>(locked);
+        // [big-C 76067] v12[3]: the DWORD at vertex offset +12, the diffuse
+        // slot of the FVF-66 (XYZ + DIFFUSE) vertex layout.
+        value = static_cast<unsigned int*>(locked)[3];
         vertexBuffer->Unlock();
         vertexBuffer->Release();
     }
@@ -119,17 +130,21 @@ void MmeComposeMaterialColor(ModelData* model, const RenderSnapshot& snap, int s
             device->GetMaterial(&material);
         }
         // [big-C 147-153] semantic 0x18 (Diffuse) on a kind==0 (accessory)
-        // object during the draw-type-1 pass scales rgba by DAT_1800b5c20
-        // (= 10.0f). UNCERTAIN rationale; ported verbatim.
-        if (semantic == 0x18 && model != nullptr && model->kind() == 0 && drawType == 1) {
+        // object during the draw-type-1 pass scales floats 0..2 (r,g,b) by
+        // DAT_1800b5c20 (= 10.0f); the alpha is NOT scaled. UNCERTAIN
+        // rationale; ported verbatim.
+        if (semantic == 0x18 && model != nullptr && model->kind() == 0 &&
+            drawType == 1) {
             material.Diffuse.r *= 10.0f;
             material.Diffuse.g *= 10.0f;
             material.Diffuse.b *= 10.0f;
-            material.Diffuse.a *= 10.0f;
         }
     } else if (drawType == 4) {
-        // [big-C 156-160] the edge pass zeroes the material (0x44 memset).
+        // [big-C 156-160] the edge pass zeroes the material (0x44 memset)
+        // then sets the Diffuse.a and Ambient.a slots to 1.0f.
         memset(&material, 0, sizeof(material));
+        material.Diffuse.a = 1.0f;
+        material.Ambient.a = 1.0f;
     } else {
         // [big-C 161-188] ExpGetAcsMaterial / ExpGetPmdMaterial(hostIndex,
         // subsetIndex). hostIndex lives at ModelData+0xf0 (the passKey
@@ -138,14 +153,23 @@ void MmeComposeMaterialColor(ModelData* model, const RenderSnapshot& snap, int s
         int subset = snap.subset_index;
         if (model != nullptr && model->kind() == 0) {
             material = ExpGetAcsMaterial(hostIndex, subset);
+            // [big-C 190-198] the accessory (kind==0) ExpGet path also scales
+            // the Diffuse r,g,b by 10.0f for semantic 0x18, with no draw-type
+            // restriction (the PMD path never scales).
+            if (semantic == 0x18) {
+                material.Diffuse.r *= 10.0f;
+                material.Diffuse.g *= 10.0f;
+                material.Diffuse.b *= 10.0f;
+            }
         } else {
             material = ExpGetPmdMaterial(hostIndex, subset);
         }
     }
 
     // [big-C 189-218] slice selection:
-    //   0x18 -> +0x00 Diffuse, 0x19 -> +0x10 Ambient, 0x1A -> +0x20 Specular
-    //   (the switch selects the third block), 0x1B -> +0x30 Emissive.
+    //   0x18 -> +0x00 Diffuse, 0x19 -> +0x10 Ambient, 0x1A -> +0x30 Emissive,
+    //   0x1B -> +0x20 Specular (the switch's third block is +0x30, fourth
+    //   is +0x20 - swapped relative to the D3DMATERIAL9 field order).
     switch (semantic) {
     case 0x18:
         out[0] = material.Diffuse.r; out[1] = material.Diffuse.g;
@@ -156,18 +180,109 @@ void MmeComposeMaterialColor(ModelData* model, const RenderSnapshot& snap, int s
         out[2] = material.Ambient.b; out[3] = material.Ambient.a;
         break;
     case 0x1A:
-        out[0] = material.Specular.r; out[1] = material.Specular.g;
-        out[2] = material.Specular.b; out[3] = material.Specular.a;
-        break;
-    case 0x1B:
         out[0] = material.Emissive.r; out[1] = material.Emissive.g;
         out[2] = material.Emissive.b; out[3] = material.Emissive.a;
+        break;
+    case 0x1B:
+        out[0] = material.Specular.r; out[1] = material.Specular.g;
+        out[2] = material.Specular.b; out[3] = material.Specular.a;
         break;
     default:
         out[0] = out[1] = out[2] = out[3] = 0.0f;
         break;
     }
     *power = material.Power;
+}
+
+// [0x1800B2550] sub_180056C30 的 QI 目标：IID_IDirect3DTexture9（字节与
+// sas_exec.cpp 的 kIidD3DTexture9 一致）。本地定义，链接不依赖 dxguid.lib。
+static const GUID kToonIidD3DTexture9 = {
+    0x85c31227, 0x3de5, 0x4f00, {0x9b, 0x3a, 0xf1, 0x1a, 0xc3, 0x8c, 0x18, 0xb5}};
+
+// [sub_180056C30 0x180056c30] FUN_180056c30 - 固定函数路径 TOONCOLOR 的取色。
+// 先按纹理指针查一张静态记忆化哈希表（原版 16 桶起步、节点内缓存 64 位
+// 混合哈希的单链侵入式表：插入 sub_180061780、扩容 sub_1800622D0、
+// atexit(sub_1800A3A10 -> sub_180062000) 时统一释放）。对表全局变量的全部
+// 交叉引用仅这组函数：进程生命期内没有任何清除/失效路径，设备 Reset 也
+// 不清表——正确性完全依赖指针身份，Reset 后新纹理得到新指针，旧条目只是
+// 留驻内存。移植用 unordered_map 等价表达（哈希函数不影响语义，不复刻）。
+// 未命中时从纹理内容取色：
+//   QueryInterface(IID_IDirect3DTexture9) -> GetSurfaceLevel(0)（最高分辨率
+//   级别，v表+0x90）-> GetDesc（v表+0x60），Format 仅接受 D3DFMT_R8G8B8
+//   (20) / D3DFMT_A8R8G8B8 (21) / D3DFMT_X8R8G8B8 (22) [0x180056e53]；
+//   LockRect(RECT{0, Height-1, 1, Height}, D3DLOCK_READONLY=0x10) [v表+0x68]
+//   只锁第 0 列最底行的单个像素（toon ramp 受光最强的一端），随后
+//   UnlockRect [v表+0x70]。内存字节序 B,G,R(,A)：r=pBits[2]、g=pBits[1]、
+//   b=pBits[0] 各 /255 [0x180056ea6-0x180056ecd]；a 仅 A8R8G8B8 取
+//   pBits[3]/255 [0x180056ed6-0x180056ee7]，R8G8B8/X8R8G8B8 固定 1.0。
+// 任何一步失败（QI、GetSurfaceLevel、格式不符、LockRect）保持回退
+// (1,1,1,1)（初值 0x180056dac）；除纹理为 null 外，失败结果同样写入记忆
+// 化表（null 在插入路径之前提前返回，0x180056dc3）。
+void MmeComputeFixedFunctionToonColor(float out[4], IDirect3DBaseTexture9* texture)
+{
+    struct ToonColorEntry { float c[4]; };
+    static std::unordered_map<IDirect3DBaseTexture9*, ToonColorEntry> cache;
+
+    std::unordered_map<IDirect3DBaseTexture9*, ToonColorEntry>::const_iterator it =
+        cache.find(texture);
+    if (it != cache.end()) {                          // 命中：直接回缓存值
+        out[0] = it->second.c[0];
+        out[1] = it->second.c[1];
+        out[2] = it->second.c[2];
+        out[3] = it->second.c[3];
+        return;
+    }
+
+    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;     // 回退初值 [0x180056dac]
+    if (texture != nullptr) {
+        IDirect3DTexture9* tex9 = nullptr;
+        if (SUCCEEDED(texture->QueryInterface(kToonIidD3DTexture9,
+                                              reinterpret_cast<void**>(&tex9))) &&
+            tex9 != nullptr) {
+            IDirect3DSurface9* surface = nullptr;
+            if (SUCCEEDED(tex9->GetSurfaceLevel(0, &surface)) &&
+                surface != nullptr) {
+                D3DSURFACE_DESC desc;
+                memset(&desc, 0, sizeof(desc));
+                surface->GetDesc(&desc);
+                if (desc.Format == D3DFMT_R8G8B8 ||     // 20 [0x180056e53]
+                    desc.Format == D3DFMT_A8R8G8B8 ||   // 21
+                    desc.Format == D3DFMT_X8R8G8B8) {   // 22
+                    // 只锁 (0, Height-1) 单像素：left=0, top=H-1, right=1,
+                    // bottom=H [0x180056e59-0x180056e6c]。
+                    RECT rc;
+                    rc.left = 0;
+                    rc.top = static_cast<LONG>(desc.Height) - 1;
+                    rc.right = 1;
+                    rc.bottom = static_cast<LONG>(desc.Height);
+                    D3DLOCKED_RECT locked;
+                    memset(&locked, 0, sizeof(locked));
+                    if (SUCCEEDED(surface->LockRect(&locked, &rc,
+                                                    D3DLOCK_READONLY)) &&
+                        locked.pBits != nullptr) {
+                        const unsigned char* bits =
+                            static_cast<const unsigned char*>(locked.pBits);
+                        r = static_cast<float>(bits[2]) / 255.0f;  // [0x180056ea6]
+                        g = static_cast<float>(bits[1]) / 255.0f;  // [0x180056eba]
+                        b = static_cast<float>(bits[0]) / 255.0f;  // [0x180056ecd]
+                        a = (desc.Format == D3DFMT_A8R8G8B8)
+                                ? static_cast<float>(bits[3]) / 255.0f  // [0x180056ee7]
+                                : 1.0f;                                  // [0x180056eee]
+                        surface->UnlockRect();                          // [0x180056efa]
+                    }
+                }
+                surface->Release();                   // [0x180056f09]
+            }
+            tex9->Release();                          // [0x180056f4a]
+        }
+        // 失败回退值同样入表（原版插入在 null 检查之后无条件执行）。
+        ToonColorEntry entry = { { r, g, b, a } };
+        cache[texture] = entry;
+    }
+    out[0] = r;
+    out[1] = g;
+    out[2] = b;
+    out[3] = a;
 }
 
 } // namespace
@@ -184,6 +299,33 @@ MaterialBinding* MmeFindMaterialBinding(unsigned int materialCount, ModelData* m
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr || model == nullptr) {
         return nullptr;
+    }
+    // [offscreen DefaultEffect window; sub_18005A1E0 + sub_18002CA80] While
+    // a suspended scene technique renders into an offscreen target with
+    // staged DefaultEffect rows, the original resolves the draw through the
+    // scene effect's OWNER-KEYED map entry - the lookup key's first field
+    // comes from the current binding object (+56): the effect's owner id
+    // inside the window, 0 outside. That owner-keyed entry is built by
+    // expanding the rows (sub_18002ACE0's owner branch reads the offscreen
+    // record +0x78 vector during the per-frame mapping rebuild): an
+    // unlisted or "none" row resolves to the EMPTY binding (the raw host
+    // draw), "hide" to a NULL entry (the draw gate in
+    // MmeHandleDrawIndexedPrimitive swallows it), a path/main_default row
+    // to that effect. The model's own (owner-0) entries are invisible to
+    // the owner-keyed lookup, so the staging pointer short-circuits the
+    // manager map here - the snapshot apply and the draw wrapper both
+    // observe the substitution and neither falls back to the main binding.
+    // [2026-09 P1] 窗口判定从"行 staging 非空"扩为"离屏渲染回合"
+    // （MmeInOffscreenRenderTurn——原版 wrapper 非 null 的等价）：无
+    // DefaultEffect 行的 0x2E 目标同样处于离屏回合，场景键 0 的模型
+    // 自身绑定同样不可见（miss → 调用方吞绘制）。carrier 命中 turn 条目
+    // （(turnId, carrier, -1)，value 即自身绑定——drain 建立），不查行。
+    MmeContext* stagedCtx = g_context;
+    if (stagedCtx != nullptr && MmeInOffscreenRenderTurn()) {
+        if (MmeModelOwnsOffscreenTurn(model)) {
+            return MmeActiveModelBinding(model);
+        }
+        return MmeResolveOffscreenDefaultBinding(model);
     }
     (void)allowWholeObject;   // the original's flag is always 1 at both call sites
     int subset = subsetIndex < 0 ? -1 : subsetIndex;
@@ -206,7 +348,8 @@ MaterialBinding* MmeFindMaterialBinding(unsigned int materialCount, ModelData* m
 
 MaterialBinding* MmeEnsureMaterialBinding(unsigned int materialCount, ModelData* model,
                                           int subsetIndex, ID3DXEffect* effect,
-                                          const std::string& effectPath)
+                                          const std::string& effectPath,
+                                          const std::shared_ptr<LoadedEffect>& owner)
 {
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr || model == nullptr) {
@@ -217,20 +360,42 @@ MaterialBinding* MmeEnsureMaterialBinding(unsigned int materialCount, ModelData*
     std::map<EffectOwnerManager::BindingKey, MaterialBinding*>::iterator it =
         manager->bindings.find(key);
     if (it != manager->bindings.end() && it->second != nullptr) {
-        it->second->effect = effect;
+        if (it->second->effect != effect) {
+            // Effect reassignment: the per-MmdPass selection table belongs to
+            // the previous effect - force a rebuild on the next resolve.
+            it->second->drawTableBuilt = false;
+            // The resolved parameter handles (name table + semantic walk)
+            // belong to the previous effect object too - drop them so the
+            // next apply re-resolves against the new effect.
+            it->second->namesResolved = false;
+            it->second->namedHandles.clear();
+            it->second->semanticsResolved = false;
+            it->second->semanticHandles.clear();
+        }
+        // [原版 sub_18002CA80 绑定重建的引用切换] 先刷新借用指针
+        // （effect/sas 指向新条目内部，此刻旧条目尚未死亡），再切换
+        // owner 引用——旧条目若在此失去最后一个引用，其 ~LoadedEffect
+        // （FUN_18000B210 语义）在借用指针已安全后执行。
+        it->second->effect = owner != nullptr ? owner->effect : effect;
         it->second->effectPath = effectPath;
+        it->second->sas = owner != nullptr ? owner->sas : nullptr;
+        it->second->owner = owner;
         return it->second;
     }
     MaterialBinding* binding = new MaterialBinding();
-    binding->effect = effect;
+    binding->effect = owner != nullptr ? owner->effect : effect;
     binding->effectPath = effectPath;
+    binding->sas = owner != nullptr ? owner->sas : nullptr;
+    binding->owner = owner;
     manager->bindings[key] = binding;
     return binding;
 }
 
 void MmeDropMaterialBindings(ModelData* model)
 {
-    // [0x18002a430 / FUN_180058740] erase every binding of the model.
+    // [0x18002a430 / FUN_180058740] erase every binding of the model; a
+    // scene-effect carrier also loses its SAS class flags (the planner must
+    // drop it from passPlanA/B/renderPassList).
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr || model == nullptr) {
         return;
@@ -245,6 +410,141 @@ void MmeDropMaterialBindings(ModelData* model)
             ++it;
         }
     }
+    // The model's transient offscreen-DefaultEffect binding goes with it
+    // (the ModelData key must not dangle in the context map).
+    MmeContext* ctx = g_context;
+    if (ctx != nullptr) {
+        std::map<ModelData*, MaterialBinding*>::iterator transient =
+            ctx->offscreenDefaultBindings.find(model);
+        if (transient != ctx->offscreenDefaultBindings.end()) {
+            delete transient->second;
+            ctx->offscreenDefaultBindings.erase(transient);
+        }
+    }
+    model->ClearSasBinding();
+}
+
+// ---------------------------------------------------------------------------
+// Technique selection [sub_18001DB50 / sub_18001DD20 / FUN_18001b940].
+//
+// The original precomputes five per-MmdPass handle vectors on the SAS object
+// at effect load (sub_18001DD20, driven from sub_18000BC90 with the model's
+// material count) and the per-draw apply (FUN_18001b940, called from
+// MME_ApplyModelRenderSnapshot) only INDEXES them: modes 0/1 (object,
+// object_ss) with subset*8 + (useTexture | useSpheremap<<1 | useToon<<2),
+// modes 2/3/4 (shadow, edge, zplot) with the bare subset (their table was
+// selected with every Use* state false). The port keeps the same two steps
+// on the binding: the table below (built once per effect assignment) and the
+// per-draw refresh (MmeRefreshDrawTechnique).
+// ---------------------------------------------------------------------------
+
+// Pass count of a technique handle (the table's per-entry pass count; the
+// original reads it from the effect's technique map record).
+static unsigned int MmeTechniquePassCount(const SasEffect* sas, D3DXHANDLE handle)
+{
+    if (sas == nullptr || handle == nullptr) {
+        return 0;
+    }
+    for (size_t i = 0; i < sas->techniques.size(); ++i) {
+        if (sas->techniques[i].handle == handle) {
+            return static_cast<unsigned int>(sas->techniques[i].passes.size());
+        }
+    }
+    return 0;
+}
+
+// [sub_18001DD20] the load-time selection-table precompute. Scene-class
+// effects (ScriptClass scene) and any pre/post-process order clamp the
+// subset count to one, and pre/post effects build ONLY the object-mode
+// table [0x18001ddab-0x18001ddbe / 0x18001de1d]. The original's trailing
+// "Error: some techniques cannot run on this hardware:" report is dead code
+// in the shipped binary (its flag is only ever cleared - 0x18001DDBE /
+// 0x18001E2E8 / 0x18001E3C8 - so sub_18001DD20 always returns 0 and never
+// fails the load); a selection that resolves only to an invalid technique is
+// still stored and drawn. The same applies here.
+static void MmeBuildDrawTechniqueTable(MaterialBinding* binding, SasEffect* sas,
+                                       ModelData* model)
+{
+    for (int i = 0; i < 5; ++i) {
+        binding->drawTechniques[i].clear();
+    }
+    binding->drawTableBuilt = true;
+    if (binding->effect == nullptr || sas == nullptr) {
+        return;   // [!*a1] no effect: the empty table selects nothing
+    }
+    int materialCount = (model != nullptr) ? model->materialCount() : 0;
+    if (materialCount <= 0) {
+        return;   // [a2 <= 0] every lookup misses -> the raw host draw
+    }
+    if (sas->scriptClass == kSasClassScene ||
+        sas->scriptOrder != kSasOrderStandard) {
+        materialCount = 1;
+    }
+    for (int mode = 0; mode < 5; ++mode) {
+        if (mode != 0 && sas->scriptOrder != kSasOrderStandard) {
+            continue;   // pre/post effects never draw the other four modes
+        }
+        for (int subset = 0; subset < materialCount; ++subset) {
+            if (mode <= 1) {
+                // [0x18001df12-0x18001df40] the eight Use* states: combo bit
+                // 0 = useTexture, bit 1 = useSpheremap, bit 2 = useToon.
+                for (int combo = 0; combo < 8; ++combo) {
+                    D3DXHANDLE handle = SasSelectTechnique(
+                        sas, mode, subset, (combo & 1) != 0, (combo & 2) != 0,
+                        (combo & 4) != 0, nullptr);
+                    binding->drawTechniques[mode].push_back(std::make_pair(
+                        handle, MmeTechniquePassCount(sas, handle)));
+                }
+            } else {
+                // [0x18001de40-0x18001de5c] shadow/edge/zplot select with
+                // every Use* state false.
+                D3DXHANDLE handle =
+                    SasSelectTechnique(sas, mode, subset, false, false, false,
+                                       nullptr);
+                binding->drawTechniques[mode].push_back(std::make_pair(
+                    handle, MmeTechniquePassCount(sas, handle)));
+            }
+        }
+    }
+}
+
+// [FUN_18001b940 0x18001b955-0x18001b978] the per-draw table lookup. A
+// negative subset or an out-of-range index resolves to the null technique
+// (the original leaves v8 = 0 and forwards the raw draw); the selected
+// entry (a null handle included) is installed into the slot the draw
+// wrapper reads (host draw type 1..5 = mode 0..4 + 1).
+static void MmeRefreshDrawTechnique(MaterialBinding* binding,
+                                    const RenderSnapshot& snap)
+{
+    if (binding == nullptr) {
+        return;
+    }
+    const int mode = snap.draw_type_index;   // snapshot+0x30, normalized 0..4
+    if (mode < 0 || mode > 4) {
+        return;
+    }
+    D3DXHANDLE technique = nullptr;
+    unsigned int passes = 0;
+    int index = snap.subset_index;           // snapshot+0x28
+    if (index >= 0) {
+        if (mode <= 1) {
+            // object/object_ss fold the material state into the index:
+            // base_texture_present (+0x56), 0 < sphere_mode (+0x50),
+            // toon_used (+0x54).
+            index = index * 8
+                  | ((snap.base_texture_present != 0) ? 1 : 0)
+                  | ((snap.sphere_mode > 0) ? 2 : 0)
+                  | ((snap.toon_used != 0) ? 4 : 0);
+        }
+        const std::vector<std::pair<D3DXHANDLE, unsigned int> >& table =
+            binding->drawTechniques[mode];
+        if (index < static_cast<int>(table.size())) {
+            technique = table[static_cast<size_t>(index)].first;
+            passes = table[static_cast<size_t>(index)].second;
+        }
+    }
+    binding->techniques[mode + 1] = technique;
+    binding->passCounts[mode + 1] = passes;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,12 +561,18 @@ void MmeSelectMaterialEffectBinding(ModelData* model, void* bindingContext,
         return;
     }
 
-    // [kit L25-27] count = bindingContext ? *(u32*)(bindingContext+0x38) : 0.
-    unsigned int count = 0;
-    if (bindingContext != nullptr) {
-        count = *reinterpret_cast<unsigned int*>(
-            reinterpret_cast<unsigned char*>(bindingContext) + 0x38);
-    }
+    // [kit L25-27 / 0x18005a252] count = bindingContext ?
+    // *(u32*)(bindingContext+0x38) : 0 —— 原版 bindingContext 是 0x48 回合
+    // 包装（wrapper），+0x38（=56）是【当前 turn id】而非 materialCount：
+    // 基回合 wrapper == null → 0（场景键 0），离屏回合 → 该回合的 owner id
+    // （模型自身的 (0, model, *) 条目对它不可见）。本移植没有数值 turn id，
+    // 且离屏回合内的查找已由 MmeFindMaterialBinding 的离屏短路接管
+    // （carrier / DefaultEffect 行），manager-map 键只余基回合成分——恒 0。
+    // 旧实现把 bindingContext 当 ModelData* 读 materialCount()，在
+    // ScriptExternal 挂起窗口内 carrier 的 materialCount != 0 时会以
+    // (materialCount, model, subset) 错键查找（查到或撞错 owner 条目），
+    // 与原版 (turnId, model, subset) 语义不符——2026-09 修正。
+    const unsigned int count = 0;
 
     // [kit L56-58] re-apply the existing binding for the snapshot subset.
     MaterialBinding* binding = MmeFindMaterialBinding(count, model, snap.subset_index, true);
@@ -285,6 +591,13 @@ void MmeSelectMaterialEffectBinding(ModelData* model, void* bindingContext,
         }
     }
 }
+
+// [R4/R5; sub_18002CA80 0x18002d0a2 / sub_180057BC0 0x180057d58] the offscreen
+// DefaultEffect window's CONTROLOBJECT re-evaluation, run from the per-draw
+// apply below. Declared here, defined next to the control resolver
+// (ControlObjectVisitor region) which it drives.
+static void MmeBindOffscreenWindowControls(ModelData* model,
+                                           MaterialBinding* binding);
 
 // ---------------------------------------------------------------------------
 // MME_ApplyModelRenderSnapshot [0x18005a1e0]
@@ -308,16 +621,34 @@ void MmeApplyModelRenderSnapshot(ModelData* model, void* bindingContext,
     }
 
     // [kit L25-33] count from the binding context (+0x38, 0 when null).
-    unsigned int count = 0;
-    if (bindingContext != nullptr) {
-        count = *reinterpret_cast<unsigned int*>(
-            reinterpret_cast<unsigned char*>(bindingContext) + 0x38);
-    }
+    // 同 MmeSelectMaterialEffectBinding 的键语义核验：原版 wrapper+0x38 是
+    // 【turn id】（基回合 0），不是 materialCount——离屏回合的 owner 键
+    // 查找由 MmeFindMaterialBinding 的离屏短路接管（carrier / DefaultEffect
+    // 行展开），这里只剩基回合的场景键 0。旧实现以 carrier 的
+    // materialCount() 构键，ScriptExternal 挂起窗口内键位错开（P2，修正）。
+    (void)bindingContext;
+    const unsigned int count = 0;
 
     // [kit L31-37] FUN_18002d910 + FUN_18001b940(binding, draw_type_index,
-    // subset, effect_file_used, 0 < sphere_mode, toon_used, model+0x08).
+    // subset, base_texture_present, 0 < sphere_mode, toon_used, model+0x08).
     MaterialBinding* binding = MmeFindMaterialBinding(count, model, snap.subset_index, true);
     if (binding == nullptr) {
+        // [offscreen DefaultEffect window; sub_18005A1E0] Inside the window
+        // a null resolution is the original's EMPTY binding (an unlisted or
+        // "none" row) - the lazy creation of the model's own binding must
+        // not run: the owner-keyed entry exists as a null/empty binding and
+        // the draw replays through the host pipeline (the draw wrapper's
+        // raw forward), never through the main effect.
+        // [2026-09 P1] 窗口判定同步扩为"离屏渲染回合"（原版 wrapper 非
+        // null）：无 DefaultEffect 行的回合里 owner 键同样 miss（原版
+        // sub_18002D910 返回 0、sub_18005A1E0 不调 FUN_18001b940），模型
+        // 自身的 (0, model, -1) 绑定不可见——lazy resolve 同样不得运行
+        // （否则会把自身效果带给离屏目标）。carrier 的窗口查找在
+        // MmeFindMaterialBinding 的短路内已返回自身绑定，不会走到这里。
+        MmeContext* windowCtx = g_context;
+        if (windowCtx != nullptr && MmeInOffscreenRenderTurn()) {
+            return;
+        }
         // The Phase 2 binding creation: resolve the model's assigned effect
         // through the engine cache and create the whole-object binding (the
         // original's FUN_18001b7b0/binding-ctor work at assign time). Without
@@ -328,21 +659,44 @@ void MmeApplyModelRenderSnapshot(ModelData* model, void* bindingContext,
         }
     }
     if (binding != nullptr) {
+        // [kit L31-37 / FUN_18001b940 0x18001b955-0x18001b978] the per-draw
+        // technique table lookup: index the precomputed per-MmdPass table
+        // with the snapshot's subset and material Use* state (mode 0/1 fold
+        // them into subset*8 + tex | sph<<1 | toon<<2) and install the
+        // selected technique/pass count into the slot the draw wrapper
+        // reads. A miss installs null - the wrapper then forwards the raw
+        // host draw, the original's v8 == 0 path.
+        MmeRefreshDrawTechnique(binding, snap);
         // FUN_18001b940's op walk reduces to the standard parameter set in
-        // Phase 2; the pass state itself is applied by the draw wrapper in
-        // callbacks.cpp (ID3DXEffect::Begin/BeginPass around the forwarded
-        // draw, the observable equivalent of the original's op array).
+        // Phase 2; the technique/pass state itself is executed by the object
+        // draw's SAS walk in callbacks.cpp (SasExecuteTechnique - the walk
+        // runs the technique/pass Script annotations and replays the
+        // recorded draw per pass through the host kind-0 callback
+        // FUN_18005a740: Begin/BeginPass/DIP/EndPass/End, the observable
+        // equivalent of the original's op array).
         MmeBindStandardParameters(model, binding, snap);
+        // [R4/R5] inside the offscreen DefaultEffect window the binding is a
+        // staged-row transient: re-evaluate its CONTROLOBJECT parameters with
+        // the drawn object as "(self)" and the offscreen owner available for
+        // "(OffscreenOwner)" (the original's per-walk EffectFrameParamSetter
+        // fields +16/+24). No-op outside the window.
+        MmeBindOffscreenWindowControls(model, binding);
     }
 }
 
 // ---------------------------------------------------------------------------
-// MmeResolveModelEffectBinding - the Phase 2 binding creation. The original
-// builds the binding (and its per-technique op arrays) when an effect is
-// assigned to an object; the port resolves lazily on the first draw. The
-// technique selection follows the MME convention (MainTec0, then the numbered
-// MainTec variants); a MainTec0-less effect binds with no technique and the
-// draws fall back to the host pipeline.
+// MmeResolveModelEffectBinding - the binding creation. The original builds
+// the binding (and its per-technique op arrays) when an effect is assigned to
+// an object [FUN_18002ca80]; the port resolves lazily on the first draw.
+// Technique selection runs through the per-MmdPass selector table
+// (sub_18001DB50/sub_18001DD20 - MmdPass + Subset + UseTexture/UseSpheremap/
+// UseToon against the material state); there is NO name-based fallback: a
+// mode/subset/state combination that matches nothing draws through the host
+// pipeline (FUN_18001b940's null-technique forward; the "MainTec0" convention
+// does not exist in the binary). A scene/sceneorobject-class effect
+// additionally writes its scriptClass/scriptOrder into the ModelData
+// (+0x360/+0x364/+0x368) - the pass planner then routes the object through
+// passPlanA/B and renderPassList [FUN_18002ca80 L292-320].
 // ---------------------------------------------------------------------------
 MaterialBinding* MmeResolveModelEffectBinding(ModelData* model)
 {
@@ -362,33 +716,47 @@ MaterialBinding* MmeResolveModelEffectBinding(ModelData* model)
     // The draw path looks the binding up with count = 0 (null binding
     // context) and the whole-object subset (-1).
     MaterialBinding* binding = MmeEnsureMaterialBinding(0, model, -1,
-                                                        loaded->effect, path);
+                                                        loaded->effect, path,
+                                                        loaded);
     if (binding == nullptr || binding->effect == nullptr) {
-        MmeLogWrite("BindResolve: no binding/effect\n", 0);
         return binding;
     }
-    if (binding->technique == nullptr) {
-        D3DXHANDLE technique = binding->effect->GetTechniqueByName("MainTec0");
-        if (technique != nullptr) {
-            D3DXTECHNIQUE_DESC desc;
-            memset(&desc, 0, sizeof(desc));
-            if (SUCCEEDED(binding->effect->GetTechniqueDesc(technique, &desc))) {
-                binding->passCount = desc.Passes;
-            }
-            binding->technique = technique;
-        }
+    binding->sas = loaded->sas;   // owner 引用下与 Ensure 的赋值幂等
+    if (!binding->drawTableBuilt) {
+        MmeBuildDrawTechniqueTable(binding, loaded->sas, model);
     }
-    {
-        static std::string loggedPath;
-        if (loggedPath != path) {
-            loggedPath = path;
-            char line[0x220];
-            sprintf_s(line, sizeof(line),
-                      "BindResolve: effect=%p technique=%p passes=%u\n",
-                      (void*)binding->effect, (void*)binding->technique,
-                      binding->passCount);
-            MmeLogWrite(line, 0);
+
+    // Scene-class wiring: the planner picks the object up as a pass record.
+    if (loaded->sas != nullptr &&
+        loaded->sas->scriptClass != kSasClassObject) {
+        model->setUnknownFlag360(
+            static_cast<unsigned long long>(loaded->sas->scriptClass));
+        model->setRenderClass(loaded->sas->scriptOrder == kSasOrderPreprocess ? 1
+                          : loaded->sas->scriptOrder == kSasOrderPostprocess ? 2
+                          : 0);
+        model->setFlag368(loaded->sas->drawsGeometry ? 1 : 0);
+        // The stepped/resumed scene technique: the first hardware-valid
+        // technique in the MME order.
+        binding->sceneTechIndex = -1;
+        if (loaded->sas != nullptr) {
+            SasEffect* sas = loaded->sas;
+            for (size_t o = 0; o < sas->techniqueOrder.size(); ++o) {
+                for (size_t t = 0; t < sas->techniques.size(); ++t) {
+                    if (sas->techniques[t].handle != sas->techniqueOrder[o]) {
+                        continue;
+                    }
+                    if (!sas->techniques[t].empty && sas->techniques[t].hardwareOk) {
+                        binding->sceneTechIndex = static_cast<int>(t);
+                        break;
+                    }
+                }
+                if (binding->sceneTechIndex >= 0) {
+                    break;
+                }
+            }
         }
+    } else {
+        model->ClearSasBinding();
     }
     return binding;
 }
@@ -398,7 +766,398 @@ MaterialBinding* MmeActiveModelBinding(ModelData* model)
     if (model == nullptr) {
         return nullptr;
     }
-    return MmeFindMaterialBinding(0, model, -1, true);
+    // Direct manager-map read: this is the pass-record DRIVER lookup (the
+    // pass planner's scene-technique stepping), which the original serves
+    // from the effect's own binding object (never through the owner-keyed
+    // draw-entry lookup). It must bypass the offscreen DefaultEffect window
+    // short-circuit in MmeFindMaterialBinding - a row that hides or "none"s
+    // the carrier model itself must not unhook its suspended technique.
+    EffectOwnerManager* manager = g_ownerManager;
+    if (manager == nullptr) {
+        return nullptr;
+    }
+    std::map<EffectOwnerManager::BindingKey, MaterialBinding*>::const_iterator it =
+        manager->bindings.find(EffectOwnerManager::BindingKey(0, model, -1));
+    if (it != manager->bindings.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+bool MmeInOffscreenRenderTurn()
+{
+    // [sub_18005A1E0 0x18005a24c-0x18005a268 / FUN_18005d130 L74740-74745]
+    // 原版离屏回合判定是 ctx+0x168 的 0x48 回合包装（wrapper）非空：
+    // wrapper+0x38 即绘制查找的 owner turn id（基回合 wrapper == null →
+    // 键 0）。移植的 ctx->currentBindingOffscreen 是 wrapper 的资源身份
+    // 对应物——pass_planner 在回合应用时按
+    // renderPassList[lastRepeatCount-1] 设置，基回合（lastRepeatCount < 1）
+    // 与回合切换的清空点写 null，非 null 即窗口。行 staging
+    // （ctx->offscreenDefaultEffect）只覆盖"行存在"的子集，不再作为窗口
+    // 判定：无 DefaultEffect 行的离屏目标同样处于窗口内。
+    MmeContext* ctx = g_context;
+    return ctx != nullptr && ctx->currentBindingOffscreen != nullptr;
+}
+
+bool MmeModelOwnsOffscreenTurn(ModelData* model)
+{
+    // [sub_18002CA80 子轮 drain 0x18002d1a0-0x18002d69c / sub_18005A410
+    // 0x18005a449-0x18005a4bb] 原版的 (turnId, carrier, -1) 条目只为
+    // carrier 建立，turn id 按资源名分配（sub_18002D820 的名字→id 映射，
+    // 同名共享），所以"模型自身绑定的 SAS 声明了与本回合资源同名的
+    // 0x2E（OFFSCREENRENDERTARGET）参数"即等价于该模型持有本回合的
+    // turn 条目（条目 value 即 carrier 自身绑定——照常绘制与驱动）。
+    // 与 pass_planner 的 MmeSceneWalkTechIndex（(id, carrier, -1) 的
+    // walk 查找）使用同一判据。
+    MmeContext* ctx = g_context;
+    if (model == nullptr || ctx == nullptr ||
+        ctx->currentBindingOffscreen == nullptr) {
+        return false;
+    }
+    MaterialBinding* binding = MmeActiveModelBinding(model);
+    SasEffect* sas = (binding != nullptr) ? binding->sas : nullptr;
+    if (sas == nullptr) {
+        return false;
+    }
+    const std::string& turnName = ctx->currentBindingOffscreen->name;
+    for (size_t i = 0; i < sas->resources.size(); ++i) {
+        if (sas->resources[i].semanticId == 0x2E &&
+            sas->resources[i].name == turnName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex,
+                                                const std::string& effectPath)
+{
+    if (model == nullptr || subsetIndex < 0 || effectPath.empty()) {
+        return nullptr;
+    }
+    MmeContext* ctx = g_context;
+    IDirect3DDevice9* device = ctx != nullptr ? ctx->device : nullptr;
+    std::shared_ptr<LoadedEffect> loaded =
+        MmeEngineLoadEffectFile(device, effectPath);
+    if (loaded == nullptr || loaded->effect == nullptr) {
+        return nullptr;
+    }
+    MaterialBinding* binding = MmeEnsureMaterialBinding(
+        0, model, subsetIndex, loaded->effect, effectPath, loaded);
+    if (binding == nullptr) {
+        return nullptr;
+    }
+    binding->sas = loaded->sas;   // owner 引用下与 Ensure 的赋值幂等
+    if (!binding->drawTableBuilt) {
+        // [sub_18001DD20] same per-MmdPass selection table as the whole-object
+        // binding; the per-draw apply indexes it (FUN_18001b940). No
+        // name-based fallback (see MmeResolveModelEffectBinding).
+        MmeBuildDrawTechniqueTable(binding, loaded->sas, model);
+    }
+    return binding;
+}
+
+// ---------------------------------------------------------------------------
+// Offscreen DefaultEffect (sub_180011960 offscreen record +0x78 rows). While
+// a suspended scene technique renders into the offscreen target, EVERY model
+// draw consults the staged rows: the FIRST row whose key matches the model
+// wins (annotation order - the original's vector append order).
+//
+// Key matching [VERIFIED, sub_18002ACE0 0x18002b7c5-0x18002b981] per row:
+//   - key == "self" (std::string::compare vs the 4-char literal = memcmp,
+//     CASE-SENSITIVE): the row matches iff the drawn ModelData POINTER equals
+//     the offscreen owner (the model the scene-class effect declaring this
+//     OFFSCREENRENDERTARGET is assigned to; the original reads it from the
+//     scene-effect assignment context, map entry +32 -> +48). "self" never
+//     goes through the wildcard matcher, and the wildcard branch never
+//     matches the owner by name - only this pointer compare.
+//   - every other key: sub_1800676F0(name, nameLen, key, keyLen, 1) - the
+//     self-written recursive wildcard matcher (the DLL imports no
+//     PathMatchSpec), applied to the model's BASENAME+EXTENSION ONLY
+//     (ModelData+0x48). The full path is never compared by the original.
+// The port keeps its earlier exact full-path stricmp as an additional branch
+// so pre-wildcard scenes with absolute-path keys do not regress.
+// ---------------------------------------------------------------------------
+
+// [sub_1800676F0] the original's wildcard matcher, ported 1:1. (name,nameLen)
+// and (pat,patLen) are length-delimited (the caller feeds std::string data,
+// which is NUL-terminated at [len] - the original's star-skip relies on that
+// terminator; the port bounds-checks instead, which is equivalent because
+// '\0' can never equal '*'). Semantics:
+//   - pattern empty: match iff name is empty;
+//   - '?': eats exactly one character (any);
+//   - '*': collapses consecutive stars; an all-star remainder matches
+//     anything, otherwise the first following pattern char is scanned
+//     forward in the name (raw or tolower equality) and the tail is matched
+//     recursively - the scan is skipped for a '?'/'\\' first char, the
+//     recursion then tries every position;
+//   - '\\' ESCAPES the next pattern character ('\*' matches a literal
+//     asterisk); a trailing lone backslash fails the match;
+//   - literal characters compare through tolower() on both sides when
+//     ignoreCase is set (the DefaultEffect caller passes 1).
+static bool MmeWildcardMatch(const char* name, size_t nameLen,
+                             const char* pat, size_t patLen, bool ignoreCase)
+{
+    const char* np = name;
+    const char* const nend = name + nameLen;
+    const char* pp = pat;
+    const char* const pend = pat + patLen;
+    if (pp == pend) {
+        return np == nend;
+    }
+    char pc = *pp;
+    while (true) {
+        pc = *pp;
+        if (np == nend) {
+            break;
+        }
+        if (pc == '*') {
+            goto star;
+        }
+        if (pc == '?') {
+            ++pp;
+            ++np;
+        } else {
+            if (pc == '\\' && ++pp == pend) {
+                return false;
+            }
+            if (ignoreCase) {
+                if (tolower(static_cast<unsigned char>(*np)) !=
+                    tolower(static_cast<unsigned char>(*pp))) {
+                    return false;
+                }
+            } else if (*np != *pp) {
+                return false;
+            }
+            ++np;
+            ++pp;
+        }
+        if (pp == pend) {
+            return np == nend;
+        }
+    }
+    if (pc != '*') {
+        return false;
+    }
+star:
+    do {
+        ++pp;
+    } while (pp != pend && *pp == '*');
+    if (pp == pend) {
+        return true;
+    }
+    char first = *pp;
+    if (ignoreCase) {
+        first = static_cast<char>(
+            tolower(static_cast<unsigned char>(first)));
+    }
+    const size_t tailLen = static_cast<size_t>(pend - pp);
+    while (true) {
+        if (first != '?' && first != '\\') {
+            for (; np < nend; ++np) {
+                if (first == *np) {
+                    break;
+                }
+                if (ignoreCase &&
+                    first ==
+                        static_cast<char>(
+                            tolower(static_cast<unsigned char>(*np)))) {
+                    break;
+                }
+            }
+        }
+        if (MmeWildcardMatch(np, static_cast<size_t>(nend - np), pp, tailLen,
+                             ignoreCase)) {
+            return true;
+        }
+        if (np == nend) {
+            return false;
+        }
+        ++np;
+    }
+}
+
+// [sub_18002ACE0 0x18002b890] the "self" target: the owner of the effect
+// that declares this OFFSCREENRENDERTARGET (the scene carrier whose
+// technique is suspended and rendering into the target). The original reads
+// the pointer from its scene-effect assignment context; the port recovers
+// it from the staged rows pointer instead: the whole-object binding whose
+// SAS model contains the 0x2E resource owning the staged vector. A
+// scene-class carrier is required (sceneTechIndex >= 0 - the planner's
+// stepped/resumed records); an OBJECT-class assignment of the same .fx
+// shares the engine-cached SasEffect and must not win. Returns null when
+// no carrier is bound (a "self" row then matches nothing - the original's
+// missing-map-entry path behaves the same).
+static ModelData* MmeOffscreenDefaultEffectOwner(MmeContext* ctx)
+{
+    EffectOwnerManager* manager = g_ownerManager;
+    if (manager == nullptr) {
+        return nullptr;
+    }
+    ModelData* fallback = nullptr;
+    for (std::map<EffectOwnerManager::BindingKey,
+                  MaterialBinding*>::const_iterator it =
+             manager->bindings.begin();
+         it != manager->bindings.end(); ++it) {
+        MaterialBinding* binding = it->second;
+        if (binding == nullptr || binding->sas == nullptr) {
+            continue;
+        }
+        SasEffect* sas = binding->sas;
+        for (size_t r = 0; r < sas->resources.size(); ++r) {
+            if (sas->resources[r].semanticId == 0x2E &&
+                &sas->resources[r].defaultEffectMap ==
+                    ctx->offscreenDefaultEffect) {
+                if (binding->sceneTechIndex >= 0) {
+                    return it->first.model;
+                }
+                if (fallback == nullptr) {
+                    fallback = it->first.model;
+                }
+            }
+        }
+    }
+    return fallback;
+}
+
+// The value of the first staged row whose key matches the model (null when
+// no rows are staged or none match).
+static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
+{
+    MmeContext* ctx = g_context;
+    if (model == nullptr || ctx == nullptr ||
+        ctx->offscreenDefaultEffect == nullptr) {
+        return nullptr;
+    }
+    const char* filename = model->filename();
+    const std::string& name = model->name();   // basename+extension
+    const std::vector<std::pair<std::string, std::string>>& rows =
+        *ctx->offscreenDefaultEffect;
+    ModelData* owner = nullptr;          // lazily resolved on the first
+    bool ownerResolved = false;          // "self" row
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const std::string& key = rows[i].first;
+        if (key.empty()) {
+            continue;
+        }
+        // [sub_18002ACE0 0x18002b880] "self": exact case-sensitive keyword,
+        // then a POINTER comparison against the offscreen owner.
+        if (key == "self") {
+            if (!ownerResolved) {
+                owner = MmeOffscreenDefaultEffectOwner(ctx);
+                ownerResolved = true;
+            }
+            if (model == owner) {
+                return &rows[i].second;
+            }
+            continue;
+        }
+        // [sub_18002ACE0 0x18002b899-0x18002b8c5] wildcard row: glob against
+        // the basename+extension, case-insensitive ("sky*box*.*",
+        // "GroundFog*.*", "*.pmx" ...). An exact key is the degenerate
+        // pattern, so precise rows (e.g. "DirectionalLight.pmx") keep
+        // matching exactly like the previous stricmp port.
+        if (MmeWildcardMatch(name.c_str(), name.size(), key.c_str(),
+                             key.size(), true)) {
+            return &rows[i].second;
+        }
+        // Kept from the pre-wildcard port: an exact FULL-PATH row still
+        // matches. (Divergence kept deliberately: the original's matcher
+        // would not match an absolute-path key - the '\' of a path is a
+        // glob escape and only the basename is compared.)
+        if (filename != nullptr && _stricmp(key.c_str(), filename) == 0) {
+            return &rows[i].second;
+        }
+    }
+    return nullptr;
+}
+
+MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model)
+{
+    const std::string* value = MmeOffscreenDefaultEffectRow(model);
+    if (value == nullptr) {
+        return nullptr;
+    }
+    if (*value == "none" || *value == "hide") {
+        // "none": no effect, the host pipeline draws (the null-binding path
+        // - the original's EMPTY owner-keyed binding whose wrapper call
+        // forwards through the model+8 raw-draw callback).
+        // "hide": the draw must be suppressed entirely - the original
+        // inserts a NULL owner-keyed entry, so the lookup misses and no
+        // replay happens. The port exposes the decision through
+        // MmeOffscreenDefaultEffectHides; the draw gate lives in
+        // MmeHandleDrawIndexedPrimitive (right after the snapshot update).
+        return nullptr;
+    }
+    std::string path;
+    if (*value == "main_default") {
+        path = MmeEmmDefaultEffect();
+        if (path.empty()) {
+            return nullptr;
+        }
+    } else {
+        path = *value;   // the parse-time absolute path of the referenced .fx
+    }
+    MmeContext* ctx = g_context;
+    if (ctx == nullptr) {
+        return nullptr;
+    }
+    // One transient binding per model; reused while the staged row's path is
+    // unchanged (the resume walk destroys them via
+    // MmeClearOffscreenDefaultBindings).
+    std::map<ModelData*, MaterialBinding*>::iterator cached =
+        ctx->offscreenDefaultBindings.find(model);
+    if (cached != ctx->offscreenDefaultBindings.end() &&
+        cached->second != nullptr &&
+        cached->second->effectPath == path) {
+        return cached->second;
+    }
+    IDirect3DDevice9* device = ctx->device;
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, path);
+    if (loaded == nullptr || loaded->effect == nullptr) {
+        return nullptr;
+    }
+    MaterialBinding* binding = new MaterialBinding();
+    binding->effect = loaded->effect;
+    binding->effectPath = path;
+    binding->sas = loaded->sas;
+    // [原版 0x1D8 对象 +0x08/+0x10] 瞬态绑定同样持有缓存条目的 shared
+    // 引用：MmeClearOffscreenDefaultBindings / 行路径变化时的 delete 在
+    // 释放最后一个引用时触发 ~LoadedEffect（FUN_18000B210 语义）。
+    binding->owner = loaded;
+    binding->sceneTechIndex = -1;   // never a scene record driver
+    // [sub_18001DD20] the owner-keyed entries the original expands from the
+    // staged rows carry the same per-MmdPass selection table; the per-draw
+    // apply indexes it (FUN_18001b940). No name-based fallback.
+    MmeBuildDrawTechniqueTable(binding, loaded->sas, model);
+    if (cached != ctx->offscreenDefaultBindings.end()) {
+        delete cached->second;
+        cached->second = binding;
+    } else {
+        ctx->offscreenDefaultBindings[model] = binding;
+    }
+    return binding;
+}
+
+bool MmeOffscreenDefaultEffectHides(ModelData* model)
+{
+    const std::string* value = MmeOffscreenDefaultEffectRow(model);
+    return value != nullptr && *value == "hide";
+}
+
+void MmeClearOffscreenDefaultBindings()
+{
+    MmeContext* ctx = g_context;
+    if (ctx == nullptr) {
+        return;
+    }
+    ctx->offscreenDefaultEffect = nullptr;
+    for (std::map<ModelData*, MaterialBinding*>::iterator it =
+             ctx->offscreenDefaultBindings.begin();
+         it != ctx->offscreenDefaultBindings.end(); ++it) {
+        delete it->second;
+    }
+    ctx->offscreenDefaultBindings.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -421,10 +1180,13 @@ void MmeBindMaterialParameter(ModelData* model, ID3DXEffect* effect, int semanti
     case 0x1C: {
         // ToonColor [big-C 53-79]. Effect path: snapshot+0x1a8 when the model
         // is a PMD/PMX model (kind 1) in the draw-type-2 pass; otherwise the
-        // all-1.0 fallback (DAT_1800b5b28). Fixed-function path: the original
-        // derives the color from the stage-0 texture (FUN_180056c30); Phase 2
-        // approximates that fallback with the same all-1.0 vector
-        // (PHASE2_IMPLEMENTATION_NOTES.md, UNCERTAIN).
+        // all-1.0 fallback (DAT_1800b5b28). Fixed-function path
+        // [0x18005f069-0x18005f0ae]: only for a kind-1 model in the
+        // draw-type-1 pass - GetTexture(0) (device slot 0x200) feeds
+        // FUN_180056c30 (ported as MmeComputeFixedFunctionToonColor), which
+        // memoizes per texture pointer and derives the color from the
+        // bottom-left pixel of the level-0 surface; everything else falls
+        // back to the all-1.0 vector.
         if (snap.effect_file_used != 0) {
             if (model->kind() == 1 && snap.draw_type == 2) {
                 value[0] = snap.toon_color.r;
@@ -433,6 +1195,18 @@ void MmeBindMaterialParameter(ModelData* model, ID3DXEffect* effect, int semanti
                 value[3] = snap.toon_color.a;
             } else {
                 value[0] = value[1] = value[2] = value[3] = 1.0f;
+            }
+        } else if (model->kind() == 1 && snap.draw_type == 1) {
+            // [0x18005f069-0x18005f0ae] 无宿主 .fx 的固定函数分支：stage-0
+            // 纹理交给 FUN_180056c30 的移植取色后 Release。
+            IDirect3DDevice9* device = model->device();
+            IDirect3DBaseTexture9* texture = nullptr;
+            if (device != nullptr) {
+                device->GetTexture(0, &texture);
+            }
+            MmeComputeFixedFunctionToonColor(value, texture);
+            if (texture != nullptr) {
+                texture->Release();               // [0x18005f0a6]
             }
         } else {
             value[0] = value[1] = value[2] = value[3] = 1.0f;
@@ -460,28 +1234,50 @@ void MmeBindMaterialParameter(ModelData* model, ID3DXEffect* effect, int semanti
         break;
     }
     case 0x4E: {
-        // GroundShadowColor [big-C 100-141]. Only during the shadow pass
-        // (raw draw type 3); material x light composition (kind==1 scales the
-        // alpha by DAT_1800b68b8 = 0.65f).
+        // GroundShadowColor [big-C 100-141; 0x18005eff0 case 78]. Only during
+        // the shadow pass (raw draw type 3). The rgb base is the Ambient
+        // slice of the CURRENT device material (GetMaterial - draw type 3
+        // routes through that branch here), multiplied by light0's Ambient
+        // rgb (GetLight(0), D3DLIGHT9 +0x24). kind==1 alpha = the fixed-
+        // function vertex diffuse alpha (FUN_18005ee60, snapshot+0x08 /
+        // snapshot+0x14) scaled 1/255 then by DAT_1800b68b8 (= 0.65f);
+        // kind==0 alpha = the material Diffuse.a - the light alpha never
+        // enters the composition.
         if (snap.draw_type != 3) {
             return;
         }
-        float materialValue[4];
+        float ambientValue[4];
+        float diffuseValue[4];
         float power = 0.0f;
-        MmeComposeMaterialColor(model, snap, 0x18, materialValue, &power);
-        D3DLIGHT9& light = g_cachedLight;   // DAT_1800d9890
-        value[0] = materialValue[0] * light.Diffuse.r;
-        value[1] = materialValue[1] * light.Diffuse.g;
-        value[2] = materialValue[2] * light.Diffuse.b;
-        value[3] = materialValue[3] *
-                   ((model->kind() == 1) ? 0.65f : light.Diffuse.a);
+        MmeComposeMaterialColor(model, snap, 0x19, ambientValue, &power);
+        MmeComposeMaterialColor(model, snap, 0x18, diffuseValue, &power);
+        if (model->kind() == 1) {
+            IDirect3DDevice9* device = model->device();
+            unsigned int color = MmeReadVertexDiffuseColor(
+                device, snap.base_vertex_index, static_cast<int>(snap.start_index));
+            value[3] = static_cast<float>((color >> 24) & 0xff) * 0.0039215689f;
+            value[3] *= 0.64999998f;                        // [0x1800b68b8]
+        } else {
+            value[3] = diffuseValue[3];                     // material Diffuse.a
+        }
+        D3DLIGHT9 light;
+        memset(&light, 0, sizeof(light));
+        IDirect3DDevice9* device = model->device();
+        if (device == nullptr || FAILED(device->GetLight(0, &light))) {
+            light = g_cachedLight;                          // DAT_1800d9890
+        }
+        value[0] = ambientValue[0] * light.Ambient.r;
+        value[1] = ambientValue[1] * light.Ambient.g;
+        value[2] = ambientValue[2] * light.Ambient.b;
         break;
     }
     case 0x18:
     case 0x19:
     case 0x1A:
     case 0x1B: {
-        // Diffuse / Ambient / Specular / Emissive (Geometry) [big-C 142-218].
+        // Diffuse / Ambient / Emissive / Specular (Geometry) [big-C 142-218;
+        // 0x1A is the Emissive id, 0x1B the Specular id - see the slice
+        // switch in MmeComposeMaterialColor].
         float power = 0.0f;
         MmeComposeMaterialColor(model, snap, semantic, value, &power);
         break;
@@ -574,6 +1370,168 @@ void MmeBindBooleanParameter(ModelData* model, ID3DXEffect* effect, int semantic
 // The Phase 2 standard apply
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// [0x1800B2FA0..0x1800B36A0] the original's SEMANTIC table, in table order.
+// A parameter whose desc.Semantic appears here is claimed by the semantic
+// family during the parameter enumeration (the semantic-table walk at
+// 0x18000e492 runs FIRST and never falls through to the name table on a
+// hit), so the name resolver below must skip it.
+const char* const kSemanticNames[] = {
+    "World", "WorldInverse", "WorldTranspose", "WorldInverseTranspose",
+    "View", "ViewInverse", "ViewTranspose", "ViewInverseTranspose",
+    "Projection", "ProjectionInverse", "ProjectionTranspose",
+    "ProjectionInverseTranspose",
+    "WorldView", "WorldViewInverse", "WorldViewTranspose",
+    "WorldViewInverseTranspose",
+    "ViewProjection", "ViewProjectionInverse", "ViewProjectionTranspose",
+    "ViewProjectionInverseTranspose",
+    "WorldViewProjection", "WorldViewProjectionInverse",
+    "WorldViewProjectionTranspose", "WorldViewProjectionInverseTranspose",
+    "Diffuse", "Ambient", "Emissive", "Specular",
+    "Position", "Direction",
+    "ToonColor", "EdgeColor", "SpecularPower",
+    "ViewportPixelSize",
+    "ElapsedTime", "Time", "Time2", "ElapsedTime2",
+    "RenderColorTarget", "RenderDepthStencilTarget",
+    "ControlObject",
+    "MaterialTexture", "MaterialSphereMap", "MaterialToonTexture",
+    "MousePosition", "LeftMouseDown", "MiddleMouseDown", "RightMouseDown",
+    "AnimatedTexture", "OffScreenRenderTarget",
+    "TextureValue",
+    "AddingTexture", "MultiplyingTexture", "AddingSphereTexture",
+    "MultiplyingSphereTexture",
+    "GroundShadowColor",
+};
+
+// [0x1800B36A0..0x1800B39A0] the original's parameter-NAME table, in table
+// order (stride 0x20: {id, name, class, type, rows*columns}). Verified
+// against the per-id dispatchers: sub_18001B340 cases 52/53/54 (matWorld/
+// matLightViewProj/matRotate - 0x34/0x35/0x36, case 53 re-dispatches id 20's
+// light product), cases 60/62/69 (parthf/transp/opadd -> the boolean
+// provider 0x18005fb40), cases 67/68 (VertexCount/SubsetCount -> the int
+// provider); sub_18001B5B0 cases 57-59 (EgColor/SpcColor/DifColor ->
+// 0x39/0x3A/0x3B, the snapshot-vector provider) and cases 70-77
+// (TexCAdd..SphCMul 0x46-0x49, same provider). Place (0x38) and LightDir
+// (0x37) appear in NO setter dispatch. matWorldViewProj shares id 0x14 with
+// the WORLDVIEWPROJECTION semantic; ToonColor shares id 0x1C (the material
+// binder). "DifColor" at 0x1800b2aa0 has a SINGLE f (verified via
+// get_string; the table-B entry id 0x3B points exactly there).
+struct NameParamEntry {
+    const char*        name;
+    int                id;
+    D3DXPARAMETER_CLASS cls;
+    D3DXPARAMETER_TYPE type;
+    unsigned int       count;   // rows * columns
+};
+
+const NameParamEntry kNameParams[] = {
+    { "matWorld",         0x34, D3DXPC_MATRIX_ROWS, D3DXPT_FLOAT, 16 },
+    { "matWorldViewProj", 0x14, D3DXPC_MATRIX_ROWS, D3DXPT_FLOAT, 16 },
+    { "matLightViewProj", 0x35, D3DXPC_MATRIX_ROWS, D3DXPT_FLOAT, 16 },
+    { "matRotate",        0x36, D3DXPC_MATRIX_ROWS, D3DXPT_FLOAT, 16 },
+    { "EgColor",          0x39, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "ToonColor",        0x1C, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "LightDir",         0x37, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "SpcColor",         0x3A, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "Place",            0x38, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "DifColor",         0x3B, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "parthf",           0x3C, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "spadd",            0x3D, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "transp",           0x3E, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "use_texture",      0x3F, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "use_spheremap",    0x40, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "use_subtexture",   0x41, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "use_toon",         0x42, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "VertexCount",      0x43, D3DXPC_SCALAR,      D3DXPT_INT,   1 },
+    { "SubsetCount",      0x44, D3DXPC_SCALAR,      D3DXPT_INT,   1 },
+    { "opadd",            0x45, D3DXPC_SCALAR,      D3DXPT_BOOL,  1 },
+    { "TexCAdd",          0x46, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "TexCMul",          0x47, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "SphCAdd",          0x48, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+    { "SphCMul",          0x49, D3DXPC_VECTOR,      D3DXPT_FLOAT, 4 },
+};
+
+// [0x18000e45e-0x18000e878] the original resolves the name-table parameters
+// while ENUMERATING the effect's top-level parameters: GetParameter(NULL, i)
+// -> GetParameterDesc, skip the parameters a recognized semantic claims,
+// then match desc.Name against the name table with _stricmp (case variants
+// like `Matworld`/`MATWORLD` bind exactly like `matWorld`) and register the
+// ENUMERATED handle under the table id - never GetParameterByName (the D3DX
+// name lookup is case-sensitive and would miss the variants). The shape gate
+// (0x18000e8a2-0x18000e8e9): desc.Class with MATRIX_COLUMNS normalized to
+// MATRIX_ROWS must equal the table class, desc.Type the table type,
+// rows*columns the table count, and matrices must have rows == 4 / vectors
+// rows == 1. A mismatch skips the binding silently except the four use_*
+// flags, which report "Error: type of parameter '<name>' is invalid."
+// (0x18000e901-0x18000e955; prefix 0x1800b3e20). Note the name-table path
+// has NO desc.Elements gate (that gate only exists on the semantic path).
+void MmeResolveNameTableHandles(MaterialBinding* binding)
+{
+    binding->namesResolved = true;
+    ID3DXEffect* effect = binding->effect;
+    if (effect == nullptr) {
+        return;
+    }
+    D3DXEFFECT_DESC effectDesc;
+    memset(&effectDesc, 0, sizeof(effectDesc));
+    if (FAILED(effect->GetDesc(&effectDesc))) {
+        return;
+    }
+    for (UINT i = 0; i < effectDesc.Parameters; ++i) {
+        D3DXHANDLE h = effect->GetParameter(nullptr, i);
+        D3DXPARAMETER_DESC pd;
+        memset(&pd, 0, sizeof(pd));
+        if (h == nullptr || FAILED(effect->GetParameterDesc(h, &pd)) ||
+            pd.Name == nullptr) {
+            continue;
+        }
+        // A recognized semantic claims the parameter for the semantic family.
+        if (pd.Semantic != nullptr) {
+            bool claimed = false;
+            for (size_t s = 0; s < sizeof(kSemanticNames) / sizeof(kSemanticNames[0]); ++s) {
+                if (_stricmp(pd.Semantic, kSemanticNames[s]) == 0) {
+                    claimed = true;
+                    break;
+                }
+            }
+            if (claimed) {
+                continue;
+            }
+        }
+        const NameParamEntry* entry = nullptr;
+        for (size_t n = 0; n < sizeof(kNameParams) / sizeof(kNameParams[0]); ++n) {
+            if (_stricmp(pd.Name, kNameParams[n].name) == 0) {
+                entry = &kNameParams[n];
+                break;
+            }
+        }
+        if (entry == nullptr) {
+            continue;
+        }
+        int cls = pd.Class;
+        if (cls == D3DXPC_MATRIX_COLUMNS) {
+            cls = D3DXPC_MATRIX_ROWS;   // [0x18000e8a2] the 3 -> 2 normalize
+        }
+        const bool mismatch =
+            cls != static_cast<int>(entry->cls) ||
+            pd.Type != entry->type ||
+            pd.Rows * pd.Columns != static_cast<INT>(entry->count) ||
+            (cls == D3DXPC_MATRIX_ROWS && pd.Rows != 4) ||
+            (cls == D3DXPC_VECTOR && pd.Rows != 1);
+        if (mismatch) {
+            if (entry->id >= 0x3F && entry->id <= 0x42) {
+                MmeLogWrite((std::string("Error: type of parameter '") +
+                             pd.Name + "' is invalid.\n").c_str(), 0);
+            }
+            continue;
+        }
+        binding->namedHandles[entry->name] = h;
+    }
+}
+
+}  // namespace
+
 void MmeBindStandardParameters(ModelData* model, MaterialBinding* binding,
                                const RenderSnapshot& snap)
 {
@@ -584,163 +1542,591 @@ void MmeBindStandardParameters(ModelData* model, MaterialBinding* binding,
 
     // Handles must belong to the target effect: the g_paramHandles cache was
     // resolved from the host effect at Initialize and is meaningless for a
-    // model effect. Resolve lazily once per binding and cache by name.
-    if (binding->namedHandles.empty()) {
-        static const char* const kNames[] = {
-            "matWorld", "matWorldViewProj", "matLightViewProj", "matRotate",
-            "EgColor", "ToonColor", "LightDir", "SpcColor", "Place",
-            "DifColor", "parthf", "spadd", "transp",
-            "TexCAdd", "TexCMul", "SphCAdd", "SphCMul",
-        };
-        for (int i = 0; i < kParamCount; ++i) {
-            binding->namedHandles[kNames[i]] =
-                effect->GetParameterByName(nullptr, kNames[i]);
-        }
+    // model effect. The port resolves the whole 24-entry name table once per
+    // binding with the original's enumeration + _stricmp mechanism (see
+    // MmeResolveNameTableHandles).
+    if (!binding->namesResolved) {
+        MmeResolveNameTableHandles(binding);
     }
-    auto H = [&](int index) -> D3DXHANDLE {
-        return binding->namedHandles[g_paramNames[index]];
+    auto H = [&](const char* name) -> D3DXHANDLE {
+        std::map<std::string, D3DXHANDLE>::const_iterator it =
+            binding->namedHandles.find(name);
+        return it != binding->namedHandles.end() ? it->second : nullptr;
     };
 
     // --- the 17 cached standard parameters (DAT_1800d9b30..DAT_1800d9bb0) ---
-    // Matrices from the snapshot fields (+0x98/+0x118/+0x158/+0xd8).
-    effect->SetMatrix(H(kParamMatWorld),
+    // Matrices from the snapshot fields (+0x98/+0x118/+0x158/+0xd8); ids
+    // 0x34/0x14/0x35/0x36 (sub_18001B340 cases 52/53/54 - case 53
+    // re-dispatches matLightViewProj as id 20's light WORLDVIEWPROJECTION).
+    effect->SetMatrix(H("matWorld"),
                       reinterpret_cast<const D3DXMATRIX*>(&snap.effect_world));
-    effect->SetMatrix(H(kParamMatWorldViewProj),
+    effect->SetMatrix(H("matWorldViewProj"),
                       reinterpret_cast<const D3DXMATRIX*>(&snap.world_view_projection));
-    effect->SetMatrix(H(kParamMatLightViewProj),
+    effect->SetMatrix(H("matLightViewProj"),
                       reinterpret_cast<const D3DXMATRIX*>(&snap.light_view_projection));
-    effect->SetMatrix(H(kParamMatRotate),
+    effect->SetMatrix(H("matRotate"),
                       reinterpret_cast<const D3DXMATRIX*>(&snap.rotation));
 
     // Colors from the snapshot (+0x198..+0x217) except LightDir, which comes
-    // from the GetLight(0) cache (DAT_1800d9890).
-    effect->SetVector(H(kParamEgColor),
-                      reinterpret_cast<const D3DXVECTOR4*>(&snap.edge_color));
-    effect->SetVector(H(kParamToonColor),
-                      reinterpret_cast<const D3DXVECTOR4*>(&snap.toon_color));
+    // from the GetLight(0) cache (DAT_1800d9890). Ids 0x39/0x3A/0x3B and
+    // 0x46-0x49 (the sub_18001B5B0 cases 57-59/70-77 snapshot-vector
+    // provider). ToonColor is id 0x1C - the MATERIAL binder
+    // (sub_18001B5B0 case 24 -> MmeBindMaterialParameter), not a plain
+    // snapshot vector. Place (id 0x38) is resolved by the table but consumed
+    // by no setter dispatch in the original - never set.
+    // [sub_18005F830] EgColor/SpcColor/DifColor: with effect_file_used
+    // (+0x55) the snapshot vectors win (+0x198/+0x1B8/+0x1C8); otherwise the
+    // original synthesizes from LIVE GetMaterial + GetLight(0) device state:
+    // DifColor = lightDiffuse*matDiffuse (a=1), SpcColor =
+    // lightSpecular*matSpecular (a = mat.Power==0 ? 0.1f : mat.Power),
+    // EgColor = lightAmbient*(kind==1 ? matDiffuse : matAmbient) +
+    // matEmissive (a = mat.Diffuse.a).
+    if (snap.effect_file_used != 0) {
+        effect->SetVector(H("EgColor"),
+                          reinterpret_cast<const D3DXVECTOR4*>(&snap.edge_color));
+        effect->SetVector(H("SpcColor"),
+                          reinterpret_cast<const D3DXVECTOR4*>(&snap.specular_color));
+        effect->SetVector(H("DifColor"),
+                          reinterpret_cast<const D3DXVECTOR4*>(&snap.diffuse_color));
+    } else {
+        IDirect3DDevice9* bindDevice = nullptr;
+        if (SUCCEEDED(effect->GetDevice(&bindDevice)) && bindDevice != nullptr) {
+            D3DMATERIAL9 mat;
+            D3DLIGHT9 light;
+            memset(&mat, 0, sizeof(mat));
+            memset(&light, 0, sizeof(light));
+            bindDevice->GetMaterial(&mat);
+            bindDevice->GetLight(0, &light);
+            float eg[4];
+            float spc[4];
+            float dif[4];
+            if (model->kind() == 1) {
+                eg[0] = light.Ambient.r * mat.Diffuse.r + mat.Emissive.r;
+                eg[1] = light.Ambient.g * mat.Diffuse.g + mat.Emissive.g;
+                eg[2] = light.Ambient.b * mat.Diffuse.b + mat.Emissive.b;
+            } else {
+                eg[0] = mat.Ambient.r * light.Ambient.r + mat.Emissive.r;
+                eg[1] = mat.Ambient.g * light.Ambient.g + mat.Emissive.g;
+                eg[2] = mat.Ambient.b * light.Ambient.b + mat.Emissive.b;
+            }
+            eg[3] = mat.Diffuse.a;
+            spc[0] = light.Specular.r * mat.Specular.r;
+            spc[1] = light.Specular.g * mat.Specular.g;
+            spc[2] = light.Specular.b * mat.Specular.b;
+            spc[3] = (mat.Power == 0.0f) ? 0.1f : mat.Power;  // 0x3DCCCCCD
+            dif[0] = light.Diffuse.r * mat.Diffuse.r;
+            dif[1] = light.Diffuse.g * mat.Diffuse.g;
+            dif[2] = light.Diffuse.b * mat.Diffuse.b;
+            dif[3] = 1.0f;                                    // 0x3F800000
+            effect->SetVector(H("EgColor"),
+                              reinterpret_cast<const D3DXVECTOR4*>(eg));
+            effect->SetVector(H("SpcColor"),
+                              reinterpret_cast<const D3DXVECTOR4*>(spc));
+            effect->SetVector(H("DifColor"),
+                              reinterpret_cast<const D3DXVECTOR4*>(dif));
+            bindDevice->Release();
+        }
+    }
+    MmeBindMaterialParameter(model, effect, 0x1C, H("ToonColor"), 4);
     {
         float lightDir[4];
         lightDir[0] = g_cachedLight.Direction.x;
         lightDir[1] = g_cachedLight.Direction.y;
         lightDir[2] = g_cachedLight.Direction.z;
         lightDir[3] = 0.0f;
-        effect->SetVector(H(kParamLightDir),
+        effect->SetVector(H("LightDir"),
                           reinterpret_cast<const D3DXVECTOR4*>(lightDir));
     }
-    effect->SetVector(H(kParamSpcColor),
-                      reinterpret_cast<const D3DXVECTOR4*>(&snap.specular_color));
-    effect->SetVector(H(kParamDifColor),
-                      reinterpret_cast<const D3DXVECTOR4*>(&snap.diffuse_color));
-    effect->SetVector(H(kParamTexCAdd),
+    effect->SetVector(H("TexCAdd"),
                       reinterpret_cast<const D3DXVECTOR4*>(&snap.texture_add));
-    effect->SetVector(H(kParamTexCMul),
+    effect->SetVector(H("TexCMul"),
                       reinterpret_cast<const D3DXVECTOR4*>(&snap.texture_multiply));
-    effect->SetVector(H(kParamSphCAdd),
+    effect->SetVector(H("SphCAdd"),
                       reinterpret_cast<const D3DXVECTOR4*>(&snap.sphere_add));
-    effect->SetVector(H(kParamSphCMul),
+    effect->SetVector(H("SphCMul"),
                       reinterpret_cast<const D3DXVECTOR4*>(&snap.sphere_multiply));
 
-    // Booleans through the cached handles (semantics 0x3C/0x3D/0x3E).
-    MmeBindBooleanParameter(model, effect, 0x3C, H(kParamParthf));
-    MmeBindBooleanParameter(model, effect, 0x3D, H(kParamSpadd));
-    MmeBindBooleanParameter(model, effect, 0x3E, H(kParamTransp));
+    // Booleans through the name-table handles (ids 0x3C-0x42 and 0x45; the
+    // sub_18001B340 cases 60/62/69 + sub_18001B5B0 cases 61/63-66 boolean
+    // provider 0x18005fb40). MmeBindBooleanParameter no-ops a null handle.
+    MmeBindBooleanParameter(model, effect, 0x3C, H("parthf"));
+    MmeBindBooleanParameter(model, effect, 0x3D, H("spadd"));
+    MmeBindBooleanParameter(model, effect, 0x3E, H("transp"));
+    MmeBindBooleanParameter(model, effect, 0x3F, H("use_texture"));
+    MmeBindBooleanParameter(model, effect, 0x40, H("use_spheremap"));
+    MmeBindBooleanParameter(model, effect, 0x41, H("use_subtexture"));
+    MmeBindBooleanParameter(model, effect, 0x42, H("use_toon"));
+    MmeBindBooleanParameter(model, effect, 0x45, H("opadd"));
 
-    // --- name-resolved extras (the SAS scan resolves these per effect in the
-    // original; Phase 2 resolves per apply through GetParameterByName) ---
-    D3DXHANDLE handle = effect->GetParameterByName(nullptr, "use_texture");
-    if (handle != nullptr) {
-        MmeBindBooleanParameter(model, effect, 0x3F, handle);
-    }
-    handle = effect->GetParameterByName(nullptr, "use_spheremap");
-    if (handle != nullptr) {
-        MmeBindBooleanParameter(model, effect, 0x40, handle);
-    }
-    handle = effect->GetParameterByName(nullptr, "use_subtexture");
-    if (handle != nullptr) {
-        MmeBindBooleanParameter(model, effect, 0x41, handle);
-    }
-    handle = effect->GetParameterByName(nullptr, "use_toon");
-    if (handle != nullptr) {
-        MmeBindBooleanParameter(model, effect, 0x42, handle);
-    }
-    handle = effect->GetParameterByName(nullptr, "opadd");
-    if (handle != nullptr) {
-        MmeBindBooleanParameter(model, effect, 0x45, handle);
-    }
-    handle = effect->GetParameterByName(nullptr, "_INDEX");
-    if (handle != nullptr) {
-        effect->SetInt(handle, snap.subset_index);
-    }
-    handle = effect->GetParameterByName(nullptr, "VertexCount");
+    // [sub_18001B340 cases 67/68 - ids 0x43/0x44] the int provider.
+    D3DXHANDLE handle = H("VertexCount");
     if (handle != nullptr) {
         effect->SetInt(handle, model->cachedPerVertexValue() >= 0
                                    ? model->cachedPerVertexValue() : 0);
     }
-    handle = effect->GetParameterByName(nullptr, "SubsetCount");
+    handle = H("SubsetCount");
     if (handle != nullptr) {
         effect->SetInt(handle, model->materialCount());
     }
 
-    // Material-color semantics for effects that expose the evidenced standard
-    // parameter names (the SAS semantic table maps DIFFUSE/EDGECOLOR/TOONCOLOR
-    // to these in the original; exact-name UNCERTAIN, see notes).
-    struct NamedSemantic {
-        const char* name;
-        int semantic;
-    };
-    static const NamedSemantic kNamedSemantics[] = {
-        { "DifColor",   0x18 },
-        { "EgColor",    0x1D },
-        { "ToonColor",  0x1C },
-    };
-    for (int i = 0; i < 3; ++i) {
-        D3DXHANDLE semanticHandle =
-            effect->GetParameterByName(nullptr, kNamedSemantics[i].name);
-        if (semanticHandle != nullptr) {
-            MmeBindMaterialParameter(model, effect, kNamedSemantics[i].semantic,
-                                     semanticHandle, 4);
-        }
-    }
+    // --- MATERIALTEXTURE / MATERIALSPHEREMAP / MATERIALTOONTEXTURE are bound
+    // BY SEMANTIC in MmeBindSemanticParameters [sub_18005F7C0, dispatched per
+    // effect Begin through sub_18001B5B0 cases 41-43 at 0x18001b662]: the
+    // snapshot slots (+0x38/+0x48/+0x40) were staged from the MMHack getters
+    // GetTexture/GetSphereMapTexture/GetToonTexture [sub_180059C60
+    // 0x180059c99-0x180059cbe]. The original's parameter-name table
+    // (0x1800B36A0, matWorld..SphCMul) has NO "ObjectTexture"-style entry, so
+    // there is no name-based fallback to keep here. ---
 
-    // --- texture parameters (MATERIALTEXTURE / MATERIALSPHEREMAP /
-    // MATERIALTOONTEXTURE) through the MMHack state queries (the snapshot
-    // fields were captured from GetTexture/GetSphereMapTexture/
-    // GetToonTexture) ---
-    if (snap.base_texture != nullptr) {
-        handle = effect->GetParameterByName(nullptr, "ObjectTexture");
-        if (handle != nullptr) {
-            effect->SetTexture(handle, snap.base_texture);
+    MmeBindSemanticParameters(model, binding, snap);
+}
+
+// ---------------------------------------------------------------------------
+// The SAS semantic binding layer. ray-mmd style effects declare the standard
+// parameters by SEMANTIC (float4x4 matWorldViewProject : WORLDVIEWPROJECTION,
+// float3 CameraPosition : POSITION<Object=Camera>, ...), never by the MME
+// legacy names - the original resolves both through its semantic/name tables
+// (0x1800B2FA0/0x1800B36A0). Handles resolve once per binding via
+// GetParameterBySemantic; the values come from the snapshot, the BeginScene
+// transform caches (g_worldViewMatrix/g_projMatrix/...) and the light cache.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The "Object" annotation of a semantic parameter ("Camera" / "Light" /
+// "Geometry" / absent).
+std::string SemanticObjectAnnotation(ID3DXEffect* effect, D3DXHANDLE param)
+{
+    D3DXHANDLE ann = effect->GetAnnotationByName(param, "Object");
+    if (ann == nullptr) {
+        return std::string();
+    }
+    LPCSTR s = nullptr;
+    if (effect->GetString(ann, &s) == S_OK && s != nullptr) {
+        return std::string(s);
+    }
+    return std::string();
+}
+
+D3DXMATRIX InverseOf(const D3DMATRIX& m)
+{
+    D3DXMATRIX out;
+    D3DXMatrixInverse(&out, nullptr, reinterpret_cast<const D3DXMATRIX*>(&m));
+    return out;
+}
+
+// [0x18000e481-0x18000e4a8 / 0x18000e811-0x18000e835] the original walks
+// BOTH lookup tables (semantic 0x1800B2FA0, parameter name 0x1800B36A0)
+// with _stricmp - the matching is case-insensitive end to end, so a
+// lowercase "worldviewprojection" binds like WORLDVIEWPROJECTION.
+bool SemanticEquals(const std::string& sem, const char* name)
+{
+    return _stricmp(sem.c_str(), name) == 0;
+}
+
+// ---------------------------------------------------------------------------
+// [零分配热路径] The per-semantic dispatch classification, resolved ONCE per
+// binding (the resolve pass of MmeBindSemanticParameters) and consumed by the
+// per-pass switch. The kind/base/flags/light encoding mirrors the original's
+// string dispatch order exactly: suffix decode (INVERSETRANSPOSE → TRANSPOSE
+// → INVERSE) → matrix family → POSITION/DIRECTION → the Light-family color
+// composition → material ids → times → texture slots → mouse → modulation →
+// viewport/mouse-position.
+// ---------------------------------------------------------------------------
+enum {
+    kSemNone = 0,
+    kSemMatrix,             // base 0..5 = WORLD/VIEW/PROJECTION/WORLDVIEW/
+                            // VIEWPROJECTION/WORLDVIEWPROJECTION; flags
+                            // bit0=INVERSE bit1=TRANSPOSE
+    kSemPositionDirection,  // base 0=POSITION 1=DIRECTION; light selects family
+    kSemLightColor,         // base 0=DIFFUSE 1=AMBIENT 2=SPECULAR (light only)
+    kSemMaterialId,         // base = the 0x18..0x1E/0x4E material id
+    kSemTime,               // base 0=TIME 1=ELAPSEDTIME 2=TIME2 3=ELAPSEDTIME2
+    kSemTextureSlot,        // base 0=MaterialTexture 1=SphereMap 2=ToonTexture
+    kSemMouseDown,          // base 0=Left 1=Right 2=Middle (g_mouseClick* order)
+    kSemTextureModulation,  // flags bit0=mul bit1=sphere
+    kSemViewportPixelSize,
+    kSemMousePosition
+};
+
+void ClassifySemantic(ID3DXEffect* effect, D3DXHANDLE h,
+                      const D3DXPARAMETER_DESC& pd,
+                      MaterialBinding::SemanticBind* sb)
+{
+    sb->kind = kSemNone;
+    sb->base = 0;
+    sb->flags = 0;
+    sb->light = 0;
+    const char* sem = pd.Semantic != nullptr ? pd.Semantic : "";
+    // [0x18000f3a0] the annotation is matched case-insensitively against
+    // "camera"/"light"/"light0"/"geometry"; "light" and "light0" both select
+    // the light family.
+    const std::string objectAnn = SemanticObjectAnnotation(effect, h);
+    if (_stricmp(objectAnn.c_str(), "Light") == 0 ||
+        _stricmp(objectAnn.c_str(), "Light0") == 0) {
+        sb->light = 1;
+    }
+    bool inverse = false, transpose = false;
+    std::string base = sem;
+    if (base.size() >= 15 &&
+        _stricmp(base.c_str() + base.size() - 15, "INVERSETRANSPOSE") == 0) {
+        inverse = transpose = true;
+        base.erase(base.size() - 15);
+    } else if (base.size() >= 9 &&
+               _stricmp(base.c_str() + base.size() - 9, "TRANSPOSE") == 0) {
+        transpose = true;
+        base.erase(base.size() - 9);
+    } else if (base.size() >= 7 &&
+               _stricmp(base.c_str() + base.size() - 7, "INVERSE") == 0) {
+        inverse = true;
+        base.erase(base.size() - 7);
+    }
+    sb->flags = static_cast<unsigned char>((inverse ? 1 : 0) | (transpose ? 2 : 0));
+    struct MatrixBase { const char* name; unsigned char base; };
+    static const MatrixBase kMatrices[] = {
+        {"WORLD", 0}, {"VIEW", 1}, {"PROJECTION", 2},
+        {"WORLDVIEW", 3}, {"VIEWPROJECTION", 4}, {"WORLDVIEWPROJECTION", 5},
+    };
+    for (size_t i = 0; i < sizeof(kMatrices) / sizeof(kMatrices[0]); ++i) {
+        if (_stricmp(base.c_str(), kMatrices[i].name) == 0) {
+            sb->kind = kSemMatrix;
+            sb->base = kMatrices[i].base;
+            return;
         }
     }
-    if (snap.sphere_texture != nullptr) {
-        handle = effect->GetParameterByName(nullptr, "ObjectSphereMap");
-        if (handle != nullptr) {
-            effect->SetTexture(handle, snap.sphere_texture);
+    if (_stricmp(sem, "POSITION") == 0 || _stricmp(sem, "DIRECTION") == 0) {
+        sb->kind = kSemPositionDirection;
+        sb->base = _stricmp(sem, "POSITION") == 0 ? 0 : 1;
+        return;
+    }
+    if (sb->light != 0 &&
+        (_stricmp(sem, "DIFFUSE") == 0 || _stricmp(sem, "AMBIENT") == 0 ||
+         _stricmp(sem, "SPECULAR") == 0)) {
+        sb->kind = kSemLightColor;
+        sb->base = _stricmp(sem, "DIFFUSE") == 0 ? 0
+                 : (_stricmp(sem, "AMBIENT") == 0 ? 1 : 2);
+        return;
+    }
+    struct MaterialSem { const char* name; unsigned char id; };
+    static const MaterialSem kMaterials[] = {
+        {"DIFFUSE", 0x18}, {"AMBIENT", 0x19}, {"SPECULAR", 0x1B},
+        {"EMISSIVE", 0x1A}, {"TOONCOLOR", 0x1C}, {"EDGECOLOR", 0x1D},
+        {"SPECULARPOWER", 0x1E}, {"GROUNDSHADOWCOLOR", 0x4E},
+    };
+    for (size_t i = 0; i < sizeof(kMaterials) / sizeof(kMaterials[0]); ++i) {
+        if (_stricmp(sem, kMaterials[i].name) == 0) {
+            sb->kind = kSemMaterialId;
+            sb->base = kMaterials[i].id;
+            return;
         }
     }
-    if (snap.toon_texture != nullptr) {
-        handle = effect->GetParameterByName(nullptr, "ObjectToonTexture");
-        if (handle != nullptr) {
-            effect->SetTexture(handle, snap.toon_texture);
+    if (_stricmp(sem, "TIME") == 0)         { sb->kind = kSemTime; sb->base = 0; return; }
+    if (_stricmp(sem, "ELAPSEDTIME") == 0)  { sb->kind = kSemTime; sb->base = 1; return; }
+    if (_stricmp(sem, "Time2") == 0)        { sb->kind = kSemTime; sb->base = 2; return; }
+    if (_stricmp(sem, "ElapsedTime2") == 0) { sb->kind = kSemTime; sb->base = 3; return; }
+    if (_stricmp(sem, "MaterialTexture") == 0)     { sb->kind = kSemTextureSlot; sb->base = 0; return; }
+    if (_stricmp(sem, "MaterialSphereMap") == 0)   { sb->kind = kSemTextureSlot; sb->base = 1; return; }
+    if (_stricmp(sem, "MaterialToonTexture") == 0) { sb->kind = kSemTextureSlot; sb->base = 2; return; }
+    if (_stricmp(sem, "LeftMouseDown") == 0)   { sb->kind = kSemMouseDown; sb->base = 0; return; }
+    if (_stricmp(sem, "RightMouseDown") == 0)  { sb->kind = kSemMouseDown; sb->base = 1; return; }
+    if (_stricmp(sem, "MiddleMouseDown") == 0) { sb->kind = kSemMouseDown; sb->base = 2; return; }
+    if (_stricmp(sem, "AddingTexture") == 0)            { sb->kind = kSemTextureModulation; sb->flags = 0; return; }
+    if (_stricmp(sem, "MultiplyingTexture") == 0)       { sb->kind = kSemTextureModulation; sb->flags = 1; return; }
+    if (_stricmp(sem, "AddingSphereTexture") == 0)      { sb->kind = kSemTextureModulation; sb->flags = 2; return; }
+    if (_stricmp(sem, "MultiplyingSphereTexture") == 0) { sb->kind = kSemTextureModulation; sb->flags = 3; return; }
+    if (_stricmp(sem, "VIEWPORTPIXELSIZE") == 0) { sb->kind = kSemViewportPixelSize; return; }
+    if (_stricmp(sem, "MOUSEPOSITION") == 0)     { sb->kind = kSemMousePosition; return; }
+    sb->kind = kSemNone;
+    sb->flags = 0;
+}
+
+}  // namespace
+
+void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
+                               const RenderSnapshot& snap)
+{
+    if (binding == nullptr || binding->effect == nullptr) {
+        return;
+    }
+    ID3DXEffect* effect = binding->effect;
+    // [零分配热路径] 首次绑定把每个语义参数的分发决策定型进 semanticFast
+    // （kind/base/flags/light），此后每 pass 只走 switch——本函数在 rayMMD
+    // 下每帧被调用 300+ 次（~31 pass × 10 轮），原版 sub_18001B5B0 的预编
+    // 译 id 表是零分配的，任何每调用的 std::string/注解读取都会把渲染线程
+    // 变成每秒数十万次 malloc/free 的堆竞争源（曾在 free() 的堆锁上死锁，
+    // 见 2026-09-18 rayMMD 冻结分析）。
+    if (!binding->semanticsResolved) {
+        binding->semanticsResolved = true;
+        D3DXEFFECT_DESC effectDesc{};
+        if (SUCCEEDED(effect->GetDesc(&effectDesc))) {
+            for (UINT i = 0; i < effectDesc.Parameters; ++i) {
+                D3DXHANDLE h = effect->GetParameter(nullptr, i);
+                D3DXPARAMETER_DESC pd{};
+                if (h == nullptr || FAILED(effect->GetParameterDesc(h, &pd)) ||
+                    pd.Semantic == nullptr) {
+                    continue;
+                }
+                binding->semanticHandles.push_back(h);
+                MaterialBinding::SemanticBind sb{};
+                sb.handle = h;
+                // kind/base/flags/light 的定型逻辑与下方分发一一对应（沿
+                // 用原实现的字符串语义，仅在首次执行）。
+                ClassifySemantic(effect, h, pd, &sb);
+                binding->semanticFast.push_back(sb);
+            }
+        }
+    }
+    if (binding->semanticFast.empty()) {
+        return;
+    }
+    // Camera and light matrix families. The Object annotation selects which
+    // family VIEW/PROJECTION and their products use.
+    // [0x18005ea40 / 0x18005ebe0] the WORLD base of both the geometry and
+    // light families is snapshot+0x58 (model_world, translation intact) -
+    // NOT the +0x98 effect_world whose fixed-function variant zeroes the
+    // translation row.
+    D3DMATRIX world = snap.model_world;
+    // [0x1800574e0 / 0x180057720] the camera VIEW cache DAT_1800d9db0 is
+    // world@BeginScene * view, computed once in OnBeginScene; the original
+    // never multiplies the inverse world back in.
+    D3DXMATRIX cameraView =
+        *reinterpret_cast<const D3DXMATRIX*>(&g_worldViewMatrix);
+    const D3DXMATRIX cameraProj = g_projMatrix;
+    const D3DXMATRIX lightView = g_lightViewMatrix;
+    const D3DXMATRIX lightProj = g_lightProjMatrix;
+
+    for (size_t si = 0; si < binding->semanticFast.size(); ++si) {
+        const MaterialBinding::SemanticBind& sb = binding->semanticFast[si];
+        D3DXHANDLE h = sb.handle;
+        D3DXPARAMETER_DESC pd{};
+        if (FAILED(effect->GetParameterDesc(h, &pd))) continue;
+        const D3DXMATRIX view = sb.light ? lightView : cameraView;
+        const D3DXMATRIX proj = sb.light ? lightProj : cameraProj;
+        // [0x180057720 case 8/16] the camera VIEWPROJECTION is (W*V)*P; the
+        // light family reads the GetLightViewProjMatrix product
+        // (DAT_1800d9ef0) for the plain VIEWPROJECTION.
+        D3DXMATRIX viewProj{}, worldView{}, worldViewProj{};
+        D3DXMatrixMultiply(&viewProj, &view, &proj);
+        D3DXMatrixMultiply(&worldView, reinterpret_cast<const D3DXMATRIX*>(&world), &view);
+        if (sb.light) {
+            // [0x18005ebe0 case 20] the light WORLDVIEWPROJECTION is the
+            // precomputed snapshot+0x158 cache, not a live product.
+            worldViewProj = *reinterpret_cast<const D3DXMATRIX*>(
+                &snap.light_view_projection);
+        } else {
+            // [0x18005ea40 case 20] geometry: objWorld * (W*V*P).
+            D3DXMatrixMultiply(&worldViewProj,
+                               reinterpret_cast<const D3DXMATRIX*>(&world), &viewProj);
+        }
+
+        auto setVector = [&](float x, float y, float z, float w) {
+            float values[4] = {x, y, z, w};
+            effect->SetValue(h, values, (pd.Columns >= 4 ? 4u : pd.Columns) * sizeof(float));
+        };
+        switch (sb.kind) {
+        case kSemMatrix: {
+            const D3DXMATRIX* matrix = nullptr;
+            switch (sb.base) {
+            case 0: matrix = reinterpret_cast<const D3DXMATRIX*>(&world); break;
+            case 1: matrix = &view; break;
+            case 2: matrix = &proj; break;
+            case 3: matrix = &worldView; break;
+            case 4: matrix = &viewProj; break;
+            default: matrix = &worldViewProj; break;
+            }
+            D3DXMATRIX value = (sb.flags & 1) ? InverseOf(*matrix) : *matrix;
+            if (sb.flags & 2) {
+                // [子项3; sub_18005EA40] the transpose runs IN PLACE
+                // (D3DXMatrixTranspose(&v11, &v11) at 0x18005eba4), after the
+                // optional Inverse (0x18005eb90) and before SetMatrix
+                // (vtbl+304). The flags are NOT annotations: sub_18001B340
+                // (0x18001b3d9/0x18001b3de) derives them from the
+                // semantic-id variant bits (inverse = id&1, transpose = id&2)
+                // - i.e. the semantic-NAME suffix (WorldInverseTranspose
+                // etc.) that the classify pass already decodes.
+                D3DXMatrixTranspose(&value, &value);
+            }
+            effect->SetMatrix(h, &value);
+            continue;
+        }
+        case kSemPositionDirection: {
+            if (sb.light) {
+                // [0x180057a20] t = TransformNormal(lightDir, the inverse of
+                // the BeginScene world matrix [DAT_1800d9d70]); POSITION =
+                // (-t, 0), DIRECTION = (normalize(t), 0). No 100000 scale -
+                // the old port's -dir*100000 followed ray-mmd's HLSL, not
+                // the MME binary.
+                D3DXVECTOR3 t(g_cachedLight.Direction.x,
+                              g_cachedLight.Direction.y,
+                              g_cachedLight.Direction.z);
+                D3DXVec3TransformNormal(
+                    &t, &t,
+                    reinterpret_cast<const D3DXMATRIX*>(&g_invWorldAtBegin));
+                if (sb.base == 0) {
+                    setVector(-t.x, -t.y, -t.z, 0.0f);
+                } else {
+                    D3DXVec3Normalize(&t, &t);
+                    setVector(t.x, t.y, t.z, 0.0f);
+                }
+            } else {
+                // [0x180057920] camera: POSITION = the translation of
+                // inverse(worldView) with w 1; DIRECTION = normalize(the
+                // inverse's row 2) with w 0.
+                D3DXMATRIX inv = InverseOf(cameraView);
+                if (sb.base == 0) {
+                    setVector(inv.m[3][0], inv.m[3][1], inv.m[3][2], 1.0f);
+                } else {
+                    D3DXVECTOR3 d(inv.m[2][0], inv.m[2][1], inv.m[2][2]);
+                    D3DXVec3Normalize(&d, &d);
+                    setVector(d.x, d.y, d.z, 0.0f);
+                }
+            }
+            continue;
+        }
+        case kSemLightColor: {
+            // [0x18005f550] the Light-object color composition. Draw types
+            // 1/3 read the LIVE GetLight(0); every other draw uses the
+            // OnBeginScene light0 cache (DAT_1800d9890). The kind==0
+            // (accessory) rewrites apply on the cached branch: draw 1 with
+            // the DIFFUSE semantic divides the Diffuse rgb by
+            // DAT_1800b5c20 (= 10.0f); the non-1/3/4 draws set Diffuse.rgb
+            // to 1.0f (DAT_1800b5b28) and subtract DAT_1800b5c24 (= 0.3f)
+            // from Ambient.rgb regardless of the semantic. The output w is
+            // unconditionally 1.0f.
+            D3DLIGHT9 lightState;
+            memset(&lightState, 0, sizeof(lightState));
+            int drawType = snap.draw_type;
+            if (drawType == 1 || drawType == 3) {
+                IDirect3DDevice9* device =
+                    model != nullptr ? model->device() : nullptr;
+                if (device == nullptr || FAILED(device->GetLight(0, &lightState))) {
+                    lightState = g_cachedLight;
+                }
+                if (sb.base == 0 && model != nullptr &&
+                    model->kind() == 0 && drawType == 1) {
+                    lightState.Diffuse.r /= 10.0f;
+                    lightState.Diffuse.g /= 10.0f;
+                    lightState.Diffuse.b /= 10.0f;
+                }
+            } else {
+                lightState = g_cachedLight;
+                if (model != nullptr && model->kind() == 0 && drawType != 4) {
+                    lightState.Diffuse.r = lightState.Diffuse.g =
+                        lightState.Diffuse.b = 1.0f;
+                    lightState.Ambient.r -= 0.30000001f;
+                    lightState.Ambient.g -= 0.30000001f;
+                    lightState.Ambient.b -= 0.30000001f;
+                }
+            }
+            if (sb.base == 0) {
+                setVector(lightState.Diffuse.r, lightState.Diffuse.g,
+                          lightState.Diffuse.b, 1.0f);
+            } else if (sb.base == 1) {
+                setVector(lightState.Ambient.r, lightState.Ambient.g,
+                          lightState.Ambient.b, 1.0f);
+            } else {
+                setVector(lightState.Specular.r, lightState.Specular.g,
+                          lightState.Specular.b, 1.0f);
+            }
+            continue;
+        }
+        case kSemMaterialId:
+            MmeBindMaterialParameter(model, effect, sb.base, h, pd.Columns);
+            continue;
+        case kSemTime:
+            // [sub_180057B30] TIME reads g_frameTimeBase; ELAPSEDTIME the
+            // frame delta; the "2" variants read the RAW frame clock,
+            // bypassing the edit/play switch of the sub_180056F80 machine
+            // (TIME2 = g_lastFrameTime, ELAPSEDTIME2 = g_frameDelta).
+            switch (sb.base) {
+            case 0: effect->SetFloat(h, g_frameTimeBase); break;
+            case 1: effect->SetFloat(h, g_deltaSeconds); break;
+            case 2: effect->SetFloat(h, g_lastFrameTime); break;
+            default: effect->SetFloat(h, g_frameDelta); break;
+            }
+            continue;
+        case kSemTextureSlot: {
+            // [子项1; sub_18005F7C0] the material texture semantics bind BY
+            // SEMANTIC to the snapshot texture slots; the SetTexture is
+            // unconditional (a null texture clears the sampler).
+            switch (sb.base) {
+            case 0: effect->SetTexture(h, snap.base_texture); break;
+            case 1: effect->SetTexture(h, snap.sphere_texture); break;
+            default: effect->SetTexture(h, snap.toon_texture); break;
+            }
+            continue;
+        }
+        case kSemMouseDown: {
+            // [子项2; sub_180058340] the mouse button semantics are float4s
+            // frozen at the press; the port's g_mouseClick* arrays keep the
+            // original's slot order (left, right, middle).
+            setVector(g_mouseClickPos[sb.base][0], g_mouseClickPos[sb.base][1],
+                      g_mouseClickZ[sb.base], g_mouseClickTime[sb.base]);
+            continue;
+        }
+        case kSemTextureModulation: {
+            // [子项2; sub_18005F830] the texture modulation semantics are
+            // the SEMANTIC twins of the TexCAdd/TexCMul/SphCAdd/SphCMul
+            // names and read the SAME snapshot slots. When the effect path
+            // is unused or the object is not a PMD model the Add twins
+            // splat 0.0 and the Mul twins splat 1.0.
+            const bool mul = (sb.flags & 1) != 0;
+            const bool sphere = (sb.flags & 2) != 0;
+            if (snap.effect_file_used != 0 && model != nullptr && model->kind() == 1) {
+                const D3DCOLORVALUE& v =
+                    sphere ? (mul ? snap.sphere_multiply : snap.sphere_add)
+                           : (mul ? snap.texture_multiply : snap.texture_add);
+                setVector(v.r, v.g, v.b, v.a);
+            } else {
+                const float splat = mul ? 1.0f : 0.0f;
+                setVector(splat, splat, splat, splat);
+            }
+            continue;
+        }
+        case kSemViewportPixelSize: {
+            // [sub_18005edd0] the live viewport extents.
+            D3DVIEWPORT9 vp{};
+            if (model && model->device()) model->device()->GetViewport(&vp);
+            setVector(static_cast<float>(vp.Width), static_cast<float>(vp.Height), 0, 0);
+            continue;
+        }
+        case kSemMousePosition: {
+            // [0x180055b10 mouse tail] the live cursor in NDC.
+            D3DVIEWPORT9 vp{}; POINT pt{};
+            if (model && model->device()) model->device()->GetViewport(&vp);
+            GetCursorPos(&pt); if (g_mainWindow) ScreenToClient(g_mainWindow, &pt);
+            const float x = vp.Width ? 2.0f * (pt.x - static_cast<float>(vp.X)) / vp.Width - 1.0f : 0.0f;
+            const float y = vp.Height ? 1.0f - 2.0f * (pt.y - static_cast<float>(vp.Y)) / vp.Height : 0.0f;
+            setVector(x, y, 0, 0);
+            continue;
+        }
+        default:
+            continue;
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// CONTROLOBJECT staging (Phase 3 seam with live host calls)
+// CONTROLOBJECT staging + the per-frame resolver (the original's
+// EffectFrameParamSetter walk, sub_180057BC0)
 // ---------------------------------------------------------------------------
+
+// The shared staging table (one entry per scanned object; filled by the pass
+// planner's accessory scan each frame). NOTE: a single table shared by the
+// stage/find pair - the original keeps per-object staging on the ModelData
+// itself; the port keeps the observable behavior (find returns the values
+// staged for the current frame).
+static std::map<ModelData*, ControlObjectStage>& ControlStageTable() {
+    static std::map<ModelData*, ControlObjectStage> table;
+    return table;
+}
 
 ControlObjectStage* MmeStageControlObjectValues(ModelData* model, int hostIndex)
 {
-    // The SAS interpreter (Phase 3) resolves CONTROLOBJECT parameters from the
-    // host exports. The staging runs per scanned object from the pass planner
-    // (once per frame), keeping the host import surface live; the Phase 3
-    // resolver consumes the staged values by object/bone/morph name.
-    static std::map<ModelData*, ControlObjectStage> stageTable;
     if (model == nullptr || hostIndex < 0) {
         return nullptr;
     }
-    ControlObjectStage& stage = stageTable[model];
+    ControlObjectStage& stage = ControlStageTable()[model];
 
     if (model->kind() == 0) {
         // Accessory panel values [ExpGetAcsX/Y/Z/Rx/Ry/Rz/Si/Tr].
@@ -753,10 +2139,8 @@ ControlObjectStage* MmeStageControlObjectValues(ModelData* model, int hostIndex)
         stage.panel[6] = ExpGetAcsSi(hostIndex);
         stage.panel[7] = ExpGetAcsTr(hostIndex);
     } else {
-        // Bone world matrix + morph value placeholders (bone 0 / morph 0;
-        // the Phase 3 resolver indexes by CONTROLOBJECT item name).
-        stage.boneWorld = ExpGetPmdBoneWorldMat(hostIndex, 0);
-        stage.morphValue = ExpGetPmdMorphValue(hostIndex, 0);
+        // Model: the ExpGetPmd* calls below read the live values directly;
+        // the stage keeps the frame-valid marker for the resolver.
     }
     stage.valid = true;
     return &stage;
@@ -764,9 +2148,9 @@ ControlObjectStage* MmeStageControlObjectValues(ModelData* model, int hostIndex)
 
 ControlObjectStage* MmeFindControlObjectStage(ModelData* model)
 {
-    static std::map<ModelData*, ControlObjectStage> stageTable;
-    std::map<ModelData*, ControlObjectStage>::const_iterator it = stageTable.find(model);
-    if (it == stageTable.end()) {
+    std::map<ModelData*, ControlObjectStage>& table = ControlStageTable();
+    std::map<ModelData*, ControlObjectStage>::const_iterator it = table.find(model);
+    if (it == table.end()) {
         return nullptr;
     }
     return const_cast<ControlObjectStage*>(&it->second);
@@ -784,6 +2168,390 @@ void MmeResolveAccessoryAttach(ModelData* model, unsigned long long accessoryId)
     int attachedBoneIndex = -1;
     BOOL attached = GetAcsAttachedPmd(accessoryId, &attachedModelId, &attachedBoneIndex);
     model->setAttachInfo(attached != FALSE, attachedModelId, attachedBoneIndex);
+}
+
+// ---------------------------------------------------------------------------
+// MmeUpdateControlObjects - the per-frame CONTROLOBJECT resolution
+// (the original's EffectFrameParamSetter, sub_180057BC0). Every collected
+// control parameter resolves its object by name against the live ModelData
+// list and its item through the name table (bones 0..n-1, morphs -1,-2,...,
+// accessory pseudo-bones), then the value is pushed by parameter type.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// [0x180057BC0] Names are resolved in the per-frame drawing-order tree.
+// +0xec is abs(ExpGetPmd/AcsOrder), not a model loading serial.
+ModelData* FindModelByName(const std::string& objectName, ModelData* owner)
+{
+    if (g_context == nullptr || owner == nullptr)
+        return nullptr;
+    return g_context->modelsByName.Find(objectName, owner->passPlanScratch().renderOrder);
+}
+
+// [0x180058133-0x18005817e] the object-not-found kind guess: the registry
+// entry's first model kind when the name is loaded, else the name suffix
+// (".x"/".X" -> accessory 0, otherwise model 1).
+int KindGuessForName(const std::string& objectName)
+{
+    if (g_context != nullptr) {
+        ModelData* first = g_context->modelsByName.First(objectName);
+        if (first != nullptr)
+            return first->kind();
+    }
+    const size_t len = objectName.size();
+    if (len >= 2 && (objectName[len - 1] == 'x' || objectName[len - 1] == 'X') &&
+        objectName[len - 2] == '.') {
+        return 0;   // accessory file extension
+    }
+    return 1;
+}
+
+// [0x1800555c0] the attached-pmd id -> ModelData lookup (the original reads
+// the manager's id map at DAT_1800d9bb8+280; the port's registry is that
+// map, keyed by the host ExpGetPmdID/ExpGetAcsID pointer).
+ModelData* FindModelById(unsigned long long objectId)
+{
+    MmeContext* ctx = g_context;
+    if (ctx == nullptr || objectId == 0) {
+        return nullptr;
+    }
+    std::unordered_map<unsigned long long, ModelData*>::const_iterator it =
+        ctx->modelRegistry.find(objectId);
+    return (it != ctx->modelRegistry.end()) ? it->second : nullptr;
+}
+
+// [0x180058042 arg_30] the parameter-shape code the original registered per
+// control parameter: 0 = bool scalar, 1 = float scalar, 3 = float3 vector,
+// 4 = float4 vector, 16 = matrix.
+int ControlParameterTypeCode(const D3DXPARAMETER_DESC& pd)
+{
+    if (pd.Class == D3DXPC_MATRIX_ROWS || pd.Class == D3DXPC_MATRIX_COLUMNS) {
+        return 16;
+    }
+    if (pd.Class == D3DXPC_VECTOR) {
+        if (pd.Type == D3DXPT_BOOL) {
+            return 0;
+        }
+        return (pd.Columns >= 4) ? 4 : 3;
+    }
+    return (pd.Type == D3DXPT_BOOL) ? 0 : 1;
+}
+
+// [0x180058189-0x18005830d] the object-not-found writes, by parameter shape.
+// The float default depends on the item presence: whole-object references
+// read the "default object" scale (10.0f accessories [DAT_1800b5c20] / 1.0f
+// models [DAT_1800b5b28]); item-named references read 0.0f. The matrix
+// default is the identity for models and D3DXMatrixScaling(10,10,10) for
+// accessories.
+void SetControlDefaults(ID3DXEffect* effect, D3DXHANDLE param, int typeCode,
+                        bool hasItem, int kindGuess)
+{
+    switch (typeCode) {
+    case 0:
+        effect->SetBool(param, FALSE);                                 // [0x1800582fb]
+        break;
+    case 1:
+        effect->SetFloat(param, hasItem
+                                ? 0.0f
+                                : ((kindGuess == 0) ? 10.0f : 1.0f));  // [0x1800582b2]
+        break;
+    case 3: {
+        float v[4] = { 0.0f, 0.0f, 0.0f, 0.0f };                       // [0x180058285]
+        effect->SetVector(param, reinterpret_cast<const D3DXVECTOR4*>(v));
+        break;
+    }
+    case 4: {
+        float v[4] = { 0.0f, 0.0f, 0.0f, 1.0f };                       // [0x180058243]
+        effect->SetVector(param, reinterpret_cast<const D3DXVECTOR4*>(v));
+        break;
+    }
+    default: {
+        D3DXMATRIX m;
+        if (kindGuess == 0) {
+            D3DXMatrixScaling(&m, 10.0f, 10.0f, 10.0f);                // [0x1800581b6]
+        } else {
+            D3DXMatrixIdentity(&m);                                   // [0x1800581d0]
+        }
+        effect->SetMatrix(param, &m);                                  // [0x18005822b]
+        break;
+    }
+    }
+}
+
+void ResolveOneControl(SasEffect* sas, const SasControlObject& control,
+                       ModelData* owner, ModelData* offscreenOwner)
+{
+    ID3DXEffect* effect = sas->effect;
+    if (effect == nullptr || control.param == nullptr) {
+        return;
+    }
+
+    // --- object resolution [0x180057c0f-0x180057ea2] ---
+    ModelData* target = FindModelByName(control.objectName, owner);
+    if (target == nullptr) {
+        if (control.objectName == "(OffscreenOwner)" &&
+            offscreenOwner != nullptr) {
+            // [0x180057d58-0x180057da8] the offscreen owner: the setter's
+            // +24 field [0x18002d0ca], which sub_18002CA80 fills at
+            // 0x18002d0a2 ONLY while the assignment walk renders into an
+            // offscreen scene (scene id a4 != 0): the id -> offscreen-record
+            // registration (map@ctx+0xB8) yields the record whose +0x30 is
+            // the object carrying the effect that declares the
+            // OFFSCREENRENDERTARGET (e.g. ray.x). Outside the window the
+            // field is null, the name falls through "(self)" /
+            // "(AttachedModel)" and lands in the not-found defaults below -
+            // the original's failure behavior, kept verbatim.
+            target = offscreenOwner;
+        } else if (control.objectName == "(self)") {
+            // [0x180057e02] the object the effect is assigned to (the
+            // setter's +16 field [0x18002d0c6]): the DRAWN object - for an
+            // offscreen DefaultEffect row that is the row-matched model, not
+            // the offscreen owner.
+            target = owner;
+        } else if (control.objectName == "(AttachedModel)") {
+            // [0x180057e63-0x180057e9a] only when the owner itself is an
+            // accessory (kind +0x28 == 0): GetAcsAttachedPmd(owner id) ->
+            // the attached model via the id map (sub_1800555c0).
+            if (owner != nullptr && owner->kind() == 0) {
+                unsigned long long attachedId = 0;
+                int attachedBone = -1;
+                if (GetAcsAttachedPmd(owner->objectId(), &attachedId,
+                                      &attachedBone)) {
+                    target = FindModelById(attachedId);
+                }
+            }
+        }
+    }
+
+    D3DXPARAMETER_DESC pd;
+    memset(&pd, 0, sizeof(pd));
+    if (effect->GetParameterDesc(control.param, &pd) != S_OK) {
+        return;
+    }
+    const int typeCode = ControlParameterTypeCode(pd);
+
+    if (target == nullptr) {
+        // [0x180058133-0x18005830d] object not found: write the defaults.
+        SetControlDefaults(effect, control.param, typeCode,
+                           !control.itemName.empty(),
+                           KindGuessForName(control.objectName));
+        return;
+    }
+
+    const int hostIndex = target->passPlanScratch().passKey;   // +0xf0
+    const bool hasItem = !control.itemName.empty();
+
+    // --- value staging [sub_180059690's 16-float buffer]: either a full
+    // matrix (matrixResult) or a value (triple) in floats 12-14 of an
+    // identity matrix, float 15 keeping the 1.0. ---
+    float buffer[16];
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            buffer[r * 4 + c] = (r == c) ? 1.0f : 0.0f;
+        }
+    }
+    bool matrixResult = false;
+
+    if (!hasItem) {
+        // [0x180057eb2] whole-object reference: the object world matrix at
+        // ModelData+0xf8 (the port's planMatrix); eax = 0x10 marks the
+        // matrix result (matrix/vector/scalar all derive from it).
+        memcpy(buffer, &target->planMatrix(), sizeof(buffer));
+        matrixResult = true;
+    } else if (owner != nullptr && owner->kind() == 0 &&
+               control.itemName == "(AttachedBone)") {
+        // [0x180057eef-0x18005802c] the "(AttachedBone)" item on an
+        // accessory owner: the attached bone's world matrix when the named
+        // object IS the owner's attached model (and a bone exists); the
+        // zero/identity buffer otherwise (result 0).
+        unsigned long long attachedId = 0;
+        int attachedBone = -1;
+        ModelData* attached = nullptr;
+        if (GetAcsAttachedPmd(owner->objectId(), &attachedId, &attachedBone)) {
+            attached = FindModelById(attachedId);
+        }
+        if (attached == target && attachedBone >= 0 && hostIndex >= 0) {
+            D3DMATRIX world = ExpGetPmdBoneWorldMat(hostIndex, attachedBone);
+            memcpy(buffer, &world, sizeof(buffer));
+            matrixResult = true;
+        }
+    } else if (const int* index = target->findNameIndex(control.itemName)) {
+        if (target->kind() == 1) {
+            if (*index < 0) {
+                // [0x180059761] morph (encoded -1, -2, ...): the value lands
+                // in float 12.
+                buffer[12] = ExpGetPmdMorphValue(hostIndex, -(*index) - 1);
+            } else if (hostIndex >= 0) {
+                // [0x180059728] bone: the full world matrix.
+                D3DMATRIX world = ExpGetPmdBoneWorldMat(hostIndex, *index);
+                memcpy(buffer, &world, sizeof(buffer));
+                matrixResult = true;
+            }
+        } else if (hostIndex >= 0) {
+            // [0x180059790] accessory pseudo-bones, read live from the
+            // panel. 0/1/2 = X/Y/Z, 4/5/6 = Rx/Ry/Rz, 8 = Si, 9 = Tr write
+            // float 12; the combos 3 (XYZ) and 7 (Rxyz) write the triple
+            // into floats 12-14.
+            switch (*index) {
+            case 0: buffer[12] = ExpGetAcsX(hostIndex); break;
+            case 1: buffer[12] = ExpGetAcsY(hostIndex); break;
+            case 2: buffer[12] = ExpGetAcsZ(hostIndex); break;
+            case 3:
+                buffer[12] = ExpGetAcsX(hostIndex);
+                buffer[13] = ExpGetAcsY(hostIndex);
+                buffer[14] = ExpGetAcsZ(hostIndex);
+                break;
+            case 4: buffer[12] = ExpGetAcsRx(hostIndex); break;
+            case 5: buffer[12] = ExpGetAcsRy(hostIndex); break;
+            case 6: buffer[12] = ExpGetAcsRz(hostIndex); break;
+            case 7:
+                buffer[12] = ExpGetAcsRx(hostIndex);
+                buffer[13] = ExpGetAcsRy(hostIndex);
+                buffer[14] = ExpGetAcsRz(hostIndex);
+                break;
+            case 8: buffer[12] = ExpGetAcsSi(hostIndex); break;
+            case 9: buffer[12] = ExpGetAcsTr(hostIndex); break;
+            default: break;   // unknown pseudo index: the identity stays
+            }
+        }
+    }
+    // else: unknown item name - sub_180059690 returns 0 leaving its identity
+    // buffer, which yields the 0 / zero-vector / identity defaults below.
+
+    // --- push by parameter shape [0x180058042] ---
+    switch (typeCode) {
+    case 0:
+        // [0x180058125] bool = the OBJECT's display flag (+0xf4), read with
+        // or without an item name (the item is ignored for bools).
+        effect->SetBool(control.param,
+                        (hostIndex >= 0)
+                            ? ((target->kind() == 1)
+                                   ? (ExpGetPmdDisp(hostIndex) ? TRUE : FALSE)
+                                   : (ExpGetAcsDisp(hostIndex) ? TRUE : FALSE))
+                            : FALSE);
+        break;
+    case 1:
+        // [0x1800580cd] scalar: sqrt of the buffer's FIRST ROW floats for a
+        // matrix result, else the value slot (float 12).
+        effect->SetFloat(control.param, matrixResult
+            ? sqrtf(buffer[0] * buffer[0] + buffer[1] * buffer[1] +
+                    buffer[2] * buffer[2])
+            : buffer[12]);
+        break;
+    case 3:
+        // [0x1800580b4] float3: the buffer floats 12-14.
+        {
+            float v[4] = { buffer[12], buffer[13], buffer[14], 0.0f };
+            effect->SetVector(control.param,
+                              reinterpret_cast<const D3DXVECTOR4*>(v));
+        }
+        break;
+    case 4:
+        // [0x18005806e] float4: the buffer floats 12-15 (w = the buffer's
+        // float 15 - 1.0 unless a bone/object matrix overwrote it).
+        {
+            float v[4] = { buffer[12], buffer[13], buffer[14], buffer[15] };
+            effect->SetVector(control.param,
+                              reinterpret_cast<const D3DXVECTOR4*>(v));
+        }
+        break;
+    default:
+        // [0x18005822b] matrix: the buffer as-is.
+        {
+            D3DXMATRIX m;
+            memcpy(&m, buffer, sizeof(m));
+            effect->SetMatrix(control.param, &m);
+        }
+        break;
+    }
+}
+
+bool ControlObjectVisitor(void* /*user*/, SasEffect* sas)
+{
+    if (sas == nullptr) {
+        return true;
+    }
+    // The "(self)" owner: the (unique) model whose whole-object binding
+    // carries this effect. Manager-map lookup only - the offscreen
+    // DefaultEffect fallback must not manufacture owners for unassigned
+    // models drawing through a staged default row.
+    ModelData* owner = nullptr;
+    MmeContext* ctx = g_context;
+    if (ctx != nullptr && g_ownerManager != nullptr) {
+        for (size_t i = 0; i < ctx->models.size() && owner == nullptr; ++i) {
+            std::map<EffectOwnerManager::BindingKey, MaterialBinding*>::
+                const_iterator it = g_ownerManager->bindings.find(
+                    EffectOwnerManager::BindingKey(0, ctx->models[i], -1));
+            MaterialBinding* binding =
+                (it != g_ownerManager->bindings.end()) ? it->second : nullptr;
+            if (binding != nullptr && binding->sas == sas) {
+                owner = ctx->models[i];
+            }
+        }
+    }
+    // [0x180057d58] the offscreen owner for "(OffscreenOwner)". The plan-time
+    // pass runs outside the offscreen render window (the original's main-scene
+    // walk, scene id a4 == 0, carries a null setter+24), so this only
+    // resolves when a window is somehow already staged - the draw-time
+    // equivalent lives in MmeBindOffscreenWindowControls.
+    ModelData* offscreenOwner = nullptr;
+    if (ctx != nullptr && ctx->offscreenDefaultEffect != nullptr) {
+        offscreenOwner = MmeOffscreenDefaultEffectOwner(ctx);
+    }
+    for (size_t i = 0; i < sas->controls.size(); ++i) {
+        ResolveOneControl(sas, sas->controls[i], owner, offscreenOwner);
+    }
+    return true;
+}
+
+}  // namespace
+
+// [R4/R5; sub_18002CA80 0x18002d0a2 + EffectFrameParamSetter 0x18002d0b9 /
+// sub_180057BC0 0x180057d58-0x180057e06] the offscreen DefaultEffect window's
+// CONTROLOBJECT re-evaluation. The original drains its scene-request queue
+// (sub_18002BAA0: the main scene walk with a4 == 0, then the offscreen scene
+// walks pushed by the suspended scene techniques with a4 != 0) inside
+// MME_RebuildRenderPassPlan, evaluating every assignment's frame parameters
+// through an EffectFrameParamSetter whose +16 is the drawn object and whose
+// +24 is the offscreen owner (map@ctx+0xB8 record+0x30, null on the main
+// walk). The port's staged-row sub-effects resolve lazily INSIDE the render
+// window (MmeResolveOffscreenDefaultBinding at draw time - the transient
+// bindings do not exist at plan time), so their equivalent evaluation point
+// is the draw itself: the drawn model takes over every setter+16 duty
+// ("(self)", the name-registry serial bound, the "(AttachedModel)" source)
+// and the offscreen owner - recovered from the staged rows pointer exactly
+// like the "self" DefaultEffect row key (MmeOffscreenDefaultEffectOwner) -
+// supplies "(OffscreenOwner)". Outside the window this no-ops: the plan-time
+// MmeUpdateControlObjects pass has already written the a4 == 0 values,
+// "(OffscreenOwner)" among its not-found defaults.
+static void MmeBindOffscreenWindowControls(ModelData* model,
+                                           MaterialBinding* binding)
+{
+    MmeContext* ctx = g_context;
+    if (ctx == nullptr || ctx->offscreenDefaultEffect == nullptr ||
+        model == nullptr || binding == nullptr || binding->sas == nullptr) {
+        return;   // window closed, or nothing staged for this draw
+    }
+    // Only the staged rows' transient bindings evaluate here. The window's
+    // MmeFindMaterialBinding short-circuit hands the apply a binding from
+    // this map, but a stale/mismatched binding must not invent an owner.
+    std::map<ModelData*, MaterialBinding*>::const_iterator staged =
+        ctx->offscreenDefaultBindings.find(model);
+    if (staged == ctx->offscreenDefaultBindings.end() ||
+        staged->second != binding) {
+        return;
+    }
+    ModelData* offscreenOwner = MmeOffscreenDefaultEffectOwner(ctx);
+    for (size_t i = 0; i < binding->sas->controls.size(); ++i) {
+        ResolveOneControl(binding->sas, binding->sas->controls[i], model,
+                          offscreenOwner);
+    }
+}
+
+void MmeUpdateControlObjects()
+{
+    MmeEngineForEachSas(&ControlObjectVisitor, nullptr);
 }
 
 } // namespace mme

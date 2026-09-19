@@ -58,19 +58,27 @@ T& At(unsigned char* base, std::size_t offset) {
     return *reinterpret_cast<T*>(base + offset);
 }
 
+// x64 sub_7FF7CB4BD470 computes both frame maps in SSE single precision:
+//   (int)(float)((float)(int)(frame - start) * (float)scale)
+// i.e. cvtsi2ss -> mulss (round-to-nearest float product) -> cvttss2si.
+// A double product (the x87 shape of the x86 build) diverges by one frame
+// at common values (e.g. scale 1.05, diff 20: float rounds 20.9999990 up
+// to 21.0f and truncates to 21, double truncates to 20), so the multiply
+// and the truncation must both stay in float.
 std::uint32_t ScaledRelativeFrame(std::uint32_t frame,
                                   std::uint32_t start,
                                   std::uint32_t end,
                                   double scale) {
+    const float f = static_cast<float>(scale);
     if (frame <= end) {
-        return static_cast<std::uint32_t>(
-            static_cast<std::int64_t>(
-                static_cast<double>(frame - start) * scale));
+        const float m = static_cast<float>(
+            static_cast<std::int32_t>(frame - start)) * f;
+        return static_cast<std::uint32_t>(static_cast<std::int32_t>(m));
     }
-    const std::uint32_t scaledSpan = static_cast<std::uint32_t>(
-        static_cast<std::int64_t>(
-            static_cast<double>(end - start) * scale));
-    return frame + scaledSpan - end;
+    const float m = static_cast<float>(
+        static_cast<std::int32_t>(end - start)) * f;
+    return frame + static_cast<std::uint32_t>(static_cast<std::int32_t>(m)) -
+           end;
 }
 
 template <typename Key>

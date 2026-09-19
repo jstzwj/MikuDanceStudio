@@ -3,13 +3,14 @@ from conan.tools.cmake import CMakeDeps, CMakeToolchain, cmake_layout
 
 
 class MikuDanceStudioConan(ConanFile):
-    """MikuDanceStudio - 1:1 open-source restoration of MikuMikuDance v932.
+    """MikuDanceStudio - behavioral reconstruction of MikuMikuDance v932 x64.
 
     Package management via Conan 2.  The only third-party link-time
     dependency of the original binary is Bullet Physics 2.75 (statically
     linked); it is provided by the local recipe in ``recipes/bullet275``.
-    DirectX 9 (d3d9 / d3dx9_32) and the system Win32 APIs are consumed from
-    the Microsoft DirectX SDK (June 2010) / the Windows SDK, not from Conan.
+    DirectX 9 and the system Win32 APIs are not supplied by this recipe.
+    Runtime D3DX selection belongs to the application; parity evidence and
+    remaining limitations are recorded in docs/PORTING_STATUS.md.
     """
 
     name = "mikudancestudio"
@@ -35,13 +36,12 @@ class MikuDanceStudioConan(ConanFile):
         cmake_layout(self)
 
     def validate(self):
-        # The restoration targets the exact 32-bit layout of the original
-        # binary; the state-class offsets in docs/FIELD_MAP.md only describe
-        # the x86 original.
-        if self.info.settings.arch != "x86":
+        # x64 is the behavioral reference. The x86 profile remains available
+        # for legacy reconstruction work; it is not the parity baseline.
+        if self.info.settings.arch == "x86":
             self.output.warning(
-                "MikuDanceStudio reproduces the x86 (32-bit) original; "
-                "consider building with an x86 profile."
+                "The behavioral reference is MikuMikuDanceE_v932x64; "
+                "use profiles/x64 for parity work."
             )
 
     def build(self):

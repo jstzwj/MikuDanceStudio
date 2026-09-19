@@ -57,7 +57,7 @@ extern HWND         g_offscreenWindow;          // DAT_1800d9b10
 extern LONG_PTR     g_offscreenOriginalWndProc; // DAT_1800d9b18
 extern HMENU        g_menuState;                // DAT_1800d9b20 (the installed "MMEffect" popup menu)
 extern HHOOK        g_cbtHook;                  // DAT_1800d9b28 (WH_CBT, FUN_180055800)
-extern unsigned int g_autoReload;               // DAT_1800d72e1 [System] auto-reload toggle (default 1)
+extern unsigned int g_autoReload;               // DAT_1800d72e1 auto-reload toggle; file-backed .data init 0x01 (RVA 0xD72E1 -> file off 0xD56E1), so default ON - not a BSS zero
 
 typedef int (__cdecl *ExpGetEnglishModeFn)(void);
 extern ExpGetEnglishModeFn g_englishModeFn;     // DAT_1800d9bf8 GetProcAddress(GetModuleHandleA(NULL), "ExpGetEnglishMode")
@@ -78,7 +78,6 @@ extern ID3DXEffect* g_currentEffect;                    // DAT_1800d9918 (GetCur
 extern D3DXHANDLE   g_paramHandles[kParamCount];        // DAT_1800d9b30..DAT_1800d9bb0
 
 // --- cached render state (globals_structures.md section 7) ---
-extern D3DMATERIAL9 g_cachedMaterial;      // DAT_1800d9878 (GetMaterial)
 extern D3DLIGHT9    g_cachedLight;         // DAT_1800d9890 (GetLight(0))
 extern D3DMATRIX    g_worldAtBegin;        // DAT_1800d9d30 (D3DTS_WORLD at BeginScene)
 extern D3DMATRIX    g_invWorldAtBegin;     // DAT_1800d9d70 (D3DXMatrixInverse; the "view^-1" global)

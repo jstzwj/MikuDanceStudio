@@ -41,6 +41,7 @@
 
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/physics_scene.hpp"
+#include "mikudancestudio/physics_world.hpp"
 
 #include "scene_gizmo_data.inc"
 
@@ -117,7 +118,7 @@ bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
         btVector3(-10000.0f, -10000.0f, -10000.0f),
         btVector3(10000.0f, 10000.0f, 10000.0f), 1500000);
     scene->solver = new btSequentialImpulseConstraintSolver();       // 0x405E18
-    scene->world = new btDiscreteDynamicsWorld(                      // 0x405E5D (0x110)
+    scene->world = new PhysicsWorld(                                // 0x405E5D (0x110)
         scene->dispatcher, scene->broadphase, scene->solver,
         scene->collisionConfig);
     btDiscreteDynamicsWorld* world = scene->world;
@@ -127,11 +128,13 @@ bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
     // flt_52EA00 there and nothing zeroes it); the load-pass main step
     // consumes it for exactly one substep (orig maindt probe: first call
     // runs with m_localTime=1/60, dt=0).
-    // Original 0x405EAB stores C2C3FFFF, not the nearest -98.0f
-    // (C2C40000).  The one-ULP difference propagates into every body's
-    // initial velocity and then through all sequential-impulse RHS values.
+    // x64 original 0x7FF7CB4257CF loads dword_7FF7CB552CA8 =
+    // 0xC2C40000 = -98.0f exactly (x and z come from the zeroed xmm6).
+    // The x86 build's 0x405EAB instead stores C2C3FFFF, one ULP below;
+    // this port follows the x64 baseline, which is the behavioral
+    // reference for both build flavors here.
     world->setGravity(btVector3(
-        0.0f, -97.99999237060546875f, 0.0f));              // 0x405EAB
+        0.0f, -98.0f, 0.0f));                              // x64 0x7FF7CB4257CF (x86 0x405EAB)
 
     // ---- static ground body -------------------------------------------------
     auto* plane = new btStaticPlaneShape(                  // 0x405EF8 (0x60)

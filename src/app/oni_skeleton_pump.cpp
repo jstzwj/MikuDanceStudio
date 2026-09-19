@@ -67,6 +67,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <new>
 #include <cstdio>
 #include <cstring>
 
@@ -352,11 +353,13 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
         // {骨号, trans, rotQuat, 标志字节}；x64 源为 bone+328..356 = trans/
         // rotQuat，标志字节数组 x64 0x3128——沿用 frame_line_edit.cpp 对
         // 同族快照（x86 0x43A 段）已核定的 boneSelection 选择字节数组）。
-        delete[] undo.bonePose;
+        ::operator delete(undo.bonePose);
         undo.bonePose = nullptr;
         const std::int32_t boneCount =
             static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
-        undo.bonePose = new mdl::BonePoseSnapshot[boneCount]{};
+        undo.bonePose = static_cast<mdl::BonePoseSnapshot*>(
+            ::operator new(sizeof(mdl::BonePoseSnapshot) * boneCount));
+        std::memset(undo.bonePose, 0, sizeof(mdl::BonePoseSnapshot) * boneCount);
         mdl::BoneRecord* const bones = mdl::Bones(model);
         unsigned char* const flags = mdl::Mdl(model)->boneSelection;
         for (std::int32_t i = 0; i < boneCount; ++i) {
@@ -371,10 +374,11 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
         // 0x7FF7CB4F319D..0x7FF7CB4F323D：64 字节/条的关键帧快照缓冲
         // （3456 = 54 条 x 64 字节/样本），计数字段清零；keyVisitMap 全清。
         undo.dirty = 0;
-        delete[] static_cast<unsigned char*>(undo.auxiliaryPose);
+        ::operator delete(undo.auxiliaryPose);
         undo.auxiliaryPose = nullptr;
         undo.auxiliaryPose =
-            new unsigned char[3456 * static_cast<std::size_t>(samples)]{};
+            ::operator new(3456 * static_cast<std::size_t>(samples));
+        std::memset(undo.auxiliaryPose, 0, 3456 * static_cast<std::size_t>(samples));
         std::memset(mdl::Mdl(model)->keyVisitMap, 0, mdl::kBoneKeyCapacity);
 
         // 名单驱动的逐骨登记（0x7FF7CB4F3247..0x7FF7CB4F3A16）。任何一骨
@@ -465,7 +469,7 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
     }  // samples > 0；满表路径原样直返、不做下面的清理（原版行为）
 
     // 0x7FF7CB4F3A18..0x7FF7CB4F3A31：释放追踪缓冲、采样计数清零。
-    delete[] PoseTraceBuffer(model);
+    ::operator delete(PoseTraceBuffer(model));
     mdl::PoseTraceBuffer(model) = nullptr;
     mdl::Mdl(model)->matMisc = 0;
     return true;
@@ -492,27 +496,10 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive) {
     // 同源）。前 18 个无条件；1.40 版补 2 个；1.50 版补 5 个。
     auto getJoint = reinterpret_cast<void (__stdcall*)(int, float*)>(
         s.OniExportSlot(4));  // x64 [app+0xA1358]
-    static const struct { int joint; int slotFloat; } kJoints[18] = {
-        {0x00, 3570}, {0x01, 3576}, {0x02, 3579}, {0x03, 3582},
-        {0x04, 3585}, {0x05, 3588}, {0x06, 3594}, {0x07, 3597},
-        {0x08, 3600}, {0x09, 3606}, {0x0A, 3609}, {0x0B, 3612},
-        {0x0C, 3618}, {0x0D, 3621}, {0x0E, 3624}, {0x0F, 3573},
-        {0x10, 3591}, {0x11, 3603},
-    };
-    float* const jointSlots = reinterpret_cast<float*>(model);
-    for (const auto& entry : kJoints)
-        getJoint(entry.joint, jointSlots + entry.slotFloat);
-    const unsigned char version = s.state.openniVersion;  // x64 0xA137E
-    if (version == 0x0E) {                       // 0x7FF7CB44C3E3
-        getJoint(0x12, jointSlots + 3615);
-        getJoint(0x13, jointSlots + 3627);
-    } else if (version == 0x0F) {                // 0x7FF7CB44C42C
-        getJoint(0x12, jointSlots + 3615);
-        getJoint(0x13, jointSlots + 3627);
-        getJoint(0x14, jointSlots + 3630);
-        getJoint(0x15, jointSlots + 3633);
-        getJoint(0x16, jointSlots + 3636);
-    }
+    if (model == nullptr || getJoint == nullptr)
+        return;
+    mdl::CaptureSkeletonJoints(mdl::Mdl(model)->currentJoints,
+                               s.state.openniVersion, getJoint);
 
     // ② 滚动均值平滑（0x7FF7CB44C4EF）：窗口 = framesPerSecond/10。
     ModelVertexHistoryPush(

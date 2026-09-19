@@ -631,18 +631,33 @@ void FrameDriver(MMDApp* app) {
                                      nullptr);
             }
             if (hr == D3DERR_DEVICELOST) {
-                while (device->TestCooperativeLevel() !=
-                       D3DERR_DEVICENOTRESET) {
+                // Original loop (x64 0x7FF7CB4570CD): while (TCL !=
+                // NOTRESET) { Sleep(1); pump ONLY in fullscreen; }.
+                // Port hardening (documented deviation, stuck-forever
+                // rescue only): (1) pump in windowed mode too - the
+                // original leaves the app visibly hung (AppHangB1 ghost)
+                // for as long as the wait lasts, and a pending WM_SIZE can
+                // itself be required for the driver to report NOTRESET;
+                // (2) break out when TestCooperativeLevel() == D3D_OK - a
+                // transient Present() DEVICELOST (RDP/DWM hiccup, driver
+                // TDR recovery) otherwise waits forever for a NOTRESET
+                // that never comes, freezing the viewport black with the
+                // message pump starved; retrying the next Present is the
+                // correct recovery when the device is not resettable-pending.
+                for (;;) {
+                    HRESULT cooperative = device->TestCooperativeLevel();
+                    if (cooperative == D3DERR_DEVICENOTRESET ||
+                        cooperative == D3D_OK)
+                        break;
                     Sleep(1);
-                    if (s.FullscreenMode() != 0) {
-                        MSG msg;
-                        if (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
-                            TranslateMessage(&msg);
-                            DispatchMessageA(&msg);
-                        }
+                    MSG recovery;
+                    if (PeekMessageA(&recovery, nullptr, 0, 0, PM_REMOVE)) {
+                        TranslateMessage(&recovery);
+                        DispatchMessageA(&recovery);
                     }
                 }
-                PostDeviceReset(app);                          // 0x440DB0
+                if (device->TestCooperativeLevel() != D3D_OK)
+                    PostDeviceReset(app);                          // 0x440DB0
             }
         }
     }

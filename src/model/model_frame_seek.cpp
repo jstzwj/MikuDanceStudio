@@ -164,6 +164,10 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
                 v = rec.value;
             } else {
                 const mdl::MorphKey& prev = keys[rec.previous];
+#if defined(_M_IX86)
+                // x86 0x4B49C3..0x4B4A10: same x87 shape as the advance
+                // copy - t and delta round through float stack slots
+                // (fstp/fld), product+add extended, one final rounding.
                 const float tF = (float)((double)(frameU32 - prev.frame) /
                                          (double)(std::uint32_t)(
                                              rec.frame - prev.frame));
@@ -171,6 +175,17 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
                     rec.value - prev.value;
                 v = (float)((double)tF * (double)delta +
                             (double)prev.value);
+#else
+                // x64 sub_7FF7CB4EBD90 @ 0x7FF7CB4EC4FD..0x7FF7CB4EC549:
+                // single precision end to end - the frame deltas subtract
+                // in integer registers, cvtsi2ss/divss form the fraction,
+                // subss/mulss/addss the value; no double accumulation.
+                const float tF =
+                    static_cast<float>(frameU32 - prev.frame) /
+                    static_cast<float>(static_cast<int>(rec.frame) -
+                                       static_cast<int>(prev.frame));
+                v = tF * (rec.value - prev.value) + prev.value;
+#endif
             }
             vals[k].value = v;
             result = k + 1;

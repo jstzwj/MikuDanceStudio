@@ -38,7 +38,7 @@ namespace {
 //   1. Lock(0, nAvgBytesPerSec) once (Restore + retry on
 //      DSERR_BUFFERLOST); failure exits.  WaveStreamFeed(p1, l1, p2, l2),
 //      Unlock, Play(0, 0, DSBPLAY_LOOPING), wrapped = 0.
-//   2. while (stop != 1):
+//   2. while (audio->ReadStopFlag() != 1):
 //        Lock(writeOff, avgBytes) (+restore retry); failure exits.
 //        if (l1 == 0 && l2 == 0) { Unlock(p1, 0, p2, 0); exit; }   // EOF
 //        WaveStreamFeed(p1, l1, p2, l2); Unlock.
@@ -46,12 +46,12 @@ namespace {
 //        play-cursor chase: do { GetCurrentPosition(&cur, 0);
 //          wrapped ? (cur > last ? keep : wrapped = 0)
 //                  : (cur > writeOff ? leave the wait);
-//          last = cur; for (i < 10) { Sleep(10); if (stop == 1) break; }
-//        } while (stop != 1);
+//          last = cur; for (i < 10) { Sleep(10); if (audio->ReadStopFlag() == 1) break; }
+//        } while (audio->ReadStopFlag() != 1);
 //        advance: l2 != 0 ? (writeOff = l2, wrapped = 1)
 //                         : (writeOff += l1; writeOff == bufBytes
 //                            ? (writeOff = 0, wrapped = 1) : wrapped = 0);
-//   3. exit epilogue: Stop(); Release(); ctx+0x14 = 0; stop = 2;
+//   3. exit epilogue: Stop(); Release(); ctx+0x14 = 0; audio->WriteStopFlag(2);
 //      _endthread().  (The fail-count break calls Stop a second time via
 //      the shared epilogue - harmless, kept as the original lays it out.)
 void __cdecl WaveFeedThread(void* ctx) {
@@ -59,7 +59,6 @@ void __cdecl WaveFeedThread(void* ctx) {
     IDirectSoundBuffer* buffer = audio->streamingBuffer;
     const DWORD avgBytes = audio->format.nAvgBytesPerSec;
     const std::int32_t bufBytes = audio->bufferBytes;
-    std::uint32_t& stop = audio->stopFlag;
     auto lock = [&](DWORD off, void** p1, DWORD* l1, void** p2,
                     DWORD* l2) -> HRESULT {
         HRESULT hr = buffer->Lock(off, avgBytes, p1, l1, p2, l2, 0);
@@ -73,7 +72,7 @@ void __cdecl WaveFeedThread(void* ctx) {
         buffer->Stop();                                        // 0x4C2F36
         buffer->Release();                                     // 0x4C2F4A
         audio->streamingBuffer = nullptr;                       // 0x4C2F4C
-        stop = 2;                                              // 0x4C2F53
+        audio->WriteStopFlag(2);                                              // 0x4C2F53
         _endthread();
     };
 
@@ -91,7 +90,7 @@ void __cdecl WaveFeedThread(void* ctx) {
         buffer->Unlock(p1, l1, p2, l2);                        // 0x4C2D8B
         buffer->Play(0, 0, DSBPLAY_LOOPING);                   // 0x4C2D9C
         bool wrapped = false;                                  // 0x4C2DA7
-        if (stop != 1) {
+        if (audio->ReadStopFlag() != 1) {
             DWORD writeOff = l1;  // v3 seeded with the first lock length
             // ---- 2. streaming loop ----------------------------------------
             for (;;) {
@@ -123,12 +122,12 @@ void __cdecl WaveFeedThread(void* ctx) {
                     last = cur;
                     for (int i = 0; i < 10; ++i) {             // 0x4C2E9E
                         Sleep(10);
-                        if (stop == 1)
+                        if (audio->ReadStopFlag() == 1)
                             break;
                     }
-                } while (stop != 1);
+                } while (audio->ReadStopFlag() != 1);
                 // advance the write offset (0x4C2EC6..0x4C2F05)
-                if (stop != 1) {
+                if (audio->ReadStopFlag() != 1) {
                     if (l2 != 0) {
                         writeOff = l2;
                         wrapped = true;
@@ -141,7 +140,7 @@ void __cdecl WaveFeedThread(void* ctx) {
                             wrapped = false;
                         }
                     }
-                    if (stop != 1)
+                    if (audio->ReadStopFlag() != 1)
                         continue;
                 }
                 break;
@@ -219,7 +218,7 @@ void WaveSeekAndFeed(void* obj, double seconds) {
         return;                                                 // 0x4C34AA
     const std::int32_t avgBytes = audio->format.nAvgBytesPerSec; // 0x4C34B1
     const std::int32_t blkAlign = audio->format.nBlockAlign;     // 0x4C34B7
-    audio->stopFlag = 0;                                        // 0x4C34BF
+    audio->WriteStopFlag(0);                                        // 0x4C34BF
     audio->failureCount = 0;                                    // 0x4C34C9
     double avg = static_cast<double>(avgBytes);                 // 0x4C34D7 fild
     if (avgBytes < 0)                                           // 0x4C34DA jge
@@ -240,10 +239,12 @@ void WaveSeekAndFeed(void* obj, double seconds) {
 // entry from ui_frame_step / ui_mouse_misc / ui_editor_click and the frame
 // drivers 0x430F20/0x4312E0/0x446A70/0x44AAA0).  Sequence verbatim:
 // KillTimer(hwnd, 0x64) on the ctx main HWND (+0x0C), CloseDataFile
-// (0x4C2680), WaveStartPlayback (0x4C2760), restore the streaming buffer's
-// volume - IDirectSoundBuffer vtable slot 15 (0x3C = SetVolume) with the
-// ctx dword at +0x258, WaveSeekAndFeed(this, seconds), SetTimer(hwnd, 0x64,
-// 0x21, 0).
+// (0x4C2680), WaveStartPlayback (0x4C2760), call the streaming buffer's
+// vtable slot 15 with the ctx dword at +0x258 - slot 15 (0x3C x86 / 0x78
+// x64) is SetFrequency, NOT SetVolume (slot 17): the original hands its
+// -10000..0 volume dword to SetFrequency, an invalid no-op call, so its
+// WAV volume never took effect; replicated verbatim below, then
+// WaveSeekAndFeed(this, seconds), SetTimer(hwnd, 0x64, 0x21, 0).
 // ---------------------------------------------------------------------------
 void WaveRestartAt(void* obj, double seconds) {  // VA 0x004C3530
     auto* audio = static_cast<WaveAudioContext*>(obj);
@@ -252,7 +253,11 @@ void WaveRestartAt(void* obj, double seconds) {  // VA 0x004C3530
     CloseDataFile(obj);                                         // 0x4C3541
     WaveStartPlayback(obj);                                     // 0x4C3548
     IDirectSoundBuffer* buffer = audio->streamingBuffer;
-    buffer->SetVolume(audio->volume);                            // 0x4C355D
+    // x64 0x7FF7CB4FAC5E (call [rax+0x78], edx = [rbx+0x288]): the original
+    // re-applies the volume dword through vtable slot 15 = SetFrequency, not
+    // SetVolume (slot 17) - an invalid no-op call, so the original's WAV
+    // volume never took effect.  DWORD cast = mov edx bit-pattern semantics.
+    buffer->SetFrequency(static_cast<DWORD>(audio->volume));      // 0x4C355D
     WaveSeekAndFeed(obj, seconds);                              // 0x4C356B
     SetTimer(hwnd, 0x64, 0x21, nullptr);                        // 0x4C3580
 }

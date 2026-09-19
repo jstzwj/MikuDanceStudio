@@ -19,7 +19,7 @@
 // This header is self-contained: it needs only <d3d9.h>, <d3dx9.h>, <string>.
 // The parent (effect_engine.cpp) calls SasParse right after
 // D3DXCreateEffectFromFileW succeeds and SasUnload on unload; the pass planner
-// queries the technique/pass model and drives SasExecutePostEffect.
+// queries the technique/pass model and drives the step/resume walk.
 #ifndef MME_SAS_INTERPRETER_H_
 #define MME_SAS_INTERPRETER_H_
 
@@ -48,16 +48,14 @@ enum SasScriptOrder {
     kSasOrderPostprocess = 2   // "postprocess"
 };
 
-// [0x1800169d0 L18599-18693] technique "MmdPass" annotation values (the record
-// field in the original holds object=0, object_ss=1, shadow=2, zplot=3/4 - the
-// decompile shows two distinct numeric encodings for the zplot-like entry;
-// UNCERTAIN: the original distinguishes a 4-char pass-mode string stored as 3
-// from "zplot" stored as 4. This port normalizes both to kSasPassZplot).
+// [0x1800169d0 L18599-18693] technique "MmdPass" annotation values
+// (0x1800B456C: object=0, object_ss=1, shadow=2, edge=3, zplot=4).
 enum SasMmdPass {
     kSasPassObject = 0,    // "object"    - plain object draw
     kSasPassObjectSS = 1,  // "object_ss" - object draw while self-shadow is on
     kSasPassShadow = 2,    // "shadow"    - shadow map draw
-    kSasPassZplot = 3      // "zplot"     - z-plot draw
+    kSasPassEdge = 3,      // "edge"      - outline draw
+    kSasPassZplot = 4      // "zplot"     - z-plot draw
 };
 
 // Parse (validate + model) an effect after D3DXCreateEffectFromFileW
@@ -71,11 +69,20 @@ enum SasMmdPass {
 //   pathAnsi  - effect file path as requested from the loader (log context)
 //   device    - device the effect was created against (texture creation)
 SasEffect* SasParse(ID3DXEffect* effect, const std::string& pathAnsi,
-                    IDirect3DDevice9* device);
+                    IDirect3DDevice9* device, std::string* outFailureLog = nullptr);
 
 // [FUN_18000b210 unload path] release the parsed representation. Does NOT
 // release the ID3DXEffect (owned by effect_engine).
 void SasUnload(SasEffect* sas);
+
+// Device-reset hook (PHASE3 note #7): drop every D3DPOOL_DEFAULT resource
+// (offscreen render targets / depth stencils) and re-create it against the
+// reset device, re-binding the texture parameters.
+void SasRecreateResources(SasEffect* sas, IDirect3DDevice9* device);
+
+// Lost-device half for resources created in D3DPOOL_DEFAULT. Must run before
+// IDirect3DDevice9::Reset; recreation alone after Reset is too late.
+void SasReleaseDeviceResources(SasEffect* sas);
 
 // Does this effect define post-effect (screen) passes? True when the
 // STANDARDSGLOBAL scan saw ScriptClass "scene"/"sceneorobject" with
@@ -112,6 +119,11 @@ struct SasTechniqueInfo {
     const char* name;             // technique name (GetTechniqueDesc)
     D3DXHANDLE  handle;
     int         mmdPass;          // SasMmdPass (kSasPassObject when absent)
+    // Use* filters. The original bytes default to 0xFF = "wildcard"
+    // (sub_1800169D0 0x180016a41 *(v4+4)=-256; consumed as SIGNED by the
+    // technique selector sub_18001DB50 0x18001dc65-0x18001dcb1: negative
+    // matches any material state). The bools here report "nonzero" -
+    // true for an explicit Use*=true AND for the no-annotation default.
     bool        useTexture;       // "UseTexture" annotation
     bool        useSpheremap;     // "UseSpheremap" annotation
     bool        useToon;          // "UseToon" annotation
@@ -123,10 +135,11 @@ struct SasTechniqueInfo {
     int         passCount;        // GetTechniqueDesc.Passes
 };
 
-// Techniques in the order MME uses them: the STANDARDSGLOBAL
-// "Script=Technique=A?B:C" order first (FUN_18000c470 LAB_18000d3d0 block),
-// then any remaining techniques in declaration order (the initial
-// GetTechnique(i) enumeration loop).
+// Techniques in the order MME uses them: every technique in declaration
+// order (the initial GetTechnique(i) enumeration loop), REPLACED by ONLY
+// the STANDARDSGLOBAL "Script=Technique=A?B:C" names when a valid Script
+// annotation is present (FUN_18000c470: vector clear at 0x18000d072,
+// then the LAB_18000d3d0 block pushes the listed names back).
 int SasGetTechniqueCount(const SasEffect* sas);
 bool SasGetTechniqueInfo(const SasEffect* sas, int index, SasTechniqueInfo* out);
 bool SasGetPassInfo(const SasEffect* sas, int techIndex, int passIndex,
@@ -136,23 +149,45 @@ bool SasGetPassInfo(const SasEffect* sas, int techIndex, int passIndex,
 // Returns true when `subset` may be drawn with `techIndex`.
 bool SasIsSubsetAllowed(const SasEffect* sas, int techIndex, int subset);
 
+// [sub_18001DB50 0x18001DB50-0x18001DD1F] the technique selector. One query
+// = (draw mode, subset, material Use* state):
+//   drawMode     - SasMmdPass value 0..4 (object/object_ss/shadow/edge/zplot)
+//   subset       - material subset index; negative selects nothing
+//   useTexture/useSpheremap/useToon - the CURRENT material's state flags
+// (FUN_18001b940's snapshot+0x56 / 0<sphere_mode / snapshot+0x54).
+// Iterates the technique order vector (sas+0xF8: every technique in
+// declaration order, or ONLY the STANDARDSGLOBAL Script=Technique names
+// when a valid Script annotation replaced the list at 0x18000d072) and
+// returns the
+// FIRST technique whose MmdPass == drawMode, whose Subset ranges contain
+// `subset`, and whose Use* bytes match (0xFF = wildcard, matches either
+// state; an explicit annotation byte requires equality with the material
+// state). A technique that passes those filters but fails the validity check
+// - [System] SkipValidation=false: the ValidateTechnique result (record+8);
+// true: the vs_3_0/ps_3_0 mix check (record+9) [byte_1800D99D9 select at
+// 0x18001dcb3] - is skipped and remembered; when NO valid technique matched,
+// the LAST remembered invalid one is returned as a fallback (the original
+// still draws through it). *validMatch receives the "found" byte (false only
+// for the invalid fallback; true for a valid match and for the no-match
+// null). Returns D3DXHANDLE; nullptr when nothing matched.
+D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
+                              bool useTexture, bool useSpheremap, bool useToon,
+                              bool* validMatch);
+
 // --- execution (implemented in sas_exec.cpp) ---
+//
+// Scene/postprocess techniques execute through the RUNTIME state machine
+// (FUN_18001bbc0 port) with a persisted run state: the pass planner STEPS a
+// technique to the ScriptExternal suspension (the scene turn then renders
+// into the targets the script bound) and RESUMES it after the turn to run
+// the lighting/composite passes. The run-state API (SasRunState /
+// SasCreateRunState / SasExecuteTechniqueStep / SasResumeTechnique) is
+// declared in sas_exec.h, which the engine sources include.
 
-// Execute the post-effect chain for one repeat iteration (the OnEndScene
-// path): runs the postprocess technique's compiled script - render target
-// switches, ClearSetColor/ClearSetDepth/Clear, ScriptExternal=Color,
-// loopbycount (unrolled at compile time), Pass=/Draw=Buffer execution.
-//   passIndex - pass of the postprocess technique to draw for the final
-//               "Pass=" step (-1 = every pass with a script, the default).
-// The clearSetColor/clearDepth defaults come from the host (MMHack
-// GetClearColor / the MME context); register them with SasSetHostCallbacks.
-void SasExecutePostEffect(SasEffect* sas, IDirect3DDevice9* device,
-                          int passIndex);
-
-// Execute one technique's script + passes for object-class effects (the
-// OnDrawIndexedPrimitive-side entry the parent may use after wiring).
-void SasExecuteTechnique(SasEffect* sas, IDirect3DDevice9* device,
-                         int techIndex, int subset);
+// Execute one technique's script + passes for object-class effects (a fresh
+// run state, full run, restore) - the object-draw-side entry.
+void SasExecuteTechnique(SasEffect* sas, IDirect3DDevice9* device, int techIndex,
+                         int subset);
 
 // Host callbacks for the steps that live outside the SAS module. All are
 // optional; the defaults implement the D3D-visible behavior directly.
@@ -165,10 +200,6 @@ struct SasHostCallbacks {
     // "DirectX Error:" reporter. kind: 0 = standard-shader draw, 1 = effect
     // pass draw (BeginPass/EndPass + fullscreen quad for post effects).
     long (*RunPass)(void* ctx, SasEffect* sas, int kind, int passIndex);
-    // [Tips: (2) ScriptExternal=Color] render preprocess effects + objects +
-    // other post effects into the currently bound render target. Default:
-    // no-op returning S_OK (the parent's pass planner owns scene rendering).
-    long (*ScriptExternalColor)(void* ctx, SasEffect* sas);
     // Default clear color/z when a technique clears without ClearSetColor
     // (MMHack GetClearColor / host state).
     unsigned long (*GetClearColor)(void* ctx);

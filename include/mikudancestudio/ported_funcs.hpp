@@ -273,7 +273,6 @@ void RenderModelsFixed(MMDApp*);                 // VA 0x00425D20
 void RenderModelsEffect(MMDApp*, const float[16]); // VA 0x004277E0
 void RenderAccessoriesFixed(MMDApp*);             // VA 0x004C4A10
 void RenderAccessoriesFixedRange(MMDApp*, int, int);
-void RenderAccessoriesProjectedGroundShadow(MMDApp*);
 void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp*);
 void RenderAccessoriesShadow(MMDApp*);            // VA 0x004C52D0
 void RenderAccessoriesEffect(MMDApp*);            // VA 0x004C55C0
@@ -315,7 +314,9 @@ void LoadSceneV1(MMDApp* app, int fd);            // VA 0x0045916D..0x45E7F7 (v1
                                                   //  loader body inside sub_458F80)
 void LoadVmdFile(const wchar_t* path);            // wide-path wrapper of
                                                   //  LoadVmdMotion (VA 0x00434B60)
-int LoadVmdMotion(MMDApp* app, const char* fileName);  // VA 0x00434B60
+int LoadVmdMotion(MMDApp* app, const wchar_t* fileName);  // VA 0x00434B60 (wide
+                                                  //  path, _wsopen_s per x64
+                                                  //  0x7FF7CB48D1B7)
 void PanelPaint(MMDApp* app);                     // VA 0x00414610 (ui_panel_paint.cpp)
 int ResetMorphKeyCursor(unsigned char* model);    // VA 0x004A49A0
 bool RegisterBoneKey(unsigned char* model, unsigned char* rec,
@@ -337,9 +338,9 @@ void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode);
 void ResetDisplayKeyCursor(unsigned char* model); // VA 0x004A4A00
 void DeleteMarkedModelKeys(unsigned char* model, int frame);
                                                   // VA 0x004A09E0
-void UndoModelEdit(unsigned char* model, std::int32_t* frame);
+void UndoModelEdit(unsigned char* model, std::int32_t& frame);
                                                   // VA 0x004A1870
-void RedoModelEdit(unsigned char* model, std::int32_t* frame);
+void RedoModelEdit(unsigned char* model, std::int32_t& frame);
                                                   // VA 0x004A2490
 // Exact 0x43F15E..0x43F60D inline block used by the frame-range scaler:
 // convert the deletion snapshot to type 4, then open the paired type-2

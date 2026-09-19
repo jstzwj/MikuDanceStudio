@@ -495,7 +495,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->AccessorySlot(found) = nullptr;
         // dispose the previous frame blob of this slot
         if (app->AccessoryKeys(found) != nullptr) {
-            free(app->AccessoryKeys(found));
+            ::operator delete(app->AccessoryKeys(found));
             app->AccessoryKeys(found) = nullptr;
         }
         // fresh 0x927C0 frame blob with an identity frame seeded
@@ -689,6 +689,15 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     case 494: {
         unsigned char* model = ActiveModel(app);
+        if (model == nullptr) {
+            // Selected slot empty: walking the null record here is fatal;
+            // keep the radio bookkeeping below and skip the scan.
+            SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
+            SendMessageA(hwnd, WM_COMMAND, 0x1EA, 0);
+            PostLanguageSweep(app);
+            PostLanguageSweep2(app);
+            break;
+        }
         auto* const modelRecord = mikudancestudio::mdl::Mdl(model);
         const std::int32_t boneCount = modelRecord->boneCount;
         mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
@@ -959,7 +968,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         unsigned char* pasteBlob =
             reinterpret_cast<unsigned char*>(undo.bonePose);
         if (pasteBlob != nullptr) {
-            free(pasteBlob);
+            ::operator delete(pasteBlob);
             undo.bonePose = nullptr;
         }
         const std::int32_t count =
@@ -1056,7 +1065,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         unsigned char* pasteBlob =
             reinterpret_cast<unsigned char*>(undo.bonePose);
         if (pasteBlob != nullptr) {
-            free(pasteBlob);
+            ::operator delete(pasteBlob);
             undo.bonePose = nullptr;
         }
         const std::int32_t count =

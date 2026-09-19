@@ -1,7 +1,7 @@
 // Model-facing API and compatibility boundary.
 //
 // The reverse-engineered executable stores one model in a flat allocation.
-// The actual field map lives in model_layout.hpp; that generated header is
+// The actual field map lives in model_layout.hpp; that runtime record is
 // the only place where ABI offsets and unknown padding belong.  Code below
 // exposes typed views for the portions whose ownership and element type are
 // established.  New call sites should use those views instead of inventing
@@ -220,47 +220,9 @@ inline const BoneReference* SelectorStates(const DisplayKey& key) {
     return static_cast<const BoneReference*>(key.selectorStates);
 }
 
-constexpr std::size_t kName = 8776;      // char[20] SJIS
-constexpr std::size_t kNameEn = 8826;    // char[20]
-constexpr std::size_t kBoneListRows = 12712;
-constexpr std::size_t kBoneListPos = 12716;
-constexpr std::size_t kPhysicsMode = 14590;
-// PMX temporary-table slots are part of the flat ABI. Their x64 ownership
-// layout has not yet been recovered sufficiently to make them ModelRecord
-// members, so expose typed views here instead of leaking offsets to callers.
-// The PMX loader builds five flattened UV-morph tables, one for each file
-// morph type 3..7 (UV plus four additional-UV channels).  x64 writes the
-// counts at +0x2238..+0x2248 and the table pointers at
-// +0x2278..+0x2298.
-#if MIKUDANCESTUDIO_X64
-constexpr std::size_t kPmxUvMorphCounts = 0x2238;
-constexpr std::size_t kPmxUvMorphTables = 0x2278;
-#else
-constexpr std::size_t kPmxUvMorphCounts = 8688;
-constexpr std::size_t kPmxUvMorphTables = 8736;
-#endif
-// PMX loader sub_1400A9AC0 allocates these three adjacent 128-byte material
-// pools at +0x22A0/+0x22A8/+0x22B0 in the x64 model record.  Their Win32
-// counterparts begin at +8756 and retain 4-byte pointer spacing.
-#if MIKUDANCESTUDIO_X64
-constexpr std::size_t kPmxMaterialMorphPools = 0x22A0;
-#else
-constexpr std::size_t kPmxMaterialMorphPools = 8756;
-#endif
-
-// Kinect standard-pose trace: a recording-enabled flag byte and the
-// 0x3B3760-byte sample buffer pointer (308 bytes per sample), with the
-// rewind cursor living in ModelRecord::matMisc.  The generated layout
-// declares the x86 pointer slot as "pmxVertexCount" - a misnomer: every
-// user treats it as this pointer.  x86 0x21A8/0x21AC; x64 0x21E0/0x21E8
-// (alloc twin 0x7FF7CB4C9A74/0x7FF7CB4C9AA3, trace pump 0x7FF7CB4F23E0).
-#if defined(_M_X64)
-constexpr std::size_t kPoseTraceFlag = 0x21E0;
-constexpr std::size_t kPoseTraceBuffer = 0x21E8;
-#else
-constexpr std::size_t kPoseTraceFlag = 8616;
-constexpr std::size_t kPoseTraceBuffer = 8620;
-#endif
+constexpr std::size_t kPoseTraceFlag = offsetof(ModelRecord, poseTraceRecording);
+constexpr std::size_t kPoseTraceBuffer = offsetof(ModelRecord, poseTraceBuffer);
+constexpr std::size_t kPmdModelNameBytes = 20;
 
 enum class PmxTextBufferSlot : std::size_t {
     japaneseName,
@@ -280,11 +242,11 @@ inline const T& At(const unsigned char* m, std::size_t off) {
 }
 
 inline std::uint8_t& PoseTraceFlag(unsigned char* m) {
-    return At<std::uint8_t>(m, kPoseTraceFlag);
+    return reinterpret_cast<ModelRecord*>(m)->poseTraceRecording;
 }
 
 inline void*& PoseTraceBuffer(unsigned char* m) {
-    return At<void*>(m, kPoseTraceBuffer);
+    return reinterpret_cast<ModelRecord*>(m)->poseTraceBuffer;
 }
 
 // Typed view of the model object: routes table pointers through
@@ -306,36 +268,20 @@ inline PmdVertex*& PmdVertices(unsigned char* m) {
     return Mdl(m)->rawVertices;
 }
 
-// PMX loader sub_1400A9AC0 aggregates PMD/vertex morph zero and bone-morph
-// offsets into these tables.  The x64 record moves them to +0x2260/+0x2268,
-// with their counts at +0x2234/+0x224C.
-#if MIKUDANCESTUDIO_X64
-constexpr std::size_t kBaseVertexMorphCount = 0x2234;
-constexpr std::size_t kBoneMorphOffsetCount = 0x224C;
-constexpr std::size_t kBaseVertexMorphTable = 0x2260;
-constexpr std::size_t kBoneMorphOffsetTable = 0x2268;
-#else
-constexpr std::size_t kBaseVertexMorphCount = 8684;
-constexpr std::size_t kBoneMorphOffsetCount = 8708;
-constexpr std::size_t kBaseVertexMorphTable = 8724;
-constexpr std::size_t kBoneMorphOffsetTable = 8728;
-#endif
-
 inline std::uint32_t& BaseVertexMorphCount(unsigned char* m) {
-    return At<std::uint32_t>(m, kBaseVertexMorphCount);
+    return Mdl(m)->morph0Count;
 }
 
 inline std::int32_t& BoneMorphOffsetCount(unsigned char* m) {
-    return At<std::int32_t>(m, kBoneMorphOffsetCount);
+    return Mdl(m)->boneMorphCount;
 }
 
 inline PmdVertexMorphEntry*& BaseVertexMorphTable(unsigned char* m) {
-    return *reinterpret_cast<PmdVertexMorphEntry**>(m + kBaseVertexMorphTable);
+    return Mdl(m)->morph0Table;
 }
 
 inline BoneMorphOffsetRecord*& BoneMorphOffsets(unsigned char* m) {
-    return *reinterpret_cast<BoneMorphOffsetRecord**>(
-        m + kBoneMorphOffsetTable);
+    return Mdl(m)->boneMorphTable;
 }
 
 template <typename T>
@@ -381,20 +327,12 @@ inline std::int32_t*& PmxIndices(unsigned char* m) {
     return ResourceAs<std::int32_t>(Mdl(m)->indices);
 }
 
-struct PmxUvMorphCounts {
-    std::int32_t byFamily[5];
-};
-
-struct PmxUvMorphTables {
-    PmxUvMorphEntry* byFamily[5];
-};
-
 inline PmxUvMorphCounts& UvMorphCounts(unsigned char* m) {
-    return At<PmxUvMorphCounts>(m, kPmxUvMorphCounts);
+    return Mdl(m)->uvMorphCounts;
 }
 
 inline PmxUvMorphTables& UvMorphTables(unsigned char* m) {
-    return At<PmxUvMorphTables>(m, kPmxUvMorphTables);
+    return Mdl(m)->uvMorphTables;
 }
 
 inline PmxUvMorphEntry*& PmxUvMorphBaseTable(unsigned char* m) {
@@ -406,14 +344,8 @@ inline PmxUvMorphEntry*& AdditionalUvMorphTable(unsigned char* m,
     return UvMorphTables(m).byFamily[family + 1];
 }
 
-struct PmxMaterialMorphPools {
-    MaterialMorphPool* base;
-    MaterialMorphPool* additive;
-    MaterialMorphPool* multiplicative;
-};
-
 inline PmxMaterialMorphPools& MaterialMorphPools(unsigned char* m) {
-    return At<PmxMaterialMorphPools>(m, kPmxMaterialMorphPools);
+    return Mdl(m)->materialMorphPools;
 }
 
 inline MaterialMorphPool*& MaterialMorphBase(unsigned char* m) {
