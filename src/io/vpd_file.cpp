@@ -233,8 +233,7 @@ void LoadVpdFile(const wchar_t* path) {
                     for (int c = 0; c < 3; ++c)
                         boneAxis[c] = tailBone.position[c] - bone->position[c];
                     auto* d3 = &d3dx::Get();
-                    if (d3->module != nullptr)
-                        d3->vec3Normalize(boneAxis, boneAxis);
+                    d3->vec3Normalize(boneAxis, boneAxis);
                 }
                 auto* d3 = &d3dx::Get();
                 if (d3->quatToAxisAngle != nullptr) {

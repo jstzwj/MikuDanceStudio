@@ -19,6 +19,8 @@
 #include "mmhack_state.h"
 #include "mme_abi.h"
 #include "mmeffect/mme_ui.h"
+#include "mmeffect/device_initialization.h"
+#include "mmeffect/host_object_cache.h"
 
 extern "C" void __cdecl MmeHostInitializeRuntime(HINSTANCE instance) {
     mme::MmeUiInitializeRuntime(instance);
@@ -45,7 +47,7 @@ namespace {
 // 原 MyDirect3DDevice9 包装器的自有字段（+0x1c/+0x20/+0x28/+0x2c 与三张对
 // 象缓存图），本工程单设备假设与原版一致。
 struct MmeHostDeviceState {
-    int mmeInitFlag = 0;                          // 包装器 +0x1c
+    mme::DeviceInitialization initialization;     // 包装器 +0x1c 的生命周期
     IDirect3DSurface9* trackedRT = nullptr;       // 包装器 +0x20（借用指针）
     int currentObject = 0;                        // 包装器 +0x28
     int endSceneFired = 0;                        // 包装器 +0x2c
@@ -181,7 +183,7 @@ void __cdecl MmeHostRecordTextureFile(const wchar_t* path,
 
 int __cdecl MmeHostEffectsActive(void)
 {
-    return (g_host.mmeInitFlag != 0 && !g_mmh.effectsDisabled) ? 1 : 0;
+    return (g_host.initialization.IsReady() && !g_mmh.effectsDisabled) ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +199,7 @@ HRESULT __cdecl MmeHostClear(IDirect3DDevice9* device, unsigned long rect_count,
     device->GetRenderTarget(0, &surf);
     if (surf != nullptr)
         surf->Release();                         // 仅为借用比对
-    if (g_host.trackedRT == nullptr || g_host.mmeInitFlag == 0 ||
+    if (g_host.trackedRT == nullptr || !g_host.initialization.IsReady() ||
         g_mmh.effectsDisabled) {
         return device->Clear(rect_count, rects, flags, color, z, stencil);
     }
@@ -220,18 +222,17 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
     g_mmh.frameTime = ExpGetFrameTime();         // DAT_18006e79c
 
     // 惰性 MMEffect 初始化：首个 BeginScene 调用 Initialize。
-    if (g_host.mmeInitFlag == 0) {
-        if (Initialize(device) != 0) {
+    if (!g_host.initialization.EnsureReady(
+        [device] { return Initialize(device); },
+        [] {
             const char* msg = (g_mmh.currentEffect != nullptr)
                 ? "Initialize Error"
                 : "Initialize Error: failed to load default effect file. "
                   "Please check video card capability.";
             MessageBoxA(g_mmh.mainWindow, msg, "MikuMikuEffect", MB_ICONERROR);
             g_mmh.effectsDisabled = 1;           // DAT_18006e794
-            return 0;
-        }
-        g_host.mmeInitFlag = 1;
-    }
+        }))
+        return S_OK; // Original failure returns 0 without real BeginScene.
 
     HRESULT hr = device->BeginScene();           // 真实槽 41 (+0x148)
     if (hr != 0)
@@ -247,20 +248,14 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         liveIds[(unsigned long long)(uintptr_t)ExpGetAcsID(i)] = true;
 
     // --- 阶段 1+2: 清除已消失对象的缓存 (OnDeleteModel) -----------------------
-    std::list<MmhCachedObject*>::iterator it = g_host.objectList.begin();
-    while (it != g_host.objectList.end()) {
-        MmhCachedObject* obj = *it;
-        if (liveIds.find(obj->id) == liveIds.end()) {
+    mme::RemoveMissingHostObjects(g_host.objectList, g_host.objectById,
+        liveIds, [device](MmhCachedObject* obj) {
             OnDeleteModel(device, obj->id);
             if (obj->texRef != nullptr)
                 static_cast<IUnknown*>(obj->texRef)->Release();
             g_mmh.objData.erase(obj->id);
             delete obj;
-            it = g_host.objectList.erase(it);
-        } else {
-            ++it;
-        }
-    }
+        });
 
     // --- 阶段 3: 为新对象建立缓存 (OnCreateModel) ------------------------------
     for (int i = 0; i < pmdNum; i++) {
@@ -548,14 +543,14 @@ HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
 // ---------------------------------------------------------------------------
 void __cdecl MmeHostOnLostDevice(IDirect3DDevice9* device)
 {
-    if (g_host.mmeInitFlag == 0)
+    if (!g_host.initialization.IsReady())
         return;
     OnLostDevice(device);
 }
 
 void __cdecl MmeHostOnResetDevice(IDirect3DDevice9* device)
 {
-    if (g_host.mmeInitFlag == 0)
+    if (!g_host.initialization.IsReady())
         return;
     OnResetDevice(device);
 }
@@ -565,8 +560,9 @@ void __cdecl MmeHostOnResetDevice(IDirect3DDevice9* device)
 // (+0x20) 是借用指针（BeginScene 中即已释放），这里刻意不再释放。
 void __cdecl MmeHostDestroyDevice(IDirect3DDevice9* device)
 {
-    if (g_host.mmeInitFlag != 0)
-        Cleanup(device);
+    // Original Release (0x180001D50 -> 0x180001DB0) calls Cleanup even when
+    // Initialize failed: it may already have allocated the context/engine.
+    Cleanup(device);
     for (MmhCachedObject* obj : g_host.objectList) {
         if (obj->texRef != nullptr)
             static_cast<IUnknown*>(obj->texRef)->Release();
@@ -576,7 +572,7 @@ void __cdecl MmeHostDestroyDevice(IDirect3DDevice9* device)
     g_host.objectById.clear();
     g_host.objectByOrder.clear();
     g_host.currentObject = 0;
-    g_host.mmeInitFlag = 0;
+    g_host.initialization.Reset();
     g_host.endSceneFired = 0;
     g_host.trackedRT = nullptr;
 }

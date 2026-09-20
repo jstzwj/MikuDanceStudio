@@ -21,7 +21,7 @@
 //   436 = main-window model combo (used only for its item count)
 //
 // Working state:
-//   app+0xA0668 -> array of 20-byte SelectAttachRecord values, one per
+//   app+0xA0668 -> array of 20-byte mdl::BoneOrderEntry values, one per
 //     combo-669 item.
 //   app+0xA0B1C -> int[] mapping combo-673 item-2 to model slot
 //   app+0xA0B24 -> int[] mapping combo-677 item to bone id
@@ -92,34 +92,13 @@ bool English(MMDApp* app) {
     return app->state.englishUI != 0;  // 0xA0B4C / x64 0xA1B90
 }
 
-// Dialog-side view of one 20-byte boneOrderTable entry.  The bone-order walk
-// (bone_sort / key_registrars) decodes the same bytes as BoneOrderEntry; the
-// select dialog decodes them as {bone, -, -, target model, target bone}
-// (x86 0x4CCE4 / x64 0x96470, verified in sub_7FF7CB4BA7B0 at
-// 0x7FF7CB4BA825/0x7FF7CB4BA86F).
-struct SelectAttachRecord {
-    std::int32_t boneIndex;
-    std::int32_t reserved[2];
-    std::int32_t targetModelSlot;  // -1 root, -2 ground
-    std::int32_t targetBoneIndex;
-};
-static_assert(sizeof(SelectAttachRecord) == 20, "select dialog record ABI");
-static_assert(offsetof(SelectAttachRecord, targetModelSlot)
-                  == offsetof(mdl::BoneOrderEntry, linkedModel),
-              "select record aliases the bone-order table (model slot)");
-static_assert(offsetof(SelectAttachRecord, targetBoneIndex)
-                  == offsetof(mdl::BoneOrderEntry, linkedBone),
-              "select record aliases the bone-order table (bone index)");
-
-// The combo-669 record source is the model's bone-order table.
-SelectAttachRecord* ModelSelectRecords(unsigned char* model) {
-    return static_cast<SelectAttachRecord*>(mdl::Mdl(model)->boneOrderTable);
+// The dialog and model use the same external-parent selector type.
+mdl::BoneOrderEntry* ModelSelectRecords(unsigned char* model) {
+    return mdl::BoneOrder(model);
 }
 
-// Combo-669 selection record for item index i.
-SelectAttachRecord* SelRecord(MMDApp* app, int item) {
-    return static_cast<SelectAttachRecord*>(
-               app->state.selectNavRecords) + item;
+mdl::BoneOrderEntry* SelRecord(MMDApp* app, int item) {
+    return app->state.selectNavRecords + item;
 }
 
 LPARAM StrParam(const void* s) {
@@ -134,20 +113,16 @@ LPARAM StrParam(const void* s) {
 void InitSelectNavDialog(MMDApp* app, HWND hDlg) {  // VA 0x00466630
     app->AccessoryApplyGate() = 0;                     // 0x46665D
     if (app->state.selectNavRecords != nullptr) {      // 0x466664
-        free(app->state.selectNavRecords);             // j_j__free_0
+        delete[] app->state.selectNavRecords;
         app->state.selectNavRecords = nullptr;
     }
 
     unsigned char* model = ActiveModel(app);
     const int count = static_cast<int>(
         mdl::Mdl(model)->boneOrderCount);              // x86 0x4CCE8 / x64 0x96478
-    auto* const records = static_cast<SelectAttachRecord*>(
-        operator new(sizeof(SelectAttachRecord) * static_cast<std::size_t>(count)));
+    auto* const records = mdl::CopyBoneBindings(
+        ModelSelectRecords(model), static_cast<std::size_t>(count));
     app->state.selectNavRecords = records;
-    if (count > 0) {                                                 // 0x4666B4
-        memcpy(records, ModelSelectRecords(model),
-               sizeof(SelectAttachRecord) * static_cast<std::size_t>(count));
-    }
 
     const HWND combo669 = GetDlgItem(hDlg, panel::kBoneNameCombo);                    // 0x46671F
     const HWND combo673 = GetDlgItem(hDlg, panel::kMorphNameCombo);                    // 0x466733
@@ -192,13 +167,12 @@ void InitSelectNavDialog(MMDApp* app, HWND hDlg) {  // VA 0x00466630
         static_cast<HWND>(app->state.hwnd), panel::kMainComboModel); // 0x4668A0
     const int modelCount =
         static_cast<int>(SendMessageA(mainCombo, CB_GETCOUNT, 0, 0)) - 1;  // 0x4668B1
-    if (app->AccessoryOrderArray() != nullptr) {                    // 0x4668AB
-        free(app->AccessoryOrderArray());
-        app->AccessoryOrderArray() = nullptr;
+    if (app->DialogOrders().modelIndices != nullptr) {                    // 0x4668AB
+        app->DialogOrders().modelIndices.reset();
     }
-    int* const order = static_cast<int*>(
-        operator new(static_cast<std::size_t>(4 * modelCount)));     // 0x4668DE
-    app->AccessoryOrderArray() = order;
+    app->DialogOrders().modelIndices.reset(
+        new std::int32_t[static_cast<std::size_t>(modelCount)]);
+    std::int32_t* const order = app->DialogOrders().modelIndices.get();
 
     char Buffer[256];                                                // 0x466906
     int nOrder = 0;
@@ -242,7 +216,7 @@ void SyncSelectAttachCombo(MMDApp* app, HWND hDlg) {  // VA 0x00461C20
     const int attach = SelRecord(
         app,
         static_cast<int>(SendMessageA(combo669, CB_GETCURSEL, 0, 0)))
-        ->targetModelSlot;
+        ->linkedModel;
 
     if (attach == -1) {                                              // 0x461C66
         SendMessageA(combo673, CB_SETCURSEL, 0, 0);
@@ -252,7 +226,7 @@ void SyncSelectAttachCombo(MMDApp* app, HWND hDlg) {  // VA 0x00461C20
         const int n = static_cast<int>(
                          SendMessageA(combo673, CB_GETCOUNT, 0, 0)) - 2;
         if (n > 0) {                                                 // 0x461C86
-            const int* order = static_cast<int*>(app->AccessoryOrderArray());
+            const int* order = app->DialogOrders().modelIndices.get();
             int idx = 0;
             while (attach != order[idx]) {
                 ++idx;
@@ -277,12 +251,12 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) {  // VA 0
         GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCURSEL, 0, 0));       // 0x43D320
     const int attach = static_cast<int>(SendMessageA(
         GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCURSEL, 0, 0));                        // 0x43D333
-    SelectAttachRecord* const rec = SelRecord(app, boneSel);
+    mdl::BoneOrderEntry* const rec = SelRecord(app, boneSel);
 
     if (attach == 0 || attach == 1) {                                // 0x43D348
-        rec->targetModelSlot = attach == 0 ? -1 : -2;                // 0x43D350 / 0x43D365
+        rec->linkedModel = attach == 0 ? -1 : -2;                // 0x43D350 / 0x43D365
         // LABEL_5: empty target-bone list                          // 0x43D36D
-        rec->targetBoneIndex = 0;
+        rec->linkedBone = 0;
         SendMessageA(combo677, CB_RESETCONTENT, 0, 0);
         SendMessageA(combo677, CB_ADDSTRING, 0, StrParam("------"));        // 0x52C0E8
         SendMessageA(combo677, CB_SETCURSEL, 0, 0);
@@ -290,8 +264,8 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) {  // VA 0
         return;
     }
 
-    const int modelSlot = static_cast<int*>(app->AccessoryOrderArray())[attach - 2];
-    rec->targetModelSlot = modelSlot;                                // 0x43D3B1
+    const int modelSlot = app->DialogOrders().modelIndices.get()[attach - 2];
+    rec->linkedModel = modelSlot;                                // 0x43D3B1
     SendMessageA(combo677, CB_RESETCONTENT, 0, 0);                             // 0x43D3B5
 
     unsigned char* const model = ModelAt(app, modelSlot);
@@ -329,7 +303,7 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) {  // VA 0
     if (keepSelection) {                                             // 0x43D4F7
         if (n > 0) {
             int idx = 0;
-            while (rec->targetBoneIndex != boneIds[idx]) {
+            while (rec->linkedBone != boneIds[idx]) {
                 ++idx;
                 if (idx >= n) {
                     RefreshSelectNavDisplay(app, hDlg);                            // 0x43D51F
@@ -340,7 +314,7 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) {  // VA 0
         }
     } else {
         SendMessageA(combo677, CB_SETCURSEL, 0, 0);                         // 0x43D538
-        rec->targetBoneIndex = 0;                                    // 0x43D544
+        rec->linkedBone = 0;                                    // 0x43D544
     }
     RefreshSelectNavDisplay(app, hDlg);                                            // 0x43D554
 }
@@ -353,14 +327,14 @@ void CommitTargetBonePick(MMDApp* app, HWND hDlg) {  // VA 0x0043D560
         GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCURSEL, 0, 0));       // 0x43D597
     const int attach = static_cast<int>(SendMessageA(
         GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCURSEL, 0, 0));                        // 0x43D5A2
-    SelectAttachRecord* const rec = SelRecord(app, boneSel);
+    mdl::BoneOrderEntry* const rec = SelRecord(app, boneSel);
     if (attach >= 2) {                                               // 0x43D5A5
         const int pick = static_cast<int>(SendMessageA(
             GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCURSEL, 0, 0));                    // 0x43D5DF
-        rec->targetBoneIndex =
+        rec->linkedBone =
             static_cast<int*>(app->AccessoryEditArray())[pick];
     } else {
-        rec->targetBoneIndex = 0;                                    // 0x43D5B0
+        rec->linkedBone = 0;                                    // 0x43D5B0
     }
     RefreshSelectNavDisplay(app, hDlg);                                            // 0x43D5C0
 }
@@ -399,9 +373,8 @@ void ResetModelSelection(MMDApp* app) {  // VA 0x004256C0
     const int count = static_cast<int>(
         mdl::Mdl(model)->boneOrderCount);                            // 0x4258B2 / x64 0x96478
     if (count > 0) {
-        memcpy(ModelSelectRecords(model),
-               app->state.selectNavRecords,
-               sizeof(SelectAttachRecord) * static_cast<std::size_t>(count));
+        std::copy_n(app->state.selectNavRecords, count,
+                    ModelSelectRecords(model));
     }
 
     RegisterDisplayKeyCurrent(model, app->state.currentFrame);    // 0x42592E
@@ -422,7 +395,7 @@ void ApplyBoneAttach(MMDApp* app, HWND hDlg) {  // VA 0x0043D610
         GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCURSEL, 0, 0));       // 0x43D650
     const int attach = static_cast<int>(SendMessageA(
         GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCURSEL, 0, 0));                        // 0x43D655
-    const SelectAttachRecord* const rec = SelRecord(app, boneSel);
+    const mdl::BoneOrderEntry* const rec = SelRecord(app, boneSel);
 
     unsigned char* const model = ActiveModel(app);
     mdl::BoneRecord* const bones = mdl::Bones(model);                // 0x26BC
@@ -453,9 +426,9 @@ void ApplyBoneAttach(MMDApp* app, HWND hDlg) {  // VA 0x0043D610
             // attach to a bone of another model: bake the target bone's
             // world placement relative to the current bone's position
             unsigned char* const tmodel =
-                ModelAt(app, rec->targetModelSlot);                  // 0x43D73B
+                ModelAt(app, rec->linkedModel);                  // 0x43D73B
             mdl::BoneRecord& target =
-                mdl::Bones(tmodel)[rec->targetBoneIndex];
+                mdl::Bones(tmodel)[rec->linkedBone];
             const float* const tpos = target.position;
             X = *reinterpret_cast<d3dx::D3DXMATRIXF*>(
                 target.matExtra);                                    // 0x43D764
@@ -544,7 +517,7 @@ void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg) {  // VA 0x004250C0
     unsigned char* model = s.SelectedModel();
     mikudancestudio::mdl::BoneRecord* bones =
         mikudancestudio::mdl::Bones(model);
-    const SelectAttachRecord* const rec =
+    const mdl::BoneOrderEntry* const rec =
         SelRecord(app, sel);                             // 0xA0668 + 20*sel
     mikudancestudio::mdl::BoneRecord* bone = &bones[rec->boneIndex];
 
@@ -555,11 +528,11 @@ void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg) {  // VA 0x004250C0
     if (kind == 1) {                                             // 0x42521A
         std::memcpy(&m, bone->matInit, sizeof m);
     } else if (kind >= 2) {                                      // 0x425286
-        unsigned char* srcModel = s.ModelSlot(rec->targetModelSlot);
+        unsigned char* srcModel = s.ModelSlot(rec->linkedModel);
         mikudancestudio::mdl::BoneRecord* srcBones =
             mikudancestudio::mdl::Bones(srcModel);
         mikudancestudio::mdl::BoneRecord& src =
-            srcBones[rec->targetBoneIndex];
+            srcBones[rec->linkedBone];
         std::memcpy(&m, &src.matInit[0], sizeof m);
         const float* const p = src.position;  // x64 0x13C (bone+316)
         api.translation(&t, p[0], p[1], p[2]);

@@ -1,5 +1,7 @@
 # 第九轮审计：MMD/MME 1:1 程度 + RayMMD 渲染专项（合并报告）
 
+> 2026-09-20 纠正：本报告所称原版 Draw=Buffer 的 FILLMODE(7)、SCISSORTESTENABLE(161) 均为枚举误译，实际是 ZENABLE(7)、MULTISAMPLEANTIALIAS(161)。本轮已重新IDA核验并修复；下文历史还原百分比不构成严格一比一证明。见 [RayMMD 新核验](fix13_raymmd.md)。
+
 - 基线：工作树未提交状态（2026-09-15）。
 - 参照：MikuMikuDanceE_v932x64（IDA `d5fe9858`，基址 0x7FF7CB420000）、MMEffect v0.37 x64（IDA `2109c52a`，基址 0x180000000）、MME REFERENCE.txt、OpenMMD/bullet-2.75、逆向笔记（OpenMMD/MMEffect逆向）。
 - 方法：4 个并行审计面（MME 二进制比对 / MMD 渲染管线比对 / RayMMD 全链路侦查 / 数据·物理·时间轴比对），关键结论经主线二次核验。

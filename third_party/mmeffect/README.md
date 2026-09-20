@@ -19,13 +19,15 @@ MME v0.37 效果引擎通过 MMEffect 静态库直接链接进 MikuMikuDanceE.ex
 | src/mmhack/ | 历史命名的状态查询层：对象注册、材质、光照矩阵；不实现 hook |
 | src/mmeffect/ | SAS、pass 规划、材质绑定、EMM、UI、动画纹理 |
 | src/mme_host.cpp | 宿主渲染和资源事件适配 |
-| src/d3dx9_dyn.cpp | D3DX 自由函数运行时转发 |
+| cmake/D3dxRuntime.cmake（仓库根目录） | 从共享声明生成正常 D3DX 导入库，无运行时转发 DLL |
 | res/ | MME 菜单、对话框及图标 |
 
 ## 验证边界
 
 本轮修复名称注册顺序和回退、单位矩阵重置、Mesh subset 范围和错误传播，并统一类型化 Mesh/Effect 调用。细节及 IDA 证据见[修复报告](../../reports/fix11_mme.md)和[证据记录](../../reports/fix11_mme_ida_evidence.md)。
 
-缺少必要 D3DX 时初始化失败；缺少标准效果时提示一次并跳过绘制。后者有意区别于原版逐帧弹窗及伪成功返回，不能称作严格错误路径对齐。
+第十二轮恢复普通 D3DX 导入：缺少运行库或必要导出时由 Windows 加载器在程序入口前拒绝启动。缺少标准效果时恢复原 MMHack 的逐帧初始化重试、逐次提示及失败返回 S_OK（不调用真实 BeginScene），详情见[失败状态机修复](../../reports/fix12_effect_failure.md)。
 
-CTest 包含局部语义、真实 D3DX NULLREF Mesh/Effect ABI，以及 EXE 内 MMD/MME 资源共存检查。尚未完成真实 GPU 图像、复杂效果包、设备切换及旧硬件软件索引回退的全面对照。
+旧硬件 32 位索引回退按原能力/缓冲容量条件直接调用类型化 D3DX DrawSubset，保留微软库的软件绘制行为，详见[回退修复](../../reports/fix12_mesh_fallback.md)。尚未完成旧显卡实测、真实 GPU 图像、复杂效果包及设备切换的全面对照。
+
+CTest 包含局部语义、真实 D3DX NULLREF Mesh/Effect ABI、EXE 内 MMD/MME 资源共存、初始化重试、软件回退分流及普通导入检查；最终结果见[第十二轮汇总](../../reports/fix12_summary.md)。

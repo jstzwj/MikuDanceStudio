@@ -749,8 +749,8 @@ static int g_accOrderCount = 0;
 // VA 0x0044CA40 - modal accessory-order dialog proc (case 249, tpl 0x293/
 // 0x273).  WM_INITDIALOG: topmost; the main-window accessory combo 0x1D7
 // is copied into the dialog list 0x274 (CB_GETCOUNT/CB_GETLBTEXT ->
-// LB_ADDSTRING), BuildAccessoryOrderArray rebuilds the order array (app+0xA0B1C, new
-// 4*count), the count edit 0x27B shows app+0xA0B20 ("%d") and the list
+// LB_ADDSTRING), BuildAccessoryOrderArray rebuilds the 32-bit slot-index array
+// (4*count bytes on both architectures), the count edit 0x27B shows app+0xA0B20 ("%d") and the list
 // selection is cleared (-1).
 //   0x276/0x277 (up/down): the selected item is swapped with its neighbour
 //      in the listbox AND the order array.
@@ -775,8 +775,8 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         const HWND main = MainHwnd(app);
         g_accOrderCount = static_cast<int>(
             SendMessageA(GetDlgItem(main, panel::kAccessoryCombo), CB_GETCOUNT, 0, 0));
-        reinterpret_cast<unsigned char*&>(app->AccessoryOrderArray()) = static_cast<unsigned char*>(
-            ::operator new(4u * static_cast<std::uint32_t>(g_accOrderCount)));
+        app->DialogOrders().accessoryIndices.reset(
+            new std::int32_t[static_cast<std::size_t>(g_accOrderCount)]);
         for (int i = 0; i < g_accOrderCount; ++i) {
             SendMessageA(GetDlgItem(main, panel::kAccessoryCombo), CB_GETLBTEXT, i,
                          (LPARAM)text);
@@ -808,10 +808,7 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                              sel - 1, (LPARAM)text);
                 SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL,
                              sel - 1, 0);
-                std::int32_t* order = reinterpret_cast<std::int32_t*&>(app->AccessoryOrderArray());
-                const std::int32_t tmp = order[sel - 1];
-                order[sel - 1] = order[sel];
-                order[sel] = tmp;
+                app->DialogOrders().SwapAccessories(sel - 1, sel);
             }
             return 0;
         }
@@ -827,10 +824,7 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                              sel + 1, (LPARAM)text);
                 SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL,
                              sel + 1, 0);
-                std::int32_t* order = reinterpret_cast<std::int32_t*&>(app->AccessoryOrderArray());
-                const std::int32_t tmp = order[sel + 1];
-                order[sel + 1] = order[sel];
-                order[sel] = tmp;
+                app->DialogOrders().SwapAccessories(sel + 1, sel);
             }
             return 0;
         }
@@ -878,18 +872,12 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             }
             SendMessageA(GetDlgItem(main, panel::kRegisterScopeCombo), CB_SETCURSEL, 0, 0);
             EndDialog(hDlg, 1);
-            if (app->AccessoryOrderArray() != nullptr) {
-                free(app->AccessoryOrderArray());
-                app->AccessoryOrderArray() = nullptr;
-            }
+            app->DialogOrders().accessoryIndices.reset();
             return 0;
         }
         case 2:  // IDCANCEL
             EndDialog(hDlg, 2);
-            if (app->AccessoryOrderArray() != nullptr) {
-                free(app->AccessoryOrderArray());
-                app->AccessoryOrderArray() = nullptr;
-            }
+            app->DialogOrders().accessoryIndices.reset();
             return 0;
         }
         if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
@@ -971,17 +959,9 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // objects (table at app+0x9DD70, order byte at obj+1181), then
 // 0x42F1E0 + 0x40D070.
 void BuildAccessoryOrderArray(MMDApp* app, int count) {  // VA 0x00439C90
-    void** order = static_cast<void**>(
-        app->AccessoryOrderArray());   // 0xA0B1C
-    for (int i = 0; i < count; ++i) {
-        for (int j = 0; j < 255; ++j) {
-            mdl::AccessoryRecord* acc = app->AccessorySlot(j);
-            if (acc != nullptr && acc->order == i) {
-                order[i] = acc;                                 // 0x439CC6
-                break;
-            }
-        }
-    }
+    // x64 sub_7FF7CB4A96E0 stores DWORD slot indices, not object pointers.
+    BuildAccessoryOrderIndices(app->DialogOrders().accessoryIndices.get(), count,
+        [app](int slot) { return app->AccessorySlot(slot); });
     PostLanguageSweep(app);                                     // 0x42F1E0
     PostLanguageSweep2(app);                                    // 0x40D070
 }
@@ -993,22 +973,17 @@ void BuildAccessoryOrderArray(MMDApp* app, int count) {  // VA 0x00439C90
 // 0x40D070.
 void ApplyAccessorySettingsDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x00439D00
     auto& s = *app;
-    mdl::AccessoryRecord** order = static_cast<mdl::AccessoryRecord**>(
-        app->AccessoryOrderArray());   // 0xA0B1C
+    const std::int32_t* order = app->DialogOrders().accessoryIndices.get();
     char text[100];
-    const HWND list = GetDlgItem(hDlg, panel::kOrderListBox);                   // 0x274
-    for (int i = 0; i < count; ++i) {
-        mdl::AccessoryRecord* acc = order[i];
-        if (acc == nullptr)
-            continue;
-        acc->order = static_cast<unsigned char>(i);             // 0x439D2D
-        SendMessageA(list, LB_GETTEXT, i,
-                     reinterpret_cast<LPARAM>(text));
-        strcpy_s(acc->name, sizeof(acc->name), text);
-    }
-    s.SelectedObjectSlot() =
-        order[0] != nullptr
-            ? reinterpret_cast<unsigned char*>(order[0])[0] : 0; // 0x439D92
+    const HWND list = GetDlgItem(hDlg, panel::kOrderListBox);
+    // x64 sub_7FF7CB4A9760 resolves each slot through the accessory table;
+    // the selected object is the first slot, never a byte of the object.
+    s.SelectedObjectSlot() = ApplyAccessoryOrderIndices(order, count,
+        [app](int slot) { return app->AccessorySlot(slot); },
+        [&](int index, mdl::AccessoryRecord& accessory) {
+            SendMessageA(list, LB_GETTEXT, index, reinterpret_cast<LPARAM>(text));
+            strcpy_s(accessory.name, sizeof(accessory.name), text);
+        });
     SyncAccessoryEditPanel(app);                                             // 0x4134E0
     for (int j = 0; j < 255; ++j) {
         mdl::AccessoryRecord* acc = app->AccessorySlot(j);

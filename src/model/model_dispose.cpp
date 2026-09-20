@@ -232,7 +232,8 @@ void ModelDispose(unsigned char* m) {
     DeleteOwnedStorage(mdl::Mdl(m)->indices);
     DeleteOwnedStorage(mdl::Mdl(m)->rawVertices);
     DeleteOwnedStorage(mdl::Mdl(m)->pmxVertices);
-    DeleteOwnedStorage(mdl::Mdl(m)->boneOrderTable);
+    delete[] mdl::Mdl(m)->boneOrderTable;
+    mdl::Mdl(m)->boneOrderTable = nullptr;
 
     // ---- D3D pool objects (vertex/index buffers) ---------------------------
     ReleaseCom(mdl::Mdl(m)->vertexBuffer2);

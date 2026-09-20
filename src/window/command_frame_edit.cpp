@@ -1802,8 +1802,7 @@ static void Cmd400_FrameCopy(MMDApp* app, HWND hwnd) {
                 rec.selectorStates[0].modelIndex = lightData[0].modelIndex;
                 rec.selectorStates[0].boneIndex = lightData[0].boneIndex;
                 if (lightCount > 1) {
-                    const auto* order = static_cast<const mdl::BoneOrderEntry*>(
-                        mdl::Mdl(model)->boneOrderTable);
+                    const auto* order = mdl::BoneOrder(model);
                     for (std::int32_t i = 1; i < lightCount; ++i) {
                         const std::uint32_t boneIdx = order[i].boneIndex;
                         strcpy_s(rec.selectorStates[i].boneName,
@@ -2711,17 +2710,8 @@ static void Cmd400_DeleteModel(MMDApp* app, HWND hwnd) {
         // bone parent table 0x4CCE4 (0x14 stride) - entries pointing at
         // the deleted slot index are severed
         mdl::ModelRecord& record = *mdl::Mdl(m);
-        const std::int32_t boneCnt = record.boneOrderCount;
-        unsigned char* boneTbl =
-            static_cast<unsigned char*>(record.boneOrderTable);
-        for (std::int32_t k = 0; k < boneCnt; ++k) {
-            std::int32_t* rec =
-                reinterpret_cast<std::int32_t*>(boneTbl + 0x14 * k);
-            if (rec[3] == found) {
-                rec[3] = -1;
-                rec[4] = 0;
-            }
-        }
+        mdl::DetachBoneBindings(record.boneOrderTable, record.boneOrderCount,
+                                found);
         mdl::DisplayKey* displayKeys = mdl::DisplayKeys(m);
         for (std::int32_t keyIndex = 0; keyIndex < 1000; ++keyIndex) {
             auto* states = mdl::SelectorStates(displayKeys[keyIndex]);
@@ -2798,16 +2788,15 @@ static void Cmd400_AccessoryEditDialog(MMDApp* app, HWND hwnd) {
     }
     app->SceneModified() = 1;
     app->state.accessoryEditDialogOpen = 0;
-    if (app->AccessoryOrderArray() != nullptr) {
-        free(app->AccessoryOrderArray());
-        app->AccessoryOrderArray() = nullptr;
+    if (app->DialogOrders().modelIndices != nullptr) {
+        app->DialogOrders().modelIndices.reset();
     }
     if (app->AccessoryEditArray() != nullptr) {
         free(app->AccessoryEditArray());
         app->AccessoryEditArray() = nullptr;
     }
     if (app->state.selectNavRecords != nullptr) {
-        free(app->state.selectNavRecords);
+        delete[] app->state.selectNavRecords;
         app->state.selectNavRecords = nullptr;
     }
     if (app->AccessoryApplyGate() == 0) {

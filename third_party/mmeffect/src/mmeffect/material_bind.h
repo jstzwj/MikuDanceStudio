@@ -265,23 +265,11 @@ MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex
 MaterialBinding* MmeActiveModelBinding(ModelData* model);
 
 // --- offscreen DefaultEffect (sub_180011960 offscreen record +0x78) ---
-// While a suspended scene technique renders into an offscreen target whose
-// DefaultEffect annotation produced rows (ctx->offscreenDefaultEffect, staged
-// by the pass planner), EVERY model draw resolves through the rows - the
-// original keys the binding lookup by the scene effect's owner id (the
-// current binding object +56 is the map key's first field inside the window)
-// and the owner-keyed entries are the expanded rows (sub_18002ACE0 owner
-// branch / sub_18002CA80), so the model's own (owner-0) binding is invisible:
-// the FIRST row whose key matches the model's file wins (full path or
-// basename+extension, case-insensitive - the EMD [Object] matching rule of
-// sub_18002E8D0/sub_18002E6F0). "main_default" maps to the EMM default
-// effect, a path to that effect file; the binding is TRANSIENT (kept in the
-// context, destroyed at MmeClearOffscreenDefaultBindings - never the manager
-// map). An unmatched row and "none" return null (the original's EMPTY
-// binding - the raw host draw, never the main effect), and "hide" returns
-// null here as well - the draw gate in MmeHandleDrawIndexedPrimitive
-// swallows the draw via MmeOffscreenDefaultEffectHides.
-MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model);
+// Resolve the active turn's DefaultEffect assignment by first matching row.
+// Resource declaration does not grant the object its root binding in a turn.
+// Missing, none and hide return null; the caller distinguishes missing/hide
+// (no draw) from none (host geometry) with the predicates below.
+MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model, int subsetIndex = -1);
 
 // [sub_18005A1E0 0x18005a24c-0x18005a268] 离屏渲染回合（offscreen render
 // turn）判定：原版以 ctx+0x168 的 0x48 回合包装（wrapper）非空为窗口——
@@ -294,14 +282,9 @@ MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model);
 // 自身的 (0, model, -1) 绑定对 turn-id 键不可见）。
 bool MmeInOffscreenRenderTurn();
 
-// [sub_18002CA80 子轮 drain 0x18002d1a0-0x18002d69c / sub_18005A410
-// 0x18005a449-0x18005a4bb] carrier 判定：当前离屏回合的 (turnId, carrier,
-// -1) 条目只属于声明了本回合 0x2E 资源（同名 OFFSCREENRENDERTARGET）的
-// 模型——turn id 由资源名分配（sub_18002D820 的名字→id 映射，同名共享），
-// 所以"模型自身的绑定声明了与本回合资源同名的 0x2E 参数"即等价于命中
-// (turnId, model, -1) 条目（value 即 carrier 自身绑定，照常绘制/驱动）。
-// 与 pass_planner 的 MmeSceneWalkTechIndex 使用同一判据。
-bool MmeModelOwnsOffscreenTurn(ModelData* model);
+// Distinguish an absent turn mapping (no draw) from an explicit "none"
+// mapping (draw host geometry without an effect).
+bool MmeHasOffscreenDefaultEffectRow(ModelData* model);
 
 // True when the model's matched offscreen DefaultEffect row is "hide" - the
 // model must not be drawn into the offscreen target at all.

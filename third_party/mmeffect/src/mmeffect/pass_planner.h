@@ -45,11 +45,16 @@
 #include <map>
 
 #include <d3d9.h>
+#include <d3dx9.h>
 
 namespace mme {
 
 class MmeContext;
 class ModelData;
+
+// Production Draw=Buffer callback, also exercised by the GPU regression.
+HRESULT SasDefaultDrawBufferPass(ID3DXEffect* effect, IDirect3DDevice9* device,
+                                int passIndex);
 
 // [0x1800599a0] FUN_1800599a0: per-model pass-state reset (start of every
 // plan rebuild; also the FUN_18005c510 head).

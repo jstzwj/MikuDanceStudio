@@ -25,6 +25,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
+#include "mikudancestudio/dialog_order_arrays.hpp"
 #include "mikudancestudio/dshow_recorder.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/physics_scene.hpp"
@@ -218,15 +219,8 @@ public:
 #endif
     }
 
-    // Accessory-order dialog scratch array (menu 249; x86 blob slot
-    // 0xA0B1C): 4*count ints allocated at WM_INITDIALOG, freed on close.
-    void*& AccessoryOrderArray() {
-#if defined(_M_X64)
-        return m_accessoryOrderArray;
-#else
-        return state.accessoryOrderArray;
-#endif
-    }
+    // Typed slot-index workspaces, with model and accessory ownership independent.
+    DialogOrderArrays& DialogOrders() { return m_dialogOrders; }
 
     // Morph-frame cleanup shift (menu 225) and blink-register range
     // (menu 227); x86 blob slots 0xA08F4..0xA08FC.
@@ -1444,6 +1438,8 @@ public:
 
 private:
 
+    DialogOrderArrays m_dialogOrders;
+
 #if defined(_M_X64)
     // In the original x86 blob, 0x9E180 is a D3DLIGHT9 overlay spanning
     // several scalar mirrors.  The provisional x64 compatibility layout
@@ -1516,7 +1512,6 @@ private:
     HWND m_frameRangeDialog = nullptr;
     HWND m_groundShadowColorDialog = nullptr;
     WNDPROC m_groundShadowColorEditProc = nullptr;
-    void* m_accessoryOrderArray = nullptr;
     std::int32_t m_morphFrameShift = 0;
     std::int32_t m_blinkStartFrame = 0;
     std::int32_t m_blinkEndFrame = 0;

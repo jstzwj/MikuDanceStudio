@@ -26,6 +26,7 @@ int main() {
     model.morphKeyCursors = static_cast<std::uint32_t*>(::operator new(4));
     model.reservedMorphTable = ::operator new(16);
     model.pmxTextBuffers[0] = static_cast<wchar_t*>(::operator new(32));
+    model.boneOrderTable = new mdl::BoneOrderEntry[3]{};
     model.undoRings[0].slots[0].bonePose =
         static_cast<mdl::BonePoseSnapshot*>(::operator new(sizeof(mdl::BonePoseSnapshot)));
     ModelDispose(bytes);
@@ -33,6 +34,7 @@ int main() {
         && model.morphKeyCursors == nullptr
         && model.reservedMorphTable == nullptr
         && model.pmxTextBuffers[0] == nullptr
+        && model.boneOrderTable == nullptr
         && model.undoRings[0].slots[0].bonePose == nullptr;
     ::operator delete(bytes);
     return released ? 0 : 1;

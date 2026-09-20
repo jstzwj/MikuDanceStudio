@@ -117,14 +117,6 @@ static_assert(offsetof(IkChain, maxAngle) == 20,
               "IK chain angle x86 ABI");
 #endif
 
-struct BoneOrderEntry {
-    std::int32_t boneIndex;
-    std::uint32_t windowStart;
-    std::uint32_t windowEnd;
-    std::int32_t linkedModel;
-    std::int32_t linkedBone;
-};
-static_assert(sizeof(BoneOrderEntry) == 20, "bone order entry ABI");
 static_assert(sizeof(BoneReference) == 8, "bone reference ABI");
 
 // Timeline records are ordinary source-level records in the original, not
@@ -416,7 +408,7 @@ inline DisplayKey*& DisplayKeys(unsigned char* m) {
 }
 
 inline BoneOrderEntry*& BoneOrder(unsigned char* m) {
-    return *reinterpret_cast<BoneOrderEntry**>(&Mdl(m)->boneOrderTable);
+    return Mdl(m)->boneOrderTable;
 }
 
 inline std::uint32_t& BoneOrderCount(unsigned char* m) {

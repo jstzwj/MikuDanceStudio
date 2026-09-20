@@ -1,7 +1,7 @@
 // mme_bridge.cpp - 内置 MMEffect 宿主桥实现。
 //
-// 见 include/mikudancestudio/mme_bridge.hpp。MMEffect.dll 与本进程静态链接
-// （导入库），无需运行时 LoadLibrary；全部调用直达 MmeHost* 导出。
+// 见 include/mikudancestudio/mme_bridge.hpp。效果引擎静态内置在宿主中，
+// 全部调用直达 MmeHost*，无需代理 DLL 或设备 hook。
 //
 // [核验结论 2026-09] 原 MMHack 对宿主 EXE 的 user32!GetKeyState IAT hook
 // （[0x180004910]，DllMain 经 sub_18000ada0 无条件安装、不依赖 MME 初始
@@ -38,8 +38,8 @@ namespace mikudancestudio {
 namespace mme {
 namespace {
 
-// 标准效果已注册（MME Initialize 的前置条件齐备）。
-bool g_available = false;
+// 设备已登记到内置效果引擎。标准效果是否齐备由惰性 Initialize 判断。
+bool g_deviceRegistered = false;
 // 已注册给 MME 的主窗口（帧级刷新用；初始化期间 WM_CREATE 的句柄可能
 // 尚未写回 app->Hwnd()）。
 HWND g_registeredWindow = nullptr;
@@ -54,14 +54,6 @@ HWND g_registeredWindow = nullptr;
 HWND g_editModeControl = nullptr;
 // 0x18006E7BD（byte_18006E7BD）：RecWindow（AVI 录制窗）粘滞标志。
 bool g_recWindowSticky = false;
-
-// MMHack 180002E35..180002E8F: missing standard effect fails Initialize.
-// The original returns S_OK without beginning a scene and retries its modal
-// error every frame. We report once and return a failing HRESULT instead:
-// the caller skips drawing and the application stays responsive. This is an
-// explicit error-path deviation, not an emulation of the original modal loop.
-bool g_missingStandardEffect = false;
-bool g_initErrorShown = false;
 
 // 0x18000EF60（fn，EnumThreadWindows 回调）：候选顶层窗口类名 strcmp
 // 精确等于 "RecWindow" → 置 found 并终止枚举。判据仅类名——不是 #32770
@@ -148,21 +140,16 @@ int ProbeNotEditMode(HWND mainWindow) {
 // frame_driver.cpp 第 9 节），Reset 前后各一次通知（device_reset.cpp，
 // OnResetDevice 紧贴 Reset、InitRenderStates 之前）。
 void OnDeviceCreated(MMDApp* app, HWND hwnd) {
-    g_available = false;
+    g_deviceRegistered = false;
     g_registeredWindow = nullptr;
-    // 弹窗闩锁随设备周期重置（原版设备销毁清 +0x1c 后，重建的设备会在
-    // 首个 BeginScene 重新走 Initialize 失败→弹窗路径）。
-    g_missingStandardEffect = false;
-    g_initErrorShown = false;
     D3DRenderer* renderer = app->Renderer();
     if (renderer == nullptr || renderer->device == nullptr)
         return;
-    // MME requires the host standard effect. A failed shader/capability
-    // path is recorded here and prevents rendering at the first BeginScene.
-    if (renderer->effect == nullptr) {
-        g_missingStandardEffect = true;
-        return;
-    }
+    // Even with no standard effect, register the device and enter the same
+    // lazy Initialize state machine as every other initialization failure.
+    // MMHack 0x180002E35..0x180002E8F retries on each BeginScene, reports the
+    // error, leaves initialization pending, and returns S_OK without starting
+    // the real scene. There is deliberately no second failure latch here.
     // InitD3D 于 WM_CREATE 期间运行，app->Hwnd() 此时还是空——以参数句柄
     // 为准（回落到 app->Hwnd() 仅为防御）。
     HWND window = hwnd;
@@ -173,19 +160,19 @@ void OnDeviceCreated(MMDApp* app, HWND hwnd) {
     MmeHostSetDrawnWindow(window);
     MmeHostSetStandardEffect(renderer->effect);
     g_registeredWindow = window;
-    g_available = true;
+    g_deviceRegistered = true;
 }
 
 void OnDeviceDestroyed(MMDApp* app) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return;
     D3DRenderer* renderer = app->Renderer();
     MmeHostDestroyDevice(renderer != nullptr ? renderer->device : nullptr);
-    g_available = false;
+    g_deviceRegistered = false;
 }
 
 void OnLostDevice(MMDApp* app) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return;
     D3DRenderer* renderer = app->Renderer();
     if (renderer != nullptr)
@@ -193,7 +180,7 @@ void OnLostDevice(MMDApp* app) {
 }
 
 void OnResetDevice(MMDApp* app) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return;
     D3DRenderer* renderer = app->Renderer();
     if (renderer != nullptr)
@@ -205,25 +192,14 @@ void OnResetDevice(MMDApp* app) {
 // ---------------------------------------------------------------------------
 HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
                    D3DCOLOR color, float z, unsigned long stencil) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return device->Clear(0, nullptr, flags, color, z, stencil);
     return MmeHostClear(device, 0, nullptr, flags, color, z, stencil);
 }
 
 HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device) {
-    if (!g_available) {
-        // Preserve the original diagnostic; do not return success for a
-        // scene that could not be initialized (see the deviation above).
-        if (g_missingStandardEffect && !g_initErrorShown) {
-            g_initErrorShown = true;
-            MessageBoxA(
-                static_cast<HWND>(app->Hwnd()),
-                "Initialize Error: failed to load default effect file. "
-                "Please check video card capability.",
-                "MikuMikuEffect", MB_ICONERROR);
-        }
-        return g_missingStandardEffect ? D3DERR_NOTAVAILABLE : device->BeginScene();
-    }
+    if (!g_deviceRegistered)
+        return device->BeginScene();
     // 主窗口句柄刷新（初始化时序的兜底：若注册句柄与当前不符则更新，
     // 需在 MME 惰性 Initialize 之前生效）。
     HWND window = static_cast<HWND>(app->Hwnd());
@@ -263,13 +239,13 @@ HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device) {
 }
 
 HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return device->EndScene();
     return MmeHostEndScene(device);
 }
 
 void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return;
     MmeHostPreRenderTargetCopy(device);
 }
@@ -279,7 +255,7 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device) {
 // ---------------------------------------------------------------------------
 HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                       unsigned int start_vertex, unsigned int primitive_count) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return device->DrawPrimitive(type, start_vertex, primitive_count);
     return MmeHostDrawPrimitive(device, type, start_vertex, primitive_count);
 }
@@ -288,7 +264,7 @@ HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                              int base_vertex_index, unsigned int min_vertex_index,
                              unsigned int vertex_count, unsigned int start_index,
                              unsigned int primitive_count) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index,
                                             vertex_count, start_index, primitive_count);
     return MmeHostDrawIndexedPrimitive(device, type, base_vertex_index,
@@ -297,7 +273,7 @@ HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
 }
 
 bool EffectsActive() {
-    return g_available && MmeHostEffectsActive() != 0;
+    return g_deviceRegistered && MmeHostEffectsActive() != 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,14 +287,9 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
     if (!EffectsActive())
         return mesh->DrawSubset(material);
 
-    MeshSubsetPlan plan;
-    HRESULT hr = PlanMeshSubset(*mesh, material, plan);
-    if (FAILED(hr))
-        return hr;
-
     IDirect3DVertexBuffer9* vb = nullptr;
     IDirect3DIndexBuffer9* ib = nullptr;
-    hr = mesh->GetVertexBuffer(&vb);
+    HRESULT hr = mesh->GetVertexBuffer(&vb);
     if (FAILED(hr) || vb == nullptr)
         return FAILED(hr) ? hr : E_FAIL;
     hr = mesh->GetIndexBuffer(&ib);
@@ -327,17 +298,23 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
         return FAILED(hr) ? hr : E_FAIL;
     }
 
-    // Accessory loading clones to the host FVF (XYZ/NORMAL/TEX1). Setting
-    // that FVF selects the same declaration as the mesh's DrawSubset.
-    device->SetFVF(mesh->GetFVF());
-    device->SetStreamSource(0, vb, 0, mesh->GetNumBytesPerVertex());
-    device->SetIndices(ib);
-    hr = DrawMeshSubsetPlan(plan, mesh->GetNumFaces(), (mesh->GetOptions() & 1) != 0,
-        [device](const D3DXATTRIBUTERANGE& range) {
-            return DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0,
-                range.VertexStart, range.VertexCount, range.FaceStart * 3,
-                range.FaceCount);
-        });
+    hr = DrawMeshSubsetWithFallback(*mesh, *device, *vb, *ib, material, [&] {
+        MeshSubsetPlan plan;
+        HRESULT planned = PlanMeshSubset(*mesh, material, plan);
+        if (FAILED(planned))
+            return planned;
+        // Accessory loading clones to the host FVF (XYZ/NORMAL/TEX1). Setting
+        // that FVF selects the same declaration as the mesh's DrawSubset.
+        device->SetFVF(mesh->GetFVF());
+        device->SetStreamSource(0, vb, 0, mesh->GetNumBytesPerVertex());
+        device->SetIndices(ib);
+        return DrawMeshSubsetPlan(plan, mesh->GetNumFaces(), (mesh->GetOptions() & 1) != 0,
+            [device](const D3DXATTRIBUTERANGE& range) {
+                return DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0,
+                    range.VertexStart, range.VertexCount, range.FaceStart * 3,
+                    range.FaceCount);
+            });
+    });
     vb->Release();
     ib->Release();
     return hr;
@@ -347,19 +324,19 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
 // 文件通知
 // ---------------------------------------------------------------------------
 void NotifyPmmLoaded(MMDApp* app) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return;
     MmeHostNotifyPmmLoaded(app->EnvFileName());
 }
 
 void NotifyPmmSaved(MMDApp* app) {
-    if (!g_available)
+    if (!g_deviceRegistered)
         return;
     MmeHostNotifyPmmSaved(app->EnvFileName());
 }
 
 void RecordTexture(const wchar_t* path, IDirect3DBaseTexture9* texture) {
-    if (!g_available || path == nullptr || texture == nullptr)
+    if (!g_deviceRegistered || path == nullptr || texture == nullptr)
         return;
     MmeHostRecordTextureFile(path, texture);
 }

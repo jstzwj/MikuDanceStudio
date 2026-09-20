@@ -27,7 +27,7 @@ namespace {
 
 // [R3 forward declaration] the host slots (SasDefaultDrawBufferPass /
 // SasHostRunPass, above the definition) bind the scene walk carrier's
-// whole-object record through the same (0, model, -1) resolver the scene
+// whole-object record through the same current-turn resolver the scene
 // drivers use - the definition sits with the other record helpers below.
 static MaterialBinding* MmeSceneRecordBinding(ModelData* record);
 
@@ -48,6 +48,8 @@ struct SasQuadVertex {
     float nx, ny, nz;
     float u, v;
 };
+
+} // namespace
 
 HRESULT SasDefaultDrawBufferPass(ID3DXEffect* effect, IDirect3DDevice9* device, int passIndex)
 {
@@ -93,21 +95,22 @@ HRESULT SasDefaultDrawBufferPass(ID3DXEffect* effect, IDirect3DDevice9* device, 
     device->GetStreamSource(0, &savedStreamVb, &savedStreamOffset,
                             &savedStreamStride);
     device->GetIndices(&savedIndices);
-    // [0x18005aacf-0x18005ab14] save FILLMODE(7) / LIGHTING(137) /
-    // STENCILENABLE(52) / SCISSORTESTENABLE(161), then [0x18005ab28-
-    // 0x18005ab66] zero all four - FILLMODE is literally set to 0.
-    DWORD rsFillMode = 0;
+    // [0x18005aacf-0x18005ab14] save ZENABLE(7) / LIGHTING(137) /
+    // STENCILENABLE(52) / MULTISAMPLEANTIALIAS(161), then zero all four.
+    // These are SDK enum values: FILLMODE is 8 and SCISSORTESTENABLE is
+    // 174. The original does not modify either of those states here.
+    DWORD rsZEnable = 0;
     DWORD rsLighting = 0;
     DWORD rsStencil = 0;
-    DWORD rsScissor = 0;
-    device->GetRenderState(D3DRS_FILLMODE, &rsFillMode);
+    DWORD rsMultisample = 0;
+    device->GetRenderState(D3DRS_ZENABLE, &rsZEnable);
     device->GetRenderState(D3DRS_LIGHTING, &rsLighting);
     device->GetRenderState(D3DRS_STENCILENABLE, &rsStencil);
-    device->GetRenderState(D3DRS_SCISSORTESTENABLE, &rsScissor);
-    device->SetRenderState(D3DRS_FILLMODE, 0);
+    device->GetRenderState(D3DRS_MULTISAMPLEANTIALIAS, &rsMultisample);
+    device->SetRenderState(D3DRS_ZENABLE, FALSE);
     device->SetRenderState(D3DRS_LIGHTING, 0);
     device->SetRenderState(D3DRS_STENCILENABLE, 0);
-    device->SetRenderState(D3DRS_SCISSORTESTENABLE, 0);
+    device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE);
     // Every failure path below releases the saved refs (indices, stream VB,
     // declaration - the original's release order) WITHOUT restoring the
     // device [0x18005ab87-0x18005aba9 and the parallel branches]: the
@@ -217,10 +220,10 @@ HRESULT SasDefaultDrawBufferPass(ID3DXEffect* effect, IDirect3DDevice9* device, 
     // [0x18005ade2-0x18005ae6d] the success-path restore: the four render
     // states first, then SetVertexDeclaration, SetStreamSource(0),
     // SetIndices (the original ignores every restore call's HRESULT).
-    device->SetRenderState(D3DRS_FILLMODE, rsFillMode);
+    device->SetRenderState(D3DRS_ZENABLE, rsZEnable);
     device->SetRenderState(D3DRS_LIGHTING, rsLighting);
     device->SetRenderState(D3DRS_STENCILENABLE, rsStencil);
-    device->SetRenderState(D3DRS_SCISSORTESTENABLE, rsScissor);
+    device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, rsMultisample);
     device->SetVertexDeclaration(savedDecl);
     device->SetStreamSource(0, savedStreamVb, savedStreamOffset,
                             savedStreamStride);
@@ -228,6 +231,8 @@ HRESULT SasDefaultDrawBufferPass(ID3DXEffect* effect, IDirect3DDevice9* device, 
     releaseSavedRefs();   // [0x18005ae7c-0x18005aea3] indices, VB, decl
     return hr;
 }
+
+namespace {
 
 long SasHostRunPass(void* /*ctx*/, SasEffect* sas, int kind, int passIndex)
 {
@@ -376,82 +381,18 @@ int MmeAbsInt(int value)
 // FUN_18005a410 / FUN_18005a5c0 - the per-record scene-effect drivers
 // ---------------------------------------------------------------------------
 
-// The whole-object binding of a pass record (the (0, model, -1) entry the
-// lazy resolver created).
+// [0x18005a449-0x18005a4e5] Resolve (current turn id, model, -1), not
+// automatically the carrier's root effect merely because it owns a target.
 static MaterialBinding* MmeSceneRecordBinding(ModelData* record)
 {
     if (record == nullptr) {
         return nullptr;
     }
-    MaterialBinding* binding = MmeActiveModelBinding(record);
-    if (binding == nullptr) {
+    MaterialBinding* binding = MmeFindMaterialBinding(0, record, -1, true);
+    if (binding == nullptr && !MmeInOffscreenRenderTurn()) {
         binding = MmeResolveModelEffectBinding(record);
     }
     return binding;
-}
-
-// [FUN_18005c970 `v4 = *a1`] the wrapper's inner OFFSCREEN record is carried
-// by the queue item itself since the 2026-09 re-audit (sub_18002CA80 stores
-// the 0x98 record pointer at wrapper+0 at QUEUE-BUILD time, 0x18002d415 -
-// the runtime staged-RT0 identity matching this port used before was a
-// workaround for the missing association, not the original's mechanism).
-// The staged-RT0 match below survives for ONE consumer: the offscreen
-// DefaultEffect staging after a scene step - the rows belong to the 0x2E
-// resource whose surface the technique's OWN script commands actually
-// redirected RT0 into (a RenderColorTarget=X script binds X's surface,
-// which is not necessarily the queue item's resource), so the host must
-// identify the rows' owner by the staged surface, exactly like the
-// original's per-parameter records do.
-static SasResource* MmeMatchOffscreenForState(SasRunState* state,
-                                              MaterialBinding* binding)
-{
-    if (state == nullptr || state->activeColor[0] == nullptr ||
-        binding == nullptr || binding->sas == nullptr) {
-        return nullptr;
-    }
-    for (size_t i = 0; i < binding->sas->resources.size(); ++i) {
-        SasResource& res = binding->sas->resources[i];
-        if (res.semanticId == 0x2E && res.surface == state->activeColor[0]) {
-            return &res;
-        }
-    }
-    return nullptr;
-}
-
-static SasResource* MmeMatchStagedOffscreen(ModelData* record,
-                                            MaterialBinding* binding)
-{
-    if (record == nullptr) {
-        return nullptr;
-    }
-    return MmeMatchOffscreenForState(record->runState(), binding);
-}
-
-// [offscreen DefaultEffect staging] publish the parsed rows of the offscreen
-// target a suspended scene technique renders into, for the binding
-// resolution's unassigned-model fallback (ctx->offscreenDefaultEffect). The
-// staged RT0 (the surface the step's RenderColorTarget0 script bound /
-// FUN_18005c970 re-bound) identifies the 0x2E resource; a null match or an
-// empty row vector clears the staging. The resume walk drops it again
-// (MmeClearOffscreenDefaultBindings in MmeFinishSceneRecord).
-static void MmeStageOffscreenDefaultEffect(MmeContext* ctx, ModelData* record)
-{
-    if (ctx == nullptr) {
-        return;
-    }
-    ctx->offscreenDefaultEffect = nullptr;
-    if (record == nullptr) {
-        return;
-    }
-    SasRunState* state = record->runState();
-    if (state == nullptr || !state->suspended) {
-        return;
-    }
-    SasResource* offscreen =
-        MmeMatchStagedOffscreen(record, MmeSceneRecordBinding(record));
-    if (offscreen != nullptr && !offscreen->defaultEffectMap.empty()) {
-        ctx->offscreenDefaultEffect = &offscreen->defaultEffectMap;
-    }
 }
 
 // Flush the sas->log lines appended by a run into MMEffect.txt (the per
@@ -491,54 +432,17 @@ static void MmeCollectSceneOffscreens(ModelData* record,
     }
 }
 
-// [0x18005db44 / 0x18005e170 / 0x18005e46a `mov rdx, [rsi+0x168]`] the
-// WRAPPER-KEYED technique resolution every scene driver selects its technique
-// through. The three walk sites (FUN_18005da50's planB step walk, its planA
-// full-run walk, FUN_18005e210's planB resume walk) all pass ctx+0x168 -
-// the CURRENT turn's queue wrapper - as the second argument, and
-// sub_18005A410 / sub_18005A5C0 / sub_18005A2C0 look the binding record up
-// in the mgr+0xA0 map keyed (wrapper+56 id, carrier, -1) [verified at the
-// binary level, 0x18005a449 `mov edx,[rdx+38h]` + the (id, carrier, subset)
-// tree walk at 0x18005a464-0x18005a4bb]:
-//   - wrapper NULL (the base turn / a null ctx+0x168): key id 0 = the ROOT
-//     binding record, whose techniques[0] is the carrier's FIRST pass
-//     technique - every scene carrier steps/resumes its first technique;
-//   - wrapper = a queue item: the child-round drain created one (id,
-//     carrier, -1) record per carrier for the turn's resource NAME, so
-//     EVERY carrier whose effect declares a 0x2E parameter of that name
-//     walks its (single, script-first) technique in that turn; carriers
-//     without the name hold a null record and the walk no-ops.
-// The walk technique is ALWAYS the binding's own first technique (the
-// original's (id, carrier) record stores no per-turn technique choice) -
-// never the queue item's.
+// [0x18005a449-0x18005a4e5] The wrapper selects a binding by
+// (turn id, carrier, -1). Resource-name registration creates the TURN,
+// not a root-effect binding for its owner. DefaultEffect may hide that
+// owner or assign a different scene effect; use that binding's technique.
 static int MmeSceneWalkTechIndex(MmeContext* ctx, ModelData* record)
 {
     if (ctx == nullptr || record == nullptr) {
         return -1;
     }
     MaterialBinding* binding = MmeSceneRecordBinding(record);
-    int first = (binding != nullptr) ? binding->sceneTechIndex : -1;
-    if (first < 0) {
-        return -1;
-    }
-    if (ctx->currentBindingObject == nullptr) {
-        return first;   // base turn: the root record, every carrier walks
-    }
-    // [sub_18005A410's (id, carrier, -1) lookup] the turn's id came from the
-    // resource NAME: a carrier owns the turn iff its effect declares a 0x2E
-    // parameter with that name.
-    SasResource* turn = ctx->currentBindingOffscreen;
-    SasEffect* sas = (binding != nullptr) ? binding->sas : nullptr;
-    if (turn == nullptr || sas == nullptr) {
-        return -1;
-    }
-    for (size_t i = 0; i < sas->resources.size(); ++i) {
-        if (sas->resources[i].semanticId == 0x2E &&
-            sas->resources[i].name == turn->name) {
-            return first;
-        }
-    }
-    return -1;
+    return binding != nullptr ? binding->sceneTechIndex : -1;
 }
 
 // [FUN_18005a410 / FUN_18005a5c0 / FUN_18005a2c0 shared prologue,
@@ -568,38 +472,10 @@ static void MmeApplyRecordStateBlock(ModelData* record,
     device->SetViewport(&viewport);                       // slot 0x178
 }
 
-// [FUN_18005a410] step the record's scene technique to the ScriptExternal
-// suspension. The technique comes from the CALLER's wrapper key (the
-// (turn id, carrier) binding record's techniques[0]; the D130 site
-// 0x18005d17c dispatches through the queue item's own wrapper+0 chain, the
-// DA50 planB walk passes ctx+0x168) - the binding's FIRST technique, the
-// same one every turn of the carrier walks (a turn is one of the carrier's
-// 0x2E resources, never one of its techniques). Verified against the
-// binary: the original has NO suspended-state reuse - every call
-// unconditionally new(0x88)s a fresh run state, constructs it via
-// sub_18001b7b0 (capturing the CURRENT color targets 0..3, the depth
-// stencil and the viewport as the saved set; command index 0), then
-// OVERWRITES +0x358, orphaning (leaking) the old state, and re-walks the
-// technique from index 0 in step mode (sub_18001bbc0, a4 = 1): the
-// pre-scene commands re-bind + re-clear the G-buffers and the walk parks at
-// the suspension point. The port destroys the old state instead of leaking
-// it; the orphaned original state never restores either, so the observable
-// device sequence is identical.
-//
-// The rebuild (not reuse) is load-bearing at the second step site of a
-// turn boundary. Sequence per the binary: the turn-tail step of
-// renderPassList[repeat] (FUN_18005d130 -> vtable+0x80, 0x18005d18d), then
-// FUN_18005c510 resets the flags, then FUN_18005c970 (0x18005d218)
-// rebinds the bound record's STAGED targets + Clear, then the first-draw
-// DA50 walk (sub_18005a410 per planB record, 0x18005db4e, re-entered at
-// 0x18005d579) steps the same records again. The rebuilt state therefore
-// captures the staged (redirected) targets as its saved set and its
-// pre-scene commands re-clear the G-buffers for the upcoming turn - the
-// original's intent, not an accident: the following resume's restore
-// epilogue returns to that staged set, not to a stale back-buffer capture.
-// (The original prologue 0x18005a4eb-0x18005a51f re-Applies the record's
-// +0x158 state block, viewport-preserved [see MmeApplyRecordStateBlock
-// below].)
+// [FUN_18005a410] Step the CURRENT TURN binding's first technique.
+// A fresh run state captures the current targets, and ScriptExternal parks
+// that state until the matching resume. Resource ownership does not select
+// this binding; the wrapper-keyed map lookup above does.
 static void MmeStepSceneRecord(ModelData* record, int techIndex)
 {
     IDirect3DDevice9* device = nullptr;
@@ -691,13 +567,8 @@ static void MmeStepSceneRecord(ModelData* record, int techIndex)
         ctx->sceneWalkCarrier = nullptr;
         MmeFlushSasLogDelta(binding->sas, logBefore);
     }
-    // Offscreen DefaultEffect staging: the walk just bound the pre-scene
-    // targets; if it parked at ScriptExternal on an offscreen target with
-    // DefaultEffect rows, publish them for the scene draws that follow. The
-    // rows' host is identified by the STAGED RT0 (the technique's own script
-    // commands may have redirected into any 0x2E parameter - see
-    // MmeMatchOffscreenForState), not by the queue item.
-    MmeStageOffscreenDefaultEffect(ctx, record);
+    // DefaultEffect belongs to the current queue wrapper. Script target
+    // redirects do not replace the turn's object-to-effect assignment map.
 }
 
 // [FUN_18005a5c0] resume the record's stepped technique to completion: the
@@ -716,11 +587,8 @@ static void MmeFinishSceneRecord(ModelData* record, int techIndex)
     if (ctx != nullptr) {
         device = ctx->device;
     }
-    // The offscreen DefaultEffect pass is over: the resume restores the main
-    // targets, so the staged rows and the transient bindings must not leak
-    // into the draws that follow (all paths - the early returns below fire
-    // for records that never staged anything, and the clear is idempotent).
-    MmeClearOffscreenDefaultBindings();
+    // The current turn's binding must survive through all carrier resumes.
+    // It is released at the turn boundary, after MmeRunPostEffect completes.
     if (record == nullptr || device == nullptr) {
         return;
     }
@@ -821,7 +689,7 @@ static void MmeFullRunSceneRecord(ModelData* record)
     // binding record's techniques[0]; the record stores no per-turn
     // technique choice, so the walk is ALWAYS the binding's first
     // technique). The caller's MmeSceneWalkTechIndex gate already enforced
-    // the (id, carrier) hit: a carrier not owning the turn's resource name
+    // the (id, carrier) hit: a hidden or unassigned carrier
     // never reaches this body.
     const int techIndex = binding->sceneTechIndex;
     SasTechnique& tech = binding->sas->techniques[
@@ -2244,21 +2112,13 @@ void MmePassBookkeeping(MmeContext* ctx)
         // [L74723-74725] the post effect runs when the repeat index is still
         // inside the pass list.
         MmeRunPostEffect(ctx);
-        // [L74726-74733] renderPassList[lastRepeatCount] record step: the
-        // original calls the queue item's wrapper chain (0x18005d17c:
-        // wrapper+0 -> offscreen record -> resource -> OBJ -> vtable slot
-        // 0x80, 0x18005d18d) right after the resume, so the UPCOMING turn
-        // opens with a freshly bound + cleared G-buffer. The stepped
-        // technique is the ITEM OWNER binding's own first technique (the
-        // (turn id, carrier) record stores no per-turn technique choice);
-        // the port resolves it from the item's carrier binding.
+        // [0x18005d17c-0x18005d18d] wrapper -> offscreen record ->
+        // resource -> texture, then texture vtable slot 16 (+0x80):
+        // GenerateMipSubLevels. This is NOT a scene-script callback.
         const MmeRenderPassItem& nextItem = ctx->renderPassList[
             static_cast<size_t>(ctx->lastRepeatCount)];
-        if (nextItem.carrier != nullptr) {
-            MaterialBinding* nextBinding =
-                MmeSceneRecordBinding(nextItem.carrier);
-            MmeStepSceneRecord(nextItem.carrier,
-                (nextBinding != nullptr) ? nextBinding->sceneTechIndex : -1);
+        if (nextItem.offscreen != nullptr && nextItem.offscreen->texture != nullptr) {
+            nextItem.offscreen->texture->GenerateMipSubLevels();
         }
         // [L74731-74733, 0x18005d199-0x18005d1a6] when lastRepeatCount == 0
         // (the base-scene turn of a new frame) and the ctx+0x18 cached
@@ -2272,6 +2132,9 @@ void MmePassBookkeeping(MmeContext* ctx)
             MmeRestoreTargetSet(ctx->cachedTargetSet, device);
         }
     }
+    // A turn binding remains valid until its final scene-script resume.
+    // Retire the transient bindings before publishing the next wrapper.
+    MmeClearOffscreenDefaultBindings();
     MmeUpdatePassBookkeeping(ctx);                                 // [L74736]
     if (hasPasses) {
         // [L74738-74749] the scene is closed while the new repeat's record is
@@ -2306,7 +2169,7 @@ void MmePassBookkeeping(MmeContext* ctx)
             // viewport/Clear choreography + the snapshot-gate recompute).
             DWORD adaptive = 0;
             if (device != nullptr) {
-                device->GetRenderState(static_cast<D3DRENDERSTATETYPE>(0xa1), &adaptive);   // 161 = D3DRS_ADAPTIVE_TESS_X (raw constant; not in the DXSDK headers)
+                device->GetRenderState(static_cast<D3DRENDERSTATETYPE>(0xa1), &adaptive);   // 161 = D3DRS_MULTISAMPLEANTIALIAS
             }
             MmeApplyPassRecord(ctx, ctx->currentBindingObject,
                                ctx->currentBindingOffscreen, device,
@@ -2495,17 +2358,10 @@ void MmeRunPostEffect(MmeContext* ctx)
         }
     }
 
-    // [L75521-75527] the passPlanB walk: FUN_18005a5c0 per record - resume
-    // the stepped techniques to completion (the lighting/composite passes
-    // onto the restored targets; a walk that already completed only
-    // re-applies the restore epilogue) and drop the run states. The resume
-    // resolves each carrier's technique through the SAME wrapper key as the
-    // step (0x18005e46a passes ctx+0x168): at the base turn (a null
-    // currentBindingObject) every scene carrier resumes its FIRST
-    // technique; at an item turn every carrier whose effect declares the
-    // turn's resource NAME resumes its (first) technique - every other
-    // carrier's (id, carrier) record is null and sub_18005A5C0's walk
-    // no-ops (the port's -1 gate below).
+    // [0x18005e46a] Resume each carrier through its CURRENT TURN binding.
+    // A hidden/unassigned carrier has no binding, even if its root effect
+    // declared this turn's target. An explicitly assigned child scene effect
+    // resumes the same technique that its step suspended.
     for (size_t i = 0; i < ctx->passPlanB.size(); ++i) {
         ModelData* record = ctx->passPlanB[i];
         int techIndex = MmeSceneWalkTechIndex(ctx, record);
@@ -2564,7 +2420,7 @@ void MmeReportDrawError(MmeContext* ctx)
     // description (the original keeps it for the validation block below).
     DWORD adaptive = 0;
     if (device != nullptr) {
-        device->GetRenderState(static_cast<D3DRENDERSTATETYPE>(0xa1), &adaptive);   // slot 0x1d0; 161 = D3DRS_ADAPTIVE_TESS_X (raw constant)
+        device->GetRenderState(static_cast<D3DRENDERSTATETYPE>(0xa1), &adaptive);   // slot 0x1d0; 161 = D3DRS_MULTISAMPLEANTIALIAS
     }
     if (adaptive != 0 && device != nullptr) {
         IDirect3DSurface9* target = nullptr;
@@ -2577,20 +2433,9 @@ void MmeReportDrawError(MmeContext* ctx)
         }
     }
 
-    // [L75169-...] the passPlanB backwards walk: FUN_18005a410 per record -
-    // the ScriptExternal step that binds + clears the G-buffers and parks
-    // the technique at the suspension point for the scene turn. The step
-    // resolves each carrier's technique through the WRAPPER key
-    // (0x18005db44 `mov rdx, [rsi+0x168]`; the (turn id, carrier, -1) map
-    // lookup is verified at 0x18005a449-0x18005a4bb): at the base turn (a
-    // null currentBindingObject) every scene carrier steps its FIRST
-    // technique; at an item turn every carrier whose effect declares the
-    // turn's resource NAME steps its (first) technique - every other
-    // carrier's (wrapper id, carrier) record is null (created so by
-    // sub_18002CA80's child-round drain) and sub_18005A410's map miss skips
-    // the whole body. A skipped carrier
-    // holds no run state here (FUN_18005c510 destroyed them all at the
-    // boundary), so it contributes no redirectedMask bit either.
+    // [0x18005db44] Walk scene carriers backwards using (turn id,
+    // carrier, -1) bindings. Never substitute an owning carrier's root
+    // effect for a missing or hidden DefaultEffect assignment.
     unsigned int bindingErrorFlags = 0;
     for (size_t i = ctx->passPlanB.size(); i > 0; --i) {
         ModelData* record = ctx->passPlanB[i - 1];
@@ -2692,7 +2537,7 @@ void MmeReportDrawError(MmeContext* ctx)
     // suspension - the original routes them through FUN_18001bab0's full
     // run on a fresh state that never touches +0x358). The walk site passes
     // ctx+0x168 (0x18005e170 `mov rdx,[rsi+0x168]`), so at an item turn
-    // only the carriers whose effect declares the turn's resource NAME run
+    // only carriers with an applicable current-turn binding run
     // (the (turn id, carrier, -1) map miss no-ops the others) - the base
     // turn's null wrapper resolves the root record and every carrier runs.
     for (size_t i = 0; i < ctx->passPlanA.size(); ++i) {

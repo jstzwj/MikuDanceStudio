@@ -12,6 +12,7 @@
 #include <cstdint>
 
 #include "mikudancestudio/raw_pad.hpp"
+#include "mikudancestudio/bone_binding.hpp"
 #include "mikudancestudio/undo_layout.hpp"
 #include "mikudancestudio/skeleton_tracking.hpp"
 
@@ -208,7 +209,7 @@ struct ModelRecord {
 #else
     unsigned char keyVisitMap[300000];  // 14596
 #endif
-    void* boneOrderTable;  // 314596  (20-byte slots; x64 0x96470)
+    BoneOrderEntry* boneOrderTable;  // owned array; x86 314596, x64 0x96470
     std::uint32_t boneOrderCount;  // 314600  (x64 0x96478)
     std::int32_t centerBone;  // 314604  (physics_frame 0x4B3460)
     std::int32_t frameRegistrationSelection;  // 314608  (combo 434 selection)

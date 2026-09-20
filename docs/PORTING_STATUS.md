@@ -1,6 +1,6 @@
 # 移植与验证状态
 
-更新：2026-09-19。行为基准及维护规则见 [X64_RECONSTRUCTION.md](X64_RECONSTRUCTION.md)。当前项目仍处于**行为对照与结构恢复阶段**，没有完整等价证明，不使用“100%”“严格一比一已完成”或估算百分比描述状态。
+更新：2026-09-20。行为基准及维护规则见 [X64_RECONSTRUCTION.md](X64_RECONSTRUCTION.md)。当前项目仍处于**行为对照与结构恢复阶段**，没有完整等价证明，不使用“100%”“严格一比一已完成”或估算百分比描述状态。
 
 ## 当前证据入口
 
@@ -17,6 +17,9 @@
 | [fix11_pose](../reports/fix11_pose.md) | Kinect、Undo所有权与帧引用、UI和媒体协议修复 |
 | [fix11_mme](../reports/fix11_mme.md) | 名称树、矩阵、DrawSubset、COM与D3DX失败策略 |
 | [fix11_mme_ida_evidence](../reports/fix11_mme_ida_evidence.md) | MME及D3DX语义的本轮原版证据 |
+| [fix12_summary](../reports/fix12_summary.md) | 基线提交4833705之后，逐问题重新核验、修复及最终集成结果 |
+
+第十二轮最终验证：x64/x86 Release完整构建成功，CTest各16/16通过。新增状态机、回退分流、真实D3DX导入/入口前失败、骨骼绑定表和排序工作区回归。模型/绑定对话框共享类型已恢复，排序数组的错误对象指针解释已按原版改为slot索引及RAII所有权；具体证据和未覆盖范围见第十二轮汇总。
 
 历史audit8/audit9是线索，不是永久未修列表。查看当前代码并重新验证后才能继续引用一个旧缺陷；本轮核心报告已明确标注若干旧PMX display/material问题已经修正。
 
@@ -42,9 +45,11 @@
 
 MME已通过STATIC库直接合入宿主，资源ID、HINSTANCE/资源归属、初始化与导入导出边界已完成集成，嵌入资源测试通过；不使用代理DLL、IAT patch或虚表注入。旧审计的SHARED库描述仅代表修复前状态。
 
-DrawSubset已按原版复核纠正：优化属性表采用index优先/第一匹配，无表绘制连续面属性run；“同ID优化表全部ranges都画”的旧建议已撤回。D3DX缓存现在保留实际加载成功状态，不完整runtime连续两次Load失败的测试通过。
+DrawSubset常规路径按原版优化属性表采用index优先/第一匹配，无表绘制连续面属性run；“同ID优化表全部ranges都画”的旧建议已撤回。第十二轮补足32位索引软件回退分流，调用原D3DX实现而不复制库算法，见[回退报告](../reports/fix12_mesh_fallback.md)。
 
-存在明确语义边界：standard effect缺失时只提示一次并返回失败跳过绘制，属于R4有意差异；音频线程创建失败后潜在无限等待（U2）和DirectShow无超时/无WM_QUIT处理（U4）则保留已核验的原版行为。不能据此宣称错误路径全面改进或全面严格等价。
+第十二轮已撤销R4的有意差异：standard effect缺失恢复原逐帧初始化重试、提示、S_OK且不调用真实BeginScene；失败设备也执行Cleanup，见[初始化报告](../reports/fix12_effect_failure.md)。D3DX由运行时解析改为正常PE导入，缺失运行库或导出在程序入口前失败，见[加载边界报告](../reports/fix12_d3dx_startup.md)。旧fix11缓存测试是历史状态，现已由入口前拒绝加载测试替代。
+
+音频线程创建失败后潜在无限等待（U2）和DirectShow无超时/无WM_QUIT处理（U4）保留已核验的原版行为。不能据此宣称错误路径全面改进或全面严格等价。
 
 需要持续验证：同名CONTROLOBJECT选择、矩阵/材质语义、注释默认值、effect脚本执行顺序、离屏目标、设备reset、效果切换和真实社区效果包。局部解析或getter测试不证明RayMMD及全部MME效果兼容。
 

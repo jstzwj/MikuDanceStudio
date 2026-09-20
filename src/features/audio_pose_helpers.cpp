@@ -94,24 +94,13 @@ using kfa::RdF32;
 using kfa::Wr32;
 using kfa::WrF32;
 
-// D3DXQuaternionRotationAxis / D3DXQuaternionInverse are not bound in the
-// shared d3dx_dyn.hpp Api (which must not be edited this session); resolve
-// them locally from the same module handle.
+// Quaternion helpers share the required, statically imported D3DX runtime.
 using FnQuatInverseLocal = float*(WINAPI*)(float out[4], const float q[4]);
 using FnQuatRotationAxisLocal =
     float*(WINAPI*)(float out[4], const float axis[3], float angle);
 
-FnQuatInverseLocal LocalQuatInverse() {
-    static FnQuatInverseLocal fn = reinterpret_cast<FnQuatInverseLocal>(
-        GetProcAddress(d3dx::Get().module, "D3DXQuaternionInverse"));
-    return fn;
-}
-FnQuatRotationAxisLocal LocalQuatRotationAxis() {
-    static FnQuatRotationAxisLocal fn =
-        reinterpret_cast<FnQuatRotationAxisLocal>(GetProcAddress(
-            d3dx::Get().module, "D3DXQuaternionRotationAxis"));
-    return fn;
-}
+FnQuatInverseLocal LocalQuatInverse() { return d3dx::Api::quatInverse; }
+FnQuatRotationAxisLocal LocalQuatRotationAxis() { return d3dx::Api::quatRotationAxis; }
 
 // .rdata float constants (bit-exact; Hex-Rays decimal renderings do not
 // round-trip, e.g. flt_52B738 = 0x40490FD8 prints as "3.141592" but the
@@ -567,11 +556,6 @@ float* BuildLookAtQuaternion(float out[4], const float quat[4], float ax,
                              unsigned char mode) {
     auto* d3 = &d3dx::Get();
     FnQuatInverseLocal quatInverse = LocalQuatInverse();
-    if (d3->module == nullptr || quatInverse == nullptr ||
-        d3->matrixRotationQuaternion == nullptr || d3->rotY == nullptr ||
-        d3->multiply == nullptr || d3->vec3Transform == nullptr ||
-        d3->vec3Normalize == nullptr || d3->quatFromMatrix == nullptr)
-        return out;
 
     float qInv[4];
     quatInverse(qInv, quat);                                       // 0x4A6109
@@ -681,9 +665,6 @@ float* BuildLookAtQuaternion(float out[4], const float quat[4], float ax,
 void InitStandardSkeletonQuats(unsigned char* m, unsigned char flag) {
     auto* d3 = &d3dx::Get();
     FnQuatRotationAxisLocal quatRotationAxis = LocalQuatRotationAxis();
-    if (d3->module == nullptr || quatRotationAxis == nullptr ||
-        d3->vec3Normalize == nullptr || d3->quatMultiply == nullptr)
-        return;
 
     auto& state = *mdl::Mdl(m);
     auto& joints = state.currentJoints;

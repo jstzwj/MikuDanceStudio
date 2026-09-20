@@ -7,6 +7,39 @@
 
 namespace mikudancestudio::mme {
 
+// D3DX's 32-bit mesh Resize selects its UP fallback using buffer capacity,
+// not the current subset or live vertex/face count. Keep that path inside
+// D3DX: the original MME wrapper forwards DrawPrimitiveUP unchanged.
+template <typename Mesh, typename Device, typename VertexBuffer,
+          typename IndexBuffer, typename IndexedDraw>
+HRESULT DrawMeshSubsetWithFallback(Mesh& mesh, Device& device,
+                                  VertexBuffer& vertices, IndexBuffer& indices,
+                                  DWORD attribute, IndexedDraw indexedDraw) {
+    constexpr DWORD mesh32Bit = 0x001; // D3DXMESH_32BIT from the D3DX9 SDK.
+    if ((mesh.GetOptions() & mesh32Bit) != 0) {
+        D3DCAPS9 caps{};
+        HRESULT hr = device.GetDeviceCaps(&caps);
+        if (FAILED(hr))
+            return hr;
+        D3DVERTEXBUFFER_DESC vertexDesc{};
+        hr = vertices.GetDesc(&vertexDesc);
+        if (FAILED(hr))
+            return hr;
+        D3DINDEXBUFFER_DESC indexDesc{};
+        hr = indices.GetDesc(&indexDesc);
+        if (FAILED(hr))
+            return hr;
+        const DWORD stride = mesh.GetNumBytesPerVertex();
+        if (stride == 0)
+            return D3DERR_INVALIDCALL;
+        if (caps.MaxVertexIndex <= 0xffffu ||
+            caps.MaxVertexIndex < vertexDesc.Size / stride ||
+            caps.MaxPrimitiveCount < indexDesc.Size / (3 * sizeof(DWORD)))
+            return mesh.DrawSubset(attribute);
+    }
+    return indexedDraw();
+}
+
 struct MeshSubsetPlan {
     bool attributeTable = false;
     std::vector<D3DXATTRIBUTERANGE> ranges;

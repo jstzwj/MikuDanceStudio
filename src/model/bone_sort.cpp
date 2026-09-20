@@ -37,14 +37,12 @@ void InitBoneSortOrder(unsigned char* m) {
 
     // ---- (re)allocate the slot table ---------------------------------------
     if (mikudancestudio::mdl::Mdl(m)->boneOrderTable != nullptr) {
-        ::operator delete(mikudancestudio::mdl::Mdl(m)->boneOrderTable);
+        delete[] mikudancestudio::mdl::Mdl(m)->boneOrderTable;
         mikudancestudio::mdl::Mdl(m)->boneOrderTable = nullptr;
     }
     const std::uint32_t slots = mdl::BoneOrderCount(m);
-    auto* tbl = static_cast<mdl::BoneOrderEntry*>(operator new(
-        sizeof(mdl::BoneOrderEntry) * slots));
+    auto* tbl = new mdl::BoneOrderEntry[slots]{};
     mikudancestudio::mdl::BoneOrder(m) = tbl;
-    std::memset(tbl, 0, sizeof(mdl::BoneOrderEntry) * slots);
     tbl[0].boneIndex = -1;
     tbl[0].linkedModel = -1;
 

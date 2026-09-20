@@ -1,16 +1,7 @@
-// ===========================================================================
-// d3dx9.h - MMEffect 内置模块专用的最小 D3DX9 ABI 镜像
-// ===========================================================================
-// MikuDanceStudio 不依赖 DirectX SDK 头文件构建（见 include/mikudancestudio/
-// d3dx_dyn.hpp 的既有约定）。本头文件以同样的方式自写声明：COM 接口的
-// vtable 槽位顺序、结构体布局均为二进制 ABI 事实，与原 d3dx9effect.h /
-// d3dx9shader.h / d3dx9core.h 的顺序逐一核对（SetInt@26、SetTechnique@58、
-// Begin@63、OnLostDevice@69 与宿主 fx_slots.hpp 的原版二进制实证槽位一致）。
-//
-// 仅覆盖内置 MMEffect 模块实际调用的表面；未被调用的槽位保留声明位置、
-// 参数从简。自由函数（D3DXCreateEffectFromFileW 等）由 src/d3dx9_dyn.cpp
-// 转发到运行时加载的 d3dx9_XX.dll，不引入构建期 d3dx9.lib 依赖。
-// =========================================================================//
+// Shared D3DX9 declarations for the host and built-in effect engine.
+// The COM layouts match the Microsoft D3DX9 ABI. Free functions are linked
+// through a normal generated import library, requiring the original runtime
+// at process load (x64: d3dx9_43.dll; x86: d3dx9_32.dll).
 #ifndef MIKUDANCESTUDIO_MME_D3DX9_MIRROR_H_
 #define MIKUDANCESTUDIO_MME_D3DX9_MIRROR_H_
 
@@ -350,8 +341,9 @@ struct ID3DXEffect : public IUnknown {
 };
 
 // ---------------------------------------------------------------------------
-// 自由函数（src/d3dx9_dyn.cpp 转发到运行时加载的 d3dx9_XX.dll）
 // ---------------------------------------------------------------------------
+// Host-side imports share the same required runtime as the effect engine.
+struct D3DXQUATERNION { float x, y, z, w; };
 extern "C" {
 
 HRESULT WINAPI D3DXCreateTexture(IDirect3DDevice9* device, unsigned int width,
@@ -464,11 +456,16 @@ D3DXMATRIX* WINAPI D3DXMatrixLookAtLH(D3DXMATRIX* out, const D3DXVECTOR3* eye,
 // inlines the identity matrix at 0x1800581d0 (inside sub_180057BC0:
 // xorps xmm0,xmm0 zero-fill + movss stores into the stack matrix, 1.0f
 // diagonal). d3dx9_XX.dll likewise has no such export (the SDK ships it
-// as a header D3DXINLINE), so d3dx9_dyn.cpp fills the matrix inline
+// as a header D3DXINLINE), so this header fills the matrix inline
 // instead of forwarding - a GetProcAddress here would be forever null.
 D3DXMATRIX* WINAPI D3DXMatrixScaling(D3DXMATRIX* out, float sx, float sy,
                                      float sz);
-D3DXMATRIX* WINAPI D3DXMatrixIdentity(D3DXMATRIX* out);
+inline D3DXMATRIX* WINAPI D3DXMatrixIdentity(D3DXMATRIX* out) {
+    for (int row = 0; row != 4; ++row)
+        for (int column = 0; column != 4; ++column)
+            out->m[row][column] = row == column ? 1.0f : 0.0f;
+    return out;
+}
 D3DXVECTOR3* WINAPI D3DXVec3TransformNormal(D3DXVECTOR3* out,
                                             const D3DXVECTOR3* v,
                                             const D3DXMATRIX* matrix);
@@ -483,6 +480,31 @@ HRESULT WINAPI D3DXGetShaderInputSemantics(const unsigned long* function,
 HRESULT WINAPI D3DXDisassembleEffect(ID3DXEffect* effect, BOOL enableColorCode,
                                      ID3DXBuffer** disassembly);
 
+
+HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(IDirect3DDevice9*, LPCVOID, UINT,
+    UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR,
+    void*, void*, IDirect3DTexture9**);
+HRESULT WINAPI D3DXCreateEffectFromResourceA(IDirect3DDevice9*, HMODULE, LPCSTR,
+    const D3DXMACRO*, ID3DXInclude*, DWORD, ID3DXEffectPool*, ID3DXEffect**, ID3DXBuffer**);
+D3DXMATRIX* WINAPI D3DXMatrixPerspectiveFovLH(D3DXMATRIX*, float, float, float, float);
+D3DXMATRIX* WINAPI D3DXMatrixRotationX(D3DXMATRIX*, float);
+D3DXMATRIX* WINAPI D3DXMatrixRotationY(D3DXMATRIX*, float);
+D3DXMATRIX* WINAPI D3DXMatrixRotationZ(D3DXMATRIX*, float);
+D3DXMATRIX* WINAPI D3DXMatrixTranslation(D3DXMATRIX*, float, float, float);
+D3DXVECTOR4* WINAPI D3DXVec3Transform(D3DXVECTOR4*, const D3DXVECTOR3*, const D3DXMATRIX*);
+HRESULT WINAPI D3DXLoadMeshFromXInMemory(LPCVOID, DWORD, DWORD, IDirect3DDevice9*,
+    ID3DXBuffer**, ID3DXBuffer**, ID3DXBuffer**, DWORD*, ID3DXMesh**);
+HRESULT WINAPI D3DXLoadMeshFromXW(LPCWSTR, DWORD, IDirect3DDevice9*,
+    ID3DXBuffer**, ID3DXBuffer**, ID3DXBuffer**, DWORD*, ID3DXMesh**);
+HRESULT WINAPI D3DXComputeNormals(ID3DXBaseMesh*, const DWORD*);
+D3DXQUATERNION* WINAPI D3DXQuaternionRotationMatrix(D3DXQUATERNION*, const D3DXMATRIX*);
+D3DXQUATERNION* WINAPI D3DXQuaternionMultiply(D3DXQUATERNION*, const D3DXQUATERNION*, const D3DXQUATERNION*);
+D3DXMATRIX* WINAPI D3DXMatrixRotationQuaternion(D3DXMATRIX*, const D3DXQUATERNION*);
+void WINAPI D3DXQuaternionToAxisAngle(const D3DXQUATERNION*, D3DXVECTOR3*, float*);
+D3DXQUATERNION* WINAPI D3DXQuaternionNormalize(D3DXQUATERNION*, const D3DXQUATERNION*);
+D3DXQUATERNION* WINAPI D3DXQuaternionInverse(D3DXQUATERNION*, const D3DXQUATERNION*);
+D3DXQUATERNION* WINAPI D3DXQuaternionRotationAxis(D3DXQUATERNION*, const D3DXVECTOR3*, float);
+HRESULT WINAPI D3DXSaveSurfaceToFileW(LPCWSTR, int, IDirect3DSurface9*, const void*, const RECT*);
 }  // extern "C"
 
 #endif  // MIKUDANCESTUDIO_MME_D3DX9_MIRROR_H_

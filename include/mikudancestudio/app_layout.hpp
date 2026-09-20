@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include "mikudancestudio/clipboard_layout.hpp"
+#include "mikudancestudio/bone_binding.hpp"
 #include "mikudancestudio/path_workspace.hpp"
 #include "mikudancestudio/raw_pad.hpp"
 
@@ -657,7 +658,7 @@ struct MMDAppState {
     unsigned char accessoryEditDialogOpen;  // was a0665 (menu 442) - x64 pin
                                            // 661101 (0xA166D)
     RawPad<2> pad320;
-    void* selectNavRecords;  // dialog 442 SelectAttachRecord array
+    mdl::BoneOrderEntry* selectNavRecords;  // owned dialog 442 working copy
                           // (was a0668OrUint32)
     unsigned char physicsBodiesMoved;
     unsigned char playbackAlwaysOnOffMode;
@@ -732,12 +733,12 @@ struct MMDAppState {
 #if defined(_M_X64)
     // blob slots for the ground-shadow-color dialog (0xA1B38), its saved
     // edit proc (0xA1B40) and the reorder array (0xA1B48); the port keeps
-    // all three in MMDApp mirrors
+    // dialog handles in MMDApp mirrors and typed scratch ownership in DialogOrders
     RawPad<24> pad349;
 #else
     HWND groundShadowColorDialog;  // menu 248, modeless
     WNDPROC groundShadowColorEditProc;  // saved wndproc of its value edit
-    void* accessoryOrderArray;          // menu 249 reorder scratch array
+    RawPad<4> accessoryOrderArray;  // retired scratch slot; typed owners in MMDApp
 #endif
     std::int32_t accessoryRenderSplitOrder;  // x64 pin 662352 (0xA1B50,
                                              // init 1)

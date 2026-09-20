@@ -17,8 +17,7 @@
 //      per toon texture; x64 0x7FF7CB4BA522..0x7FF7CB4BA567).
 //
 // D3DX fidelity: the original imports d3dx9_32.dll specifically; the port
-// LoadLibrary's the very same DLL and resolves the two entry points, so no
-// build-time D3DX dependency is introduced.
+// imports the matching runtime through the shared D3DX interface.
 // Device: *(this+657092)+120032 (guard: null until the D3D init is ported).
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
@@ -30,19 +29,12 @@
 #include <cstring>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
 namespace {
-
-// runtime-resolved d3dx9_32.dll entry points (import table of the original)
-using FnCreateTexInMemEx = HRESULT(WINAPI*)(
-    IDirect3DDevice9*, LPCVOID, UINT, UINT, UINT, UINT, DWORD, D3DFORMAT,
-    D3DPOOL, DWORD, DWORD, D3DCOLOR, void*, void*, IDirect3DTexture9**);
-using FnCreateTexFromFileExA = HRESULT(WINAPI*)(
-    IDirect3DDevice9*, LPCSTR, UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL,
-    DWORD, DWORD, D3DCOLOR, void*, void*, IDirect3DTexture9**);
 
 // Binary-compatible D3DXIMAGE_INFO layout.  The project resolves D3DX at
 // runtime, so it cannot include the legacy D3DX SDK header directly.
@@ -56,28 +48,7 @@ struct D3dxImageInfo {
     UINT ImageFileFormat;
 };
 
-struct D3dxApi {
-    HMODULE module = nullptr;
-    FnCreateTexInMemEx fromMemEx = nullptr;
-    FnCreateTexFromFileExA fromFileExA = nullptr;
-
-    bool Load() {
-        if (module != nullptr)
-            return fromMemEx != nullptr;
-        // original import: x86 links d3dx9_32, the x64 rebuild d3dx9_43
-        module = LoadLibraryA(sizeof(void*) == 8 ? "d3dx9_43.dll"
-                                                 : "d3dx9_32.dll");
-        if (module == nullptr)
-            return false;
-        fromMemEx = reinterpret_cast<FnCreateTexInMemEx>(
-            GetProcAddress(module, "D3DXCreateTextureFromFileInMemoryEx"));
-        fromFileExA = reinterpret_cast<FnCreateTexFromFileExA>(
-            GetProcAddress(module, "D3DXCreateTextureFromFileExA"));
-        return fromMemEx != nullptr && fromFileExA != nullptr;
-    }
-};
-
-D3dxApi g_d3dx;
+auto& g_d3dx = d3dx::Get();
 
 IDirect3DDevice9* DeviceOf(MMDApp* app) {
     D3DRenderer* sub = app->Renderer();                           // 657092

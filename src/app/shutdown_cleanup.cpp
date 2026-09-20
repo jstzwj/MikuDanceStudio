@@ -315,6 +315,11 @@ void TeardownDShowGraphCoUninit(DShowRecorder* rec) {
 void ShutdownCleanup(MMDApp* app) {
     auto& s = *app;
 
+    // A modal-dialog abort can bypass its command's normal cleanup.
+    // The application owns the remaining external-parent working copy.
+    delete[] s.state.selectNavRecords;
+    s.state.selectNavRecords = nullptr;
+
     // ---- 1/2: flag-gated callback + module unload ------------------------
     if (s.state.depthDeviceEnabled != 0) {        // 0x462C6F
         reinterpret_cast<void(*)()>(

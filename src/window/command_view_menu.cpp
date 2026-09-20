@@ -553,7 +553,7 @@ LRESULT CALLBACK ModelEdgeEditSubclassProc(  // VA 0x0045ECC0
 void ApplyModelCalculateOrderDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x0041E910
     (void)hDlg;  // the original's second pushed argument is never read
     std::int32_t* order =
-        static_cast<std::int32_t*>(app->AccessoryOrderArray());
+        app->DialogOrders().modelIndices.get();
     for (int i = 1; i < count; ++i) {
         unsigned char* model = app->ModelSlot(order[i]);
         mdl::Mdl(model)->comboSelIndex = static_cast<unsigned char>(i);
@@ -686,7 +686,7 @@ void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
 // store slotIndex+1 into the array at app+0xA0B1C.
 void BuildModelOrderArray(MMDApp* app, int count) {  // VA 0x0041E7B0
     std::int32_t* order =
-        static_cast<std::int32_t*>(app->AccessoryOrderArray());
+        app->DialogOrders().modelIndices.get();
     for (int ord = 1; ord < count; ++ord) {
         // x64: no exact twin pinned for 0x41E7B0, but every slot/order scan
         // verified on the x64 binary so far runs the full 255-slot array
@@ -708,7 +708,7 @@ void BuildModelOrderArray(MMDApp* app, int count) {  // VA 0x0041E7B0
 void ApplyModelDisplayOrderDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x0045EC80
     (void)hDlg;
     std::int32_t* order =
-        static_cast<std::int32_t*>(app->AccessoryOrderArray());
+        app->DialogOrders().modelIndices.get();
     for (int i = 1; i < count; ++i) {
         unsigned char* model = app->ModelSlot(order[i] - 1);
         mdl::Mdl(model)->comboSelIndex = static_cast<unsigned char>(i);
@@ -1224,7 +1224,7 @@ INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL, sel - 1,
                          0);
             std::int32_t* arr =
-                static_cast<std::int32_t*>(app->AccessoryOrderArray());
+                app->DialogOrders().modelIndices.get();
             const std::int32_t tmp = arr[sel - 1];
             arr[sel - 1] = arr[sel];
             arr[sel] = tmp;
@@ -1245,7 +1245,7 @@ INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL, sel + 1,
                          0);
             std::int32_t* arr =
-                static_cast<std::int32_t*>(app->AccessoryOrderArray());
+                app->DialogOrders().modelIndices.get();
             const std::int32_t tmp = arr[sel + 1];
             arr[sel + 1] = arr[sel];
             arr[sel] = tmp;
@@ -1255,20 +1255,18 @@ INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (id == 632) {  // OK (0x42E52E)
         ApplyModelCalculateOrderDialog(app, g_calculateOrderDialogCount, hDlg);  // 0x41E910
         EndDialog(hDlg, 1);
-        if (app->AccessoryOrderArray() == nullptr) {
+        if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
-        std::free(app->AccessoryOrderArray());
-        app->AccessoryOrderArray() = nullptr;
+        app->DialogOrders().modelIndices.reset();
         return 0;
     }
     if (id == 2) {  // Cancel (0x42E57E)
         EndDialog(hDlg, 2);
-        if (app->AccessoryOrderArray() == nullptr) {
+        if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
-        std::free(app->AccessoryOrderArray());
-        app->AccessoryOrderArray() = nullptr;
+        app->DialogOrders().modelIndices.reset();
         return 0;
     }
     return 0;
@@ -1541,7 +1539,7 @@ INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             SendMessageA(GetDlgItem(app->state.hwnd, panel::kMainComboModel),
                          CB_GETCOUNT, 0, 0));
         g_displayOrderDialogCount = count;
-        app->AccessoryOrderArray() = new std::int32_t[count];
+        app->DialogOrders().modelIndices.reset(new std::int32_t[count]);
         char buf[0x100];
         for (int i = 1; i < count; ++i) {
             SendMessageA(GetDlgItem(app->state.hwnd, panel::kMainComboModel),
@@ -1570,7 +1568,7 @@ INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL,
                          sel - 1, 0);
             std::int32_t* arr =
-                static_cast<std::int32_t*>(app->AccessoryOrderArray());
+                app->DialogOrders().modelIndices.get();
             const std::int32_t tmp = arr[sel + 1];
             arr[sel + 1] = arr[sel];
             arr[sel] = tmp;
@@ -1591,7 +1589,7 @@ INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL,
                          sel + 1, 0);
             std::int32_t* arr =
-                static_cast<std::int32_t*>(app->AccessoryOrderArray());
+                app->DialogOrders().modelIndices.get();
             const std::int32_t tmp = arr[sel + 2];
             arr[sel + 2] = arr[sel + 1];
             arr[sel + 1] = tmp;
@@ -1635,20 +1633,18 @@ INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SendMessageA(GetDlgItem(mainWnd, panel::kMainComboModel), CB_SETCURSEL, 0, 0);
         ApplyModelDisplayOrderDialog(app, g_displayOrderDialogCount, hDlg);  // 0x45EC80
         EndDialog(hDlg, 1);
-        if (app->AccessoryOrderArray() == nullptr) {
+        if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
-        std::free(app->AccessoryOrderArray());
-        app->AccessoryOrderArray() = nullptr;
+        app->DialogOrders().modelIndices.reset();
         return 0;
     }
     if (id == 2) {  // Cancel (0x464613)
         EndDialog(hDlg, 2);
-        if (app->AccessoryOrderArray() == nullptr) {
+        if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
-        std::free(app->AccessoryOrderArray());
-        app->AccessoryOrderArray() = nullptr;
+        app->DialogOrders().modelIndices.reset();
         return 0;
     }
     return 0;

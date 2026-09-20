@@ -224,17 +224,6 @@ void TestRuntimeMeshAbi() {
 }
 
 int main(int argc, char** argv) {
-    if (argc > 1 && std::strcmp(argv[1], "--incomplete-runtime") == 0) {
-        // Run from a test-only directory containing the incomplete runtime
-        // fixture. A cached HMODULE must never turn failed resolution into
-        // success on the second call.
-        mikudancestudio::d3dx::Api api;
-        CHECK(!api.Load());
-        CHECK(!api.Load());
-        CHECK(api.module != nullptr);
-        std::puts("Incomplete D3DX runtime remains unavailable");
-        return 0;
-    }
     TestControlObjectSelection();
     TestPlanMatrix();
     TestSubsetPlanning();

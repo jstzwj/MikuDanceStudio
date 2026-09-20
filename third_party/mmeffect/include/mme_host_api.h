@@ -70,7 +70,8 @@ HRESULT __cdecl MmeHostClear(IDirect3DDevice9* device, unsigned long rect_count,
 // 帧 BeginScene 状态机：编辑模式采样、惰性 Initialize、对象增删差异
 // （OnCreateModel/OnDeleteModel）、世界矩阵缓存、渲染目标跟踪、OnBeginScene
 // （渲染遍数规划在此发生）。notEditMode != 0 表示非编辑态（AVI 输出/模态）。
-// 内部调用真实 BeginScene 并返回其结果。
+// 初始化失败时按原版每次报告错误、保留待初始化状态，并返回 S_OK 而不
+// 调用真实 BeginScene；初始化成功后调用真实 BeginScene 并返回其结果。
 HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode);
 
 // 绘制转发：效果引擎接管（经分配特效重发）或原始转发。返回绘制 HRESULT。

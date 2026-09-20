@@ -9,7 +9,7 @@ class MikuDanceStudioConan(ConanFile):
     dependency of the original binary is Bullet Physics 2.75 (statically
     linked); it is provided by the local recipe in ``recipes/bullet275``.
     DirectX 9 and the system Win32 APIs are not supplied by this recipe.
-    Runtime D3DX selection belongs to the application; parity evidence and
+    D3DX is a required normal DLL import selected by the build; parity evidence and
     remaining limitations are recorded in docs/PORTING_STATUS.md.
     """
 

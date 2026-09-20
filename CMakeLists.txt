@@ -291,8 +291,8 @@ set_target_properties(MMDxShow PROPERTIES
 )
 
 # Effect engine linked directly into the host; no proxy or injection DLL.
+include(cmake/D3dxRuntime.cmake)
 add_library(MMEffect STATIC
-    third_party/mmeffect/src/d3dx9_dyn.cpp
     third_party/mmeffect/src/mme_host.cpp
     third_party/mmeffect/src/mmhack/mmhack_registry.cpp
     third_party/mmeffect/src/mmhack/mmhack_material.cpp
@@ -324,6 +324,7 @@ target_include_directories(MMEffect PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp（运行时 d3dx9 转发）
 )
 target_compile_definitions(MMEffect PUBLIC MIKUDANCESTUDIO_MME_EMBEDDED=1)
+target_link_libraries(MMEffect PUBLIC D3DXRuntime)
 target_link_libraries(MMEffect PRIVATE
     user32       # 窗口/菜单/消息
     gdi32        # GDI+ 底层
@@ -364,6 +365,8 @@ if(BUILD_TESTING)
     target_link_libraries(model_lifetime_test PRIVATE BULLET275::BULLET275)
     add_executable(skeleton_tracking_test tests/skeleton_tracking_test.cpp)
     add_executable(ui_protocol_test tests/ui_protocol_test.cpp)
+    add_executable(bone_binding_test tests/bone_binding_test.cpp src/model/bone_sort.cpp)
+    add_executable(dialog_order_arrays_test tests/dialog_order_arrays_test.cpp)
     add_executable(undo_frame_test tests/undo_frame_test.cpp
         src/model/model_keyframe_edit.cpp)
     target_compile_options(undo_frame_test PRIVATE /Gy)
@@ -374,15 +377,58 @@ if(BUILD_TESTING)
     target_compile_definitions(physics_scene_dispose_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
     target_link_libraries(physics_scene_dispose_test PRIVATE BULLET275::BULLET275)
     add_executable(mme_regression tests/mme_regression.cpp)
+    add_executable(mme_initialization_test tests/mme_initialization_test.cpp)
+    target_include_directories(mme_initialization_test PRIVATE third_party/mmeffect/include)
+    add_executable(mme_host_object_cache_test tests/mme_host_object_cache_test.cpp)
+    target_include_directories(mme_host_object_cache_test PRIVATE third_party/mmeffect/include)
+    add_test(NAME mme_host_object_cache COMMAND mme_host_object_cache_test)
+    add_executable(mme_buffer_pass_test tests/mme_buffer_pass_test.cpp)
+    target_include_directories(mme_buffer_pass_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_buffer_pass_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_buffer_pass_gpu COMMAND mme_buffer_pass_test)
+    set_tests_properties(mme_buffer_pass_gpu PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(mme_ray_smoke_test tests/mme_ray_smoke_test.cpp)
+    target_include_directories(mme_ray_smoke_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_ray_smoke_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_executable(mme_offscreen_turn_test tests/mme_offscreen_turn_test.cpp)
+    target_include_directories(mme_offscreen_turn_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_offscreen_turn_test PRIVATE mikudancestudio_core MMEffect dsound)
+    set(MIKUDANCESTUDIO_RAY_TEST_EFFECT "" CACHE FILEPATH
+        "Optional local ray.fx for real-asset GPU regression tests")
+    if(MIKUDANCESTUDIO_RAY_TEST_EFFECT)
+        add_test(NAME mme_ray_script_gpu COMMAND mme_ray_smoke_test "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
+        add_test(NAME mme_ray_offscreen_gpu COMMAND mme_offscreen_turn_test "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
+        set_tests_properties(mme_ray_script_gpu mme_ray_offscreen_gpu PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
+    add_executable(mesh_fallback_test tests/mesh_fallback_test.cpp)
+    target_include_directories(mesh_fallback_test PRIVATE third_party/mmeffect/include)
     target_include_directories(mme_regression PRIVATE third_party/mmeffect/include)
-    target_link_libraries(mme_regression PRIVATE d3d9 user32)
+    target_link_libraries(mme_regression PRIVATE D3DXRuntime d3d9 user32)
     foreach(test IN ITEMS model_initialization_test model_lifetime_test
-            skeleton_tracking_test ui_protocol_test undo_frame_test physics_scene_dispose_test mme_regression)
+            skeleton_tracking_test ui_protocol_test bone_binding_test dialog_order_arrays_test
+            undo_frame_test physics_scene_dispose_test
+            mme_regression mme_initialization_test mesh_fallback_test)
         target_include_directories(${test} PRIVATE include)
         add_test(NAME ${test} COMMAND ${test})
     endforeach()
     # Requires the Microsoft D3DX9 runtime installed for the target architecture.
     add_test(NAME mme_d3dx_runtime COMMAND mme_regression --runtime)
+    add_executable(d3dx_import_probe tests/d3dx_import_probe.cpp)
+    target_include_directories(d3dx_import_probe PRIVATE include)
+    target_link_libraries(d3dx_import_probe PRIVATE D3DXRuntime)
+    add_library(incomplete_d3dx_runtime SHARED tests/incomplete_d3dx_runtime.cpp)
+    set_target_properties(incomplete_d3dx_runtime PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures/d3dx"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures/d3dx")
+    add_test(NAME d3dx_direct_imports COMMAND d3dx_import_probe)
+    add_test(NAME d3dx_pe_imports COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_d3dx_imports.py
+        $<TARGET_FILE:MikuDanceStudio>)
+    add_test(NAME d3dx_loader_failure COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_d3dx_loader_failure.py
+        $<TARGET_FILE:d3dx_import_probe> $<TARGET_FILE:incomplete_d3dx_runtime>
+        ${D3DX_RUNTIME_NAME})
     add_executable(embedded_mme_resources_test tests/embedded_mme_resources_test.cpp)
     target_include_directories(embedded_mme_resources_test PRIVATE third_party/mmeffect/include)
     add_dependencies(embedded_mme_resources_test MikuDanceStudio)

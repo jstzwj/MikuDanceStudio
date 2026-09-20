@@ -1,10 +1,9 @@
 // ===========================================================================
-// mme_bridge.hpp - 内置 MMEffect（third_party/mmeffect → MMEffect.dll）宿主桥
+// mme_bridge.hpp - 静态内置 MMEffect 的宿主桥
 // ===========================================================================
-// 桥职责：在渲染管线的对应点调用 MMEffect.dll 的 MmeHost* 导出（见
-// third_party/mmeffect/include/mme_host_api.h）。设备/标准效果未就绪（无
-// d3dx9_XX.dll 或着色器低于 SM2）时所有函数退化为直通设备调用，行为与
-// 未集成 MME 时完全一致。
+// 桥职责：在渲染管线的对应点直接调用 MmeHost*（见
+// third_party/mmeffect/include/mme_host_api.h）。有效设备即登记；标准效果
+// 缺失仍进入 MME 惰性初始化，保留原版逐帧失败诊断与重试语义。
 //
 // 绘制约定：Draw* 交给桥后宿主不得再自行下发同一绘制——效果引擎要么经
 // 分配的特效技术重发，要么原始转发（与原版 MMHack 拦截一致）。
@@ -20,7 +19,7 @@ class MMDApp;
 namespace mme {
 
 // 设备创建后调用（InitD3D 尾部）：注册主窗口与内置标准效果。标准效果为
-// 空时 MME 保持不可用，全部直通。注意 InitD3D 运行于 WM_CREATE 期间、
+// 空时由 MME 惰性初始化报告失败并在下次 BeginScene 重试。InitD3D 在 WM_CREATE 期间，
 // app->Hwnd() 尚未赋值——必须传入 InitD3D 收到的窗口句柄。
 void OnDeviceCreated(MMDApp* app, HWND hwnd);
 

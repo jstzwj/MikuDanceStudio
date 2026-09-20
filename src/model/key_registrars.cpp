@@ -384,7 +384,7 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
             boneAxis[1] = tail.position[1] - bone.position[1];
             boneAxis[2] = tail.position[2] - bone.position[2];
             auto* d3 = &d3dx::Get();
-            if (d3->module != nullptr) d3->vec3Normalize(boneAxis, boneAxis);
+            d3->vec3Normalize(boneAxis, boneAxis);
         }
         float* const q = reinterpret_cast<float*>(rec + 36);
         float axisOut[3], angle;

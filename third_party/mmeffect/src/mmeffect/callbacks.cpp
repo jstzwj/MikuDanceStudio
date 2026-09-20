@@ -176,10 +176,9 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
             // invokes the model+8 draw callback - the draw is dropped
             // before the draw-type gate, so every pass (object/ss/shadow/
             // edge/zplot) of the model is swallowed for the whole window.
-            // The staging pointer is non-null exactly inside that window
-            // (scene step/repeat-boundary apply stage it, the resume walk
-            // clears it), so the main pass is unaffected.
-            if (ctx->offscreenDefaultEffect != nullptr &&
+            // Resolve the active turn's own rows; scene script target
+            // changes do not redefine which assignment table is in force.
+            if (MmeInOffscreenRenderTurn() &&
                 MmeOffscreenDefaultEffectHides(model)) {
                 return;
             }
@@ -221,36 +220,17 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
             bool drewThroughEffect = false;
             if (drawType == 1 || drawType == 2 || drawType == 3 ||
                 drawType == 4 || drawType == 5) {
-                // [sub_18005A1E0 0x18005a24c-0x18005a2a4 + sub_18002D910]
-                // 离屏渲染回合（原版 wrapper 非 null，turn id != 0）内的
-                // 绑定查找以当前回合的 turn id 为 owner 键首字段，能命中的
-                // 只有两类条目：
-                //   1) carrier 的 (turnId, carrier, -1)——子轮 drain
-                //      （sub_18002CA80 0x18002d1a0-0x18002d69c）建立，value
-                //      即 carrier 自身绑定，照常绘制/驱动（下方
-                //      MmeModelOwnsOffscreenTurn 的资源名判据——同名 0x2E
-                //      声明——等价于该 turn 条目的命中）；
-                //   2) DefaultEffect 行展开的 (turnId, model, -1)
-                //      （sub_18002ACE0 读 0x98 记录 +0x78 行向量 →
-                //      sub_18002CA80 创建段）：行值 path/main_default → 行
-                //      效果；"none"/未列出 → 空 binding（FUN_18001b940 的
-                //      effect==null 裸 DIP）；"hide" 已被上方的 gate 吞。
-                // 其余对象（含当前 0x2E 目标根本没有 DefaultEffect 注解的
-                // 回合里的全部普通对象）对 turn 键全部 miss——
-                // sub_18002D910 返回 0，sub_18005A1E0 不调 FUN_18001b940，
-                // 该次绘制整体被吞（连裸 DIP 都不走）。模型自身的
-                // (0, model, -1) 绑定与逐材质赋值对 turn 键不可见，
-                // 绝不可作为回退（"main_default" 是显式行拼写）。
+                // Resolve the active turn's explicit DefaultEffect row.
+                // Resource declaration alone never supplies a root binding:
+                // missing/hide suppress the draw; none uses the host draw.
                 MaterialBinding* binding = nullptr;
                 bool swallowOffscreenDraw = false;
                 const bool offscreenWindow = MmeInOffscreenRenderTurn();
                 if (offscreenWindow) {
-                    if (MmeModelOwnsOffscreenTurn(model)) {
-                        binding = MmeActiveModelBinding(model);
-                    } else if (ctx->offscreenDefaultEffect != nullptr) {
-                        binding = MmeResolveOffscreenDefaultBinding(model);
+                    if (MmeHasOffscreenDefaultEffectRow(model)) {
+                        binding = MmeResolveOffscreenDefaultBinding(model, snap.subset_index);
                     } else {
-                        // 无 DefaultEffect 行的离屏回合：turn 键 miss → 吞
+                        // No entry for this turn: do not draw through the root binding.
                         swallowOffscreenDraw = true;
                     }
                 } else {

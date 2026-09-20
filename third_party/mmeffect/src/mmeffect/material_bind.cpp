@@ -10,7 +10,6 @@
 #include "mmhack_api.h"  // GetBlendMode / GetCurrentEffect
 
 #include "effect_engine.h"
-#include "emm_manager.h"   // MmeEmmDefaultEffect (offscreen DefaultEffect "main_default")
 #include "mme_context.h"
 #include "mme_globals.h"
 #include "mme_log.h"       // MmeLogWrite (the name-table shape-error report)
@@ -300,32 +299,12 @@ MaterialBinding* MmeFindMaterialBinding(unsigned int materialCount, ModelData* m
     if (manager == nullptr || model == nullptr) {
         return nullptr;
     }
-    // [offscreen DefaultEffect window; sub_18005A1E0 + sub_18002CA80] While
-    // a suspended scene technique renders into an offscreen target with
-    // staged DefaultEffect rows, the original resolves the draw through the
-    // scene effect's OWNER-KEYED map entry - the lookup key's first field
-    // comes from the current binding object (+56): the effect's owner id
-    // inside the window, 0 outside. That owner-keyed entry is built by
-    // expanding the rows (sub_18002ACE0's owner branch reads the offscreen
-    // record +0x78 vector during the per-frame mapping rebuild): an
-    // unlisted or "none" row resolves to the EMPTY binding (the raw host
-    // draw), "hide" to a NULL entry (the draw gate in
-    // MmeHandleDrawIndexedPrimitive swallows it), a path/main_default row
-    // to that effect. The model's own (owner-0) entries are invisible to
-    // the owner-keyed lookup, so the staging pointer short-circuits the
-    // manager map here - the snapshot apply and the draw wrapper both
-    // observe the substitution and neither falls back to the main binding.
-    // [2026-09 P1] 窗口判定从"行 staging 非空"扩为"离屏渲染回合"
-    // （MmeInOffscreenRenderTurn——原版 wrapper 非 null 的等价）：无
-    // DefaultEffect 行的 0x2E 目标同样处于离屏回合，场景键 0 的模型
-    // 自身绑定同样不可见（miss → 调用方吞绘制）。carrier 命中 turn 条目
-    // （(turnId, carrier, -1)，value 即自身绑定——drain 建立），不查行。
+    // Nonzero turn IDs resolve the turn's own DefaultEffect assignments.
+    // Declaring its OFFSCREENRENDERTARGET only registers a render target;
+    // it does not copy the declaring object's root effect into that turn.
     MmeContext* stagedCtx = g_context;
     if (stagedCtx != nullptr && MmeInOffscreenRenderTurn()) {
-        if (MmeModelOwnsOffscreenTurn(model)) {
-            return MmeActiveModelBinding(model);
-        }
-        return MmeResolveOffscreenDefaultBinding(model);
+        return MmeResolveOffscreenDefaultBinding(model, subsetIndex);
     }
     (void)allowWholeObject;   // the original's flag is always 1 at both call sites
     int subset = subsetIndex < 0 ? -1 : subsetIndex;
@@ -698,6 +677,18 @@ void MmeApplyModelRenderSnapshot(ModelData* model, void* bindingContext,
 // (+0x360/+0x364/+0x368) - the pass planner then routes the object through
 // passPlanA/B and renderPassList [FUN_18002ca80 L292-320].
 // ---------------------------------------------------------------------------
+static int MmeFirstSceneTechnique(SasEffect* sas) {
+    if (sas == nullptr || sas->scriptClass == kSasClassObject) return -1;
+    for (D3DXHANDLE handle : sas->techniqueOrder) {
+        for (size_t index = 0; index < sas->techniques.size(); ++index) {
+            const SasTechnique& technique = sas->techniques[index];
+            if (technique.handle == handle && !technique.empty && technique.hardwareOk)
+                return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
 MaterialBinding* MmeResolveModelEffectBinding(ModelData* model)
 {
     if (model == nullptr) {
@@ -737,24 +728,7 @@ MaterialBinding* MmeResolveModelEffectBinding(ModelData* model)
         model->setFlag368(loaded->sas->drawsGeometry ? 1 : 0);
         // The stepped/resumed scene technique: the first hardware-valid
         // technique in the MME order.
-        binding->sceneTechIndex = -1;
-        if (loaded->sas != nullptr) {
-            SasEffect* sas = loaded->sas;
-            for (size_t o = 0; o < sas->techniqueOrder.size(); ++o) {
-                for (size_t t = 0; t < sas->techniques.size(); ++t) {
-                    if (sas->techniques[t].handle != sas->techniqueOrder[o]) {
-                        continue;
-                    }
-                    if (!sas->techniques[t].empty && sas->techniques[t].hardwareOk) {
-                        binding->sceneTechIndex = static_cast<int>(t);
-                        break;
-                    }
-                }
-                if (binding->sceneTechIndex >= 0) {
-                    break;
-                }
-            }
-        }
+        binding->sceneTechIndex = MmeFirstSceneTechnique(loaded->sas);
     } else {
         model->ClearSasBinding();
     }
@@ -766,12 +740,7 @@ MaterialBinding* MmeActiveModelBinding(ModelData* model)
     if (model == nullptr) {
         return nullptr;
     }
-    // Direct manager-map read: this is the pass-record DRIVER lookup (the
-    // pass planner's scene-technique stepping), which the original serves
-    // from the effect's own binding object (never through the owner-keyed
-    // draw-entry lookup). It must bypass the offscreen DefaultEffect window
-    // short-circuit in MmeFindMaterialBinding - a row that hides or "none"s
-    // the carrier model itself must not unhook its suspended technique.
+    // Explicit root-binding lookup, independent of the active offscreen turn.
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr) {
         return nullptr;
@@ -797,36 +766,6 @@ bool MmeInOffscreenRenderTurn()
     // 判定：无 DefaultEffect 行的离屏目标同样处于窗口内。
     MmeContext* ctx = g_context;
     return ctx != nullptr && ctx->currentBindingOffscreen != nullptr;
-}
-
-bool MmeModelOwnsOffscreenTurn(ModelData* model)
-{
-    // [sub_18002CA80 子轮 drain 0x18002d1a0-0x18002d69c / sub_18005A410
-    // 0x18005a449-0x18005a4bb] 原版的 (turnId, carrier, -1) 条目只为
-    // carrier 建立，turn id 按资源名分配（sub_18002D820 的名字→id 映射，
-    // 同名共享），所以"模型自身绑定的 SAS 声明了与本回合资源同名的
-    // 0x2E（OFFSCREENRENDERTARGET）参数"即等价于该模型持有本回合的
-    // turn 条目（条目 value 即 carrier 自身绑定——照常绘制与驱动）。
-    // 与 pass_planner 的 MmeSceneWalkTechIndex（(id, carrier, -1) 的
-    // walk 查找）使用同一判据。
-    MmeContext* ctx = g_context;
-    if (model == nullptr || ctx == nullptr ||
-        ctx->currentBindingOffscreen == nullptr) {
-        return false;
-    }
-    MaterialBinding* binding = MmeActiveModelBinding(model);
-    SasEffect* sas = (binding != nullptr) ? binding->sas : nullptr;
-    if (sas == nullptr) {
-        return false;
-    }
-    const std::string& turnName = ctx->currentBindingOffscreen->name;
-    for (size_t i = 0; i < sas->resources.size(); ++i) {
-        if (sas->resources[i].semanticId == 0x2E &&
-            sas->resources[i].name == turnName) {
-            return true;
-        }
-    }
-    return false;
 }
 
 MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex,
@@ -990,6 +929,8 @@ star:
 // missing-map-entry path behaves the same).
 static ModelData* MmeOffscreenDefaultEffectOwner(MmeContext* ctx)
 {
+    if (ctx != nullptr && ctx->currentBindingOffscreen != nullptr)
+        return ctx->currentBindingObject;
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr) {
         return nullptr;
@@ -1025,14 +966,13 @@ static ModelData* MmeOffscreenDefaultEffectOwner(MmeContext* ctx)
 static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
 {
     MmeContext* ctx = g_context;
-    if (model == nullptr || ctx == nullptr ||
-        ctx->offscreenDefaultEffect == nullptr) {
-        return nullptr;
-    }
+    if (model == nullptr || ctx == nullptr) return nullptr;
+    const auto* rowSource = ctx->currentBindingOffscreen != nullptr
+        ? &ctx->currentBindingOffscreen->defaultEffectMap : ctx->offscreenDefaultEffect;
+    if (rowSource == nullptr) return nullptr;
     const char* filename = model->filename();
-    const std::string& name = model->name();   // basename+extension
-    const std::vector<std::pair<std::string, std::string>>& rows =
-        *ctx->offscreenDefaultEffect;
+    const std::string& name = model->name();
+    const std::vector<std::pair<std::string, std::string>>& rows = *rowSource;
     ModelData* owner = nullptr;          // lazily resolved on the first
     bool ownerResolved = false;          // "self" row
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -1072,7 +1012,7 @@ static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
     return nullptr;
 }
 
-MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model)
+MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model, int subsetIndex)
 {
     const std::string* value = MmeOffscreenDefaultEffectRow(model);
     if (value == nullptr) {
@@ -1091,13 +1031,22 @@ MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model)
     }
     std::string path;
     if (*value == "main_default") {
-        path = MmeEmmDefaultEffect();
-        if (path.empty()) {
-            return nullptr;
+        // 0x18002b981 resolves the SAME model/subset in scene 0. It is not
+        // the global EMM default effect, and must bypass the turn resolver.
+        EffectOwnerManager* manager = g_ownerManager;
+        if (manager == nullptr) return nullptr;
+        auto found = manager->bindings.find(
+            EffectOwnerManager::BindingKey(0, model, subsetIndex));
+        if (found != manager->bindings.end()) return found->second;
+        if (subsetIndex >= 0) {
+            const auto assigned = model->subsetEffects().find(subsetIndex);
+            if (assigned != model->subsetEffects().end() && !assigned->second.empty())
+                return MmeResolveSubsetEffectBinding(model, subsetIndex, assigned->second);
         }
-    } else {
-        path = *value;   // the parse-time absolute path of the referenced .fx
+        MaterialBinding* root = MmeActiveModelBinding(model);
+        return root != nullptr ? root : MmeResolveModelEffectBinding(model);
     }
+    path = *value; // Parse-time absolute path of the referenced effect.
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return nullptr;
@@ -1125,7 +1074,7 @@ MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model)
     // 引用：MmeClearOffscreenDefaultBindings / 行路径变化时的 delete 在
     // 释放最后一个引用时触发 ~LoadedEffect（FUN_18000B210 语义）。
     binding->owner = loaded;
-    binding->sceneTechIndex = -1;   // never a scene record driver
+    binding->sceneTechIndex = MmeFirstSceneTechnique(loaded->sas);
     // [sub_18001DD20] the owner-keyed entries the original expands from the
     // staged rows carry the same per-MmdPass selection table; the per-draw
     // apply indexes it (FUN_18001b940). No name-based fallback.
@@ -1137,6 +1086,11 @@ MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model)
         ctx->offscreenDefaultBindings[model] = binding;
     }
     return binding;
+}
+
+bool MmeHasOffscreenDefaultEffectRow(ModelData* model)
+{
+    return MmeOffscreenDefaultEffectRow(model) != nullptr;
 }
 
 bool MmeOffscreenDefaultEffectHides(ModelData* model)
@@ -2084,10 +2038,28 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
             continue;
         }
         case kSemViewportPixelSize: {
-            // [sub_18005edd0] the live viewport extents.
-            D3DVIEWPORT9 vp{};
-            if (model && model->device()) model->device()->GetViewport(&vp);
-            setVector(static_cast<float>(vp.Width), static_cast<float>(vp.Height), 0, 0);
+            // [sub_18005EDD0 0x18005edf8-0x18005ee35] this semantic is
+            // the BeginScene size, or the CURRENT OFFSCREEN TURN's size
+            // (wrapper+0x40/+0x44), never the live device viewport. A script
+            // may redirect to smaller intermediate targets; Ray explicitly
+            // scales offsets from this stable size for those targets.
+            UINT width = g_beginViewport.Width;
+            UINT height = g_beginViewport.Height;
+            const SasResource* offscreen = g_context != nullptr
+                ? g_context->currentBindingOffscreen : nullptr;
+            if (offscreen != nullptr) {
+                // [0x18002d41c-0x18002d43b] the wrapper starts with zero
+                // dimensions and receives the offscreen surface descriptor.
+                // Re-query the same source, as MmeApplyPassRecord does, so
+                // a replacement surface after reset supplies its new size.
+                D3DSURFACE_DESC desc{};
+                if (offscreen->surface != nullptr) {
+                    offscreen->surface->GetDesc(&desc);
+                }
+                width = desc.Width;
+                height = desc.Height;
+            }
+            setVector(static_cast<float>(width), static_cast<float>(height), 0, 0);
             continue;
         }
         case kSemMousePosition: {
@@ -2529,19 +2501,12 @@ static void MmeBindOffscreenWindowControls(ModelData* model,
                                            MaterialBinding* binding)
 {
     MmeContext* ctx = g_context;
-    if (ctx == nullptr || ctx->offscreenDefaultEffect == nullptr ||
+    if (ctx == nullptr || !MmeInOffscreenRenderTurn() ||
         model == nullptr || binding == nullptr || binding->sas == nullptr) {
         return;   // window closed, or nothing staged for this draw
     }
-    // Only the staged rows' transient bindings evaluate here. The window's
-    // MmeFindMaterialBinding short-circuit hands the apply a binding from
-    // this map, but a stale/mismatched binding must not invent an owner.
-    std::map<ModelData*, MaterialBinding*>::const_iterator staged =
-        ctx->offscreenDefaultBindings.find(model);
-    if (staged == ctx->offscreenDefaultBindings.end() ||
-        staged->second != binding) {
-        return;
-    }
+    // main_default borrows a root binding rather than a transient binding;
+    // it still receives this turn's OffscreenOwner and the drawn self.
     ModelData* offscreenOwner = MmeOffscreenDefaultEffectOwner(ctx);
     for (size_t i = 0; i < binding->sas->controls.size(); ++i) {
         ResolveOneControl(binding->sas, binding->sas->controls[i], model,

@@ -691,8 +691,8 @@ void InitModelOrderDialog(int count, HWND hDlg) {  // VA 0x0041E810
     constexpr std::size_t kModelOrder2D7C = 0x2D7C;  // combo order byte
     // value-init: element 0 stays untouched by the fill below, and the OK
     // apply (ApplyModelCalculateOrderDialog) walks the array from index 0
-    app->AccessoryOrderArray() =
-        new std::int32_t[static_cast<std::size_t>(count) + 1]();
+    app->DialogOrders().modelIndices.reset(
+        new std::int32_t[static_cast<std::size_t>(count) + 1]());
 
     char buf[0x100];
     for (int i = 1; i <= count; ++i) {
@@ -703,7 +703,7 @@ void InitModelOrderDialog(int count, HWND hDlg) {  // VA 0x0041E810
     }
 
     std::int32_t* order =
-        static_cast<std::int32_t*>(app->AccessoryOrderArray());
+        app->DialogOrders().modelIndices.get();
     // x64 sub_7FF7CB4A98C0+0x4A98F0: order runs 1..count (the combo count
     // cached at dword_7FF7CB564604), the slot scan to 0xFF (cmp ecx,0FFh
     // @0x4A991A) - kModelSlotCount wide.
