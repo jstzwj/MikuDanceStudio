@@ -3,13 +3,8 @@
 // Ports:
 //   FUN_180018200 [0x180018200] SasCompileScript: normalize + tokenize the
 //       script ("^\s*((\w+)\s*=\s*([^=;\s]*))\s*;\s*(.*)", [0x1800B46C8]),
-//       dispatch to the flat command list. The command token is compared
-//       RAW (memcmp against the lowercase literals - "Clear=Color" warns
-//       "unsupported script command"); the only tolower (sub_1800231B0
-//       @0x180018d50) hits the VALUE (m[5]), and only for the enum compares
-//       (color/depth/geometry/buffer). STANDARDSGLOBAL (FUN_18000c470) is
-//       the opposite: it strips ALL whitespace ("\s+" -> "") and lowercases
-//       the command (sub_1800233C0 @0x18000d6dc) - two different grammars.
+//       lowercase the command through std::ctype<char>, then dispatch.
+//       Enum values compare without case; parameter and pass names retain it.
 //       "pass=Name" compiles to an id-0 entry (the original's compiler
 //       references the token "pass" and the error "Error: unknown pass
 //       name: "), "scriptexternal" to id 12, loops stay as runtime ids.
@@ -681,16 +676,7 @@ static bool SasCompileTokenizer(SasCompiler* c, const std::string& script,
         std::string command = rest.substr(cmdStart, cmdEnd - cmdStart);  // m[4]
         std::string value = rest.substr(valStart, valEnd - valStart);    // m[5]
         rest = rest.substr(j);                                           // m[6]
-        // [原版事实，勿再错记] 命令 token 不经过任何 tolower：
-        // sub_1800231B0 反编译为 string clear/init（Src[3]=15; Src[2]=0;
-        // *Src=0），不是 tolower；命令分发全部是 memcmp /
-        // sub_18000A640（std::string::compare）对 token 原文与小写字面量
-        // 的字节敏感比较 + 精确长度检查（0x180018efc "pass"、
-        // 0x1800191dd "rendercolortarget0"、0x1800194d5 "draw" 等）——
-        // 即原版命令匹配大小写敏感，"Clear=Color" 会走 LABEL_238 警告
-        // "unsupported script command"。下面这个整体 tolower 是移植的
-        // 放宽偏差（旧实现残留，比原版宽松），行为暂按现状保留；
-        // 枚举 VALUE 的大小写不敏感比较见 SasValueEqualsNoCase。
+        // 0x180018E7E -> 0x180027610 -> ctype<char>::tolower precedes dispatch.
         for (size_t k = 0; k < command.size(); ++k) {
             command[k] = static_cast<char>(
                 tolower(static_cast<unsigned char>(command[k])));

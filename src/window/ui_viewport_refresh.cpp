@@ -133,15 +133,13 @@ void RefreshMainWindowViewport(MMDApp* app) {
                          static_cast<float>(renderHeight);
     wrapper->aspectRatio = aspect;
     auto& api = d3dx::Get();
-    if (api.Load()) {
-        d3dx::D3DXMATRIXF projection{};
-        const float fovRadians =
-            s.CameraFov() * 0.01745329238474369f;
-        api.perspectiveFovLH(&projection, fovRadians, aspect,
-                             1.0f, 100000.0f);
-        device->SetTransform(D3DTS_PROJECTION,
-            reinterpret_cast<const D3DMATRIX*>(&projection));
-    }
+    d3dx::D3DXMATRIXF projection{};
+    const float fovRadians =
+        s.CameraFov() * 0.01745329238474369f;
+    api.perspectiveFovLH(&projection, fovRadians, aspect,
+                         1.0f, 100000.0f);
+    device->SetTransform(D3DTS_PROJECTION,
+        reinterpret_cast<const D3DMATRIX*>(&projection));
 
     wrapper->viewScale = static_cast<float>(
         static_cast<double>(viewport.Width) * 1.2 / 1280.0);
@@ -235,14 +233,12 @@ void RefreshSeparateWindowViewport(MMDApp* app) {  // 0x4290F0..0x42976B
                          static_cast<float>(renderHeight);
     wrapper->aspectRatio = aspect;
     auto& api = d3dx::Get();
-    if (api.Load()) {
-        d3dx::D3DXMATRIXF projection{};
-        api.perspectiveFovLH(&projection,
-            s.CameraFov() * 0.01745329238474369f,
-            aspect, 1.0f, 100000.0f);
-        device->SetTransform(D3DTS_PROJECTION,
-            reinterpret_cast<const D3DMATRIX*>(&projection));
-    }
+    d3dx::D3DXMATRIXF projection{};
+    api.perspectiveFovLH(&projection,
+        s.CameraFov() * 0.01745329238474369f,
+        aspect, 1.0f, 100000.0f);
+    device->SetTransform(D3DTS_PROJECTION,
+        reinterpret_cast<const D3DMATRIX*>(&projection));
     wrapper->viewScale = static_cast<float>(
         static_cast<double>(view.right - view.left) * 1.2 / 1280.0);
 

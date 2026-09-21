@@ -181,10 +181,10 @@ void RendererInit(D3DRenderer* r) {
     r->d3dInitialized = 1;
     r->shaderModelCaps = 1;
     r->runtimeToggle = 1;
-    r->localeTable[0] = _create_locale(0, "Locale");
-    r->localeTable[1] = _create_locale(0, ".OCP");
-    r->localeTable[2] = _create_locale(0, ".ACP");
-    r->localeTable[3] = _create_locale(0, "JPN");
+    r->localeTable[0] = _create_locale(LC_ALL, "");
+    r->localeTable[1] = _create_locale(LC_ALL, ".OCP");
+    r->localeTable[2] = _create_locale(LC_ALL, ".ACP");
+    r->localeTable[3] = _create_locale(LC_ALL, "JPN");
     // 0x406E18..0x406E42: nvapi stereo probe chain.  sub_4C6940 loads
     // nvapi.dll and runs NvAPI_Initialize; on success sub_4CAF10(1) queries
     // the stereo caps interface (0xBE7692EC) and sub_4CB210 the support
@@ -280,33 +280,6 @@ void IdentityCtor(void* obj)            { (void)obj; }
 // src/app/frame_modes.cpp.
 // PushBoneEditUndo (0x42D6E0) is ported in src/model/bone_edit_undo.cpp.
 // 0x401150 (0x401150 array ctor) is ported in src/window/accessory_paste.cpp.
-// 0x407910 wide->SJIS path conversion (PMM save model/WAV/AVI paths and
-// the drop-file flow).  Original: strcpy_s prefill from the .data "Locale"
-// narrow string ("%", 0x529679), then when src is non-empty
-// WideCharToMultiByte(932) into a heap scratch and strncpy_s it out; on
-// failure/default-char a _wcstombs_s_l fallback chain (orig tries four
-// pre-created locale pointers at ctx+0x1D4C4 - approximated with the
-// locale-agnostic wcstombs_s, the only branch reachable for the pure-ASCII
-// paths the save emits).
-void WideToSjisPath(char* dst, const wchar_t* src, std::size_t size) {
-    strcpy_s(dst, size, "%");                       // 0x407927 Locale prefill
-    if (src == nullptr || src[0] == L'\0')
-        return;
-    const int need = WideCharToMultiByte(932, 0, src, -1, nullptr, 0,
-                                        nullptr, nullptr);
-    char* tmp = static_cast<char*>(operator new(need));
-    BOOL usedDefault = FALSE;
-    const int n = WideCharToMultiByte(932, 0, src, wcslen(src) + 1, tmp,
-                                     need, nullptr, &usedDefault);
-    if (n == 0 || usedDefault) {
-        size_t dummy = 0;
-        if (wcstombs_s(&dummy, dst, size, src, _TRUNCATE) != 0)
-            dst[0] = '\0';
-    } else {
-        strncpy_s(dst, size, tmp, _TRUNCATE);
-    }
-    free(tmp);
-}
 // 0x4341E0 stop-playback restore is ported in src/app/playback_state.cpp.
 // 0x40A710 (0x40A710 dispose+free wrapper) is ported in
 // src/model/model_dispose.cpp; SeekSelectedModelToCurrentFrame (0x4220C0 seek+flag) in

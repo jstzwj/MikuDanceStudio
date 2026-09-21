@@ -751,9 +751,6 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model,
     if (mainVb == nullptr || edgeVb == nullptr)
         return;
     d3dx::Api& d3dxApi = d3dx::Get();
-    if (!d3dxApi.Load() || d3dxApi.quatFromMatrix == nullptr ||
-        d3dxApi.matrixRotationQuaternion == nullptr)
-        return;
 
     const UINT count = state.vertexCount;
     const UINT stride = 32 + 16 * additionalUv;

@@ -275,9 +275,7 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
         // [2026-09-15 per-resource queue rework] 队列项直接携带 0x2E 资源记
         // 录（wrapper+0 等价物）；(效果, 资源下标) 由载体绑定反推。
         SasResource* res = item.offscreen;
-        MaterialBinding* binding =
-            (item.carrier != nullptr) ? MmeActiveModelBinding(item.carrier)
-                                      : nullptr;
+        MaterialBinding* binding = item.assignment;
         if (res == nullptr || binding == nullptr || binding->sas == nullptr) {
             continue;
         }
@@ -841,9 +839,7 @@ void DlgAddDefaultRow(HWND list)
         return;
     }
     g_rows.push_back(row);
-    // [sub_18003FFF0 0x180040d5d-0x18004101c] "(default)" 行效果列：Main 页为
-    // 主默认效果（manager+8 字符串，此处维持既有 "(none)" 简化）；offscreen 页
-    // 为注解行重组文本 "key=value; "... / "*=none;"。
+    // Main displays the global default; target tabs display annotation rows.
     OffscreenTab* off = DlgCurrentOffscreen();
     if (off != nullptr) {
         std::string text = DlgOffscreenDefaultRowText(off);

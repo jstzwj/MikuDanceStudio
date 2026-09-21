@@ -7,8 +7,7 @@
 // command dispatcher 0x0047E8A0.
 //
 // Device vtable slots used by the original (32-bit IDirect3DDevice9,
-// corrected table - the author's pre-D3D9-SDK vtable guess was off by
-// 10 entries; see docs/ARCHITECTURE.md deviations):
+// original slot evidence; production calls use the SDK interface):
 //   +28   GetDeviceCaps
 //   +176  SetTransform
 //   +212  LightEnable

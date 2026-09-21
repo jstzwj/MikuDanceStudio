@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Ray carrier binding missing\n");
         return 1;
     }
+    sas = binding->sas;
     carrier->setRenderClass(2);
     mme::SasResource* material = nullptr;
     mme::SasResource* scene = nullptr;
@@ -108,7 +109,7 @@ int main(int argc, char** argv) {
     }
     if (!material || !scene || material->defaultEffectMap.empty()) return 1;
     ctx->passPlanB.push_back(carrier);
-    ctx->renderPassList.emplace_back(carrier, material);
+    ctx->renderPassList.emplace_back(carrier, material, 1);
     ctx->lastRepeatCount = 1;
     REQUIRE_HR(device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE));
     REQUIRE_HR(device->BeginScene());
@@ -144,20 +145,23 @@ int main(int argc, char** argv) {
     }
     std::printf("Sky child effects loaded: %s; %s\n",
         skyBinding->effectPath.c_str(), namedSkyboxBinding->effectPath.c_str());
-    // main_default means this object's scene-0 assignment, including a
-    // material override, rather than the global EMM default effect.
+    // main_default resolves the base assignment into a separate turn instance.
     const auto savedRows = material->defaultEffectMap;
-    material->defaultEffectMap = {{"self", "main_default"}};
-    if (mme::MmeFindMaterialBinding(0, carrier, -1, true) != binding) return 1;
-    auto* subsetBinding = mme::MmeEnsureMaterialBinding(0, carrier, 3,
-        loaded->effect, path, loaded);
-    if (mme::MmeFindMaterialBinding(0, carrier, 3, true) != subsetBinding) return 1;
-    material->defaultEffectMap = {{"self", "none"}};
-    if (!mme::MmeHasOffscreenDefaultEffectRow(carrier) ||
-        mme::MmeOffscreenDefaultEffectHides(carrier) ||
-        mme::MmeFindMaterialBinding(0, carrier, -1, true) != nullptr) return 1;
+    sky->setEffectFile(path);
+    sky->setSubsetEffect(3, path);
+    auto* baseSky = mme::MmeResolveModelEffectBinding(sky);
+    sky->setRenderClass(0);
+    material->defaultEffectMap = {{"*.pmx", "main_default"}};
+    auto* turnSky = mme::MmeFindMaterialBinding(0, sky, -1, true);
+    auto* turnSubset = mme::MmeFindMaterialBinding(0, sky, 3, true);
+    if (!baseSky || !turnSky || !turnSubset || turnSky == baseSky ||
+        turnSubset == turnSky || turnSky->effect == baseSky->effect) return 1;
+    material->defaultEffectMap = {{"*.pmx", "none"}};
+    if (!mme::MmeHasOffscreenDefaultEffectRow(sky) ||
+        mme::MmeOffscreenDefaultEffectHides(sky) ||
+        mme::MmeFindMaterialBinding(0, sky, -1, true) != nullptr) return 1;
     material->defaultEffectMap.clear();
-    if (mme::MmeHasOffscreenDefaultEffectRow(carrier)) return 1;
+    if (mme::MmeHasOffscreenDefaultEffectRow(sky)) return 1;
     material->defaultEffectMap = savedRows;
     mme::MmeReportDrawError(ctx);
     Com<IDirect3DSurface9> after;
@@ -193,7 +197,7 @@ int main(int argc, char** argv) {
     std::memcpy(sentinel, locked.pBits, sizeof(sentinel));
     REQUIRE_HR(sentinelReadback->UnlockRect());
     REQUIRE_HR(device->SetRenderTarget(0, material->surface));
-    ctx->renderPassList.emplace_back(carrier, material);
+    ctx->renderPassList.emplace_back(carrier, material, 1);
     ctx->lastRepeatCount = 1;
     ctx->backgroundDrawnFlag = 1; // Previous turn's post-effects are complete.
     REQUIRE_HR(device->BeginScene());

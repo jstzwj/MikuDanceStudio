@@ -76,6 +76,8 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
+#include "pump_input.hpp"
+
 namespace mikudancestudio {
 
 // Sibling-TU bodies, declared locally the key_ladder.cpp way (kept out of
@@ -100,29 +102,6 @@ constexpr float kNumpadPi = 3.1415920257568359f;      // 0x40490FD8
 constexpr float kNumpadDistance = -45.0f;         // 0xC2340000
 constexpr float kNumpadDistance1 = -30.0f;        // 0xC1F00000 (NUMPAD1)
 constexpr float kNumpadTargetY = 10.0f;           // 0x41200000
-
-// The 0x22A read and the edit-focus probe run on the floating viewport
-// window when one exists (x86 0x472731 / 0x471E67).  Same probe as
-// key_ladder.cpp FocusInPanelEdit; duplicated to keep this TU standalone.
-HWND PumpOwner(MMDApp* app) {
-    HWND owner = app->FloatingWindow();
-    return owner != nullptr ? owner : static_cast<HWND>(app->Hwnd());
-}
-
-// The panel edits whose focus suppresses the pump's key consumption.
-bool FocusInPanelEdit(MMDApp* app) {
-    const HWND owner = PumpOwner(app);
-    const HWND focus = GetFocus();
-    static const int kEdits[] = {
-        0x1C1, 0x1C2, 0x1DA, 0x1DB,
-        0x220, 0x221, 0x222, 0x223, 0x224, 0x225, 0x226, 0x22A,
-    };
-    for (int id : kEdits) {
-        if (GetDlgItem(owner, id) == focus)
-            return true;
-    }
-    return false;
-}
 
 // Bone-edit drag path gate (see header): the active model slot is also the
 // camera's parent model and the select-state byte is set.  Callers inside
@@ -192,13 +171,6 @@ void PanCameraPosition(MMDApp* app, int dx, int dy) {
         : app->CtrlModifierActive() ? 0.005f                     // 0x52E9C0
         : 0.05f;                                                 // 0x52D738
     auto& api = d3dx::Get();
-    if (!(api.Load() && api.rotX && api.rotY && api.rotZ && api.multiply)) {
-        // The original cannot start without the d3dx DLL; keep the
-        // restored build operable (same fallback stance as frame_modes).
-        app->CameraPositionX() -= static_cast<float>(dx) * scale;
-        app->CameraPositionY() += static_cast<float>(dy) * scale;
-        return;
-    }
     d3dx::D3DXMATRIXF pitch{}, yaw{}, roll{}, rotation{};
     api.rotY(&yaw, app->CameraYaw());
     api.rotX(&pitch, app->CameraPitch());
@@ -252,12 +224,12 @@ void PanSelectedCameraKey(MMDApp* app, int dx, int dy) {
 // also drops the view lock (0xA442C) before re-stepping; the release edge
 // restores it.
 // ---------------------------------------------------------------------------
-void ConsumeArrowKeyNavigation(MMDApp* app) {
+void ConsumeArrowKeyNavigation(MMDApp* app, const KeyboardInputContext& input) {
     auto& state = app->state;
     const HWND main = static_cast<HWND>(app->Hwnd());
     const bool focusOK =
-        GetFocus() == main || app->ViewportInputActive() != 0;  // 0x9EDD1
-    const bool focusInEdit = FocusInPanelEdit(app);             // !ecx
+        input.focus == main || app->ViewportInputActive() != 0;  // 0x9EDD1
+    const bool focusInEdit = !input.focusNotInPanelEdit;             // !ecx
     const bool playing = app->PlaybackActive() != 0;            // 0x330
     if (!(focusOK && !playing && !focusInEdit))                 // 0x472860
         return;
@@ -443,11 +415,11 @@ void ConsumeMiddleButtonPan(MMDApp* app) {
 // the suppressed byte 0xA0478) unless the bone-edit gate skips it.
 // NUMPAD0's model path is the full reload reset instead.
 // ---------------------------------------------------------------------------
-void ConsumeNumpadViewPresets(MMDApp* app) {
+void ConsumeNumpadViewPresets(MMDApp* app, const KeyboardInputContext& input) {
     auto& state = app->state;
     const bool gate = app->ViewportInputActive() != 0 &&        // 0x9EDD1
                       app->PlaybackActive() == 0 &&             // 0x330
-                      !FocusInPanelEdit(app);
+                      input.focusNotInPanelEdit;
     if (!gate)                                                  // 0x473145
         return;
 

@@ -42,6 +42,10 @@ struct SasEffect;   // parsed SAS model (sas_interpreter.h; Phase 3)
 
 // One cached effect file (the DXEffectCache entry).
 struct LoadedEffect {
+    // Instances retain their compiled source; their parameters, scripts and
+    // non-shared render targets belong to this instance alone.
+    std::shared_ptr<LoadedEffect> source;
+    bool assigned = false;  // first assignment uses the freshly compiled instance
     ID3DXEffect*  effect = nullptr;   // created by D3DXCreateEffectFromFileW
     std::string   path;               // narrow (CP 0) path as requested
     std::string   errorText;          // last load error (logged by the apply path)
@@ -105,6 +109,8 @@ unsigned long MmeEngineQueryFileStamp(const std::string& pathAnsi);
 // the entry's `effect` stays null and `errorText` carries the reason.
 std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
                                                       const std::string& pathAnsi);
+std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
+    IDirect3DDevice9* device, const std::shared_ptr<LoadedEffect>& source);
 
 // [0x18000b210] FUN_18000b210: drop the cache entry for `pathAnsi`, logging
 // "Unload effect file: <path>\n\n" first. No-op when the file is not cached.
@@ -128,7 +134,7 @@ IDirect3DBaseTexture9* MmeEngineFindCachedTexture(const std::string& pathAnsi);
 void MmeEngineCacheTexture(const std::string& pathAnsi, IDirect3DBaseTexture9* texture);
 void MmeEngineUncacheTexture(const std::string& pathAnsi);
 
-// [PHASE3 wiring] visit the parsed SAS model of every cached effect that has
+// Visit the parsed SAS model of each live source/assignment that has
 // one (post-effect chains, pass_planner). Return false from `visit` to stop
 // early. Returns false when the iteration was stopped, true otherwise.
 bool MmeEngineForEachSas(bool (*visit)(void* user, SasEffect* sas), void* user);

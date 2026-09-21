@@ -93,8 +93,6 @@ void PostModelReload(MMDApp* app) {  // 0x41A650
     }
 #endif
     auto& api = d3dx::Get();
-    if (!api.Load())
-        return;
 
     d3dx::D3DXMATRIXF rotationY{};
     d3dx::D3DXMATRIXF rotation{};

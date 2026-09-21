@@ -354,7 +354,7 @@ void BoneRotEdit(MMDApp* app, float* vec, int axis) {
         break;
     }
     auto* d3dx = &d3dx::Get();
-    if (d3dx->Load()) {
+    {
         d3dx::D3DXMATRIXF m, m2;
         d3dx->rotZ(&m, app->BoneRotationEditDegreesZ());
         d3dx->rotX(&m2, app->BoneRotationEditDegreesX());

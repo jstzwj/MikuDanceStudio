@@ -286,17 +286,15 @@ void ReloadModels(MMDApp* app) {
         if (device != nullptr) {
             d3dx::D3DXMATRIXF projection{};
             auto& api = d3dx::Get();
-            if (api.Load()) {
-                api.perspectiveFovLH(
-                    &projection,
-                    static_cast<float>(
-                        static_cast<double>(s.CameraFov()) * kPiOver180),
-                    wrapper->aspectRatio,  // +0x1D4EC
-                    1.0f, 100000.0f);
-                device->SetTransform(
-                    D3DTS_PROJECTION,
-                    reinterpret_cast<const D3DMATRIX*>(&projection));
-            }
+            api.perspectiveFovLH(
+                &projection,
+                static_cast<float>(
+                    static_cast<double>(s.CameraFov()) * kPiOver180),
+                wrapper->aspectRatio,  // +0x1D4EC
+                1.0f, 100000.0f);
+            device->SetTransform(
+                D3DTS_PROJECTION,
+                reinterpret_cast<const D3DMATRIX*>(&projection));
         }
     }
 }
@@ -410,10 +408,9 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             static_cast<double>(s.CameraFov()) * kPiOver180);
         d3dx::D3DXMATRIXF mat{};
         auto* d3dx = &d3dx::Get();
-        if (d3dx->Load())
-            d3dx->perspectiveFovLH(&mat, fovRad,
-                                   wrapper->aspectRatio,  // +0x1D4EC
-                                   1.0f, 100000.0f);
+        d3dx->perspectiveFovLH(&mat, fovRad,
+                               wrapper->aspectRatio,  // +0x1D4EC
+                               1.0f, 100000.0f);
         IDirect3DDevice9* dev = wrapper->device;   // +120032
         dev->SetTransform(D3DTS_PROJECTION,
                           reinterpret_cast<const D3DMATRIX*>(&mat));

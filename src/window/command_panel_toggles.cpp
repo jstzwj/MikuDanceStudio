@@ -766,7 +766,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
                 // ---- no parent: bake via own quaternion ----------------
                 d3dx::D3DXMATRIXF mat{};
                 auto* d3dx = &d3dx::Get();
-                if (d3dx->Load()) {
+                {
                     d3dx->matrixRotationQuaternion(
                         &mat, reinterpret_cast<const float*>(bone->rotQuat));
                 }

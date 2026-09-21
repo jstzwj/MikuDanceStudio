@@ -41,6 +41,11 @@ struct D3DXMACRO {
     const char* Definition;
 };
 
+struct D3DXMATERIAL {
+    D3DMATERIAL9 MatD3D;
+    LPSTR pTextureFilename;
+};
+
 // ID3DXInclude 仅以 nullptr 传入 D3DXCreateEffectFromFileW。
 struct ID3DXInclude {
     virtual HRESULT __stdcall Open(void) = 0;

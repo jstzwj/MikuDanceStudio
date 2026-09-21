@@ -264,7 +264,7 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
         const float aspect = locale->aspectRatio;  // 0x1D4EC
 
         auto* d3dx = &d3dx::Get();
-        if (d3dx->Load()) {
+        {
             d3dx::D3DXMATRIXF proj;
             // near = fld1 (1.0f), far = flt_52BB28 (100000.0f)
             d3dx->perspectiveFovLH(&proj, fovRad, aspect, 1.0f, 100000.0f);

@@ -198,7 +198,7 @@ static bool LoadPngTexture(MMDApp* app, IDirect3DDevice9* device,
     const void* bytes = resource != nullptr ? LockResource(resource) : nullptr;
     const DWORD size = SizeofResource(module, info);
     auto& api = d3dx::Get();
-    if (bytes == nullptr || size == 0 || !api.Load() || api.fromMemEx == nullptr)
+    if (bytes == nullptr || size == 0)
         return false;
     return SUCCEEDED(api.fromMemEx(
         device, bytes, size, static_cast<UINT>(-1), static_cast<UINT>(-1),
@@ -401,16 +401,16 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         // PNG 102 load failure gets the original's error box (x64
         // 0x7FF7CB4328EE, caption "InitFont"): EN "cannot load splite.tga"
         // / JP "splite.tga読込失敗" (0x7FF7CB54B4C0/B4D9).  The original
-        // asset was named splite.tga; the port ships the same sheet as
-        // res/assets/hud_sprites.png, so the message names that file.
+        // asset was named splite.tga; preserve the original message even
+        // though the embedded sheet is maintained as hud_sprites.png.
         // Non-fatal: the original shows the box and falls through to
         // PNG 114 (only 102 has a failure box).
         if (!LoadPngTexture(app, device, 0x66, &s.OverlayTexture())) {
             static const char kJpHudSheetLoadFailed[] =
-                "hud_sprites.png\x93\xC7\x8D\x9E\x8E\xB8\x94\x73";
+                "splite.tga\x93\xC7\x8D\x9E\x8E\xB8\x94\x73";
             MessageBoxA(hwnd,
                         app->EnglishUI() != 0
-                            ? "cannot load hud_sprites.png"
+                            ? "cannot load splite.tga"
                             : kJpHudSheetLoadFailed,
                         "InitFont", MB_OK);
         }

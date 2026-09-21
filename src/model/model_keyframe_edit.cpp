@@ -26,10 +26,11 @@
 namespace mikudancestudio {
 namespace {
 
-template <typename T>
-T& At(unsigned char* model, std::size_t offset) {
-    return *reinterpret_cast<T*>(model + offset);
-}
+struct BoneKeyUndoEntry {
+    std::int32_t index;
+    mdl::BoneKey key;
+};
+static_assert(sizeof(BoneKeyUndoEntry) == 64, "bone-key undo record");
 
 mdl::UndoRecord& CurrentUndo(unsigned char* model) {
     return mdl::Mdl(model)->undoRings[0].slots[
@@ -236,11 +237,9 @@ void AppendBoneKeyToUndo(unsigned char* model, int index) {  // VA 0x0049D410
     visited[index] = 1;
     auto& undo = CurrentUndo(model);
     std::int32_t& count = undo.dirty;
-    auto* records = static_cast<unsigned char*>(undo.auxiliaryPose);
-    unsigned char* out = records + static_cast<std::size_t>(count) * 0x40;
-    At<std::int32_t>(out, 0x00) = index;
-    std::memcpy(out + 0x04, &mdl::BoneKeys(model)[index],
-                sizeof(mdl::BoneKey));
+    auto* records = static_cast<BoneKeyUndoEntry*>(undo.auxiliaryPose);
+    records[count].index = index;
+    std::memcpy(&records[count].key, &mdl::BoneKeys(model)[index], sizeof(mdl::BoneKey));
     ++count;
 }
 
@@ -451,7 +450,7 @@ void SnapshotSelectedKeysForUndo(unsigned char* model, int frame) {
 
     void*& selectedSlot = undo.auxiliaryPose;
     ReplaceBuffer(selectedSlot,
-                  static_cast<std::size_t>(selectedCount) * 0x40);
+                  static_cast<std::size_t>(selectedCount) * sizeof(BoneKeyUndoEntry));
     std::memset(mdl::Mdl(model)->keyVisitMap, 0,
                 sizeof(mdl::Mdl(model)->keyVisitMap));
     for (std::size_t index = 0; index < mdl::kBoneKeyCapacity; ++index) {
@@ -628,7 +627,7 @@ void UndoModelEdit(unsigned char* model, std::int32_t& frame) {  // VA 0x004A187
     } else if (type == 2 || type == 4) {
         redo.operation = 2;
         void*& redoKeys = redo.auxiliaryPose;
-        ReplaceBuffer(redoKeys, static_cast<std::size_t>(count) * 0x40);
+        ReplaceBuffer(redoKeys, static_cast<std::size_t>(count) * sizeof(BoneKeyUndoEntry));
         std::memset(mdl::Mdl(model)->keyVisitMap, 0,
                     sizeof(mdl::Mdl(model)->keyVisitMap));
         const int boneCount = static_cast<int>(mdl::Mdl(model)->boneCount);
@@ -639,16 +638,14 @@ void UndoModelEdit(unsigned char* model, std::int32_t& frame) {  // VA 0x004A187
         SetFrameEdit(model, frame);
         CaptureAndApplyPose(model, undo.bonePose, redo.bonePose, boneCount);
         mdl::BoneKey* const keys = mdl::BoneKeys(model);
-        const auto* source = static_cast<const unsigned char*>(
+        const auto* source = static_cast<const BoneKeyUndoEntry*>(
             undo.auxiliaryPose);
-        auto* capture = static_cast<unsigned char*>(redoKeys);
+        auto* capture = static_cast<BoneKeyUndoEntry*>(redoKeys);
         for (int i = 0; i < count; ++i) {
-            const unsigned char* in = source + static_cast<std::size_t>(i) * 0x40;
-            unsigned char* out = capture + static_cast<std::size_t>(i) * 0x40;
-            const int index = At<std::int32_t>(const_cast<unsigned char*>(in), 0);
-            At<std::int32_t>(out, 0) = index;
-            std::memcpy(out + 4, &keys[index], sizeof(mdl::BoneKey));
-            std::memcpy(&keys[index], in + 4, sizeof(mdl::BoneKey));
+            const int index = source[i].index;
+            capture[i].index = index;
+            std::memcpy(&capture[i].key, &keys[index], sizeof(mdl::BoneKey));
+            std::memcpy(&keys[index], &source[i].key, sizeof(mdl::BoneKey));
         }
     }
 
@@ -677,12 +674,11 @@ void RedoModelEdit(unsigned char* model, std::int32_t& frame) {  // VA 0x004A249
         ApplyPose(model, redo.bonePose, count);
     } else if (type == 2 || type == 4) {
         mdl::BoneKey* const keys = mdl::BoneKeys(model);
-        const auto* source = static_cast<const unsigned char*>(
+        const auto* source = static_cast<const BoneKeyUndoEntry*>(
             redo.auxiliaryPose);
         for (int i = 0; i < count; ++i) {
-            const unsigned char* in = source + static_cast<std::size_t>(i) * 0x40;
-            const int index = At<std::int32_t>(const_cast<unsigned char*>(in), 0);
-            std::memcpy(&keys[index], in + 4, sizeof(mdl::BoneKey));
+            const int index = source[i].index;
+            std::memcpy(&keys[index], &source[i].key, sizeof(mdl::BoneKey));
         }
         frame = static_cast<int>(UndoAt(model, cursor).frame);
         SetFrameEdit(model, frame);
@@ -744,6 +740,29 @@ void SyncModelEditControls(unsigned char* model) {
 // namespace.  VA 0x0049D4D0.
 void RebuildBoneKeyInterpolation(unsigned char* model, int index, int lane) {  // VA 0x0049D4D0
     RebuildBoneInterpolation(model, index, lane);
+}
+
+void mdl::SelectPhysicsOnBoneKeys(ModelRecord& model) {
+    for (std::size_t i = 0; i < kMorphKeyCapacity; ++i)
+        model.morphKeys[i].allocated = 0;
+    for (std::size_t i = 0; i < kDisplayKeyCapacity; ++i)
+        model.displayKeys[i].allocated = 0;
+    for (std::size_t i = 0; i < kBoneKeyCapacity; ++i)
+        model.boneKeys[i].allocated = 0;
+
+    for (std::uint32_t bone = 0; bone < model.boneCount; ++bone) {
+        if (model.boneTable[bone].hasRigidBody == 0)
+            continue;
+        BoneKey* key = &model.boneKeys[bone];
+        for (;;) {
+            if (key->physicsDisabled == 0)
+                key->allocated = 1;
+            // The original treats the link as signed when testing the sentinel.
+            if (static_cast<std::int32_t>(key->next) <= 0)
+                break;
+            key = &model.boneKeys[key->next];
+        }
+    }
 }
 
 }  // namespace mikudancestudio

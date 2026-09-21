@@ -5,9 +5,7 @@
 // DirectX order (x, y, z, w); output is a row-major 3x4 matrix (float[12])
 // with the 4th column zeroed (pure rotation).
 //
-// factor = g_QuatScaleFactor(0x5294C8) / (qw^2 + qz^2 + qx^2 + qy^2)
-// The original evaluates the divisor in exactly that order; addition order
-// of floats is preserved below.
+// Each architecture retains its original floating-point evaluation order.
 // ===========================================================================
 #include "mikudancestudio/globals.hpp"
 
@@ -19,6 +17,27 @@ void QuaternionToMatrix3x4(float* outMatrix, const float* quaternion) {
     const float qz = quaternion[2];
     const float qw = quaternion[3];
 
+#if defined(_WIN64)
+    // Preserve the SSE evaluation order of the x64 Bullet helper.
+    const float normSquared = ((qx * qx + qy * qy) + qz * qz) + qw * qw;
+    const float scale = g_QuatScaleFactor / normSquared;
+    const float sx = qx * scale, sy = qy * scale, sz = qz * scale;
+    const float wx = qw * sx, xx = qx * sx;
+    const float wy = qw * sy, yy = qy * sy, xy = qx * sy;
+    const float zz = qz * sz, wz = qw * sz, xz = qx * sz, yz = qy * sz;
+    outMatrix[0] = 1.0f - (zz + yy);
+    outMatrix[1] = xy - wz;
+    outMatrix[2] = xz + wy;
+    outMatrix[3] = 0.0f;
+    outMatrix[4] = xy + wz;
+    outMatrix[5] = 1.0f - (zz + xx);
+    outMatrix[6] = yz - wx;
+    outMatrix[7] = 0.0f;
+    outMatrix[8] = xz - wy;
+    outMatrix[9] = yz + wx;
+    outMatrix[10] = 1.0f - (yy + xx);
+    outMatrix[11] = 0.0f;
+#else
     // original: fVar2 = *(0x5294C8) / (qw^2 + qz^2 + qx^2 + qy^2)
     const float normSquared = qw * qw + qz * qz + qx * qx + qy * qy;
     const float invNormScaled = g_QuatScaleFactor / normSquared;
@@ -45,6 +64,7 @@ void QuaternionToMatrix3x4(float* outMatrix, const float* quaternion) {
     outMatrix[9]  = scaledQxQw + scaledQz * qy;               // M21
     outMatrix[10] = 1.0f - (scaledQy * qy + scaledQxSq);      // M22
     outMatrix[11] = 0.0f;                                     // pad
+#endif
 }
 
 }  // namespace mikudancestudio

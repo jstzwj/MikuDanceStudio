@@ -230,8 +230,6 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
     ImgInfo info = {};
     HRESULT hr;
     auto* d3dx = &d3dx::Get();
-    if (!d3dx->Load() || d3dx->fromFileExW == nullptr)
-        return 0;
     hr = d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 1024,
                            D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, kD3dxDefault,
                            kD3dxDefault, 0, &info, nullptr, entryTex);

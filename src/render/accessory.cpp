@@ -37,24 +37,6 @@ namespace {
 
 using Matrix = d3dx::D3DXMATRIXF;
 
-// D3DXLoadMeshFromX* returns an array of this COM-facing record through its
-// ID3DXBuffer.  Its trailing filename is a native pointer: 72 bytes in the
-// x86 reference process, but 80 bytes on x64 after alignment.  Keeping it as
-// a real type avoids silently applying the x86 stride to x64 material data.
-struct D3dxMaterialRecord {
-    D3DMATERIAL9 material;
-    char* textureFileName;
-};
-
-static_assert(offsetof(D3dxMaterialRecord, textureFileName) ==
-                  (sizeof(void*) == 8 ? 72 : sizeof(D3DMATERIAL9)),
-              "D3DX material filename placement");
-
-template <typename T>
-T& At(void* base, std::size_t offset) {
-    return *reinterpret_cast<T*>(static_cast<unsigned char*>(base) + offset);
-}
-
 // Effect calls go through the shared slot-numbered helpers in
 // fx_slots.hpp; the old byte-offset spells (232/88/128/152/156/252/256/
 // 264/268) were x86-only and silently landed on halved slots on x64.
@@ -148,13 +130,13 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
 void ConfigureFixedTexture(void* accessory, D3DRenderer* sub,
                            IDirect3DDevice9* device, DWORD material,
                            IDirect3DTexture9* screenTexture) {
-    auto* paths = reinterpret_cast<unsigned char*>(mdl::Accessory(accessory)->texturePaths);
+    auto* paths = mdl::Accessory(accessory)->texturePaths;
     auto* types = mdl::Accessory(accessory)->textureTypes;
     const unsigned char type = types != nullptr ? types[material] : 0;
     const wchar_t* first = paths != nullptr
-        ? reinterpret_cast<const wchar_t*>(paths + 2048 * material) : L"";
+        ? paths[material].primary : L"";
     const wchar_t* second = paths != nullptr
-        ? reinterpret_cast<const wchar_t*>(paths + 2048 * material + 1024)
+        ? paths[material].sphere
         : L"";
 
     // x64 sub_7FF7CB4FD350 序言自 rdata 0x7FF7CB54A4F0 整体加载的常量矩阵：
@@ -258,7 +240,7 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
         return;
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    if (device == nullptr || !d3dx::Get().Load())
+    if (device == nullptr)
         return;
 
     Matrix base;
@@ -275,7 +257,7 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
     device->SetRenderState(static_cast<D3DRENDERSTATETYPE>(143), TRUE);
 
     const DWORD count = mdl::Accessory(accessory)->materialCount;
-    auto* materials = static_cast<unsigned char*>(mdl::Accessory(accessory)->materials);
+    auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
     mdl::Accessory(accessory)->currentMaterial = -1;
     if (projectedGroundShadow) {
         D3DMATERIAL9 shadow{};
@@ -300,8 +282,7 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
             // (alpha scaled by +1184) immediately before the subset draw.
             ConfigureFixedTexture(accessory, sub, device, i,
                                   AccessoryScreenTexture(app));
-            D3DMATERIAL9 material =
-                *reinterpret_cast<D3DMATERIAL9*>(materials + 68 * i);
+            D3DMATERIAL9 material = materials[i];
             material.Diffuse.a *= mdl::Accessory(accessory)->opacity;
             device->SetMaterial(&material);
             mme::DrawAccessorySubset(app, accessory, i);
@@ -319,13 +300,13 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
 void SelectEffectTechnique(void* accessory, D3DRenderer* sub,
                            IDirect3DDevice9* device, void* effect,
                            DWORD material, IDirect3DTexture9* screenTexture) {
-    auto* paths = reinterpret_cast<unsigned char*>(mdl::Accessory(accessory)->texturePaths);
+    auto* paths = mdl::Accessory(accessory)->texturePaths;
     auto* types = mdl::Accessory(accessory)->textureTypes;
     const unsigned char type = types != nullptr ? types[material] : 0;
     const wchar_t* first = paths != nullptr
-        ? reinterpret_cast<const wchar_t*>(paths + 2048 * material) : L"";
+        ? paths[material].primary : L"";
     const wchar_t* second = paths != nullptr
-        ? reinterpret_cast<const wchar_t*>(paths + 2048 * material + 1024)
+        ? paths[material].sphere
         : L"";
     device->SetTexture(1, nullptr);
     device->SetTexture(2, nullptr);
@@ -402,15 +383,12 @@ void WideToAnsi(const wchar_t* source, char* destination, int count) {
 }
 
 bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material,
-                    const char* name, int pathOffset) {
+                    const char* name, wchar_t* destination) {
     wchar_t converted[256] = {};
     wchar_t* directory = mdl::Accessory(accessory)->directory;
     auto* wrapperBytes = reinterpret_cast<unsigned char*>(sub);
     ConvertMaterialName(wrapperBytes, name, converted,
                         0x100, directory);
-    auto* paths = reinterpret_cast<unsigned char*>(mdl::Accessory(accessory)->texturePaths);
-    wchar_t* destination = reinterpret_cast<wchar_t*>(
-        paths + 2048 * material + pathOffset);
     swprintf_s(destination, 0x200, L"%s%s", directory, converted);
     if (LoadTextureShared(wrapperBytes, destination))
         return true;
@@ -466,14 +444,12 @@ void DisposeAccessory(void* accessory) {
     mdl::AccessoryRecord& record = *mdl::Accessory(accessory);
     ReleaseCom(record.mesh);
     record.mesh = nullptr;
-    // 0x4C4717..0x4C4755: original free order is +4, then +12, then +8
-    // (the loop order here used to be +4, +8, +12) and uses free(), not
-    // operator delete.
-    free(record.materials);
+    // Preserve the original materials, texture types, texture paths order.
+    ::operator delete(record.materials);
     record.materials = nullptr;
-    free(record.textureTypes);
+    ::operator delete(record.textureTypes);
     record.textureTypes = nullptr;
-    free(record.texturePaths);
+    ::operator delete(record.texturePaths);
     record.texturePaths = nullptr;
 }
 
@@ -543,40 +519,32 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
         fclose(vac);
     }
 
-    auto& api = d3dx::Get();
-    if (!api.Load())
-        return false;
-    void* materialBuffer = nullptr;
+    ID3DXBuffer* materialBuffer = nullptr;
     DWORD materialCount = 0;
-    void* mesh = nullptr;
-    if (FAILED(api.loadMeshFromXW(meshPath, 544,
+    ID3DXMesh* mesh = nullptr;
+    if (FAILED(D3DXLoadMeshFromXW(meshPath, 544,
             sub->device, nullptr, &materialBuffer,
             nullptr, &materialCount, &mesh)))
         return false;
     TraceAccessoryLoadStage("mesh-loaded", mesh);
     record.mesh = mesh;
     record.materialCount = materialCount;
-    record.materials = ::operator new(68 * materialCount);
-    record.texturePaths = static_cast<char (*)[2048]>(
-        ::operator new(2048 * materialCount));
+    record.materials = ::operator new(sizeof(D3DMATERIAL9) * materialCount);
+    record.texturePaths = static_cast<mdl::AccessoryTexturePaths*>(
+        ::operator new(sizeof(mdl::AccessoryTexturePaths) * materialCount));
     record.textureTypes = static_cast<std::uint8_t*>(
         ::operator new(materialCount));
-    std::memset(record.texturePaths, 0, 2048 * materialCount);
+    std::memset(record.texturePaths, 0, sizeof(mdl::AccessoryTexturePaths) * materialCount);
     std::memset(record.textureTypes, 0, materialCount);
 
     if (materialBuffer != nullptr) {
         TraceAccessoryLoadStage("material-buffer", materialBuffer);
-        using GetPointer = void*(__stdcall*)(void*);
-        auto* sourceMaterials = static_cast<D3dxMaterialRecord*>(
-            reinterpret_cast<GetPointer>(
-                (*reinterpret_cast<void***>(materialBuffer))[3])(
-                    materialBuffer));
+        auto* sourceMaterials = static_cast<D3DXMATERIAL*>(
+            materialBuffer->GetBufferPointer());
         for (DWORD i = 0; i < materialCount; ++i) {
-            auto* destination = static_cast<unsigned char*>(
-                mdl::Accessory(accessory)->materials) + 68 * i;
-            const D3dxMaterialRecord& source = sourceMaterials[i];
-            std::memcpy(destination, &source.material, 68);
-            auto* material = reinterpret_cast<D3DMATERIAL9*>(destination);
+            const D3DXMATERIAL& source = sourceMaterials[i];
+            auto* material = &static_cast<D3DMATERIAL9*>(record.materials)[i];
+            *material = source.MatD3D;
             material->Ambient = material->Diffuse;
             material->Diffuse.r *= 0.1f;
             material->Diffuse.g *= 0.1f;
@@ -584,23 +552,23 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
             material->Specular.r *= 0.1f;
             material->Specular.g *= 0.1f;
             material->Specular.b *= 0.1f;
-            char* texture = source.textureFileName;
+            char* texture = source.pTextureFilename;
             if (texture == nullptr || texture[0] == '\0')
                 continue;
             auto* types = mdl::Accessory(accessory)->textureTypes;
             if (char* star = strchr(texture, '*')) {
                 *star = '\0';
-                LoadOneTexture(sub, accessory, i, texture, 0);
+                LoadOneTexture(sub, accessory, i, texture, record.texturePaths[i].primary);
                 const char* sphere = star + 1;
                 types[i] = strstr(sphere, ".sph") != nullptr ? 4
                     : strstr(sphere, ".spa") != nullptr ? 5 : 0;
-                LoadOneTexture(sub, accessory, i, sphere, 1024);
+                LoadOneTexture(sub, accessory, i, sphere, record.texturePaths[i].sphere);
             } else {
                 types[i] = strstr(texture, "screen.bmp") != nullptr ? 3
                     : strstr(texture, ".sph") != nullptr ? 1
                     : strstr(texture, ".spa") != nullptr ? 2 : 0;
                 if (types[i] != 3)
-                    LoadOneTexture(sub, accessory, i, texture, 0);
+                    LoadOneTexture(sub, accessory, i, texture, record.texturePaths[i].primary);
             }
         }
         ReleaseCom(materialBuffer);
@@ -615,7 +583,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
         if (SUCCEEDED(typedMesh->CloneMeshFVF(options, 274, sub->device, &clone))) {
             typedMesh->Release();
             mdl::Accessory(accessory)->mesh = clone;
-            api.computeNormals(clone, nullptr);
+            D3DXComputeNormals(clone, nullptr);
         }
     }
     TraceAccessoryLoadStage("complete", mdl::Accessory(accessory)->mesh);
@@ -813,7 +781,7 @@ void RenderAccessoriesFixedRange(MMDApp* app, int firstOrder,
                                  int lastOrder) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    if (device == nullptr || !d3dx::Get().Load())
+    if (device == nullptr)
         return;
     app->ActiveRenderPass() = AccessoryRenderPass::FixedFunction;
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
@@ -864,7 +832,7 @@ void RenderAccessoriesShadow(MMDApp* app) {                     // 0x4C52D0
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
-    if (device == nullptr || effect == nullptr || !d3dx::Get().Load())
+    if (device == nullptr || effect == nullptr)
         return;
     for (int slot = 0; slot < 255; ++slot) {
         void* accessory = app->AccessorySlot(slot);
@@ -908,7 +876,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
-    if (device == nullptr || effect == nullptr || !d3dx::Get().Load())
+    if (device == nullptr || effect == nullptr)
         return;
     const float* light = reinterpret_cast<const float*>(&app->SceneLight());
     // 0x4C593B..0x4C594F: the effect accessory renderer does not feed the
@@ -965,12 +933,11 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
                 ? D3DBLEND_ONE : D3DBLEND_INVSRCALPHA);
 
         const DWORD count = mdl::Accessory(accessory)->materialCount;
-        auto* materials = static_cast<unsigned char*>(mdl::Accessory(accessory)->materials);
+        auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
         mdl::Accessory(accessory)->currentMaterial = -1;
         for (DWORD i = 0; i < count; ++i) {
             ++mdl::Accessory(accessory)->currentMaterial;
-            auto* material = reinterpret_cast<D3DMATERIAL9*>(
-                materials + 68 * i);
+            const auto* material = &materials[i];
             D3DMATERIAL9 copy = *material;
             copy.Diffuse.a *= mdl::Accessory(accessory)->opacity;
             device->SetMaterial(&copy);

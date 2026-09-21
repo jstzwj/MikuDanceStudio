@@ -64,8 +64,8 @@ public:
     void setRenderClass(int value) { renderClass_ = value; }
 
     // +0x360: the assigned scene effect's scriptClass (SasScriptClass).
-    unsigned long long unknownFlag360() const { return unknownFlag360_; }
-    void setUnknownFlag360(unsigned long long value) { unknownFlag360_ = value; }
+    int scriptClass() const { return scriptClass_; }
+    void setScriptClass(int value) { scriptClass_ = value; }
 
     // +0x358 [FUN_18005a410/FUN_18005a5c0]: the persisted 0x88 run state of
     // a scene-effect technique. Created unconditionally by the per-turn
@@ -135,8 +135,8 @@ public:
     // +0x368 (1): the "object registered/valid" flag read by the plan
     // bookkeeping (FUN_18005c510's renderClass walk); the SAS wiring copies
     // the assigned scene effect's drawsGeometry flag here.
-    unsigned char flag368() const { return flag368_; }
-    void setFlag368(unsigned char value) { flag368_ = value; }
+    bool drawsGeometry() const { return drawsGeometry_; }
+    void setDrawsGeometry(bool value) { drawsGeometry_ = value; }
 
     // Original ModelData+0x3c WORD (FUN_18005c970 byte +0x3c gate write /
     // FUN_18005cac0 read + failure WORD write 0x100): the turn-boundary
@@ -216,10 +216,10 @@ private:
     SasRunState*          runState_;            // +0x358 (0)
     unsigned char         postEffectSnapshotGate_ = 0;  // orig +0x3c byte
     unsigned char         postEffectFailedFlag_ = 0;    // orig +0x3d byte
-    unsigned long long    unknownFlag360_;      // +0x360 (scriptClass when a
+    int                   scriptClass_;      // +0x360 (scriptClass when a
                                                 //   scene effect is assigned)
     int                   renderClass_;         // +0x364 (scriptOrder; 0)
-    unsigned char         flag368_;             // +0x368 (1)
+    bool                  drawsGeometry_;             // +0x368 (1)
     PassPlanScratch       passPlanScratch_;     // +0xec..+0x137
     RenderSnapshot        snapshot_;            // +0x138 (0x220 bytes)
     D3DMATRIX             planMatrixCopy_;      // +0x190 (FUN_180059aa0 copy)

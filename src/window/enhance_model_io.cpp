@@ -38,50 +38,6 @@
 namespace mikudancestudio {
 namespace {
 
-// ---- narrow/wide name helpers of the enhance-model chain ------------------
-// Both mirror the x64 original's two-stage conversion: the Windows code page
-// first, then the renderer's four stored _locale_t handles as fallback.
-
-// x64 sub_7FF7CB429440 - append the SJIS/ACP name as wide chars (0x100 words).
-void AppendAnsiAsWide(D3DRenderer* renderer, const char* mbName,
-                      wchar_t* out) {
-    const int cw = MultiByteToWideChar(0, 0, mbName, -1, nullptr, 0);
-    wchar_t* tmp = static_cast<wchar_t*>(std::malloc(2 * cw));
-    if (MultiByteToWideChar(0, 0, mbName,
-                            static_cast<int>(std::strlen(mbName)) + 1,
-                            tmp, cw)) {
-        wcsncpy_s(out, 0x100, tmp, _TRUNCATE);
-    } else {
-        // the original chains all four locales, each overwriting the last
-        for (int i = 0; i < 4; ++i)
-            _mbstowcs_s_l(nullptr, out, 0x100, mbName, _TRUNCATE,
-                          renderer->localeTable[i]);
-    }
-    std::free(tmp);
-}
-
-// x64 sub_7FF7CB429290 - convert a wide name to SJIS (CP 932); the output is
-// left untouched when the input is empty.
-void WideToSjis(D3DRenderer* renderer, char* out, const wchar_t* wide,
-                std::size_t outBytes) {
-    if (*wide == L'\0')
-        return;
-    BOOL usedDefault = FALSE;
-    const int cb = WideCharToMultiByte(932, 0, wide, -1, nullptr, 0,
-                                       nullptr, nullptr);
-    char* tmp = static_cast<char*>(std::malloc(cb));
-    const int ok = WideCharToMultiByte(932, 0, wide, -1, tmp, cb,
-                                       nullptr, &usedDefault);
-    if (ok == 0 || usedDefault) {
-        for (int i = 0; i < 4; ++i)
-            _wcstombs_s_l(nullptr, out, outBytes, wide, _TRUNCATE,
-                          renderer->localeTable[i]);
-    } else {
-        strncpy_s(out, outBytes, tmp, _TRUNCATE);
-    }
-    std::free(tmp);
-}
-
 constexpr UINT kD3dxDefault = 0xFFFFFFFFu;
 
 }  // namespace
@@ -113,7 +69,7 @@ int CollectToonFileNames(HWND hDlg) {  // VA 0x0041EA20
         wchar_t rel[0x100];
         wcscpy_s(rel, 0x100, L"");
         if (name[0] != '\0')
-            AppendAnsiAsWide(renderer, name, rel);
+            ConvertAnsiToWide(renderer, name, rel, 0x100);
         wchar_t path[0x100];
         swprintf_s(path, 0x100, L"%s%s", model.modelDirectory, rel);
         if (path[0] != L'\0' &&
@@ -453,12 +409,6 @@ void SetModelColor(MMDApp* modelPtr, int r, int g, int b) {
     }
     vb->Unlock();
 }
-
-// ---- not-yet-ported original call targets with NO stub elsewhere -------
-// (/43A650/43B720/43BB30 - now InsertBoneCameraFrameLine /
-//  DeleteBoneCameraFrameLine / InsertFacialLightFrameLine /
-//  DeleteFacialLightFrameLine, the four frame-line edit commands in
-//  src/window/frame_line_edit.cpp; declared in ported_funcs.hpp.)
 
 // ===========================================================================
 // 0x40B5A0 (x64 sub_7FF7CB43AB40) - menu-bar language refresh after the
@@ -865,7 +815,6 @@ void ReloadTextureCache(void* rendererArg) {
     D3DRenderer* renderer = static_cast<D3DRenderer*>(rendererArg);
     IDirect3DDevice9* device = renderer->device;
     auto* d3dx = &d3dx::Get();
-    const bool haveD3dx = d3dx->Load() && d3dx->fromFileExW != nullptr;
 
     struct ImgInfo {  // first fields of D3DXIMAGE_INFO
         UINT Width, Height, Depth, MipLevels;
@@ -885,10 +834,6 @@ void ReloadTextureCache(void* rendererArg) {
         }
         unsigned char* rgb =
             reinterpret_cast<unsigned char*>(&entry.tag);
-        if (!haveD3dx) {
-            rgb[0] = rgb[1] = rgb[2] = 0;
-            continue;
-        }
         ImgInfo info = {};
         HRESULT hr = d3dx->fromFileExW(
             device, name, kD3dxDefault, kD3dxDefault, 1, 1024,

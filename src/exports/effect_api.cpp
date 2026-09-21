@@ -59,14 +59,13 @@
 #include <cstring>
 #include <cstdint>
 
+#include "mikudancestudio/charset_conv.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 
-// VA 0x00407910 - wide -> Shift-JIS; real body in src/window/ui_dropfiles.cpp.
 // VA 0x0042A110 - model-slot count; real body in src/app/late_ports.cpp.
 namespace mikudancestudio {
-void WideToSjisPath(char* dst, const wchar_t* src, rsize_t size);
 int GetPmdNum(MMDApp* app);
 }  // namespace mikudancestudio
 
@@ -112,70 +111,27 @@ int CountAcs(MMDApp* app) {
 // (mdl::Mdl / mdl::Bones / mdl::Morphs / mdl::Materials), never through
 // numeric offsets - the layouts differ between the x86 and x64 ABIs.
 
-// ---- D3DX wrappers with local fallbacks (d3dx9_32.dll may be absent) ------
+// Imported D3DX operations used by the matrix queries.
 void Identity(mikudancestudio::d3dx::D3DXMATRIXF* m) {
     std::memset(m, 0, sizeof(*m));
     m->m[0][0] = m->m[1][1] = m->m[2][2] = m->m[3][3] = 1.0f;
 }
 
-void MulFallback(mikudancestudio::d3dx::D3DXMATRIXF* o, const mikudancestudio::d3dx::D3DXMATRIXF* a,
-                 const mikudancestudio::d3dx::D3DXMATRIXF* b) {  // o = a * b (row vectors)
-    mikudancestudio::d3dx::D3DXMATRIXF t;
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j) {
-            float s = 0.0f;
-            for (int k = 0; k < 4; ++k)
-                s += a->m[i][k] * b->m[k][j];
-            t.m[i][j] = s;
-        }
-    *o = t;
-}
-
 struct D3dx {
     mikudancestudio::d3dx::Api& api;
-    bool ok;
-    D3dx() : api(mikudancestudio::d3dx::Get()), ok(api.Load()) {}
+    D3dx() : api(mikudancestudio::d3dx::Get()) {}
     void Translation(mikudancestudio::d3dx::D3DXMATRIXF* m, float x, float y, float z) {
-        if (ok && api.translation) {
-            api.translation(m, x, y, z);
-        } else {  // documented fallback, same formula
-            Identity(m);
-            m->m[3][0] = x;
-            m->m[3][1] = y;
-            m->m[3][2] = z;
-        }
+        api.translation(m, x, y, z);
     }
     void Multiply(mikudancestudio::d3dx::D3DXMATRIXF* o, const mikudancestudio::d3dx::D3DXMATRIXF* a,
                   const mikudancestudio::d3dx::D3DXMATRIXF* b) {
-        if (ok && api.multiply)
-            api.multiply(o, a, b);
-        else
-            MulFallback(o, a, b);
+        api.multiply(o, a, b);
     }
     void Rot(float angle, int axis, mikudancestudio::d3dx::D3DXMATRIXF* m) {
-        if (ok && (axis == 0 ? api.rotX : axis == 1 ? api.rotY : api.rotZ)) {
-            (axis == 0 ? api.rotX : axis == 1 ? api.rotY : api.rotZ)(m, angle);
-            return;
-        }
-        Identity(m);
-        const float c = cosf(angle), s = sinf(angle);
-        if (axis == 0) {          // X
-            m->m[1][1] = c; m->m[1][2] = s; m->m[2][1] = -s; m->m[2][2] = c;
-        } else if (axis == 1) {   // Y
-            m->m[0][0] = c; m->m[0][2] = -s; m->m[2][0] = s; m->m[2][2] = c;
-        } else {                  // Z
-            m->m[0][0] = c; m->m[0][1] = s; m->m[1][0] = -s; m->m[1][1] = c;
-        }
+        (axis == 0 ? api.rotX : axis == 1 ? api.rotY : api.rotZ)(m, angle);
     }
     void Scaling(mikudancestudio::d3dx::D3DXMATRIXF* m, float x, float y, float z) {
-        if (ok && api.scaling) {
-            api.scaling(m, x, y, z);
-        } else {
-            Identity(m);
-            m->m[0][0] = x;
-            m->m[1][1] = y;
-            m->m[2][2] = z;
-        }
+        api.scaling(m, x, y, z);
     }
 };
 
@@ -224,7 +180,7 @@ __declspec(dllexport) char* ExpGetPmdFilename(int index) {
     if (model == nullptr)
         return nullptr;                      // original: xor eax, eax
     char* out = reinterpret_cast<char*>(app->state.sjisOut);
-    mikudancestudio::WideToSjisPath(out, mikudancestudio::mdl::Mdl(model)->path, 0x100);
+    mikudancestudio::WideToSjis(app->Renderer(), out, mikudancestudio::mdl::Mdl(model)->path, 0x100);
     return out;
 }
 
@@ -375,7 +331,7 @@ __declspec(dllexport) char* ExpGetAcsFilename(int index) {
     if (acc == nullptr)
         return nullptr;
     char* out = reinterpret_cast<char*>(app->state.sjisOut);
-    mikudancestudio::WideToSjisPath(out, acc->sourcePath, 0x100);
+    mikudancestudio::WideToSjis(app->Renderer(), out, acc->sourcePath, 0x100);
     return out;
 }
 

@@ -27,8 +27,7 @@
 //     + placement construction; the port uses C++ new/delete (over-aligned
 //     new under C++17), which disposes through the same deleting dtors.
 //   * D3DXQuaternionRotationMatrix / D3DXQuaternionMultiply are imports in
-//     the original; resolved through the shared d3dx9_32 loader with a
-//     manual fallback (same algorithms).
+//     the original and remain normal PE imports in this build.
 // =========================================================================//
 
 #define WIN32_LEAN_AND_MEAN
@@ -52,56 +51,13 @@
 namespace mikudancestudio {
 namespace {
 
-// Manual fallback of D3DXQuaternionRotationMatrix (used only if the
-// original DLL entry cannot be resolved).
-void QuatFromMatrixManual(float out[4], const float* m) {
-    // D3DX layout: row-major 4x4, quaternion x,y,z,w
-    const float tr = m[0] + m[5] + m[10];
-    if (tr > 0.0f) {
-        const float s = std::sqrt(tr + 1.0f) * 2.0f;
-        out[3] = 0.25f * s;
-        const float inv = 1.0f / s;
-        out[0] = (m[6] - m[9]) * inv;
-        out[1] = (m[8] - m[2]) * inv;
-        out[2] = (m[1] - m[4]) * inv;
-        return;
-    }
-    int i = 0;
-    if (m[5] > m[0]) i = 1;
-    if (m[10] > m[4 * i + i]) i = 2;
-    static const int kNext[3] = {1, 2, 0};
-    const int j = kNext[i];
-    const int k = kNext[j];
-    float s = std::sqrt(m[4 * i + i] - m[4 * j + j] - m[4 * k + k] + 1.0f);
-    float q[4];
-    q[i] = 0.5f * s;
-    s = 0.5f / s;
-    q[3] = (m[4 * k + j] - m[4 * j + k]) * s;
-    q[j] = (m[4 * j + i] + m[4 * i + j]) * s;
-    q[k] = (m[4 * k + i] + m[4 * i + k]) * s;
-    std::memcpy(out, q, sizeof q);
-}
-
 void QuatFromMatrix(float out[4], const void* m16) {
-    auto& d = d3dx::Get();
-    if (d.Load()) {
-        d.quatFromMatrix(out, reinterpret_cast<const d3dx::D3DXMATRIXF*>(m16));
-        return;
-    }
-    QuatFromMatrixManual(out, static_cast<const float*>(m16));
+    d3dx::Get().quatFromMatrix(
+        out, reinterpret_cast<const d3dx::D3DXMATRIXF*>(m16));
 }
 
 void QuatMultiply(float out[4], const float a[4], const float b[4]) {
-    auto& d = d3dx::Get();
-    if (d.Load()) {
-        d.quatMultiply(out, a, b);
-        return;
-    }
-    // Hamilton product a*b, D3DXQUATERNION layout x,y,z,w
-    out[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
-    out[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
-    out[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
-    out[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+    d3dx::Get().quatMultiply(out, a, b);
 }
 
 #if defined(_M_IX86)

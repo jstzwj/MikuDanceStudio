@@ -176,21 +176,18 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
                     degZ = 0.0f;
                 }
                 auto& api = d3dx::Get();
-                if (api.Load() && api.rotX && api.rotY && api.rotZ &&
-                    api.multiply && api.quatFromMatrix) {
-                    d3dx::D3DXMATRIXF rz{}, rx{}, ry{}, rot{};
-                    api.rotZ(&rz, axis == 0 ? degZ
-                            : axis == 1 ? degZ : 0.0f);
-                    api.rotX(&rx, degX);
-                    api.multiply(&rot, &rz, &rx);
-                    api.rotY(&ry, degY);
-                    api.multiply(&rot, &rot, &ry);
-                    mikudancestudio::mdl::BoneRecord* bones =
-                        mikudancestudio::mdl::Bones(model);
-                    api.quatFromMatrix(
-                        reinterpret_cast<float*>(&bones[bone].rotQuat[0]),
-                        &rot);                                   // 0x462623
-                }
+                d3dx::D3DXMATRIXF rz{}, rx{}, ry{}, rot{};
+                api.rotZ(&rz, axis == 0 ? degZ
+                        : axis == 1 ? degZ : 0.0f);
+                api.rotX(&rx, degX);
+                api.multiply(&rot, &rz, &rx);
+                api.rotY(&ry, degY);
+                api.multiply(&rot, &rot, &ry);
+                mikudancestudio::mdl::BoneRecord* bones =
+                    mikudancestudio::mdl::Bones(model);
+                api.quatFromMatrix(
+                    reinterpret_cast<float*>(&bones[bone].rotQuat[0]),
+                    &rot);                                   // 0x462623
                 unsigned char* flags =
                     mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
                 flags[bone] = 1;

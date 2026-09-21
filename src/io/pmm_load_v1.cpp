@@ -1831,21 +1831,8 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
                         s->state.gravityY,
                         s->state.gravityZ};
         auto& d3dxApi = d3dx::Get();
-        if (d3dxApi.Load()) {
-            // Preserve d3dx9_32's reciprocal-sqrt rounding (see the v2
-            // loader note); the original calls D3DXVec3Normalize directly.
-            d3dxApi.vec3Normalize(dir, dir);
-        } else {
-            const double len =
-                std::sqrt(static_cast<double>(dir[0]) * dir[0] +
-                          static_cast<double>(dir[1]) * dir[1] +
-                          static_cast<double>(dir[2]) * dir[2]);
-            if (len > 0.0) {
-                dir[0] = static_cast<float>(dir[0] / len);
-                dir[1] = static_cast<float>(dir[1] / len);
-                dir[2] = static_cast<float>(dir[2] / len);
-            }
-        }
+        // Preserve the imported runtime's normalization rounding.
+        d3dxApi.vec3Normalize(dir, dir);
         const float mag = s->state.gravityMagnitude;
         // The original reaches btDynamicsWorld::setGravity through a vtable
         // slot.  That slot number is an ABI implementation detail and is not

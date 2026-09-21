@@ -99,8 +99,6 @@ void ComposeEulerToBone(MMDApp* app, unsigned char* model, int sel) {
     d3dx::D3DXMATRIXF rot{};
     d3dx::D3DXMATRIXF tmp{};
     auto* d3dx = &d3dx::Get();
-    if (!d3dx->Load())
-        return;
     d3dx->rotZ(&rot, app->state.eulerZ);
     d3dx->rotX(&tmp, app->state.eulerX);
     d3dx->multiply(&rot, &rot, &tmp);
@@ -350,9 +348,8 @@ void CommitEditControl(MMDApp* app, HWND edit) {
             static_cast<double>(s.CameraFov()) * kDegToRad);
         d3dx::D3DXMATRIXF mat{};
         auto* d3dx = &d3dx::Get();
-        if (d3dx->Load())
-            d3dx->perspectiveFovLH(&mat, fovRad, r->aspectRatio, 1.0f,
-                                   100000.0f);
+        d3dx->perspectiveFovLH(&mat, fovRad, r->aspectRatio, 1.0f,
+                               100000.0f);
         IDirect3DDevice9* dev = r->device;
         dev->SetTransform(D3DTS_PROJECTION,
                           reinterpret_cast<const D3DMATRIX*>(&mat));

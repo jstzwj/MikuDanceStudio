@@ -19,7 +19,7 @@
 //     renderClass == 0 with materialCount > 0 walks subsets 0..count-1
 //     re-applying each existing (count, model, i) node.
 //   - FUN_18002d910: the std::map lower_bound over the key
-//     (u32 materialCount, ModelData*, int subset); when the exact subset is
+//     (u32 turnId, ModelData*, int subset); when the exact subset is
 //     missing and the flag is set, retries once with subset = -1 (the
 //     "whole object" binding).
 //   - MME_BindMaterialParameter [0x18005eff0]: semantic ids
@@ -78,17 +78,11 @@ class ModelData;
 struct MaterialBinding {
     ID3DXEffect* effect;                              // the target effect
     std::string  effectPath;                          // assigned file ("" = pool effect)
-    // [原版 0x1D8 绑定对象 +0x08/+0x10] 对缓存条目（LoadedEffect）的
-    // boost::shared_ptr 引用（px/pn 两个字）。原版绑定每次重建销毁时在
-    // FUN_18000B210 尾部释放该引用（0x18000b5e9-0x18000b611 的控制块
-    // InterlockedDecrement → dispose/destroy 链），使条目活到“最后一个引
-    // 用它的绑定销毁”。移植以 std::shared_ptr 承载同一语义：上面的
-    // effect/sas 是 owner 内部指针的借用缓存（owner 活着则必然有效），
-    // 绑定析构（delete binding，含所有 MmeDropMaterialBindings /
-    // manager dtor / ctx dtor / offscreen 瞬态清空路径）释放引用，最后
-    // 一个引用死亡时 ~LoadedEffect 执行 FUN_18000B210 的完整卸载语义
-    // （日志 / SasUnload / effect->Release）。
+    // Compiled-file cache and the assignment's independent runtime instance.
     std::shared_ptr<LoadedEffect> owner;
+    std::shared_ptr<LoadedEffect> instance;
+    // Resource names are scoped to an assignment, never to the engine cache.
+    std::map<std::string, unsigned int> offscreenTurns;
     // The name-table handles (the original's 0x1800B36A0 table: matWorld ..
     // SphCMul plus use_*/opadd/VertexCount/SubsetCount). Keyed by the table's
     // canonical spelling and resolved once per binding by ENUMERATING the
@@ -231,14 +225,12 @@ ControlObjectStage* MmeFindControlObjectStage(ModelData* model);
 // "(AttachedModel)"/"(AttachedBone)" naming consumes it in Phase 3).
 void MmeResolveAccessoryAttach(ModelData* model, unsigned long long accessoryId);
 
-// Manager-map accessors (the EffectOwnerManager +0xa0 tree). Implemented
-// against mme_context.h's EffectOwnerManager; exposed here for the emm
-// manager and the Phase 3 pass records. `owner` carries the engine-cache
-// reference the binding borrows effect/sas from (the original 0x1D8 object's
-// +0x08/+0x10 shared_ptr); a null owner leaves the binding effect-less.
-MaterialBinding* MmeFindMaterialBinding(unsigned int materialCount, ModelData* model,
+// Assignment lookup: (turn ID, object, subset), with optional whole-object
+// inheritance. owner retains the compiled-file cache; each assignment owns
+// a cloned runtime effect and its SAS model.
+MaterialBinding* MmeFindMaterialBinding(unsigned int turnId, ModelData* model,
                                         int subsetIndex, bool allowWholeObject);
-MaterialBinding* MmeEnsureMaterialBinding(unsigned int materialCount, ModelData* model,
+MaterialBinding* MmeEnsureMaterialBinding(unsigned int turnId, ModelData* model,
                                           int subsetIndex, ID3DXEffect* effect,
                                           const std::string& effectPath,
                                           const std::shared_ptr<LoadedEffect>& owner);
@@ -270,7 +262,7 @@ MaterialBinding* MmeActiveModelBinding(ModelData* model);
 // The returned row is borrowed from rows. Values (hide/none/effect paths)
 // are not interpreted here. "self" compares model/owner pointer identity;
 // other keys retain the renderer's case-insensitive basename glob matching
-// and its legacy exact full-path compatibility branch.
+// against the basename and extension.
 const std::pair<std::string, std::string>* MmeFindDefaultEffectRow(
     const std::vector<std::pair<std::string, std::string>>& rows,
     ModelData* model, ModelData* owner);
@@ -280,21 +272,14 @@ const std::pair<std::string, std::string>* MmeFindDefaultEffectRow(
 // eligibility test: the renderer may skip a turn with no assigned row.
 bool MmeDefaultEffectRowShown(const std::pair<std::string, std::string>* row);
 
-// Edit only this object's exact full-path overrides. Generic/glob rows and
-// other objects retain their order; an override is prepended to win matching.
-// Removing it exposes the original default rows again. No effects are loaded.
-void MmeSetDefaultEffectOverride(
-    std::vector<std::pair<std::string, std::string>>& rows,
-    ModelData* model, const std::string& value);
-void MmeRemoveDefaultEffectOverride(
-    std::vector<std::pair<std::string, std::string>>& rows,
-    ModelData* model);
-
 // Resolve the active turn's DefaultEffect assignment by first matching row.
 // Resource declaration does not grant the object its root binding in a turn.
 // Missing, none and hide return null; the caller distinguishes missing/hide
 // (no draw) from none (host geometry) with the predicates below.
 MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model, int subsetIndex = -1);
+MaterialBinding* MmeResolveTurnEffectBinding(unsigned int turnId,
+    SasResource& resource, ModelData* offscreenOwner, ModelData* model,
+    int subsetIndex = -1);
 
 // [sub_18005A1E0 0x18005a24c-0x18005a268] 离屏渲染回合（offscreen render
 // turn）判定：原版以 ctx+0x168 的 0x48 回合包装（wrapper）非空为窗口——
@@ -319,14 +304,11 @@ bool MmeHasOffscreenDefaultEffectRow(ModelData* model, int subsetIndex = -1);
 // model must not be drawn into the offscreen target at all.
 bool MmeOffscreenDefaultEffectHides(ModelData* model, int subsetIndex = -1);
 
-// Destroy every transient offscreen-DefaultEffect binding and drop the staged
-// row vector (the resume walk / plan reset entry).
-void MmeClearOffscreenDefaultBindings();
-
-// Per-frame CONTROLOBJECT resolution for every loaded effect (the original's
+// Per-frame CONTROLOBJECT resolution for every assignment (the original's
 // EffectFrameParamSetter walk, sub_180057BC0): resolve each control
 // parameter's object/item against the live ModelData name tables and push
 // the value into the effect. Called once per frame from the pass planner.
-void MmeUpdateControlObjects();
+void MmeUpdateControlObjects(ModelData* model, MaterialBinding* binding,
+                             ModelData* offscreenOwner);
 
 } // namespace mme

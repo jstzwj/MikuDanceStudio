@@ -34,6 +34,9 @@ constexpr std::size_t kBoneKeyCapacity = 300000;
 constexpr std::size_t kMorphKeyCapacity = 20000;
 constexpr std::size_t kDisplayKeyCapacity = 1000;
 
+// Select physics-enabled keys of bones that have rigid bodies.
+void SelectPhysicsOnBoneKeys(ModelRecord& model);
+
 // Five-int entries used by the post-load bone evaluation order.  This table
 // contains no pointers, so its 20-byte stride is identical on x86 and x64.
 struct BoneReference {

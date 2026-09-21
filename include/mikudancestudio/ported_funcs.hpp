@@ -12,6 +12,8 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include "mikudancestudio/charset_conv.hpp"
+
 #include <cstdint>
 #include <cstdio>
 
@@ -36,9 +38,6 @@ void PrepareFrameLineOverlay(MMDApp* app);    // VA 0x004757C3
 // VA 0x00462C40 - pre-free cleanup (DirectX release, font/GDI teardown).
 void ShutdownCleanup(MMDApp* app);
 
-// VA 0x00407A70 - robust ANSI -> wide conversion (locale fallback chain).
-void ConvertAnsiToWide(void* localeTableBase, const char* multiByteStr,
-                       wchar_t* destination, int destinationWords);
 
 // ---- math -----------------------------------------------------------------
 // VA 0x00401000 - quaternion (x,y,z,w) -> row-major 3x4 rotation matrix.
@@ -85,8 +84,8 @@ bool LoadPMX(unsigned char* model, D3DRenderer* sub,
              PathResolutionWorkspace& paths, int fh); // VA 0x004B77E0
 void ModelDispose(unsigned char* model);              // VA 0x0048F830
 void DisposeAccessory(void* accessory);               // VA 0x004C4700
-void InitBoneSortOrder(unsigned char* model);         // VA 0x00490070 (stub)
-void PostLoadInit(unsigned char* model);              // VA 0x0049C850 (stub)
+void InitBoneSortOrder(unsigned char* model);         // VA 0x00490070
+void PostLoadInit(unsigned char* model);              // VA 0x0049C850
 bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub);  // 0x4032B0
 void ModelKinematicSync(unsigned char* model);        // VA 0x004B22F0
 void ModelDynamicReseat(unsigned char* model);        // VA 0x004B3460
@@ -181,7 +180,7 @@ errno_t ConvertMaterialName(unsigned char* sub, const char* mbName,
 int LoadTextureShared(unsigned char* sub, wchar_t* path);     // VA 0x407490
 void FillPanelBottom(HDC, int x, int y, int w, int h,
                      std::uint32_t color, std::uint32_t edge,
-                     int flag);                               // VA 0x40DF10 (stub)
+                     int flag);                               // VA 0x40DF10
 void PostModelReload2(MMDApp*);                       // VA 0x0040D940 (ported)
 void RebuildModelModePanel(MMDApp*);     // VA 0x0044D610
 void RebuildCameraModePanel(MMDApp*);    // VA 0x0044D780
@@ -209,8 +208,8 @@ void HandleDropFiles(HDROP);                                // VA 0x00461300
 //      src/app/avi_record_start.cpp, src/app/dshow_record_graph.cpp) ------
 void AviBgOverlayRefresh(MMDApp*);            // VA 0x004168D0
 void PicBgOverlayRefresh(MMDApp*);            // VA 0x00417130
-void StartAviRecordWindow(MMDApp*);           // VA 0x0045E820 (stub twin 0x45E820)
-void StartAviRecordFullscreen(MMDApp*);       // VA 0x00464760 (stub twin 0x464760)
+void StartAviRecordWindow(MMDApp*);           // VA 0x0045E820
+void StartAviRecordFullscreen(MMDApp*);       // VA 0x00464760
 void ApplyFullscreenWindowState(MMDApp*);  // VA 0x004629D0
                                           // (fullscreen enter/restore window mgr)
 void KickRecordPhysics(MMDApp*);  // VA 0x00401BD0 physics kick
@@ -365,7 +364,7 @@ int RegisterGravityKey(MMDApp* app, const void* rec);     // VA 0x00412DF0
 void ApplyGravityTrack(MMDApp* app);                // VA 0x00412330
 void ApplyAccessoryTrack(MMDApp* app, int slot);    // VA 0x00413120
 
-// ---- v2 loader dependencies (0x00450000 phase 2; bodies in stubs.cpp) -----
+// ---- v2 project loader helpers -----------------------------------------
 void ClearTimelineAndCurveDCs(MMDApp* app);   // VA 0x0040AE00
 void RefillBoneRegisterCombo(MMDApp* app, int slot);  // VA 0x00410040
 // (VA 0x004C4700 - accessory-track dtor; the real port is

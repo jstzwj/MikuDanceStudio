@@ -49,7 +49,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     if (*lpCmdLine != '\0') {
         wchar_t converted[256];  // `Source` local in the original (ebp-0x204)
-        ConvertAnsiToWide(app->LocaleTablePtr(),                  // [Block+0xA06C4]
+        ConvertAnsiToWide(app->Renderer(),                  // [Block+0xA06C4]
                           lpCmdLine, converted, 0x100);           // 0x407A70
         wcscpy_s(app->EnvFileName(), 0x100, converted);
     } else {

@@ -2,6 +2,7 @@
 #include "pass_planner.h"
 
 #include <algorithm>
+#include <set>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -405,33 +406,6 @@ static void MmeFlushSasLogDelta(SasEffect* sas, size_t logLengthBefore)
     }
 }
 
-// [sub_18002CA80 0x18002d1a0-0x18002d69c] the carrier's queue entries come
-// from the walk over the binding record's OFFSCREENRENDERTARGET vector
-// (binding+0x1B8). That vector is filled ONLY by the SAS parameter parser
-// (FUN_180011960) for semanticId == 0x2E (0x180014080-0x180014093:
-// sub_18001F3E0 = push_back of the 0x98 record, in parameter declaration
-// order); 0x26 RENDERCOLORTARGET / 0x27 RENDERDEPTHSTENCILTARGET / plain
-// textures never enter it. The port therefore enumerates the binding's SAS
-// resource table filtered to semanticId == 0x2E - the exact projection the
-// original's vector holds, in the same order (the resource table IS the
-// parameter enumeration order). Technique validity/count plays no role: a
-// technique is never the unit of a render turn.
-static void MmeCollectSceneOffscreens(ModelData* record,
-                                      std::vector<SasResource*>* out)
-{
-    out->clear();
-    MaterialBinding* binding = MmeSceneRecordBinding(record);
-    if (binding == nullptr || binding->sas == nullptr) {
-        return;
-    }
-    SasEffect* sas = binding->sas;
-    for (size_t i = 0; i < sas->resources.size(); ++i) {
-        if (sas->resources[i].semanticId == 0x2E) {
-            out->push_back(&sas->resources[i]);
-        }
-    }
-}
-
 // [0x18005a449-0x18005a4e5] The wrapper selects a binding by
 // (turn id, carrier, -1). Resource-name registration creates the TURN,
 // not a root-effect binding for its owner. DefaultEffect may hide that
@@ -796,39 +770,14 @@ void MmeRefreshObjectPlan(ModelData* model, int hostIndex)
 void MmeSortPlanObjects(MmeContext* ctx,
                         const std::map<int, ModelData*>& orderMap)
 {
-    // [0x18002baa0 + 0x18005fd30, re-verified 2026-09-15] TWO different
-    // orderings feed the three lists:
-    //
-    // ctx+0xb8 / ctx+0xd8 (passPlanA/B) come from fcn_18005b9e0's own
-    // UNIQUE-key |order| map (the insert at 0x18005bd34 is std::map::
-    // operator[] = insert-or-OVERWRITE, so a duplicate |order| keeps only
-    // the LAST host index - the accessory scan overwrites same-order PMD
-    // entries) - exactly the |orderMap| walk below.
-    //
-    // manager+0x158 (orderedPlan, copied into ctx+0x148 by FUN_18005fd30's
-    // straight vector assign) is built from DIFFERENT data:
-    // sub_18002BAA0 first rebuilds the mgr+0xD8 object vector from a
-    // std::set keyed (ModelData+0xEC = |order| scratch, ModelData*) - BOTH
-    // equal-|order| objects survive, pointer ascending; its pending-record
-    // drain (sub_18002C910 -> sub_18002CA80) walks that vector's
-    // whole-object assignments and pushes ONE mgr+0x118 queue id PER
-    // OFFSCREENRENDERTARGET entry of the binding record's +0x1B8 vector
-    // (only semanticId 0x2E enters that vector - the parser sub_180011960
-    // filters; see MmeCollectSceneOffscreens), gated v142 = a2 && *(object
-    // +0xF4 disp); the tail loop materializes mgr+0x158 = the queue order
-    // through the mgr+0xB8 id map (node+32 = the 0x48 wrapper: +0 the
-    // entry's own 0x98 offscreen record, +48 the carrier, +56 the id) with
-    // no sort. The port therefore queues ONE ITEM PER 0x2E RESOURCE
-    // (aligned 2026-09-15; the earlier per-technique list queued one turn
-    // for ray.fx's single technique and starved the other eight targets,
-    // and the one-item-per-carrier list before that starved every technique
-    // after the first); subset-effect carriers hold no whole-object 0x2E
-    // entries and stay unqueued.
+    // Scene scripts follow the host's unique order map; target discovery
+    // visits every assignment in (absolute order, object) order.
     EffectOwnerManager* manager = g_ownerManager;
     ctx->passPlanA.clear();
     ctx->passPlanB.clear();
     if (manager != nullptr) {
         manager->orderedPlan.clear();
+        manager->turnOwners.clear();
     }
 
     for (std::map<int, ModelData*>::const_iterator it = orderMap.begin();
@@ -841,20 +790,13 @@ void MmeSortPlanObjects(MmeContext* ctx,
         }
     }
 
-    // [sub_18002BAA0 phase 1] the (|order|, ModelData*) set contents, disp
-    // gated by the same ExpGetPmdDisp/ExpGetAcsDisp scan that filled
-    // orderMap (+0xf4 is set by MmeRefreshObjectPlan before this call).
+    // Hidden objects still participate in assignment discovery. Their display
+    // flag gates the rendering queue, not resource registration.
     std::vector<ModelData*> carriers;
     for (size_t i = 0; i < ctx->models.size(); ++i) {
         ModelData* model = ctx->models[i];
-        if (model == nullptr || model->passPlanScratch().flag == 0) {
-            continue;                                   // +0xf4 disp gate
-        }
-        if (model->renderClass() == 0) {
-            continue;   // object-class: no whole-object 0x2E resources to
-                        // queue (the original's per-subset drain reaches
-                        // these carriers too, but a material-only effect
-                        // never declares OFFSCREENRENDERTARGET in practice)
+        if (model == nullptr) {
+            continue;
         }
         carriers.push_back(model);
     }
@@ -869,35 +811,59 @@ void MmeSortPlanObjects(MmeContext* ctx,
                          reinterpret_cast<uintptr_t>(b);
               });
     if (manager != nullptr) {
-        // [sub_18002CA80's binding+0x1B8 walk, 0x18002d1a0-0x18002d69c] one
-        // queue item per OFFSCREENRENDERTARGET resource of each carrier, in
-        // the multi-set order, each carrier's resources in parameter
-        // declaration order. The turn id comes from the manager-wide
-        // name->id map (sub_180032FB0(mgr+0x30)+56, ids from sub_18002D820):
-        // a resource NAME seen at an earlier carrier resolves to the SAME
-        // id, so cross-effect/cross-carrier same-name targets share ONE
-        // render turn (the RayMMD shared-target dependency). The port keys
-        // the plan by the name itself; the first carrier declaring the name
-        // supplies the queue item's resource pointer (the original's
-        // wrapper+0 holds the first creator's 0x98 record for a shared id).
-        // Render class plays no filtering role in the original (preprocess
-        // and scene carriers queue identically); an effect with no 0x2E
-        // resource queues NOTHING - its repeat stays at the base turn, the
-        // post-effect whole running inside the base turn's step/resume.
-        std::map<std::string, bool> queuedNames;   // name -> already queued
-        std::vector<SasResource*> scratch;
-        manager->orderedPlan.reserve(carriers.size());
-        for (size_t i = 0; i < carriers.size(); ++i) {
-            ModelData* model = carriers[i];
-            MmeCollectSceneOffscreens(model, &scratch);
-            for (size_t r = 0; r < scratch.size(); ++r) {
-                SasResource* res = scratch[r];
-                if (queuedNames.find(res->name) != queuedNames.end()) {
-                    continue;   // same name: the earlier carrier's turn
-                }
-                queuedNames[res->name] = true;
-                manager->orderedPlan.push_back(MmeRenderPassItem(model, res));
+        struct PendingTurn {
+            MmeRenderPassItem item;
+            bool visible;
+        };
+        std::vector<PendingTurn> pending;
+        std::set<unsigned int> visited;
+        std::set<MaterialBinding*> assignments;
+        auto collect = [&](ModelData* model, MaterialBinding* binding, bool visible, ModelData* owner) {
+            if (!binding || !binding->sas || !assignments.insert(binding).second) return;
+            MmeUpdateControlObjects(model, binding, owner);
+            for (auto& resource : binding->sas->resources) {
+                if (resource.semanticId != 0x2E) continue;
+                unsigned int& id = binding->offscreenTurns[resource.name];
+                if (!id) id = ++manager->nextTurnId;
+                if (!visited.insert(id).second) continue;
+                manager->turnOwners[id] = model;
+                MmeRenderPassItem item(model, &resource, id);
+                item.assignment = binding;
+                pending.push_back({item, visible});
+                if (visible) manager->orderedPlan.push_back(item);
             }
+        };
+        auto visitScene = [&](const PendingTurn* turn) {
+            for (ModelData* model : carriers) {
+                const bool visible = model->passPlanScratch().flag != 0 &&
+                                     (!turn || turn->visible);
+                auto resolve = [&](int subset) -> MaterialBinding* {
+                    if (turn) return MmeResolveTurnEffectBinding(turn->item.turnId,
+                        *turn->item.offscreen, turn->item.carrier, model, subset);
+                    if (subset < 0) return MmeResolveModelEffectBinding(model);
+                    const auto assigned = model->subsetEffects().find(subset);
+                    if (assigned == model->subsetEffects().end()) return nullptr;
+                    return MmeResolveSubsetEffectBinding(model, subset, assigned->second);
+                };
+                collect(model, resolve(-1), visible, turn ? turn->item.carrier : nullptr);
+                if (model->renderClass() == 0) {
+                    for (int subset = 0; subset < model->materialCount(); ++subset)
+                        collect(model, resolve(subset), visible, turn ? turn->item.carrier : nullptr);
+                }
+            }
+        };
+        visitScene(nullptr);
+        for (size_t index = 0; index < pending.size(); ++index) {
+            // Resolution appends to pending; copy before its vector can grow.
+            const PendingTurn turn = pending[index];
+            visitScene(&turn);
+        }
+        // Retire assignments belonging to targets no longer in this graph.
+        for (auto it = manager->bindings.begin(); it != manager->bindings.end();) {
+            if (it->first.turnId && !assignments.count(it->second)) {
+                delete it->second;
+                it = manager->bindings.erase(it);
+            } else ++it;
         }
     }
 
@@ -942,10 +908,8 @@ void MmeRebuildRenderPassPlan()
     // FUN_18005c510's repeat == N branch re-captures it.
     MmeReleaseTargetSet(ctx->cachedTargetSet);
     ctx->currentBindingObject = nullptr;        // puVar5[0x2d] = 0 [L138]
-    ctx->currentBindingOffscreen = nullptr;     // the wrapper's whole identity
-                                               // dies with the plan rebuild
-                                               // (the fresh list below
-                                               // re-publishes both)
+    ctx->currentBindingOffscreen = nullptr;
+    ctx->currentBindingTurnId = 0;
 
     // [L153-205] the PMD scan.
     int pmdNum = ExpGetPmdNum();                // [L153]
@@ -1010,6 +974,8 @@ void MmeRebuildRenderPassPlan()
     // [L292-297] clear ctx+0x148 (the pass list).
     ctx->renderPassList.clear();
 
+    SasEnsureHostCallbacksInstalled();
+
     // [L298-300] FUN_18002baa0 + FUN_18005fd30: build the sorted plan.
     MmeSortPlanObjects(ctx, orderMap);
 
@@ -1060,12 +1026,7 @@ void MmeRebuildRenderPassPlan()
     // (No plan-composition log here: FUN_18005b9e0 writes none - the binary
     // carries no "Plan:"/"passPlan" strings at all.)
 
-    // [PHASE3 wiring] per-frame CONTROLOBJECT resolution (the original's
-    // EffectFrameParamSetter walk): every loaded effect's control parameters
-    // read the live object/bone/morph/panel values. Runs after the object
-    // scan so the name tables and host indexes are current.
-    SasEnsureHostCallbacksInstalled();
-    MmeUpdateControlObjects();
+
 
     // [L493] FUN_18005c510 - final pass bookkeeping.
     MmeUpdatePassBookkeeping(ctx);
@@ -1151,12 +1112,12 @@ void MmeUpdatePassBookkeeping(MmeContext* ctx)
         ctx->persistentClearUsed = 0;
         ctx->persistentLayerEligible = 1;
         // [L74287] ctx+0x43a = 1, then [L74303-74313] cleared when any plan-B
-        // model is a "normal" object (unknownFlag360 != 1 && flag368 != 0).
+        // model is a "normal" object (scriptClass != 1 && drawsGeometry != 0).
         ctx->allObjectsSpecialFlag = 1;
         for (size_t i = 0; i < ctx->passPlanB.size(); ++i) {
             ModelData* model = ctx->passPlanB[i];
-            if (model != nullptr && model->unknownFlag360() != 1 &&
-                model->flag368() != 0) {
+            if (model != nullptr && model->scriptClass() != 1 &&
+                model->drawsGeometry() != 0) {
                 ctx->allObjectsSpecialFlag = 0;
                 break;
             }
@@ -2132,9 +2093,8 @@ void MmePassBookkeeping(MmeContext* ctx)
             MmeRestoreTargetSet(ctx->cachedTargetSet, device);
         }
     }
-    // A turn binding remains valid until its final scene-script resume.
-    // Retire the transient bindings before publishing the next wrapper.
-    MmeClearOffscreenDefaultBindings();
+    // The mapping window follows the wrapper; assignments survive turn changes.
+    ctx->offscreenDefaultEffect = nullptr;
     MmeUpdatePassBookkeeping(ctx);                                 // [L74736]
     if (hasPasses) {
         // [L74738-74749] the scene is closed while the new repeat's record is
@@ -2147,6 +2107,7 @@ void MmePassBookkeeping(MmeContext* ctx)
         if (ctx->lastRepeatCount < 1) {
             ctx->currentBindingObject = nullptr;                   // [L74740]
             ctx->currentBindingOffscreen = nullptr;
+            ctx->currentBindingTurnId = 0;
         } else {
             // [L74743-74745] ctx+0x168 = renderPassList[lastRepeatCount - 1]
             // - the CURRENT turn's queue item (the original stores the 0x48
@@ -2160,9 +2121,11 @@ void MmePassBookkeeping(MmeContext* ctx)
                     static_cast<size_t>(index)];
                 ctx->currentBindingObject = item.carrier;
                 ctx->currentBindingOffscreen = item.offscreen;
+                ctx->currentBindingTurnId = item.turnId;
             } else {
                 ctx->currentBindingObject = nullptr;
                 ctx->currentBindingOffscreen = nullptr;
+                ctx->currentBindingTurnId = 0;
             }
             // [L74746] GetRenderState(0xa1) feeds the FUN_18005c970 record
             // apply (the record's SetRenderTarget/SetDepthStencilSurface/

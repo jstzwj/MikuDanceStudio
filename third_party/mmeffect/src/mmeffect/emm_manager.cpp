@@ -1655,7 +1655,7 @@ bool MmeRebindEffectAssignments(const std::string& path)
         if (!whole.empty() && EffectPathInReloadScope(whole, path)) {
             std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, whole);
             if (fresh != nullptr) {
-                // 场景类接线（renderClass/flag368/sceneTechIndex）随解析重建；
+                // 场景类接线（renderClass/drawsGeometry/sceneTechIndex）随解析重建；
                 // 类别降级为 object 时由解析内部 ClearSasBinding。
                 MmeResolveModelEffectBinding(model);
                 LogDoneOnce(fresh);

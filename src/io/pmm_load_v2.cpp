@@ -2624,22 +2624,8 @@ static void LoadSceneV2_SuccessTail(PmmV2LoadContext& ctx,
                         s->state.gravityY,
                         s->state.gravityZ};
         auto& d3dxApi = d3dx::Get();
-        if (d3dxApi.Load()) {
-            // Preserve d3dx9_32's reciprocal-sqrt rounding.  For the unit
-            // -Y vector it returns BF7FFFFF, while scalar sqrt/div returns
-            // BF800000 and shifts all later Bullet gravity/RHS values.
-            d3dxApi.vec3Normalize(dir, dir);
-        } else {
-            const double len =
-                std::sqrt(static_cast<double>(dir[0]) * dir[0] +
-                          static_cast<double>(dir[1]) * dir[1] +
-                          static_cast<double>(dir[2]) * dir[2]);
-            if (len > 0.0) {
-                dir[0] = static_cast<float>(dir[0] / len);
-                dir[1] = static_cast<float>(dir[1] / len);
-                dir[2] = static_cast<float>(dir[2] / len);
-            }
-        }
+        // Preserve the imported runtime's normalization rounding.
+        d3dxApi.vec3Normalize(dir, dir);
         const float mag = s->state.gravityMagnitude;
         const float v[4] = {dir[0] * mag * 10.0f, dir[1] * mag * 10.0f,
                             dir[2] * mag * 10.0f, 0.0f};

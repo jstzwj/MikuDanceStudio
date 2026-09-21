@@ -371,16 +371,14 @@ void LoadBackgroundPicture(MMDApp* app) {
     ImgInfo info = {};
     constexpr UINT kD3dxDefault = 0xFFFFFFFFu;
     HRESULT hr = E_FAIL;
-    if (api.Load() && api.fromFileExW != nullptr) {
-        hr = api.fromFileExW(device, stored, 0x400, 0x400, 0, 0,
-                             D3DFMT_UNKNOWN, D3DPOOL_MANAGED, kD3dxDefault,
-                             kD3dxDefault, 0, &info, nullptr, slot);  // 0x4C68AC
-        if (hr != 0) {
-            hr = api.fromFileExW(device, stored, 0x200, 0x200, 1, 0,
-                                 D3DFMT_UNKNOWN, D3DPOOL_MANAGED,
-                                 kD3dxDefault, kD3dxDefault, 0, &info,
-                                 nullptr, slot);                    // 0x4338FC
-        }
+    hr = api.fromFileExW(device, stored, 0x400, 0x400, 0, 0,
+                         D3DFMT_UNKNOWN, D3DPOOL_MANAGED, kD3dxDefault,
+                         kD3dxDefault, 0, &info, nullptr, slot);  // 0x4C68AC
+    if (hr != 0) {
+        hr = api.fromFileExW(device, stored, 0x200, 0x200, 1, 0,
+                             D3DFMT_UNKNOWN, D3DPOOL_MANAGED,
+                             kD3dxDefault, kD3dxDefault, 0, &info,
+                             nullptr, slot);                    // 0x4338FC
     }
     if (hr != 0) {                                                  // 0x433903
         MessageBoxA(hwnd,

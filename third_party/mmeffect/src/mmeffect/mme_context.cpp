@@ -129,12 +129,7 @@ MmeContext::~MmeContext()
     // Offscreen DefaultEffect staging: the borrowed row vector dies with the
     // engine cache; the transient bindings are owned here.
     offscreenDefaultEffect = nullptr;
-    for (std::map<ModelData*, MaterialBinding*>::iterator it =
-             offscreenDefaultBindings.begin();
-         it != offscreenDefaultBindings.end(); ++it) {
-        delete it->second;
-    }
-    offscreenDefaultBindings.clear();
+
 
     // [L3376-3392] pass-list teardown releases per-entry COM objects: the
     // cached render-target/depth surfaces and the binding-context pool

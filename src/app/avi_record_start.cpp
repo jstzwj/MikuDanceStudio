@@ -21,10 +21,7 @@
 //   VA 0x00401BD0 - 0x048-object physics kick (vtable slot 4 of the object
 //                   at obj+0x3C); runs once recording starts.
 //
-// NOTE: the shared stubs.cpp still exports the names 0x45E820/0x464760;
-// the 0xDF dispatch (command_file_menu.cpp case 223) calls these
-// implementations instead.  ApplyFullscreenWindowState previously lived as an inline stub in
-// command_view_menu.cpp; the real body replaces it here.
+// command_file_menu.cpp dispatches both recording modes to these starters.
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -180,7 +177,7 @@ void EnsureRecordRenderTarget(MMDApp* app) {
 }
 
 // 0x409A80 - DirectShow recording graph builder (thiscall on the app+0xA06C0
-// object).  Still a documented stub: see src/app/dshow_record_graph.cpp.
+// object), implemented in src/app/dshow_record_graph.cpp.
 
 // Common tail after a successful 0x409A80 handshake: timeline seek to the
 // record start frame, arm 9EDD8 and hand control to the physics kick
@@ -239,9 +236,7 @@ bool StartRecordGraph(MMDApp* app, std::int32_t outW, std::int32_t outH) {
     double f = static_cast<double>(frames);
     if (frames < 0)
         f += 4294967296.0f;  // 0x52B9F0 float 2^32 (0x45EB6A)
-    // 0x52BA68 is a qword double (30.0) in .rdata; the port keeps the
-    // float mirror g_FrameScale (exactly 30.0 until the config loader
-    // rewrites it).
+    // The timeline uses the fixed 30-frame scale independently of output FPS.
     const float seconds = static_cast<float>(f / g_FrameScale);
 
     float fpsF;

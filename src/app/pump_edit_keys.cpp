@@ -1,63 +1,4 @@
-// ===========================================================================
-// VA 0x00471342..0x00473127 - ConsumeEditKeys  (main-pump edit-key family)
-// ===========================================================================
-// The non-letter half of the main pump's per-frame keyboard consumption
-// (sub_46B090, x64 twin sub_7FF7CB4474F0).  The letter half is already
-// ported as ConsumeLetterHotkeys (key_ladder.cpp); this file ports the
-// eight edit-key segments that surround it in the original pump, in
-// original execution order:
-//
-//   G12 x86 0x471342..0x471EB5 | x64 0x44DEF6..0x44ED16
-//       Panel focus chain: TAB / Shift+TAB walks focus between the panel
-//       edits (select-all + optional MessageBeep on arrival), the arrow
-//       keys park focus on the panel root, and the whole walk computes
-//       the pump-wide "focus not in a panel edit" flag (r13 at 0x44ED2E)
-//       that gates the segments below.  This port is a SUPERSET of
-//       key_ladder.cpp's FocusInPanelEdit probe list - the original chain
-//       also clears the flag for 0x198, 0x1A1, 0x1A8..0x1AA, 0x1CD..0x1D2,
-//       0x1DE..0x1E5, 0x1FA, 0x1FF, 0x204, 0x209 and 0x231.
-//   G6  x86 0x4721C9          | x64 0x44F06A..0x44F106
-//       ']' (VK 221) flips the interpolation-reset checkbox 0x212 (530).
-//   G8  x86 0x472246..0x472313 | x64 0x44F106..0x44F1E8
-//       DELETE rebuilds the model-edit state (DeleteMarkedKeyframes) unless focus is
-//       inside one of the five frame edits.
-//   G5  x86 0x47244E..0x472524 (TAB) / 0x47252B..0x472609 (VK 226)
-//                           | x64 0x44F32D..0x44F42E / 0x44F42E..0x44F52F
-//       TAB and the Japanese henkan key cycle the model/accessory combo
-//       0x1B4 (436), wrapping at both ends, then apply it (ApplyModelComboSelection).
-//   G7  x86 0x472633..0x472698 | x64 0x44F52F..0x44F594 / 0x44F594..0x44F5D4
-//       Alt+Enter toggles fullscreen (flip 0xA0274 + ApplyFullscreenWindowState +
-//       PostDeviceReset); ESC leaves it (same two calls).
-//   G2  x86 0x472B76..0x472D1E | x64 0x44FB0A..0x44FCDB
-//       Enter in camera/accessory mode: dirty 0xA0B0D, clear the selected
-//       marks on the four global key tables and every accessory track,
-//       re-register each ticked global track and every active accessory,
-//       then PanelPaint + SelectionReeval.
-//   G3  x86 0x473067..0x473092 | x64 0x4500DF..0x450111
-//       Enter otherwise re-dispatches the register-frame button command
-//       0x1F4 (case 500) on the main window - NOTE the original runs G2
-//       AND G3 back to back in camera mode (case 500 has no mode gate of
-//       its own; it registers the selected model's pose).
-//   G4  x86 0x4730F8..0x473127 | x64 0x450186..0x4501B5
-//       ESC while a frame-step recording is running ends it (FinishAviRecord).
-//
-// The x86 and x64 compilers schedule these blocks differently inside the
-// pump (x86 interleaves G5/G7 between the letter blocks, x64 groups them
-// before G2); the relative order inside this family is preserved.
-//
-// Gate inputs, verified on both binaries (poll cells x64 = x86 + 4):
-//   RETURN cell x86 +0xBC (MMDAppState::enterKeyState) / x64 +0xC0 - the same cell
-//   the ~20 command handlers poke with 1 to fake an Enter; consuming it
-//   here closes that chain.
-//   MENU(Alt) +0xC4/+0xC8, ESC +0x2C/+0x30, TAB +0x80/+0x84, VK221
-//   +0x78/+0x7C, VK226 +0x7C/+0x80, DELETE +0xB8/+0xBC, SHIFT +0x24/+0x28.
-//   viewportActive 0x9EDD1/0x9FCDD and frameStep 0x9ED90/0x9FC98 are
-//   maintained by MouseInteractionBegin (frame_modes.cpp); "playing" is
-//   dword +0x330 in x86 and byte +0x368 in x64 (PlaybackActive);
-//   optflag[0] byte +0x2F8/+0x328; the modal gate is 0xA0B50/0xA1B98
-//   (FrameRangeDialog); fullscreen byte 0xA0274/0xA11E4; the main window
-//   HWND 0xA06B8/0xA16C8; the floating viewport 0xA0D38/0xA1DE0.
-// =========================================================================//
+// Panel focus traversal and edit-key actions used by the keyboard sequencer.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -68,18 +9,9 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
+#include "pump_input.hpp"
 
 namespace mikudancestudio {
-
-// Global-track register backends, defined with these signatures in
-// command_frame_edit.cpp / ui_frame_refresh.cpp / command_view_menu.cpp
-// (not yet registered in ported_funcs.hpp; declared locally like
-// key_ladder.cpp does for its cross-TU callees).
-void RegisterCameraState(MMDApp* app, int frame);    // VA 0x00410560
-void RegisterLightState(MMDApp* app, int frame);     // VA 0x00411630
-void RegisterSelfShadowState(MMDApp* app, int frame);  // VA 0x00411DF0
-                                                     // (ui_frame_refresh.cpp)
-void RegisterGravityKeyCurrent(MMDApp* app, std::int32_t frame);  // VA 0x00412B20
 
 namespace {
 
@@ -204,14 +136,14 @@ bool PumpPanelFocusChain(MMDApp* app, HWND focus) {
         }
         notInEdit = false;
     }
-    // ---- 0x44E4A4 loop: 0x1DE..0x1E5, wrapping 0x1E5 <-> 0x1DE -----------
-    for (int id = 0x1DE; id <= 0x1E5; ++id) {
+    // ---- 0x44E4A4 loop: 0x1DE..0x1E4; 0x1E5 commits below ----------------
+    for (int id = 0x1DE; id < 0x1E5; ++id) {
         if (!focusIs(main, id))
             continue;
         if (tab) {
             const int target = shift
                 ? (id == 0x1DE ? 0x1E5 : id - 1)
-                : (id == 0x1E5 ? 0x1DE : id + 1);
+                : id + 1;
             moveTo(main, target, true, false);
         }
         notInEdit = false;
@@ -337,12 +269,10 @@ void PumpDeleteRebuild(MMDApp* app, HWND focus, bool focusNotInPanelEdit) {
 // ApplyModelComboSelection (ui_model_reload.cpp).
 // ---------------------------------------------------------------------------
 void PumpTabCycle(MMDApp* app, HWND focus, bool focusNotInPanelEdit) {
-    const bool gate = FocusOk(app, focus) &&
-                      app->PlaybackActive() == 0 &&
-                      focusNotInPanelEdit &&
-                      app->FrameRangeDialog() == nullptr;
     const auto cycle = [&](bool cellPressed) {
-        if (!gate || !cellPressed)
+        if (!cellPressed || !FocusOk(app, focus) ||
+            app->PlaybackActive() != 0 || !focusNotInPanelEdit ||
+            app->FrameRangeDialog() != nullptr)
             return;
         const HWND main = static_cast<HWND>(app->Hwnd());
         const HWND combo = GetDlgItem(main, panel::kMainComboModel);
@@ -401,22 +331,10 @@ void PumpFullscreenKeys(MMDApp* app, HWND /*focus*/,
 }
 
 // ---------------------------------------------------------------------------
-// G2 + G3 - Enter register frame (x86 0x472B76..0x472D1E and
-// 0x473067..0x473092, x64 0x44FB0A..0x44FCDB and 0x4500DF..0x450111).
-// G2 (camera/accessory mode, optflag[0] != 0): dirty 0xA0B0D, clear the
-// selected marks on all 10000 records of the camera (+0x48, stride 0x54),
-// light (+0x24 / 0x28), self-shadow (+0x14 / 0x18) and gravity (+0x21 /
-// 0x24) tables and on all 255 accessory tracks (flag +0x18, stride 0x3C,
-// 10000 records), re-register each ticked track byte 0xA03E4..0xA03E7 and
-// every accessory whose object active flag (+0x4AC) is set, then
-// PanelPaint + SelectionReeval.  G3 then re-dispatches the register
-// command 0x1F4 (case 500) unconditionally on the next Enter - the
-// original fires both in camera mode.
-// ---------------------------------------------------------------------------
-void PumpEnterRegisterFrame(MMDApp* app, HWND focus,
+// Global-track Enter registration (x64 0x44FB0A..0x44FCDB).
+void PumpGlobalEnterRegister(MMDApp* app, HWND focus,
                             bool focusNotInPanelEdit) {
     auto& state = app->state;
-    const HWND main = static_cast<HWND>(app->Hwnd());
     const bool enterPressed = state.enterKeyState == 1;               // +0xBC cell
     const bool altHeld = state.menuKeyState == 3;          // +0xC4 cell
 
@@ -453,11 +371,12 @@ void PumpEnterRegisterFrame(MMDApp* app, HWND focus,
         SelectionReeval(app);                              // 0x430510
     }
 
-    // ---- G3: model mode register button (no extra gates) -----------------
-    if (enterPressed && !altHeld)
-        // raw command id kept (no macro): 0x1F4 is the original's
-        // register-button command, re-dispatched into the WM_COMMAND switch.
-        SendMessageA(main, WM_COMMAND, 0x1F4, 0);          // case 500
+}
+
+// Called only inside the sequencer's model-edit gate, after undo/redo.
+void PumpModelEnterRegister(MMDApp* app) {
+    if (app->state.enterKeyState == 1 && app->state.menuKeyState != 3)
+        SendMessageA(static_cast<HWND>(app->Hwnd()), WM_COMMAND, 0x1F4, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,26 +390,6 @@ void PumpEscStop(MMDApp* app, bool focusNotInPanelEdit) {
         app->state.escKeyState == 1 &&
         focusNotInPanelEdit)
         FinishAviRecord(app);                                    // 0x464A00
-}
-
-// ---------------------------------------------------------------------------
-// Sequencer - the pump's execution order for this family.  Wire into
-// FrameDriver right after MouseInteractionBegin and before
-// ConsumeLetterHotkeys (frame_driver.cpp): G12 must run first because it
-// both moves focus and computes the focusNotInPanelEdit flag the other
-// segments consume, and the letters do not touch any cell consumed here
-// (RETURN / ESC / TAB / VK221 / VK226 / DELETE).
-// ---------------------------------------------------------------------------
-void ConsumeEditKeys(MMDApp* app) {
-    const HWND focus = GetFocus();                         // 0x44DEF8
-    const bool focusNotInPanelEdit =
-        !PumpPanelFocusChain(app, focus);                  // r13 @ 0x44ED2E
-    PumpInterpolationToggle(app, focus, focusNotInPanelEdit);  // G6
-    PumpDeleteRebuild(app, focus, focusNotInPanelEdit);        // G8
-    PumpTabCycle(app, focus, focusNotInPanelEdit);             // G5
-    PumpFullscreenKeys(app, focus, focusNotInPanelEdit);       // G7
-    PumpEnterRegisterFrame(app, focus, focusNotInPanelEdit);   // G2 + G3
-    PumpEscStop(app, focusNotInPanelEdit);                     // G4
 }
 
 }  // namespace mikudancestudio

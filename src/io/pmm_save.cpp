@@ -94,7 +94,7 @@
 // embedded here as raw Shift-JIS bytes from .rdata 0x52BCE4/0x52BD64/
 // 0x52BD80.
 //
-// Deviations (docs/ARCHITECTURE.md section 8):
+// Undefined-byte compatibility boundaries (see docs/X64_RECONSTRUCTION.md):
 //   * swprintf_s(buf, 0x100, L"%s") is called with NO vararg in the
 //     original (0x41DCC1/0x41DD7B - the CRT then reads a stack-garbage
 //     pointer).  We pass buf itself so the call stays a no-op on the
@@ -105,11 +105,7 @@
 //     declaration (see below), so our tails are deterministic zeros on the
 //     first conversion and previous-path residue afterwards - the
 //     original's own garbage values are unreproducible and not attempted.
-//   * Saving requires the model keyframe tracks (model+0x26BC/26C0/26C4/
-//     26D0/26E0/26E4/26E8/4CCE4 and the count fields) to be allocated by
-//     the model constructor; until that constructor is ported the counts
-//     are 0 and the sparse scan would dereference a null track exactly
-//     like the original would on such a model.
+//   * Saving requires the keyframe tracks allocated during model loading.
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -120,6 +116,7 @@
 #include <cstdlib>
 #include <io.h>
 
+#include "mikudancestudio/charset_conv.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
@@ -133,9 +130,6 @@
 #include "pmm_io_common.hpp"
 
 namespace mikudancestudio {
-
-// VA 0x00407910, defined in src/window/ui_dropfiles.cpp.
-void WideToSjisPath(char* dst, const wchar_t* src, std::size_t size);
 
 namespace {
 
@@ -385,7 +379,7 @@ void WritePmmFileHeader(int fd, MMDApp* s, HWND main, char* hdr) {
 
 
 // 2. per-model block (0x41B355..0x41C981)
-void WritePmmModelBlocks(int fd, unsigned char** const slots,
+void WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned char** const slots,
                          char* text) {
     // ---- 2. per-model block (0x41B355..0x41C981) ------------------------
     // Not a file-format cap: the x64 save twin sub_7FF7CB4950A0 writes the
@@ -411,7 +405,7 @@ void WritePmmModelBlocks(int fd, unsigned char** const slots,
             W(fd, mdl::Mdl(model)->nameEn, len);               // 0x41B432
         }
 
-        WideToSjisPath(text,                                  // 0x41B45D
+        WideToSjis(renderer, text,                                  // 0x41B45D
                        mdl::Mdl(model)->path, 0x100);
         W(fd, text, 0x100);                                    // 0x41B471
 
@@ -698,7 +692,7 @@ void WritePmmAccessoryShadowList(int fd, HWND main, char* text) {
 
 // 6. accessory block (0x41D310..0x41DB42)
 void WritePmmAccessoryBlocks(
-    int fd, mdl::AccessoryRecord** const accessories,
+    int fd, const D3DRenderer* renderer, mdl::AccessoryRecord** const accessories,
     mdl::AccessoryKey** const accTracks, char* text) {
     // ---- 6. accessory block (0x41D310..0x41DB42) ------------------------
     for (unsigned char slot = 0; slot != 0xFF; ++slot) {       // 0x41D351
@@ -710,7 +704,7 @@ void WritePmmAccessoryBlocks(
             accTracks[slot]);
 
         W(fd, accessory.name, sizeof accessory.name);          // 0x41D370
-        WideToSjisPath(text,                                   // 0x41D39B
+        WideToSjis(renderer, text,                                   // 0x41D39B
                        accessory.sourcePath, 0x100);
         W(fd, text, 0x100);                                    // 0x41D3AF
         W(fd, &accessory.order, 1);                             // 0x41D3CD
@@ -787,7 +781,7 @@ void WritePmmConfigBlock(int fd, MMDApp* s, HWND main, char* text) {
         const unsigned char b = s->state.waveEnabled != 0;
         W(fd, &b, 1);
     }
-    WideToSjisPath(text,                                       // 0x41DC85
+    WideToSjis(s->Renderer(), text,                                       // 0x41DC85
                    reinterpret_cast<const wchar_t*>(
                        &s->state.wavPath),
                    0x100);
@@ -799,7 +793,7 @@ void WritePmmConfigBlock(int fd, MMDApp* s, HWND main, char* text) {
     W(fd, &s->AviOffsetX(), 4);
     W(fd, &s->AviOffsetY(), 4);
     W(fd, &s->AviScale(), 4);
-    WideToSjisPath(text, s->AviBackgroundPath(), 0x100);        // 0x41DD32
+    WideToSjis(s->Renderer(), text, s->AviBackgroundPath(), 0x100);        // 0x41DD32
     W(fd, text, 0x100);                                        // 0x41DD46
     W(fd, &s->AviBackgroundEnabled(), 4);
     if (s->PictureBackgroundTexture() == nullptr) {             // 0x41DD7B
@@ -809,7 +803,7 @@ void WritePmmConfigBlock(int fd, MMDApp* s, HWND main, char* text) {
     W(fd, &s->PictureOffsetX(), 4);
     W(fd, &s->PictureOffsetY(), 4);
     W(fd, &s->PictureScale(), 4);
-    WideToSjisPath(text, s->PictureBackgroundPath(), 0x100);    // 0x41DDD6
+    WideToSjis(s->Renderer(), text, s->PictureBackgroundPath(), 0x100);    // 0x41DDD6
     W(fd, text, 0x100);                                        // 0x41DDEA
     {
         const unsigned char b = s->PictureBackgroundEnabled() != 0;
@@ -992,11 +986,11 @@ void SaveSceneFile(MMDApp* app) {
     }
 
     WritePmmFileHeader(fd, s, main, hdr);                   // 1. 0x41B1B3..0x41B355
-    WritePmmModelBlocks(fd, slots, text);                   // 2. 0x41B355..0x41C981
+    WritePmmModelBlocks(fd, s->Renderer(), slots, text);                   // 2. 0x41B355..0x41C981
     WritePmmCameraSection(fd, s);                           // 3. 0x41C9AE..0x41CF3E
     WritePmmLightSection(fd, s);                            // 4. 0x41CF51..0x41D28F
     WritePmmAccessoryShadowList(fd, main, text);            // 5. 0x41D2AF..0x41D310
-    WritePmmAccessoryBlocks(fd, accessories, accTracks, text);  // 6. 0x41D310..0x41DB42
+    WritePmmAccessoryBlocks(fd, s->Renderer(), accessories, accTracks, text);  // 6. 0x41D310..0x41DB42
     WritePmmConfigBlock(fd, s, main, text);                 // 7. 0x41DB42..0x41DF7C
     WritePmmSelectionSection(fd, s);                        // 8. 0x41DF7C..0x41E25E
     WritePmmShadowAndConfig2(fd, s, main, text);            // 9+10. 0x41E284..0x41E6E5

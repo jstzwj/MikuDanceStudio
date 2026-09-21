@@ -48,20 +48,12 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "pump_input.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 #include "frame_state_dump.hpp"
 
-// key_ladder.cpp (registered in CMakeLists next to frame_modes_bone.cpp):
-// main-pump letter hotkey consumption ladder (x86 0x46FF35..0x4739E2).
-// pump_navigation.cpp / pump_edit_keys.cpp: the non-letter pump segments
-// that surround the ladder in the original message pump.
 namespace mikudancestudio {
-
-void ConsumeLetterHotkeys(MMDApp* app);
-void ConsumeRightButtonDrag(MMDApp* app);   // pump_navigation.cpp (G10)
-void ConsumeMiddleButtonPan(MMDApp* app);   // pump_navigation.cpp (G11)
-void ConsumeEditKeys(MMDApp* app);          // pump_edit_keys.cpp
 
 namespace {
 
@@ -315,9 +307,8 @@ void TimelineAdvance(MMDApp* app) {
     else
         format = reinterpret_cast<std::intptr_t>(surf);           // 0x46031C
     auto& d3dxApi = d3dx::Get();
-    if (d3dxApi.Load() && d3dxApi.saveSurfaceToFileW != nullptr)
-        d3dxApi.saveSurfaceToFileW(path, static_cast<int>(format),
-                                   surf, nullptr, &rect);         // 0x46032D
+    d3dxApi.saveSurfaceToFileW(path, static_cast<int>(format),
+                               surf, nullptr, &rect);            // 0x46032D
     if (surf != nullptr) {
         surf->Release();                                          // 0x460340
         surf = nullptr;
@@ -409,16 +400,9 @@ void FrameDriver(MMDApp* app) {
 
     // ---- 1. mouse-delta snapshot reset ------------------------------------
     MouseInteractionBegin(app);                                  // per-frame
-    // 0x46FF02 poll done.  The original pump then walks, in this order:
-    // the right/middle-button camera drags (x86 0x470BF5..0x47133D), the
-    // non-letter edit-key chain whose panel focus sweep opens the ladder
-    // region (0x471342..0x473127), and the letter ladder itself
-    // (0x46FF35..0x4739E2) - the arrow-key and numpad blocks are
-    // interleaved inside the ladder at their binary positions.
-    mikudancestudio::ConsumeRightButtonDrag(app);  // pump_navigation.cpp
-    mikudancestudio::ConsumeMiddleButtonPan(app);  // pump_navigation.cpp
-    mikudancestudio::ConsumeEditKeys(app);         // pump_edit_keys.cpp
-    mikudancestudio::ConsumeLetterHotkeys(app);    // key_ladder.cpp
+    ConsumeRightButtonDrag(app);
+    ConsumeMiddleButtonPan(app);
+    ConsumeKeyboardInput(app);
 #ifdef MIKUDANCESTUDIO_DIAG
     TraceOperationInput(app, "before");
 #endif
@@ -631,33 +615,19 @@ void FrameDriver(MMDApp* app) {
                                      nullptr);
             }
             if (hr == D3DERR_DEVICELOST) {
-                // Original loop (x64 0x7FF7CB4570CD): while (TCL !=
-                // NOTRESET) { Sleep(1); pump ONLY in fullscreen; }.
-                // Port hardening (documented deviation, stuck-forever
-                // rescue only): (1) pump in windowed mode too - the
-                // original leaves the app visibly hung (AppHangB1 ghost)
-                // for as long as the wait lasts, and a pending WM_SIZE can
-                // itself be required for the driver to report NOTRESET;
-                // (2) break out when TestCooperativeLevel() == D3D_OK - a
-                // transient Present() DEVICELOST (RDP/DWM hiccup, driver
-                // TDR recovery) otherwise waits forever for a NOTRESET
-                // that never comes, freezing the viewport black with the
-                // message pump starved; retrying the next Present is the
-                // correct recovery when the device is not resettable-pending.
-                for (;;) {
-                    HRESULT cooperative = device->TestCooperativeLevel();
-                    if (cooperative == D3DERR_DEVICENOTRESET ||
-                        cooperative == D3D_OK)
-                        break;
+                // x64 0x4570B3..0x457139: only NOTRESET ends the wait;
+                // messages are dispatched during fullscreen recovery only.
+                while (s.Renderer()->device->TestCooperativeLevel() != D3DERR_DEVICENOTRESET) {
                     Sleep(1);
-                    MSG recovery;
-                    if (PeekMessageA(&recovery, nullptr, 0, 0, PM_REMOVE)) {
-                        TranslateMessage(&recovery);
-                        DispatchMessageA(&recovery);
+                    if (s.FullscreenMode() != 0) {
+                        MSG recovery;
+                        if (PeekMessageA(&recovery, nullptr, 0, 0, PM_REMOVE)) {
+                            TranslateMessage(&recovery);
+                            DispatchMessageA(&recovery);
+                        }
                     }
                 }
-                if (device->TestCooperativeLevel() != D3D_OK)
-                    PostDeviceReset(app);                          // 0x440DB0
+                PostDeviceReset(app);
             }
         }
     }

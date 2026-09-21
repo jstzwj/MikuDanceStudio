@@ -1,9 +1,9 @@
 #include "mikudancestudio/mmd_app.hpp"
+#include "../src/app/pump_input.hpp"
 #include <cstdio>
 #include <cstring>
 #include <memory>
 
-namespace mikudancestudio { void ConsumeLetterHotkeys(MMDApp*); }
 
 namespace {
 int commands = 0;
@@ -28,25 +28,36 @@ int main() {
     auto app = std::make_unique<mikudancestudio::MMDApp>();
     std::memset(&app->state, 0, sizeof(app->state));
     app->MainWindow() = window;
-    // Exercise actual dispatch, with stale viewport activation and a queued
-    // press. A hidden editor cannot own the foreground, even if its previous
-    // input snapshot still says it is active. No keyboard input is synthesized.
+    // Original x64 uses (focus == main || viewportActive), then the panel
+    // and model gates. It does not add an IsIconic/GetForegroundWindow guard.
+    // Inject snapshots without moving focus or synthesizing physical keys.
     for (int minimized = 0; minimized != 2; ++minimized) {
         if (minimized) ShowWindow(window, SW_SHOWMINNOACTIVE);
         if (GetForegroundWindow() == window || (minimized && !IsIconic(window)))
             return 1;
-        for (int slot : {4, 5, 8}) { // D: center dialog; A/S: bone selection
+        for (int slot : {4, 5, 8}) {
             std::memset(app->state.dialogFlags, 0, sizeof(app->state.dialogFlags));
-            app->ViewportInputActive() = 1;
             app->state.dialogFlags[slot] = 1;
-            mikudancestudio::ConsumeLetterHotkeys(app.get());
+            for (int focusMain = 0; focusMain != 2; ++focusMain) {
+                for (int active = 0; active != 2; ++active) {
+                    for (int panelEdit = 0; panelEdit != 2; ++panelEdit) {
+                        app->ViewportInputActive() = active;
+                        const mikudancestudio::KeyboardInputContext input{
+                            focusMain ? window : nullptr, panelEdit == 0};
+                        const int before = commands;
+                        mikudancestudio::ConsumeKeyboardInput(app.get(), input);
+                        const int expected = (focusMain || active) && !panelEdit;
+                        if (commands - before != expected) {
+                            std::fprintf(stderr, "Background key gate mismatch: slot=%d focus=%d active=%d edit=%d\n",
+                                         slot, focusMain, active, panelEdit);
+                            return 1;
+                        }
+                    }
+                }
+            }
         }
     }
     DestroyWindow(window);
     UnregisterClassW(cls.lpszClassName, cls.hInstance);
-    if (commands) {
-        std::fprintf(stderr, "Inactive/minimized editor dispatched %d commands\n", commands);
-        return 1;
-    }
     return 0;
 }

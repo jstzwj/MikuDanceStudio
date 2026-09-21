@@ -1,11 +1,14 @@
 # 移植与验证状态
 
-更新：2026-09-20。行为基准及维护规则见 [X64_RECONSTRUCTION.md](X64_RECONSTRUCTION.md)。当前项目仍处于**行为对照与结构恢复阶段**，没有完整等价证明，不使用“100%”“严格一比一已完成”或估算百分比描述状态。
+更新：2026-09-22。行为基准及维护规则见 [X64_RECONSTRUCTION.md](X64_RECONSTRUCTION.md)。当前项目仍处于**行为对照与结构恢复阶段**，没有完整等价证明，不使用“100%”“严格一比一已完成”或估算百分比描述状态。
 
 ## 当前证据入口
 
 | 记录 | 用途与边界 |
 |---|---|
+| [fix19_summary](../reports/fix19_summary.md) | audit18 已确认问题的修复、纠正的旧结论、当前验收与明确保留的边界 |
+| [fix19_input](../reports/fix19_input.md) / [core](../reports/fix19_core.md) / [MME](../reports/fix19_mme.md) | 第十九轮逐项实现与原版 IDA 证据；MME 仍为宿主内建 |
+| [audit18_summary](../reports/audit18_summary.md) | 第十九轮修复前的审计快照，不能作为当前未修列表 |
 | [audit10_summary](../reports/audit10_summary.md) | 修复前工作树的全局审计结论、参考哈希、覆盖范围 |
 | [audit10_inventory](../reports/audit10_inventory.json) | 当时文件/行数/哈希清单；不是逐行正确性证明 |
 | [audit10_core](../reports/audit10_core.md) | 模型/IO/物理/数学缺陷及逐文件检查等级 |
@@ -31,9 +34,7 @@
 
 ## globals init
 
-`src/app/globals.cpp` 仍将 `g_QuatScaleFactor` 直接初始化为2.0、`g_FrameScale` 初始化为30.0。对应头文件记录的原始初始化位置尚未形成完整、可重跑的证据链。当前值可能支持常规行为，但不能仅凭“常用默认值”宣称原版启动初始化逐指令恢复完成。
-
-需要定位实际写入者、读取者和初始化时序；若原版在不同启动/播放路径重设这些值，增加覆盖相应入口的测试。旧x86 VA注释不能单独充当x64证据。
+第十九轮已读取原 x64 的 `.rdata` 和读取指令：`g_QuatScaleFactor=2.0f` 对应 RVA `0x132B08`，`g_FrameScale=30.0f` 对应 RVA `0x132A64`。它们是已证实的常量，不是尚待猜测的启动赋值；当前声明已改为 const。原始证据与独立 quaternion helper 的算序恢复见 [fix19_core](../reports/fix19_core.md)。
 
 ## UI及历史阶段注释
 

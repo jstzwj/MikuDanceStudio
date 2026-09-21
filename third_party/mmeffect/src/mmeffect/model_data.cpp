@@ -52,9 +52,9 @@ ModelData::ModelData(IDirect3DDevice9* device,
     , cachedPerVertexValue_(-1)          // [180058c70 L77] +0x3c = -1
     , drawTypeIndex_(-1)                 // [L76] +0xe8 = -1
     , runState_(nullptr)                 // [L363] +0x358 = 0
-    , unknownFlag360_(0)
+    , scriptClass_(0)
     , renderClass_(0)                    // +0x364
-    , flag368_(1)                        // [L79] +0x368 = 1
+    , drawsGeometry_(1)                        // [L79] +0x368 = 1
     , shown_(true)                       // Phase 2: visible until an EMM row hides it
     , attached_(false)                   // Phase 2: GetAcsAttachedPmd resolution
     , attachedModelId_(0)
@@ -110,9 +110,9 @@ void ModelData::ClearSasBinding()
         SasDestroyRunState(runState_);
         runState_ = nullptr;
     }
-    unknownFlag360_ = 0;
+    scriptClass_ = 0;
     renderClass_ = 0;
-    flag368_ = 1;
+    drawsGeometry_ = 1;
 }
 
 void ModelData::BuildName()

@@ -62,7 +62,7 @@ IDirect3DDevice9* DeviceOf(MMDApp* app) {
 bool InitToonTextures(MMDApp* app) {
     auto& s = *app;
     IDirect3DDevice9* device = DeviceOf(app);
-    if (device == nullptr || !g_d3dx.Load())
+    if (device == nullptr)
         return false;   // original would fail on the resource-path call chain
 
     SetCurrentDirectoryW(app->ExeDir());                          // 657102

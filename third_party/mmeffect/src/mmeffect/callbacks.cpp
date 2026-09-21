@@ -176,11 +176,11 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
                 return;
             }
             // [L93-97] apply gate: draw types 1/2 always; others only when
-            // the model is a normal object (unknownFlag360 != 1 && class 0).
+            // the model is a normal object (scriptClass != 1 && class 0).
             if (drawType == 1 || drawType == 2 ||
-                (model->unknownFlag360() != 1 && model->renderClass() == 0)) {
+                (model->scriptClass() != 1 && model->renderClass() == 0)) {
                 if (ctx->lastDrawnModel == nullptr || ctx->lastDrawnModel != model ||
-                    (model->unknownFlag360() != 1 && model->renderClass() == 0)) {
+                    (model->scriptClass() != 1 && model->renderClass() == 0)) {
                     ctx->lastDrawnModel = model;                    // [L98]
                     if (ctx->bindingReadyFlag == 0) {               // [L99-105]
                         ctx->bindingReadyFlag = (drawType != 5) ? 1 : 0;

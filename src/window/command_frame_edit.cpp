@@ -3076,7 +3076,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id,
                 static_cast<double>(app->CameraFov()) *
                 0.0174532925199433);  // dbl_52BB20 (pi/180)
             const float aspect = locale->aspectRatio;  // 0x1D4EC
-            if (d3dx->Load()) {
+            {
                 d3dx->perspectiveFovLH(&mat, fov, aspect, 1.0f, 100000.0f);
             }
             IDirect3DDevice9* device = locale->device;

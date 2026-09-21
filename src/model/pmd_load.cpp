@@ -190,7 +190,6 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
 
     IDirect3DDevice9* dev = DevOf(sub);
     auto* d3dx = &d3dx::Get();
-    const bool haveD3dx = d3dx->Load();
 
     // ---- vertices ---------------------------------------------------------
     _read(fh, &model.vertexCount, sizeof(model.vertexCount));
@@ -646,7 +645,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                     matched = 1;
             }
             if (!matched) {
-                ConvertAnsiToWide(reinterpret_cast<unsigned char*>(sub),
+                ConvertAnsiToWide(sub,
                                   toon[i], wide1, 0x100);
                 swprintf_s(wide2, 0x180, L"%s%s",
                            model.modelDirectory,
@@ -699,7 +698,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             rigid.kinematicFlag = rigid.mode == 2 ? 1 : 0;
             rigid.staticFlag = rigid.mode == 0 ? 1 : 0;
 
-            if (haveD3dx) {
+            {
                 using d3dx::D3DXMATRIXF;
                 D3DXMATRIXF mat, tmp;
                 d3dx->rotZ(&mat, rigid.rotation[2]);
@@ -783,7 +782,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             _read(fh, &joint.limits[9], 3 * sizeof(float));
             _read(fh, &joint.limits[6], 3 * sizeof(float));
             _read(fh, joint.springs, sizeof(joint.springs));
-            if (haveD3dx) {
+            {
                 using d3dx::D3DXMATRIXF;
                 mdl::RigidRecord* rigids2 = mdl::Rigids(m);
                 const std::int32_t a = joint.rigidA;

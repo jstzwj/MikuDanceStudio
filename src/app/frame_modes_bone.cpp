@@ -101,29 +101,11 @@ const char kNameL2[] = "\x8D\xB6\x82\xD0\x82\xB6";          // 0x52B814 (7)
 const char kNameL3[] = "\x8D\xB6\x98\x72";                  // 0x52B81C (5)
 
 float* Vec3Normalize(float v[3]) {
-    auto& d = d3dx::Get();
-    if (d.Load())
-        return d.vec3Normalize(v, v);
-    const float len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    if (len != 0.0f) {
-        v[0] /= len;
-        v[1] /= len;
-        v[2] /= len;
-    }
-    return v;
+    return d3dx::Get().vec3Normalize(v, v);
 }
 
 void QuatMultiply(float out[4], const float a[4], const float b[4]) {
-    auto& d = d3dx::Get();
-    if (d.Load()) {
-        d.quatMultiply(out, a, b);
-        return;
-    }
-    // D3DXQuaternionMultiply: out = b (x) a, layout x,y,z,w
-    out[0] = b[3] * a[0] + b[0] * a[3] + b[1] * a[2] - b[2] * a[1];
-    out[1] = b[3] * a[1] - b[0] * a[2] + b[1] * a[3] + b[2] * a[0];
-    out[2] = b[3] * a[2] + b[0] * a[1] - b[1] * a[0] + b[2] * a[3];
-    out[3] = b[3] * a[3] - b[0] * a[0] - b[1] * a[1] - b[2] * a[2];
+    d3dx::Get().quatMultiply(out, a, b);
 }
 
 unsigned char* CurrentModel(MMDApp* app) {

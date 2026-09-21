@@ -171,30 +171,6 @@ void InitializePmxEdgeVertices(const mdl::PmxVertex* source,
     }
 }
 
-// VA 0x00407910 - wide -> Shift-JIS.  The original falls back through
-// four locale objects kept in the render sub-object; the port uses the
-// plain CRT fallback (docs/ARCHITECTURE.md §8 - only reached when CP932
-// conversion fails).
-void WideToSjis(char* dst, const wchar_t* src, rsize_t size) {
-    dst[0] = '\0';
-    if (src == nullptr || src[0] == L'\0')
-        return;
-    const int need = WideCharToMultiByte(932, 0, src, -1, nullptr, 0,
-                                         nullptr, nullptr);
-    char* tmp = static_cast<char*>(operator new(need));
-    BOOL usedDefault = FALSE;
-    const int n = WideCharToMultiByte(932, 0, src, -1, tmp, need, nullptr,
-                                      &usedDefault);
-    if (n == 0 || usedDefault) {
-        size_t dummy = 0;
-        if (wcstombs_s(&dummy, dst, size, src, _TRUNCATE) != 0)
-            dst[0] = '\0';
-    } else {
-        strncpy_s(dst, size, tmp, _TRUNCATE);
-    }
-    operator delete(tmp);
-}
-
 // Size-prefixed UTF16 buffer (common shape).  Empty -> "Null_%02d".
 wchar_t* ReadTextBuf(int fh, int& nullIdx) {
     std::uint32_t len = 0;
@@ -258,7 +234,6 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
     int nullIdx = 0;
 
     auto& d = d3dx::Get();
-    const bool haveD3dx = d.Load();
 
     // ---- header -----------------------------------------------------------
     _read(fh, text, 1);                                     // 0x4B7806
@@ -327,7 +302,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             else
                 swprintf_s(buf, 0x14, L"Null_%02d", nullIdx++);
         }
-        WideToSjis(sjisMirrors[i], buf, kSjisSizes[i]);
+        WideToSjis(sub, sjisMirrors[i], buf, kSjisSizes[i]);
     }
     if (showInfo) {                                         // 0x4B7A56
         const int r = MessageBoxW(
@@ -769,7 +744,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         for (std::int32_t i = 0; i < boneCount; ++i) {
             mikudancestudio::mdl::BoneRecord* bone = &bones[i];
             bone->jpText = ReadTextBuf(fh, nullIdx); // JP name
-            WideToSjis(reinterpret_cast<char*>(bone),
+            WideToSjis(sub, reinterpret_cast<char*>(bone),
                        reinterpret_cast<const wchar_t*>(
                            bone->jpText), 0x14);
             // center bone detection (SJIS memcmp, 9 bytes with NUL; x64
@@ -783,7 +758,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 model.centerBone = i;
             }
             bone->enText = ReadTextBuf(fh, nullIdx); // EN name
-            WideToSjis(reinterpret_cast<char*>(bone->nameEn),
+            WideToSjis(sub, reinterpret_cast<char*>(bone->nameEn),
                        reinterpret_cast<const wchar_t*>(
                            bone->enText), 0x14);
             _read(fh, bone->position, 4);                       // position
@@ -817,8 +792,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 _read(fh, &bone->axis[2], 4);
                 float axis[3] = {bone->axis[0], bone->axis[1],
                                  bone->axis[2]};
-                if (haveD3dx)
-                    d.vec3Normalize(axis, axis);
+                d.vec3Normalize(axis, axis);
                 bone->axis[0] = axis[0];
                 bone->axis[1] = axis[1];
                 bone->axis[2] = axis[2];
@@ -989,10 +963,10 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             TracePmxOffset(fh, "morph-record-begin", i, 0);
             mdl::MorphRecord& morph = mdl::Morphs(m)[i];
             morph.jpText = ReadTextBuf(fh, nullIdx);
-            WideToSjis(morph.name, morph.jpText,
+            WideToSjis(sub, morph.name, morph.jpText,
                        0x14);
             morph.enText = ReadTextBuf(fh, nullIdx);
-            WideToSjis(morph.nameEn, morph.enText,
+            WideToSjis(sub, morph.nameEn, morph.enText,
                        0x14);
             _read(fh, &morph.panel, 1);
             _read(fh, &morph.type, 1);
@@ -1493,9 +1467,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         }
         for (int g = start; g < groups; ++g) {
             const int frameIndex = model.facialFrameCount ? g - 1 : g;
-            WideToSjis(displayGroups[g].name, frames[frameIndex].name,
+            WideToSjis(sub, displayGroups[g].name, frames[frameIndex].name,
                        sizeof(displayGroups[g].name));
-            WideToSjis(displayGroups[g].nameEn, frames[frameIndex].nameEn,
+            WideToSjis(sub, displayGroups[g].nameEn, frames[frameIndex].nameEn,
                        sizeof(displayGroups[g].nameEn));
         }
     }
@@ -1562,7 +1536,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             TracePmxOffset(fh, "rigid-record-begin", i, rcount);
             mdl::RigidRecord& rb = model.rigidTable[i];
             rb.jpText = ReadTextBuf(fh, nullIdx);
-            WideToSjis(rb.name, rb.jpText, 0x14);
+            WideToSjis(sub, rb.name, rb.jpText, 0x14);
             rb.enText = ReadTextBuf(fh, nullIdx);
             rb.boneIndex = readBoneIdx();
             _read(fh, &rb.group, 1);
@@ -1590,7 +1564,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             rb.position[0] -= bp[0];
             rb.position[1] -= bp[1];
             rb.position[2] -= bp[2];
-            if (haveD3dx) {
+            {
                 D3DXMATRIXF mat, tmp;
                 d.rotZ(&mat, rb.rotation[2]);
                 d.rotX(&tmp, rb.rotation[0]);
@@ -1650,7 +1624,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 TracePmxOffset(fh, "joint-record-begin", i, jcount);
                 mdl::JointRecord& jt = model.jointTable[i];
                 jt.jpText = ReadTextBuf(fh, nullIdx);
-                WideToSjis(jt.name, jt.jpText, 0x14);
+                WideToSjis(sub, jt.name, jt.jpText, 0x14);
                 jt.enText = ReadTextBuf(fh, nullIdx);
                 std::uint8_t jointType = 0;
                 _read(fh, &jointType, 1);                    // ignored by v9.32
@@ -1664,7 +1638,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 _read(fh, &jt.limits[9], 3 * sizeof(float));
                 _read(fh, &jt.limits[6], 3 * sizeof(float));
                 _read(fh, jt.springs, sizeof(jt.springs));
-                if (haveD3dx) {
+                {
                     using d3dx::D3DXMATRIXF;
                     const std::int32_t a = jt.rigidA;
                     const std::int32_t b = jt.rigidB;

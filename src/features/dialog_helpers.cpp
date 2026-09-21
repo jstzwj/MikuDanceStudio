@@ -46,17 +46,12 @@
 #include <share.h>
 #include <sys/stat.h>
 
+#include "mikudancestudio/charset_conv.hpp"
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 
 namespace mikudancestudio {
-
-// Wide -> Shift-JIS conversion, VA 0x00407910; real body in
-// src/window/ui_dropfiles.cpp (declared locally, same as pmm_save.cpp:126).
-// The original takes the locale table as an extra first argument; the port
-// resolves it internally, so SavePmdFile drops that argument at the call.
-void WideToSjisPath(char* dst, const wchar_t* src, std::size_t size);
 
 // VA 0x004A6520 - InitStandardSkeletonQuats: standard-pose
 // quaternion derivation from the leg/arm bone
@@ -215,10 +210,10 @@ void ModelVertexHistoryPush(unsigned char* model, int samples) {
 // model+0 is the owner HWND for the error box.  The original writes the file
 // through _sopen_s/_write/_close exactly in PMD 1.0 field order.  The locale
 // table argument is only forwarded to the wide->SJIS converter (0x407910);
-// the ported WideToSjisPath resolves it internally.  Sole caller: 0x41EC10
+// Sole caller: 0x41EC10
 // (the "save model file" command).
 // ---------------------------------------------------------------------------
-int SavePmdFile(unsigned char* model, char* path, void* /*localeTable*/) {
+int SavePmdFile(unsigned char* model, char* path, void* localeTable) {
     mdl::ModelRecord& state = *mdl::Mdl(model);
     int fh = -1;
     const errno_t openErr = _sopen_s(&fh, path, 33537 /*_O_BINARY|_O_WRONLY|
@@ -306,12 +301,12 @@ int SavePmdFile(unsigned char* model, char* path, void* /*localeTable*/) {
             wcscpy_s(wide, 0x14u, mat.texturePath + skip);
             wcscat_s(wide, 0x14u, L"*");
             wcscat_s(wide, 0x14u, mat.spherePath + skip);
-            WideToSjisPath(sjis, wide, 0x100);
+            WideToSjis(static_cast<D3DRenderer*>(localeTable), sjis, wide, 0x100);
         } else {
             const wchar_t* name = mat.texturePath;
             if (name[0] != 0)
                 name += skip;
-            WideToSjisPath(sjis, name, 0x100);
+            WideToSjis(static_cast<D3DRenderer*>(localeTable), sjis, name, 0x100);
         }
         _write(fh, sjis, 0x14);
     }

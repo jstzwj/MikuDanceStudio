@@ -103,11 +103,9 @@ void DumpEffectFailure(HRESULT result, int resourceId, void* errors) {
     std::fprintf(stream, "resource=%d HRESULT=0x%08X\r\n", resourceId,
                  static_cast<unsigned>(result));
     if (errors != nullptr) {
-        using GetPointer = void*(__stdcall*)(void*);
-        using GetSize = DWORD(__stdcall*)(void*);
-        void** vtable = *reinterpret_cast<void***>(errors);
-        const void* bytes = reinterpret_cast<GetPointer>(vtable[3])(errors);
-        const DWORD size = reinterpret_cast<GetSize>(vtable[4])(errors);
+        auto* buffer = static_cast<ID3DXBuffer*>(errors);
+        const void* bytes = buffer->GetBufferPointer();
+        const DWORD size = buffer->GetBufferSize();
         if (bytes != nullptr && size != 0)
             std::fwrite(bytes, 1, size, stream);
     }

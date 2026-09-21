@@ -402,7 +402,7 @@ void ApplyBoneAttach(MMDApp* app, HWND hDlg) {  // VA 0x0043D610
     mdl::BoneRecord& bone = bones[rec->boneIndex];
 
     auto* d3dx = &d3dx::Get();
-    if (d3dx->Load()) {                                              // D3DX imports
+    {                                              // D3DX imports
         d3dx::D3DXMATRIXF X = {};                                    // var_90 matrix
         d3dx::D3DXMATRIXF T = {};                                    // var_40 matrix
         if (attach == 0) {
@@ -522,8 +522,6 @@ void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg) {  // VA 0x004250C0
     mikudancestudio::mdl::BoneRecord* bone = &bones[rec->boneIndex];
 
     auto& api = d3dx::Get();
-    if (!api.Load())                                             // d3dx absent
-        return;
     d3dx::D3DXMATRIXF m{}, t{}, t2{};
     if (kind == 1) {                                             // 0x42521A
         std::memcpy(&m, bone->matInit, sizeof m);

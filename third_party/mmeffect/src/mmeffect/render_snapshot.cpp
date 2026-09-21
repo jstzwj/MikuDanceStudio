@@ -213,7 +213,7 @@ void MmeUpdateModelRenderSnapshot(ModelData* model, RenderSnapshot* snap)
     if ((model->renderClass() == 1 || model->renderClass() == 2) &&
         model->snapshot().subset_index < 0) {
         MmeContext* ctx = MmeGetContext();
-        memcpy(&model->snapshot(), snap, 0x220);                       // [L38]
+        model->snapshot() = *snap;                       // [L38]
         void* bindingContext = MmeAcquireBindingContext(ctx);          // [L39 FUN_180055690]
         model->snapshot().binding_context = bindingContext;            // [L40]
         // [L41] the original Captures the state block via vtable slot 0x20

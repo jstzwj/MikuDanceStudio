@@ -123,9 +123,8 @@ void ApplyProjection(MMDApp* app) {
     d3dx::D3DXMATRIXF matrix{};
     const float fov = static_cast<float>(
         static_cast<double>(app->CameraFov()) * kPiOver180);
-    if (api.Load())
-        api.perspectiveFovLH(&matrix, fov, wrapper->aspectRatio,
-                             1.0f, 100000.0f);
+    api.perspectiveFovLH(&matrix, fov, wrapper->aspectRatio,
+                         1.0f, 100000.0f);
     IDirect3DDevice9* device = wrapper->device;  // +120032
     device->SetTransform(D3DTS_PROJECTION,
                          reinterpret_cast<const D3DMATRIX*>(&matrix));

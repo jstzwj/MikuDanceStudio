@@ -339,7 +339,7 @@ IDirect3DTexture9* ToonTexture(MMDApp* app, D3DRenderer* sub,
         // converted (SJIS -> wide) toon file name.
         wchar_t converted[256] = {};
         wchar_t path[256] = {};
-        ConvertAnsiToWide(sub, mdl::PmdToonFileNames(model)[index],
+        ConvertAnsiToWide(reinterpret_cast<D3DRenderer*>(sub), mdl::PmdToonFileNames(model)[index],
                           converted, 0x100);
         swprintf_s(path, 0x100, L"%s%s",
                    mdl::Mdl(model)->modelDirectory, converted);
@@ -802,7 +802,7 @@ void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub,
             } else if (toonIndex >= 0 && toonIndex < 10) {
                 wchar_t converted[256] = {};
                 wchar_t path[256] = {};
-                ConvertAnsiToWide(sub, mdl::PmdToonFileNames(model)[toonIndex],
+                ConvertAnsiToWide(reinterpret_cast<D3DRenderer*>(sub), mdl::PmdToonFileNames(model)[toonIndex],
                                   converted, 0x100);
                 swprintf_s(path, 0x100, L"%s%s",
                     mdl::Mdl(model)->modelDirectory,
@@ -1634,7 +1634,7 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     auto* device = sub->device;
     void* effect = sub->effect;
     auto& api = d3dx::Get();
-    if (device == nullptr || effect == nullptr || !api.Load())
+    if (device == nullptr || effect == nullptr)
         return;
 
     auto*& texture = sub->hdrTexture;

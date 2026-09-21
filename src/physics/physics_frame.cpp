@@ -42,7 +42,7 @@
 // behaves this way (verified against the repo's bullet-2.75 source), so
 // 0x4B22F0 only has to write the motion state.
 //
-// Port scope / deviations (docs/ARCHITECTURE.md section 8):
+// Physics scheduling and reset behavior:
 //   - 0x4970B0 (morph application) is ported as ModelApplyMorphs and is
 //     called in both ordered per-model passes, matching 0x46FCB1/0x46FE93.
 //   - The block 1/2 catch-up loops (frame-step 0x46F12C / playing 0x46F3D6,
@@ -104,152 +104,8 @@ using d3dx::D3DXMATRIXF;
 
 namespace {
 
-// ---- D3DX-equivalent 4x4 helpers (exact same formulas, row-major) --------
-// The follow-matrix chain (0x4B22F0/0x4B3460) calls the REAL d3dx9_32.dll:
-// D3DXMatrixMultiply is pure x87 there (every element = four extended
-// products summed on the FPU stack, one rounding at the store) and the
-// rotation builders use fsin/fcos.  MSVC SSE float chains drift by ULPs,
-// which moves every kinematic hair target, so route these through the
-// runtime-resolved DLL exactly like bone_transform.cpp does; the plain
-// float versions remain only as a no-DLL fallback.
+// Use the imported D3DX math functions for the bone-follow chain.
 namespace {
-// ---- D3DX-equivalent 4x4 helpers (exact same formulas, row-major) --------
-// D3DXMatrixMultiply(out, a, b): out = a * b.
-void MatMul(float* out, const float* a, const float* b) {
-    float r[16];
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j)
-            r[i * 4 + j] = a[i * 4 + 0] * b[0 * 4 + j] +
-                           a[i * 4 + 1] * b[1 * 4 + j] +
-                           a[i * 4 + 2] * b[2 * 4 + j] +
-                           a[i * 4 + 3] * b[3 * 4 + j];
-    std::memcpy(out, r, sizeof r);
-}
-
-void MatTranslation(float* out, float x, float y, float z) {
-    std::memset(out, 0, 16 * sizeof(float));
-    out[0] = out[5] = out[10] = out[15] = 1.0f;
-    out[12] = x; out[13] = y; out[14] = z;
-}
-
-void MatRotX(float* out, float a) {
-    const float c = std::cos(a), s = std::sin(a);
-    std::memset(out, 0, 16 * sizeof(float));
-    out[0] = 1.0f; out[5] = c; out[6] = s; out[9] = -s; out[10] = c;
-    out[15] = 1.0f;
-}
-
-void MatRotY(float* out, float a) {
-    const float c = std::cos(a), s = std::sin(a);
-    std::memset(out, 0, 16 * sizeof(float));
-    out[0] = c; out[2] = -s; out[5] = 1.0f; out[8] = s; out[10] = c;
-    out[15] = 1.0f;
-}
-
-void MatRotZ(float* out, float a) {
-    const float c = std::cos(a), s = std::sin(a);
-    std::memset(out, 0, 16 * sizeof(float));
-    out[0] = c; out[1] = s; out[4] = -s; out[5] = c; out[10] = 1.0f;
-    out[15] = 1.0f;
-}
-
-// D3DXQuaternionRotationMatrix (largest-diagonal form).
-void QuatFromMatrix(float out[4], const float* m) {
-    const float trace = m[0] + m[5] + m[10];
-    if (trace > 0.0f) {
-        float s = std::sqrt(trace + 1.0f);
-        out[3] = s * 0.5f;
-        s = 0.5f / s;
-        out[0] = (m[6] - m[9]) * s;
-        out[1] = (m[8] - m[2]) * s;
-        out[2] = (m[1] - m[4]) * s;
-        return;
-    }
-    int i = 0;
-    if (m[5] > m[0]) i = 1;
-    if (m[10] > m[4 * i + i]) i = 2;
-    static const int kNext[3] = {1, 2, 0};
-    const int j = kNext[i];
-    const int k = kNext[j];
-    float s = std::sqrt(m[4 * i + i] - m[4 * j + j] - m[4 * k + k] + 1.0f);
-    float q[4];
-    q[i] = 0.5f * s;
-    s = 0.5f / s;
-    q[3] = (m[4 * k + j] - m[4 * j + k]) * s;
-    q[j] = (m[4 * j + i] + m[4 * i + j]) * s;
-    q[k] = (m[4 * k + i] + m[4 * i + k]) * s;
-    std::memcpy(out, q, sizeof q);
-}
-
-// D3DXQuaternionMultiply(out, a, b): out = a * b (x,y,z,w).
-void QuatMul(float out[4], const float a[4], const float b[4]) {
-    out[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
-    out[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
-    out[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
-    out[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
-}
-
-// D3DXMatrixInverse (cofactor form; returns false on singular matrix).
-bool MatInverse(float* out, const float* m) {
-    float dst[16];
-    dst[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] -
-             m[9] * m[6] * m[15] + m[9] * m[7] * m[14] +
-             m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
-    dst[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] +
-             m[8] * m[6] * m[15] - m[8] * m[7] * m[14] -
-             m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
-    dst[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] -
-             m[8] * m[5] * m[15] + m[8] * m[7] * m[13] +
-             m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
-    dst[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] +
-              m[8] * m[5] * m[14] - m[8] * m[6] * m[13] -
-              m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
-    dst[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] +
-             m[9] * m[2] * m[15] - m[9] * m[3] * m[14] -
-             m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
-    dst[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] -
-             m[8] * m[2] * m[15] + m[8] * m[3] * m[14] +
-             m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
-    dst[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] +
-             m[8] * m[1] * m[15] - m[8] * m[3] * m[13] -
-             m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
-    dst[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] -
-              m[8] * m[1] * m[14] + m[8] * m[2] * m[13] +
-              m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
-    dst[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] -
-             m[5] * m[2] * m[15] + m[5] * m[3] * m[14] +
-             m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
-    dst[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] +
-             m[4] * m[2] * m[15] - m[4] * m[3] * m[14] -
-             m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
-    dst[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] -
-              m[4] * m[1] * m[15] + m[4] * m[3] * m[13] +
-              m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
-    dst[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] +
-              m[4] * m[1] * m[14] - m[4] * m[2] * m[13] -
-              m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
-    dst[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] +
-             m[5] * m[2] * m[11] - m[5] * m[3] * m[10] -
-             m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
-    dst[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] -
-             m[4] * m[2] * m[11] + m[4] * m[3] * m[10] +
-             m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
-    dst[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] +
-              m[4] * m[1] * m[11] - m[4] * m[3] * m[9] -
-              m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
-    dst[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] -
-              m[4] * m[1] * m[10] + m[4] * m[2] * m[9] +
-              m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
-    const float det = m[0] * dst[0] + m[4] * dst[1] + m[8] * dst[2] +
-                      m[12] * dst[3];
-    if (std::fabs(det) < 1e-12f)
-        return false;
-    const float inv = 1.0f / det;
-    for (int i = 0; i < 16; ++i)
-        out[i] = dst[i] * inv;
-    return true;
-}
-
 // sub_0x401400 - transpose the body's raw transform into a D3DX matrix.
 // The btTransform basis stores rows; the D3DX matrix gets the transpose,
 // origin copied verbatim (matches 0x401400 byte for byte).
@@ -281,75 +137,31 @@ inline float& F32R(unsigned char* p, std::size_t off) {
 }
 
 D3DXMATRIXF* D3dxRotX(D3DXMATRIXF* o, float a) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->rotX) return api->rotX(o, a);
-    MatRotX(reinterpret_cast<float*>(o), a);
-    return o;
+    return d3dx::Get().rotX(o, a);
 }
 D3DXMATRIXF* D3dxRotY(D3DXMATRIXF* o, float a) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->rotY) return api->rotY(o, a);
-    MatRotY(reinterpret_cast<float*>(o), a);
-    return o;
+    return d3dx::Get().rotY(o, a);
 }
 D3DXMATRIXF* D3dxRotZ(D3DXMATRIXF* o, float a) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->rotZ) return api->rotZ(o, a);
-    MatRotZ(reinterpret_cast<float*>(o), a);
-    return o;
+    return d3dx::Get().rotZ(o, a);
 }
 D3DXMATRIXF* D3dxMul(D3DXMATRIXF* o, const D3DXMATRIXF* a, const D3DXMATRIXF* b) {
-    auto* api = &d3dx::Get();
-    if (api->Load())
-        return api->multiply(o, a, b);
-    MatMul(reinterpret_cast<float*>(o), reinterpret_cast<const float*>(a),
-           reinterpret_cast<const float*>(b));
-    return o;
+    return d3dx::Get().multiply(o, a, b);
 }
 float* D3dxVec3Normalize(float o[3], const float* src) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->vec3Normalize)
-        return api->vec3Normalize(o, src);
-    float x = src[0], y = src[1], z = src[2];
-    float len = std::sqrt(x * x + y * y + z * z);
-    if (len > 0.0f) {
-        o[0] = x / len;
-        o[1] = y / len;
-        o[2] = z / len;
-    } else {
-        o[0] = x;
-        o[1] = y;
-        o[2] = z;
-    }
-    return o;
+    return d3dx::Get().vec3Normalize(o, src);
 }
 D3DXMATRIXF* D3dxTranslation(D3DXMATRIXF* o, float x, float y, float z) {
-    auto* api = &d3dx::Get();
-    if (api->Load())
-        return api->translation(o, x, y, z);
-    MatTranslation(reinterpret_cast<float*>(o), x, y, z);
-    return o;
+    return d3dx::Get().translation(o, x, y, z);
 }
 D3DXMATRIXF* D3dxInverse(D3DXMATRIXF* o, const D3DXMATRIXF* m) {
-    auto* api = &d3dx::Get();
-    if (api->Load())
-        return api->inverse(o, nullptr, m);
-    return MatInverse(reinterpret_cast<float*>(o),
-                      reinterpret_cast<const float*>(m)) ? o : nullptr;
+    return d3dx::Get().inverse(o, nullptr, m);
 }
 float* D3dxQuatFromMatrix(float out[4], const D3DXMATRIXF* m) {
-    auto* api = &d3dx::Get();
-    if (api->Load())
-        return api->quatFromMatrix(out, m);
-    QuatFromMatrix(out, reinterpret_cast<const float*>(m));
-    return out;
+    return d3dx::Get().quatFromMatrix(out, m);
 }
 float* D3dxQuatMul(float out[4], const float a[4], const float b[4]) {
-    auto* api = &d3dx::Get();
-    if (api->Load())
-        return api->quatMultiply(out, a, b);
-    QuatMul(out, a, b);
-    return out;
+    return d3dx::Get().quatMultiply(out, a, b);
 }
 }  // namespace
 

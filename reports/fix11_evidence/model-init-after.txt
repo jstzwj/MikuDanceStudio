@@ -1,6 +1,0 @@
-PASS: failed-load cleanup receives null animation cursors
-PASS: all 17 standard-pose quaternions are identity
-PASS: all 690 tracking history samples carry the missing-joint sentinel
-PASS: all 23 current joints carry the missing-joint sentinel
-PASS: tracking initialization does not overwrite toon filenames
-PASS: a valid PMX header does not create a pose-trace allocation

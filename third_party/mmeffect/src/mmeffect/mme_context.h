@@ -47,59 +47,40 @@ struct MmeTargetSet {
     D3DVIEWPORT9       viewport = {};
 };
 
-// [sub_18002CA80 + sub_18002BAA0, re-verified 2026-09-15] ONE
-// renderPassList entry = ONE OFFSCREENRENDERTARGET resource of ONE carrier -
-// the original's 0x48-byte queue wrapper. The turn ids come from the
-// binding-record walk over the +0x1B8 vector (binding+0x1B8/+0x1C0, filled
-// ONLY by the SAS parameter parser sub_180011960 for semanticId == 0x2E at
-// 0x180014080-0x180014093 via sub_18001F3E0 = push_back, in parameter
-// declaration order - NOT a per-technique vector): each entry's resource
-// name (+0x28 string) is looked up in the manager-wide map<string,int> at
-// sub_180032FB0(mgr+0x30)+56, allocating a fresh id (sub_18002D820) on a
-// miss, so the SAME resource name across effects/carriers shares ONE turn
-// id (and one wrapper in the mgr+0xB8 map<int,wrapper*>). The collected ids
-// are pushed per binding in walk order into mgr+0xF8 (and mgr+0x118 behind
-// the disp gate `if (v142)` 0x18002d605); sub_18002BAA0's tail loop
-// materializes mgr+0x158 = the pass order through the mgr+0xB8 id map
-// (node+32 = the wrapper: +0 the 0x2E resource's own 0x98 record, +48 the
-// carrier, +56 the id, +0x40/+0x44 the resource surface's width/height
-// queried at queue-build time 0x18002d426-0x18002d443). A technique count
-// plays NO role in the turn count: ray.fx's single technique with N
-// OFFSCREENRENDERTARGET parameters queues N turns; an effect with no 0x2E
-// resource queues none (repeat stays at the base turn only). The port
-// carries the wrapper's identity as the carrier plus the 0x2E SasResource
-// (the 0x98 record's port equivalent); the turn's technique is NOT carried
-// - the scene drivers resolve it through the (turn id, carrier) binding
-// record's own first technique (see MmeSceneWalkTechIndex).
+// A render turn belongs to an assignment's OFFSCREENRENDERTARGET resource.
+// Its stable ID is scoped by (parent turn, object, subset, resource name).
+// Techniques are selected from the binding in the active turn at draw time.
 struct MmeRenderPassItem {
     ModelData*   carrier;
+    unsigned int turnId = 0;
+    MaterialBinding* assignment = nullptr;
     SasResource* offscreen;   // the 0x2E resource this turn renders into
                               // (wrapper+0; null never occurs - a queue item
                               // exists only because a 0x2E resource did)
     MmeRenderPassItem() : carrier(nullptr), offscreen(nullptr) {}
-    MmeRenderPassItem(ModelData* c, SasResource* o)
-        : carrier(c), offscreen(o) {}
+    MmeRenderPassItem(ModelData* c, SasResource* o, unsigned int id = 0)
+        : carrier(c), turnId(id), offscreen(o) {}
 };
 
 // Effect-owner manager (original DAT_1800d9a40, 400 bytes, FUN_18002a220 ctor
 // / FUN_180058740 dtor). Carries the registered-object list (+0x70), the plan
-// dirty flag (+0x90), the binding std::map (+0xa0; key (materialCount,
+// dirty flag (+0x90), the binding std::map (+0xa0; key (turnId,
 // ModelData*, subset) per MME_SelectMaterialEffectBinding / FUN_18002d910)
 // and the sorted extra-pass plan (+0x158, filled by the FUN_18002baa0 sort).
 class EffectOwnerManager {
 public:
-    // The +0xa0 map key (u32 materialCount, ModelData*, int subset), ordered
+    // The +0xa0 map key (u32 turnId, ModelData*, int subset), ordered
     // exactly like the original's tuple comparison (count, model, subset).
     struct BindingKey {
-        unsigned int materialCount;
+        unsigned int turnId;
         ModelData*   model;
         int          subset;
-        BindingKey(unsigned int count, ModelData* m, int s)
-            : materialCount(count), model(m), subset(s) {}
+        BindingKey(unsigned int turn, ModelData* m, int s)
+            : turnId(turn), model(m), subset(s) {}
         bool operator<(const BindingKey& other) const
         {
-            if (materialCount != other.materialCount) {
-                return materialCount < other.materialCount;
+            if (turnId != other.turnId) {
+                return turnId < other.turnId;
             }
             if (model != other.model) {
                 return model < other.model;
@@ -121,8 +102,10 @@ public:
     std::list<ModelData*> registeredObjects;  // manager+0x70 (exact container type UNCERTAIN)
     bool planDirty;                           // manager+0x90 ("plan dirty", set 1 on registration)
 
-    // manager+0xa0: (materialCount, model, subset) -> binding object.
+    // manager+0xa0: (turnId, model, subset) -> binding object.
     std::map<BindingKey, MaterialBinding*> bindings;
+    unsigned int nextTurnId = 0;
+    std::map<unsigned int, ModelData*> turnOwners;
 
     // manager+0x158: the sorted extra-pass plan (FUN_18002baa0 tail) - ONE
     // entry per queued OFFSCREENRENDERTARGET resource of each carrier (the
@@ -200,7 +183,7 @@ public:
     // (0x18005dce9); read by the sub_180002100/sub_180002440 fast paths.
     unsigned char persistentLayerEligible;
     // ctx+0x43A (byte 1082, mgr+0x1FA): the plan-family flag - set 1 and
-    // cleared when the plan-B walk finds a flag360!=1 && flag368 object
+    // cleared when the plan-B walk finds a flag360!=1 && drawsGeometry object
     // (FUN_18005c510); selects the second snapshot cache family and the
     // rect-bounded copies (sub_180001880/sub_180001e70).
     unsigned char allObjectsSpecialFlag;
@@ -274,14 +257,8 @@ public:
     // the binding resolution draws models WITHOUT an assigned effect through
     // the row-mapped effect (none/hide/main_default/<absolute path>). Null
     // while the main targets are current. The vector lives in the engine
-    // cache's SasEffect, so the borrowed pointer stays valid for the pass.
+    // assignment's SasEffect, so the borrowed pointer stays valid for the pass.
     const std::vector<std::pair<std::string, std::string>>* offscreenDefaultEffect;
-    // Transient bindings created from the staged rows (one per model, never
-    // entered into the manager map - they must not outlive the offscreen
-    // pass). Destroyed at the resume walk, at model unregister and by the
-    // context dtor.
-    std::map<ModelData*, MaterialBinding*> offscreenDefaultBindings;
-
     // [FUN_18005c970 / FUN_18005cac0 `*a1` - the renderPassList wrapper's
     // inner record] the 0x98 OFFSCREEN record of the OFFSCREENRENDERTARGET
     // parameter the CURRENT turn's wrapper names. The original holds the
@@ -299,6 +276,7 @@ public:
     // executor). Null at the base turn (the original's null ctx+0x168).
     ModelData*   currentBindingObject;
     SasResource* currentBindingOffscreen;
+    unsigned int currentBindingTurnId = 0;
 
     // ctx+0x190 map (FUN_1800601e0): the FUN_18005d5c0 background-quad fixup
     // cache - source stream vertex buffer -> rescaled copy. Owning references;

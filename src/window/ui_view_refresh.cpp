@@ -214,8 +214,7 @@ void PostViewRefresh(MMDApp* app) {
 
     d3dx::D3DXMATRIXF m;  // 64 bytes @ ebp-148h; filled by the D3DX call
     auto* d3dx = &d3dx::Get();
-    if (d3dx->Load())                                   // 0x4C68D0 import
-        d3dx->matrixRotationQuaternion(&m, quat);       // (x,y,z,w quaternion)
+    d3dx->matrixRotationQuaternion(&m, quat);       // (x,y,z,w quaternion)
 
     // Euler extraction (0x40D643..).  Every intermediate is float-truncated
     // exactly as the original x87 sequence (fstp dword) does.

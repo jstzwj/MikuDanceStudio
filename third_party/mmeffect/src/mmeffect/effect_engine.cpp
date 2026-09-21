@@ -3,6 +3,9 @@
 
 #include <direct.h>
 #include <map>
+#include <vector>
+#include <set>
+#include <algorithm>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -31,6 +34,42 @@ TextureCache& TextureCacheRef()
 {
     static TextureCache cache;
     return cache;
+}
+
+std::vector<std::weak_ptr<LoadedEffect>>& EffectInstances()
+{
+    static std::vector<std::weak_ptr<LoadedEffect>> instances;
+    return instances;
+}
+
+std::vector<std::shared_ptr<LoadedEffect>> LiveEffects()
+{
+    std::vector<std::shared_ptr<LoadedEffect>> result;
+    for (const auto& entry : EffectCacheRef()) result.push_back(entry.second);
+    auto& instances = EffectInstances();
+    for (auto it = instances.begin(); it != instances.end();) {
+        if (auto instance = it->lock()) {
+            result.push_back(instance);
+            ++it;
+        } else {
+            it = instances.erase(it);
+        }
+    }
+    // A freshly compiled effect is also its first assignment. Deduplicate
+    // that shared cache reference; later assignments own independent clones.
+    std::set<LoadedEffect*> present;
+    result.erase(std::remove_if(result.begin(), result.end(), [&](const auto& entry) {
+        return !present.insert(entry.get()).second;
+    }), result.end());
+    // Cache invalidation can leave an old source retained by live instances.
+    for (size_t i = 0; i < result.size(); ++i) {
+        auto source = result[i]->source;
+        if (source && present.insert(source.get()).second) result.push_back(source);
+    }
+    // Restore cached sources before the assignments that share their pool.
+    std::stable_partition(result.begin(), result.end(),
+        [](const auto& entry) { return !entry->source; });
+    return result;
 }
 
 // [big-C 11258-11327] the loader switches the CWD to the effect directory so
@@ -196,9 +235,8 @@ void MmeEngineOnLostDevice()
     // ID3DXEffect objects expose OnLostDevice. Cached D3D textures survive a
     // device loss as objects (D3DPOOL_DEFAULT contents become invalid and are
     // re-created by the texture engine, Phase 3), so they are left in place.
-    EffectCache& effects = EffectCacheRef();
-    for (EffectCache::iterator it = effects.begin(); it != effects.end(); ++it) {
-        LoadedEffect& entry = *it->second;
+    for (const auto& live : LiveEffects()) {
+        LoadedEffect& entry = *live;
         if (entry.sas != nullptr) {
             SasReleaseDeviceResources(entry.sas);
         }
@@ -214,9 +252,8 @@ HRESULT MmeEngineOnResetDevice(IDirect3DDevice9* device)
     // walks the effect objects only; the 16x16 target is re-created at the
     // OnResetDevice call site (callbacks.cpp), matching the original order.
     HRESULT hr = S_OK;
-    EffectCache& effects = EffectCacheRef();
-    for (EffectCache::iterator it = effects.begin(); it != effects.end(); ++it) {
-        LoadedEffect& entry = *it->second;
+    for (const auto& live : LiveEffects()) {
+        LoadedEffect& entry = *live;
         if (entry.effect != nullptr) {
             HRESULT step = entry.effect->OnResetDevice();
             if (SUCCEEDED(hr) && FAILED(step)) {
@@ -417,6 +454,29 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     return entry;
 }
 
+std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
+    IDirect3DDevice9* device, const std::shared_ptr<LoadedEffect>& source)
+{
+    if (!source || !source->effect) return nullptr;
+    if (!source->assigned) {
+        source->assigned = true;
+        EffectInstances().push_back(source);
+        return source;
+    }
+    auto instance = std::make_shared<LoadedEffect>();
+    instance->source = source;
+    instance->path = source->path;
+    instance->fileStamp = source->fileStamp;
+    // Original cache-hit loader: CloneEffect, then parse this assignment's SAS.
+    if (FAILED(source->effect->CloneEffect(device, &instance->effect))) return nullptr;
+    ScopedChdir directory(source->path);
+    instance->sas = SasParse(instance->effect, instance->path, device,
+                             &instance->errorText);
+    if (!instance->sas || SasHadErrors(instance->sas)) return nullptr;
+    EffectInstances().push_back(instance);
+    return instance;
+}
+
 void MmeEngineUnloadEffectFile(const std::string& pathAnsi)
 {
     // [0x18000b210] FUN_18000b210 的引用计数等价物：原版“卸载效果文件”=
@@ -482,12 +542,11 @@ bool MmeEngineForEachSas(bool (*visit)(void* user, SasEffect* sas), void* user)
     if (visit == nullptr) {
         return true;
     }
-    EffectCache& effects = EffectCacheRef();
-    for (EffectCache::iterator it = effects.begin(); it != effects.end(); ++it) {
-        if (it->second == nullptr || it->second->sas == nullptr) {
+    for (const auto& live : LiveEffects()) {
+        if (live->sas == nullptr) {
             continue;
         }
-        if (!visit(user, it->second->sas)) {
+        if (!visit(user, live->sas)) {
             return false;
         }
     }

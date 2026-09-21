@@ -7,8 +7,8 @@
 //   - decompiled 180059ba0_MME_UpdateModelRenderSnapshot.c (draw-type normalize,
 //     memcpy into ModelData+0x138, binding-context pointer at snapshot+0x20)
 //
-// The struct is memcpy'd (0x220 bytes) in both directions by the original
-// (Update/Apply), so the layout must stay 0x220 bytes.
+// Internal snapshots use typed assignment. The verified layout remains here
+// as a reconstruction reference, not an external ABI requirement.
 #pragma once
 
 #include <d3d9.h>

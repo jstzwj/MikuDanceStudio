@@ -564,9 +564,6 @@ void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E000
         return;
 
     d3dx::Api& api = d3dx::Get();
-    // The original imports d3dx statically for the rotation rebuild; the
-    // runtime-resolved port resolves it once before the loop.
-    api.Load();
 
     float scale[6];
     float add[6];

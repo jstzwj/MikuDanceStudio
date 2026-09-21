@@ -204,85 +204,29 @@ bool IsKnee(const mdl::BoneRecord& bone) {
                         kNameKneeRJp, 6) == 0;
 }
 
-// ---- D3DX wrappers with manual fallbacks ---------------------------------
-
-void MatRotQuatFallback(D3DXMATRIXF* out, const float q[4]) {
-    const float xx = q[0] * q[0], yy = q[1] * q[1], zz = q[2] * q[2];
-    const float xy = q[0] * q[1], xz = q[0] * q[2], yz = q[1] * q[2];
-    const float wx = q[3] * q[0], wy = q[3] * q[1], wz = q[3] * q[2];
-    out->m[0][0] = 1.0f - 2.0f * (yy + zz);
-    out->m[0][1] = 2.0f * (xy - wz);
-    out->m[0][2] = 2.0f * (xz + wy);
-    out->m[1][0] = 2.0f * (xy + wz);
-    out->m[1][1] = 1.0f - 2.0f * (xx + zz);
-    out->m[1][2] = 2.0f * (yz - wx);
-    out->m[2][0] = 2.0f * (xz - wy);
-    out->m[2][1] = 2.0f * (yz + wx);
-    out->m[2][2] = 1.0f - 2.0f * (xx + yz);
-    out->m[0][3] = out->m[1][3] = out->m[2][3] = 0.0f;
-    out->m[3][0] = out->m[3][1] = out->m[3][2] = 0.0f;
-    out->m[3][3] = 1.0f;
-}
+// D3DX imports preserve the runtime's floating-point behavior.
 
 void MatRotQuat(D3DXMATRIXF* out, const float q[4]) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->matrixRotationQuaternion != nullptr)
-        api->matrixRotationQuaternion(out, q);
-    else
-        MatRotQuatFallback(out, q);
+    d3dx::Get().matrixRotationQuaternion(out, q);
 }
 
 void Vec3Norm(float out[3], const float in[3]) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->vec3Normalize != nullptr) {
-        api->vec3Normalize(out, in);
-        return;
-    }
-    const float len = std::sqrt(in[0] * in[0] + in[1] * in[1] +
-                                in[2] * in[2]);
-    if (len > 0.0f) {
-        out[0] = in[0] / len;
-        out[1] = in[1] / len;
-        out[2] = in[2] / len;
-    } else {
-        out[0] = out[1] = out[2] = 0.0f;
-    }
+    d3dx::Get().vec3Normalize(out, in);
 }
 
 // D3DXQuaternionMultiply semantics: out = q2 * q1.
 void QuatMul(float out[4], const float q1[4], const float q2[4]) {
-    auto* api = &d3dx::Get();
-    if (api->Load() && api->quatMultiply != nullptr) {
-        api->quatMultiply(out, q1, q2);
-        return;
-    }
-    out[0] = q2[3] * q1[0] + q2[0] * q1[3] + q2[1] * q1[2] - q2[2] * q1[1];
-    out[1] = q2[3] * q1[1] - q2[0] * q1[2] + q2[1] * q1[3] + q2[2] * q1[0];
-    out[2] = q2[3] * q1[2] + q2[0] * q1[1] - q2[1] * q1[0] + q2[2] * q1[3];
-    out[3] = q2[3] * q1[3] - q2[0] * q1[0] - q2[1] * q1[1] - q2[2] * q1[2];
+    d3dx::Get().quatMultiply(out, q1, q2);
 }
 
 struct D3 {
     d3dx::Api* api = &d3dx::Get();
 
-    void rotX(D3DXMATRIXF* o, float a) { ElemRot(o, a, 0, true); }
-    void rotY(D3DXMATRIXF* o, float a) { ElemRot(o, a, 1, true); }
-    void rotZ(D3DXMATRIXF* o, float a) { ElemRot(o, a, 2, true); }
+    void rotX(D3DXMATRIXF* o, float a) { api->rotX(o, a); }
+    void rotY(D3DXMATRIXF* o, float a) { api->rotY(o, a); }
+    void rotZ(D3DXMATRIXF* o, float a) { api->rotZ(o, a); }
     void mul(D3DXMATRIXF* o, const D3DXMATRIXF* a, const D3DXMATRIXF* b) {
-        if (api->Load()) {
-            api->multiply(o, const_cast<D3DXMATRIXF*>(a),
-                          const_cast<D3DXMATRIXF*>(b));
-            return;
-        }
-        D3DXMATRIXF t;
-        for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c) {
-                float s = 0.0f;
-                for (int k = 0; k < 4; ++k)
-                    s += a->m[r][k] * b->m[k][c];
-                t.m[r][c] = s;
-            }
-        *o = t;
+        api->multiply(o, a, b);
     }
     void translation(D3DXMATRIXF* o, float x, float y, float z) {
         std::memset(o, 0, sizeof(*o));
@@ -293,52 +237,9 @@ struct D3 {
         o->m[3][3] = 1.0f;
     }
     void quatFromMatrix(float out[4], const D3DXMATRIXF* m) {
-        if (api->Load() && api->quatFromMatrix) {
-            api->quatFromMatrix(out, const_cast<D3DXMATRIXF*>(m));
-            return;
-        }
-        const float tr = m->m[0][0] + m->m[1][1] + m->m[2][2];
-        if (tr >= 0.0f) {
-            float s = std::sqrt(tr + 1.0f);
-            out[3] = s * 0.5f;
-            s = 0.5f / s;
-            out[0] = (m->m[1][2] - m->m[2][1]) * s;
-            out[1] = (m->m[2][0] - m->m[0][2]) * s;
-            out[2] = (m->m[0][1] - m->m[1][0]) * s;
-        } else {
-            int i = 0;
-            if (m->m[1][1] > m->m[0][0]) i = 1;
-            if (m->m[2][2] > m->m[i][i]) i = 2;
-            static const int nxt[3] = {1, 2, 0};
-            const int j = nxt[i], k = nxt[j];
-            float s = std::sqrt(m->m[i][i] - m->m[j][j] - m->m[k][k] + 1.0f);
-            out[i] = s * 0.5f;
-            s = 0.5f / s;
-            out[3] = (m->m[j][k] - m->m[k][j]) * s;
-            out[j] = (m->m[i][j] + m->m[j][i]) * s;
-            out[k] = (m->m[i][k] + m->m[k][i]) * s;
-        }
+        api->quatFromMatrix(out, m);
     }
 
-private:
-    void ElemRot(D3DXMATRIXF* o, float a, int axis, bool) {
-        bool done = false;
-        if (axis == 0 && api->Load() && api->rotX) { api->rotX(o, a); done = true; }
-        if (axis == 1 && api->Load() && api->rotY) { api->rotY(o, a); done = true; }
-        if (axis == 2 && api->Load() && api->rotZ) { api->rotZ(o, a); done = true; }
-        if (done) return;
-        std::memset(o, 0, sizeof(*o));
-        o->m[0][0] = o->m[1][1] = o->m[2][2] = o->m[3][3] = 1.0f;
-        const float c = std::cos(a), s = std::sin(a);
-        switch (axis) {
-        case 0: o->m[1][1] = c; o->m[1][2] = s; o->m[2][1] = -s;
-                o->m[2][2] = c; break;
-        case 1: o->m[0][0] = c; o->m[0][2] = -s; o->m[2][0] = s;
-                o->m[2][2] = c; break;
-        default: o->m[0][0] = c; o->m[0][1] = s; o->m[1][0] = -s;
-                 o->m[1][1] = c; break;
-        }
-    }
 };
 
 // ---- shared pieces --------------------------------------------------------

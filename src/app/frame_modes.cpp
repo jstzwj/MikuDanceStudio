@@ -13,18 +13,8 @@
 //   this+0x910 (2320) frame index  this+0xA0430 (656432) frame cursor
 //   this+0xA05D1 (656849) view-dirty  this+0xA442C (672812) view-lock
 //
-// Camera-translate block ported verbatim from the raw listing at 4638..4686:
-//   gate: dragActive & (this+0x8C == 3) & !modelMode
-//   scale: selector A(this+0x24==3) -> 0.01, selector B(this+0xC0==3) ->
-//          PI/180, else g_MouseScaleC
-//   camY += (prevY - curY) * scale;  camX -= (prevX - curX) * scale
-//   then 0x40D070/0x40D130 view refresh under the frame-cursor gate.
-//
-// Runtime float globals (file image differs -> initialized at runtime in the
-// original; initializer not yet located - values from the translated
-// annotations, deviation recorded in ARCHITECTURE.md):
-//   0x52B8F0 = 0.01f   0x52E9C0 = PI/180   0x52E8C0 = PI/360
-//   0x52D738 = best-evidence PI/360 (unknown, TODO(port))
+// Camera drag scales are recovered from the original image; the exact values
+// and precision of each declaration are preserved below.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -104,31 +94,21 @@ float DragScale(MMDApp* app) {
 void PanCameraPosition(MMDApp* app, int dx, int dy) {
     const float scale = DragScale(app);
     auto& api = d3dx::Get();
-    api.Load();
-    if (api.rotX != nullptr && api.rotY != nullptr &&
-        api.rotZ != nullptr && api.multiply != nullptr) {
-        d3dx::D3DXMATRIXF mx{}, my{}, mz{}, matrix{};
-        api.rotY(&my, app->CameraYaw());
-        api.rotX(&mx, app->CameraPitch());
-        api.multiply(&matrix, &mx, &my);
-        api.rotZ(&mz, -app->CameraRoll());
-        api.multiply(&matrix, &mz, &matrix);
+    d3dx::D3DXMATRIXF mx{}, my{}, mz{}, matrix{};
+    api.rotY(&my, app->CameraYaw());
+    api.rotX(&mx, app->CameraPitch());
+    api.multiply(&matrix, &mx, &my);
+    api.rotZ(&mz, -app->CameraRoll());
+    api.multiply(&matrix, &mz, &matrix);
 
-        const float sx = static_cast<float>(-dx) * scale;
-        const float sy = static_cast<float>(dy) * scale;
-        app->CameraPositionX() += sx * matrix.m[0][0] +
-                                  sy * matrix.m[1][0] + matrix.m[3][0];
-        app->CameraPositionY() += sx * matrix.m[0][1] +
-                                  sy * matrix.m[1][1] + matrix.m[3][1];
-        app->CameraPositionZ() -= sx * matrix.m[0][2] +
-                                  sy * matrix.m[1][2] + matrix.m[3][2];
-        return;
-    }
-
-    // The original cannot start without d3dx9_32.dll.  Keep the restored
-    // build operable in that documented fallback environment.
-    app->CameraPositionX() -= static_cast<float>(dx) * scale;
-    app->CameraPositionY() += static_cast<float>(dy) * scale;
+    const float sx = static_cast<float>(-dx) * scale;
+    const float sy = static_cast<float>(dy) * scale;
+    app->CameraPositionX() += sx * matrix.m[0][0] +
+                              sy * matrix.m[1][0] + matrix.m[3][0];
+    app->CameraPositionY() += sx * matrix.m[0][1] +
+                              sy * matrix.m[1][1] + matrix.m[3][1];
+    app->CameraPositionZ() -= sx * matrix.m[0][2] +
+                              sy * matrix.m[1][2] + matrix.m[3][2];
 }
 
 // PanSelectedCameraKey (parented-camera-key MMB pan) moved to
@@ -658,27 +638,19 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
             static_cast<double>(dy) * scale);
     } else {
         auto& api = d3dx::Get();
-        api.Load();
-        if (api.rotX && api.rotY && api.rotZ && api.multiply &&
-            api.vec3Transform) {
-            d3dx::D3DXMATRIXF rx{}, ry{}, rz{}, rotation{};
-            api.rotZ(&rz, -app->CameraRoll());
-            api.rotX(&rx, -app->CameraPitch());
-            api.multiply(&rotation, &rz, &rx);
-            api.rotY(&ry, -app->CameraYaw());
-            api.multiply(&rotation, &rotation, &ry);
-            float local[3]{};
-            local[axis] = static_cast<float>(static_cast<double>(dy) * scale);
-            float world[4]{};
-            api.vec3Transform(world, local, &rotation);
-            app->CameraPositionX() += world[0];
-            app->CameraPositionY() += world[1];
-            app->CameraPositionZ() += world[2];
-        } else {
-            app->CameraPosition()[axis] = static_cast<float>(
-                static_cast<double>(app->CameraPosition()[axis]) +
-                static_cast<double>(dy) * scale);
-        }
+        d3dx::D3DXMATRIXF rx{}, ry{}, rz{}, rotation{};
+        api.rotZ(&rz, -app->CameraRoll());
+        api.rotX(&rx, -app->CameraPitch());
+        api.multiply(&rotation, &rz, &rx);
+        api.rotY(&ry, -app->CameraYaw());
+        api.multiply(&rotation, &rotation, &ry);
+        float local[3]{};
+        local[axis] = static_cast<float>(static_cast<double>(dy) * scale);
+        float world[4]{};
+        api.vec3Transform(world, local, &rotation);
+        app->CameraPositionX() += world[0];
+        app->CameraPositionY() += world[1];
+        app->CameraPositionZ() += world[2];
     }
     ViewRefreshGate(app);
 }
@@ -771,9 +743,6 @@ void ModePhysicsBody(MMDApp* app, int) {
 // ---------------------------------------------------------------------------
 void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode) {
     auto& api = d3dx::Get();
-    if (!(api.Load() && api.rotX && api.rotY && api.rotZ && api.multiply &&
-          api.translation))
-        return;  // original hard-links d3dx9_32.dll; unreachable there
     // R = RotY * RotX * RotZ  (0x41ACEB..0x41AD5D)
     d3dx::D3DXMATRIXF ry{}, rot{}, rz{};
     api.rotY(&ry, app->CameraYaw());

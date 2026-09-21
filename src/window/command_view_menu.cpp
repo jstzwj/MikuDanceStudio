@@ -234,6 +234,7 @@
 #include <cstring>
 #include <cwchar>
 
+#include "mikudancestudio/charset_conv.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
@@ -293,22 +294,6 @@ void SeekSelectedModelToCurrentFrame(MMDApp* app);  // VA 0x004220C0 (model_fram
 
 namespace {
 
-// Model-field offsets (model = slot array app+0x780 [byte app+0x910]).
-                                                // stride: parent dword@0x30,
-                                                // stored pos 0x140..0x148,
-                                                // stored quat 0x14C..0x158,
-                                                // visible byte +0x1EC
-constexpr std::size_t kModelFrameFlag = 0x2D98; // frame-insert flag array
-constexpr std::size_t kModelBoneFrames = 0x26E0;  // bone display frames, 0x3C
-                                                  // stride: parent@+8, sel@+0x38
-constexpr std::size_t kModelMorphFrames = 0x26E4; // morph frames, 0x14 stride
-constexpr std::size_t kModelOtherFrames = 0x26E8; // other frames, 0x1C stride
-constexpr std::size_t kModelOrder2D7C = 0x2D7C;   // combo order byte (+1 based)
-constexpr std::size_t kModelEdgeThickness31C0 = 0x31C0;  // per-model edge
-                                                  // thickness float (253)
-constexpr std::size_t kModelNames33D8 = 0x33D8;   // enhance-model names, 10 x
-                                                  // char[100] (261)
-
 // Bit-exact original constants (see fidelity notes in the header).
 // C++17 has no std::bit_cast; MSVC's __builtin_bit_cast is accepted in
 // constant expressions, so the static_asserts pin each literal below to
@@ -357,28 +342,16 @@ double AngleAtan2(float y, float x) {
     return static_cast<double>(static_cast<float>(std::atan2(y, x)));
 }
 
-// Scene object = locale subsystem (app+0xA06C4) -> Renderer()->device
-// (+0x1D4E0).  原版 sub_7FF7CB45F550（CommandDispatch）case 276 尾部
-// 0x7FF7CB46F9EE: `call qword ptr [rax+128h]` —— x64 vtable 偏移 +0x128
-// （296 = 8×37，槽 37），即 IDirect3DDevice9::SetRenderTarget(dev, 0,
-// locale->captureSurface)；x86 原版偏移 +0x94（148 = 4×37，同为槽 37）。
-// 裸字节偏移在 x64 移植构建下会落到槽 18（GetBackBuffer），故用类型化
-// 虚调用。gate（multisampleAvailable == 0）由调用方 case 276 持有，对应
-// 原版 0x7FF7CB46F9D2 的 cmp/jnz。
-void CallSceneVtable94(MMDApp* app) {
+// Capture uses the renderer-owned surface when multisampling is unavailable.
+void BindCaptureRenderTarget(MMDApp* app) {
     D3DRenderer* locale = app->Renderer();
     locale->device->SetRenderTarget(0, locale->captureSurface);  // 0x1D534
 }
 
-// 原版 sub_7FF7CB45F550 case 277 0x7FF7CB46FAB4 / 0x7FF7CB46FAEF:
-// `call qword ptr [rax+1C8h]` —— x64 vtable 偏移 +0x1C8（456 = 8×57，
-// 槽 57），即 IDirect3DDevice9::SetRenderState(dev, 0xA1, on)；x86 原版
-// 偏移 +0xE4（228 = 4×57，同为槽 57）。裸字节偏移在 x64 移植构建下会落
-// 到槽 28（CreateRenderTarget），故用类型化虚调用。
-void CallSceneVtableE4(MMDApp* app, int on) {
+void SetMultisampleAntialias(MMDApp* app, int on) {
     D3DRenderer* locale = app->Renderer();
     locale->device->SetRenderState(
-        static_cast<D3DRENDERSTATETYPE>(0xA1), static_cast<DWORD>(on));
+        D3DRS_MULTISAMPLEANTIALIAS, static_cast<DWORD>(on));
 }
 
 // Shared tail of cases 300/302 (0x48A805): D3DXQuaternionRotationMatrix of
@@ -391,9 +364,7 @@ void BoneRotationWriteback(MMDApp* app, const d3dx::D3DXMATRIXF& m) {
     float quat[4];
     d3dx::Get().quatFromMatrix(quat, &m);
     std::memcpy(bones[cur].rotQuat, quat, sizeof(quat));
-    unsigned char* frameFlag =
-        *reinterpret_cast<unsigned char**>(model + kModelFrameFlag);
-    frameFlag[cur] = 1;
+    mdl::Mdl(model)->bonePhysicsState[cur] = 1;
     app->SceneModified() = 1;
     PostViewRefresh(app);
 }
@@ -402,8 +373,6 @@ void BoneRotationWriteback(MMDApp* app, const d3dx::D3DXMATRIXF& m) {
 // Dialog procedures of this family, ported from the MikuMikuDance.exe
 // decompilation (each carries its original VA).  They reach the app state via
 // the global g_Block and share the rotation temp floats app+0xA0B28..0xA0B40.
-// Helpers they call that have no port anywhere yet stay as external-linkage
-// stubs in this TU (call sites preserved, TODO(port); stubs.cpp is off-limits).
 // ---------------------------------------------------------------------------
 
 // ---- JP strings, byte-exact Shift-JIS as in the binary ------------------
@@ -489,7 +458,7 @@ float GetEdgeThickness(MMDApp* app) {  // VA 0x0041E950
     if (app->state.optflag[0] != 0)
         return 1.0f;
     unsigned char* model = app->SelectedModel();
-    return *reinterpret_cast<float*>(model + kModelEdgeThickness31C0);
+    return mdl::Mdl(model)->edgeScale;
 }
 // VA 0x0041E980 - edge-thickness setter (model mode only): marks the
 // in-dialog and dirty flags, then stores into the active model's thickness
@@ -500,7 +469,7 @@ void SetEdgeThickness(MMDApp* app, float thickness) {  // VA 0x0041E980
     app->state.messageSeen = 1;
     app->SceneModified() = 1;
     unsigned char* model = app->SelectedModel();
-    *reinterpret_cast<float*>(model + kModelEdgeThickness31C0) = thickness;
+    mdl::Mdl(model)->edgeScale = thickness;
 }
 // VA 0x0041E9C0 - enhance-model dialog init: mirrors the ten 100-byte SJIS
 // name slots of the active model (+0x33D8) into edits 709..718.
@@ -508,8 +477,7 @@ void FillEnhanceModelNameEdits(MMDApp* app, HWND hDlg) {  // VA 0x0041E9C0
     unsigned char* model = app->SelectedModel();
     for (int i = 0; i < 10; ++i)
         SendMessageA(GetDlgItem(hDlg, panel::kToon01Edit + i), EM_REPLACESEL, 0,
-                     reinterpret_cast<LPARAM>(model + kModelNames33D8 +
-                                              100 * i));
+                     reinterpret_cast<LPARAM>(mdl::Mdl(model)->pmdToonFileNames[i]));
 }
 // VA 0x0045ECC0 - model-edge dialog (259) edit subclass: WM_KEYDOWN +
 // VK_RETURN sets the in-dialog flag (app+0xA0D6C) and dispatches to the
@@ -633,16 +601,7 @@ void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD8
     float dir[3] = {app->state.gravityX,
                     app->state.gravityY,
                     app->state.gravityZ};
-    if (d3dx::Get().vec3Normalize != nullptr && d3dx::Get().Load())
-        d3dx::Get().vec3Normalize(dir, dir);
-    else {  // documented fallback (same formula; 1/sqrt)
-        const float inv = 1.0f / std::sqrt(dir[0] * dir[0] +
-                                           dir[1] * dir[1] +
-                                           dir[2] * dir[2]);
-        dir[0] *= inv;
-        dir[1] *= inv;
-        dir[2] *= inv;
-    }
+    d3dx::Get().vec3Normalize(dir, dir);
     const float mag = app->state.gravityMagnitude;
     float vec[4] = {static_cast<float>(dir[0] * mag * 10.0),
                     static_cast<float>(dir[1] * mag * 10.0),
@@ -1684,10 +1643,6 @@ void FineShadowModeNotice(MMDApp* app) {
                 0);
 }
 
-// (defined in effect_api.cpp; declared at namespace scope - an
-// anonymous-namespace declaration would be an undefined internal entity)
-void WideToSjisPath(char* dst, const wchar_t* src, rsize_t size);  // 0x407910
-
 void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
                  std::uint16_t notify) {
     (void)notify;  // see header: the default handler's notify gate can never
@@ -2109,77 +2064,15 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     // ------------------------------------------------------------------
-    // 274 (0x0048DC96): clear the frame-selection flags (morph +0x10 /
-    // 0x14-step, other +0x14 / 0x1C-step, bone +0x38 / 0x3C-step), then
-    // mark the display frames of every visible bone (visibility byte
-    // +0x1EC) and its parent chain: frame +0x38 = 1 when +0x39 == 0.
-    // PanelPaint tail.
+    // Select physics-enabled keys of bones that have rigid bodies.
+    // The model helper owns the three key-pool sweeps and linked-key walk.
     // ------------------------------------------------------------------
     case 274: {
         if (app->state.optflag[0] != 0) {
             return;
         }
         app->state.dialogFlags[0] = 1;
-        unsigned char* model = ActiveModel(app);
-        // morph frames
-        unsigned char* mf =
-            *reinterpret_cast<unsigned char**>(model + kModelMorphFrames);
-        for (std::size_t o = 0; o < 0x61A80u; o += 0x14) {
-            mf[o + 0x10] = 0;
-        }
-        // other (camera/light/Ik) frames
-        unsigned char* of =
-            *reinterpret_cast<unsigned char**>(model + kModelOtherFrames);
-        for (std::size_t o = 0; o < 0x6D60u; o += 0x1C) {
-            of[o + 0x14] = 0;
-        }
-        // bone display frames (0x112A880 bytes on x86; the x64 E build
-        // doubles the pool, so the bound follows kBoneKeyCapacity)
-        unsigned char* bf =
-            *reinterpret_cast<unsigned char**>(model + kModelBoneFrames);
-        for (std::size_t o = 0;
-             o < sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity; o += 0x3C) {
-            bf[o + 0x38] = 0;
-        }
-        // mark visible bones + parent chains
-        const std::int32_t boneCount =
-            static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
-        mdl::BoneRecord* const bones = mdl::Bones(model);
-        if (boneCount > 0) {
-            for (std::int32_t i = 0; i < boneCount; ++i) {
-                if (bones[i].hasRigidBody == 0) {
-                    continue;
-                }
-                const std::size_t stride = 0x3C * static_cast<std::size_t>(i);
-                if (bf[stride + 0x39] == 0) {
-                    bf[stride + 0x38] = 1;
-                }
-                const std::int32_t parent =
-                    *reinterpret_cast<std::int32_t*>(bf + stride + 8);
-                if (parent > 0) {
-                    std::size_t off = stride;
-                    for (;;) {
-                        if (bf[off + 0x39] == 0) {
-                            bf[off + 0x38] = 1;
-                        }
-                        const std::int32_t p =
-                            *reinterpret_cast<std::int32_t*>(bf + off + 8);
-                        off = 0x3C * static_cast<std::size_t>(p);
-                        if (*reinterpret_cast<std::int32_t*>(bf + off + 8) <=
-                            0) {
-                            if (bf[off + 0x39] == 0) {
-                                bf[off + 0x38] = 1;
-                            }
-                            break;
-                        }
-                    }
-                } else {
-                    if (bf[stride + 0x39] == 0) {
-                        bf[stride + 0x38] = 1;
-                    }
-                }
-            }
-        }
+        mdl::SelectPhysicsOnBoneKeys(*mdl::Mdl(ActiveModel(app)));
         PanelPaint(app);  // 0x414610
         return;
     }
@@ -2282,7 +2175,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         ShowWindow(recWnd, SW_SHOW);
         UpdateWindow(recWnd);
         if (locale->multisampleAvailable == 0) {  // 0x1D4F8
-            CallSceneVtable94(app);
+            BindCaptureRenderTarget(app);
         }
         const bool needRefresh =
             app->CaptureMode() == ScreenCaptureMode::BackgroundRefresh ||
@@ -2305,10 +2198,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->state.dialogFlags[10] = 1;
         if ((GetMenuState(GetMenu(hwnd), 0x115, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), 0x115, MF_CHECKED);
-            CallSceneVtableE4(app, 1);
+            SetMultisampleAntialias(app, 1);
         } else {
             CheckMenuItem(GetMenu(hwnd), 0x115, MF_UNCHECKED);
-            CallSceneVtableE4(app, 0);
+            SetMultisampleAntialias(app, 0);
         }
         return;
     }
@@ -2655,7 +2548,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             DisableKinect(app);  // 0x42A020
         }
         char sjisPath[0x100];
-        WideToSjisPath(sjisPath, fileBuf, 0x100);  // 0x407910
+        WideToSjis(app->Renderer(), sjisPath, fileBuf, 0x100);  // 0x407910
         OpenNiInit(app, sjisPath);  // 0x429CB0
         return;
     }

@@ -30,18 +30,6 @@ namespace {
 
 using Matrix = d3dx::D3DXMATRIXF;
 
-template <typename T>
-T& At(void* base, std::size_t offset) {
-    return *reinterpret_cast<T*>(static_cast<unsigned char*>(base) + offset);
-}
-
-template <typename T>
-T& At(const void* base, std::size_t offset) {
-    return *reinterpret_cast<T*>(
-        const_cast<unsigned char*>(static_cast<const unsigned char*>(base)) +
-        offset);
-}
-
 IDirect3DDevice9* DeviceFromScene(PhysicsScene* scene) {
     D3DRenderer* sub = scene->owner;   // slot 0
     return sub->device;
@@ -194,7 +182,6 @@ void BulletTransformToMatrix(const btTransform& source, Matrix* out) {
     out->m[3][2] = origin.z();
 }
 
-using BufferPointer = void*(WINAPI*)(void*);
 using MeshDrawSubset = HRESULT(WINAPI*)(void*, DWORD);
 
 void ReleaseCom(void* object) {
@@ -269,13 +256,12 @@ bool InitAxisMesh(MMDApp* app) {
     DWORD size = SizeofResource(nullptr, resource);
     HGLOBAL loaded = LoadResource(nullptr, resource);
     void* data = LockResource(loaded);
-    void* materialBuffer = nullptr;
+    ID3DXBuffer* materialBuffer = nullptr;
     DWORD materialCount = 0;
-    void* mesh = nullptr;
+    ID3DXMesh* mesh = nullptr;
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    auto& api = d3dx::Get();
-    if (!api.Load() || api.loadMeshFromXInMemory(
+    if (D3DXLoadMeshFromXInMemory(
             data, size, 544, device, nullptr, &materialBuffer, nullptr,
             &materialCount, &mesh) != D3D_OK) {
         MessageBoxA(nullptr, "failed load axis.x from memory!", "", MB_OK);
@@ -285,17 +271,15 @@ bool InitAxisMesh(MMDApp* app) {
     gizmo.mesh = mesh;
     gizmo.materialCount = materialCount;
     auto* materials = static_cast<D3DMATERIAL9*>(
-        ::operator new(68 * materialCount));
+        ::operator new(sizeof(D3DMATERIAL9) * materialCount));
     gizmo.materials = materials;
     if (materials == nullptr)
         return false;
-    auto getBufferPointer = reinterpret_cast<BufferPointer>(
-        (*reinterpret_cast<void***>(materialBuffer))[3]);
-    auto* source = static_cast<unsigned char*>(
-        getBufferPointer(materialBuffer));
+    const auto* source = static_cast<const D3DXMATERIAL*>(
+        materialBuffer->GetBufferPointer());
     for (DWORD i = 0; i < materialCount; ++i)
-        std::memcpy(&materials[i], source + 72 * i, 68);
-    ReleaseCom(materialBuffer);
+        materials[i] = source[i].MatD3D;
+    materialBuffer->Release();
     return true;
 }
 
