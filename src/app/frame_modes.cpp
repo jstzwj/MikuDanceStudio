@@ -31,6 +31,7 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "frame_state_dump.hpp"
+#include "bone_selection.hpp"
 
 namespace mikudancestudio {
 
@@ -298,60 +299,10 @@ unsigned char* ActiveBoneModel(MMDApp* app) {
     return app->ModelSlot(app->state.slotIdx);
 }
 
-bool BoneCanBePicked(MMDApp* app, const mdl::BoneRecord& bone) {
-    if ((bone.flags & mdl::kBoneFlagVisible) == 0)
-        return false;
-    const mdl::BoneType type = bone.type;
-    const int physicsMode = app->PlaybackPhysicsMode();
-    if (physicsMode == 2 && type != mdl::BoneType::RotateMove &&
-        bone.physicsDisabled == 0)
-        return false;
-    if (physicsMode == 1 && type != mdl::BoneType::RotateMove)
-        return false;
-    return true;
-}
-
 void PickBoneAtCursor(MMDApp* app) {
-    unsigned char* model = ActiveBoneModel(app);
-    if (model == nullptr)
-        return;
-    auto* bones = mikudancestudio::mdl::Bones(model);
-    auto* selected = mikudancestudio::mdl::Mdl(model)->boneSelection;
-    const int count = mikudancestudio::mdl::Mdl(model)->boneCount;
-    if (bones == nullptr || selected == nullptr || count <= 0)
-        return;
-
-    const int x = app->MouseX();
-    const int y = app->MouseY();
-    const bool additive = app->ShiftModifierActive();
-    int candidate = -1;
-    bool changed = false;
-    for (int i = 0; i < count; ++i) {
-        const mdl::BoneRecord& bone = bones[i];
-        if (!BoneCanBePicked(app, bone))
-            continue;
-        const int dx = bone.selState - x;
-        const int dy = bone.selState2 - y;
-        if (dx * dx + dy * dy >= 64)
-            continue;
-        if (additive) {
-            selected[i] = selected[i] == 0 ? 1 : 0;
-            if (selected[i] != 0)
-                mikudancestudio::mdl::Mdl(model)->selectedBone = i;
-            else if (mikudancestudio::mdl::Mdl(model)->selectedBone == i)
-                mikudancestudio::mdl::Mdl(model)->selectedBone = -1;
-            changed = true;
-        } else {
-            candidate = std::max(candidate, i);
-        }
-    }
-    if (!additive && candidate >= 0) {
-        std::memset(selected, 0, static_cast<std::size_t>(count));
-        selected[candidate] = 1;
-        mikudancestudio::mdl::Mdl(model)->selectedBone = candidate;
-        changed = true;
-    }
-    if (changed) {
+    auto* model = mdl::Mdl(ActiveBoneModel(app));
+    if (model && PickBoneAtPoint(*model, app->MouseX(), app->MouseY(),
+                                app->PlaybackPhysicsMode(), app->ShiftModifierActive())) {
         PostLanguageSweep(app);
         PostLanguageSweep2(app);
     }
@@ -477,6 +428,55 @@ void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
 }
 
 }  // namespace
+
+bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y,
+                     int physicsMode, bool additive) {
+    if (!model.boneTable || !model.boneSelection || model.boneCount == 0)
+        return false;
+    int first = -1;
+    int candidate = -1;
+    bool changed = false;
+    for (std::uint32_t i = 0; i < model.boneCount; ++i) {
+        const mdl::BoneRecord& bone = model.boneTable[i];
+        // Original x64 0x7FF7CB451B92..0x7FF7CB451BFE: the physics
+        // gate reads hasRigidBody, independently of the bone type byte.
+        if (!(bone.flags & mdl::kBoneFlagVisible) ||
+            !(bone.type < mdl::BoneType::InertTip || bone.type == mdl::BoneType::FixedAxis))
+            continue;
+        if (bone.hasRigidBody &&
+            (physicsMode == 1 || (physicsMode == 2 && !bone.physicsDisabled)))
+            continue;
+        const int dx = bone.selState - x;
+        const int dy = bone.selState2 - y;
+        if (dx * dx + dy * dy >= 64)
+            continue;
+        if (additive) {
+            model.boneSelection[i] = model.boneSelection[i] == 0 ? 1 : 0;
+            if (model.boneSelection[i])
+                model.selectedBone = static_cast<int>(i);
+            else if (model.selectedBone == static_cast<int>(i))
+                model.selectedBone = -1;
+            changed = true;
+        } else {
+            if (first < 0) first = static_cast<int>(i);
+            // Repeated clicks cycle through overlapping markers, then wrap.
+            if (static_cast<int>(i) > model.selectedBone) {
+                candidate = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (!additive) {
+        if (candidate < 0) candidate = first;
+        if (candidate >= 0) {
+            std::memset(model.boneSelection, 0, model.boneCount);
+            model.boneSelection[candidate] = 1;
+            model.selectedBone = candidate;
+            changed = true;
+        }
+    }
+    return changed;
+}
 
 void MouseInteractionBegin(MMDApp* app) {
     // 0x46FF02 -> 0x42D3A0 -> 0x40E3D0.  State values are exactly
