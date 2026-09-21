@@ -19,6 +19,9 @@
 #include "mmhack_state.h"
 #include "mme_abi.h"
 #include "mmeffect/mme_ui.h"
+#include "mmeffect/mme_util.h"
+#include "mmeffect/mme_context.h"
+#include "mmeffect/model_data.h"
 #include "mmeffect/device_initialization.h"
 #include "mmeffect/host_object_cache.h"
 
@@ -265,9 +268,16 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         MmhCachedObject* obj = new MmhCachedObject();
         obj->id = id;
         obj->isPmd = 1;
-        char* fname = ExpGetPmdFilename(i);
-        if (fname != nullptr)
-            obj->fileName = fname;
+        // The embedded engine uses the Windows ANSI code page for paths,
+        // not the exported API's fixed-size Shift-JIS buffer. Convert directly
+        // from the loaded wide path so non-SJIS names cannot become empty.
+        const wchar_t* widePath = g_mmdModelPathW ? g_mmdModelPathW(i) : nullptr;
+        if (widePath) {
+            obj->fileName = mme::MmeWideToAnsi(widePath);
+        } else {
+            const char* fname = ExpGetPmdFilename(i);
+            if (fname) obj->fileName = fname;
+        }
         MmhPopulateObjectData(id, true, i,
                               (g_mmdModelPathW != nullptr) ? g_mmdModelPathW(i) : nullptr);
         obj->data = MmhGetObjectData(id);
@@ -275,6 +285,10 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         g_host.objectById[id] = obj;
         OnCreateModel(device, id, obj->fileName.c_str(), obj->isPmd,
                       (unsigned int)ExpGetPmdMatNum(i), nullptr, nullptr);
+        if (widePath) {
+            if (auto* model = mme::MmeFindOrCreateModelEntry(id))
+                model->setDisplayFilename(widePath);
+        }
     }
     for (int i = 0; i < acsNum; i++) {
         unsigned long long id = (unsigned long long)(uintptr_t)ExpGetAcsID(i);
@@ -283,9 +297,16 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         MmhCachedObject* obj = new MmhCachedObject();
         obj->id = id;
         obj->isPmd = 0;
-        char* fname = ExpGetAcsFilename(i);
-        if (fname != nullptr)
-            obj->fileName = fname;
+        // The embedded engine uses the Windows ANSI code page for paths,
+        // not the exported API's fixed-size Shift-JIS buffer. Convert directly
+        // from the loaded wide path so non-SJIS names cannot become empty.
+        const wchar_t* widePath = g_mmdAcsPathW ? g_mmdAcsPathW(i) : nullptr;
+        if (widePath) {
+            obj->fileName = mme::MmeWideToAnsi(widePath);
+        } else {
+            const char* fname = ExpGetAcsFilename(i);
+            if (fname) obj->fileName = fname;
+        }
         MmhPopulateObjectData(id, false, i,
                               (g_mmdAcsPathW != nullptr) ? g_mmdAcsPathW(i) : nullptr);
         obj->data = MmhGetObjectData(id);
@@ -293,6 +314,10 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         g_host.objectById[id] = obj;
         OnCreateModel(device, id, obj->fileName.c_str(), obj->isPmd,
                       (unsigned int)ExpGetAcsMatNum(i), nullptr, nullptr);
+        if (widePath) {
+            if (auto* model = mme::MmeFindOrCreateModelEntry(id))
+                model->setDisplayFilename(widePath);
+        }
     }
 
     // --- 阶段 4: 重建绘制次序图 -----------------------------------------------

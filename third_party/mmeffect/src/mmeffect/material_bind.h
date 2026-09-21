@@ -69,6 +69,7 @@
 namespace mme {
 
 struct SasEffect;
+struct SasResource;
 struct LoadedEffect;
 class ModelData;
 
@@ -308,11 +309,15 @@ bool MmeInOffscreenRenderTurn();
 
 // Distinguish an absent turn mapping (no draw) from an explicit "none"
 // mapping (draw host geometry without an effect).
-bool MmeHasOffscreenDefaultEffectRow(ModelData* model);
+const std::string* MmeOffscreenEffectValue(const SasResource& resource,
+    ModelData* model, ModelData* owner, int subsetIndex = -1);
+bool MmeOffscreenObjectShown(const SasResource& resource,
+    ModelData* model, ModelData* owner, int subsetIndex = -1);
+bool MmeHasOffscreenDefaultEffectRow(ModelData* model, int subsetIndex = -1);
 
 // True when the model's matched offscreen DefaultEffect row is "hide" - the
 // model must not be drawn into the offscreen target at all.
-bool MmeOffscreenDefaultEffectHides(ModelData* model);
+bool MmeOffscreenDefaultEffectHides(ModelData* model, int subsetIndex = -1);
 
 // Destroy every transient offscreen-DefaultEffect binding and drop the staged
 // row vector (the resume walk / plan reset entry).

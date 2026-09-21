@@ -352,6 +352,22 @@ void MmeUnregisterModelData(unsigned long long objectId)
     }
     ModelData* model = it->second;
 
+    // Object IDs may be reused after unload; discard target-local overrides.
+    if (g_ownerManager) {
+        for (const auto& entry : g_ownerManager->bindings) {
+            MaterialBinding* binding = entry.second;
+            if (!binding || !binding->sas) continue;
+            for (auto& resource : binding->sas->resources) {
+                for (auto row = resource.effectOverrides.begin(); row != resource.effectOverrides.end();)
+                    if (row->first.first == objectId) row = resource.effectOverrides.erase(row);
+                    else ++row;
+                for (auto row = resource.shownOverrides.begin(); row != resource.shownOverrides.end();)
+                    if (row->first.first == objectId) row = resource.shownOverrides.erase(row);
+                    else ++row;
+            }
+        }
+    }
+
     // Scene loads delete accessories in batches between render callbacks. A
     // plan built at BeginScene may therefore still contain this pointer until
     // the next frame. Remove every transient reference before destroying the

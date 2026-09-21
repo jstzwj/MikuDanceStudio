@@ -51,6 +51,9 @@ public:
     const std::string& name() const { return name_; }                    // +0x48
     const char* filename() const { return filename_; }                   // +0x20 (borrowed)
 
+    const std::wstring& displayFilename() const { return displayFilename_; }
+    void setDisplayFilename(const wchar_t* path) { displayFilename_ = path ? path : L""; }
+
     // +0x364 render-class flag: 0 = normal object, 1/2 = special pass
     // (post-effect / self-shadow class) [180059ba0 L36, 18005d340 L106].
     // Written when a scene/sceneorobject effect is assigned to the object:
@@ -203,6 +206,7 @@ private:
     int                   kind_;                // +0x28
     int                   materialCount_;       // +0x38
     IUnknown*             reserved_;            // +0x40 (AddRef'd)
+    std::wstring          displayFilename_; // original loaded wide path for UI
     std::string           name_;                // +0x48 (basename+extension; "(null)" fallback)
     std::map<std::string, int> nameToIndex_;    // +0x70
     std::vector<std::wstring> materialNamesJp_; // +0xa0 (fun_18005fea0 pushes wstrings)

@@ -198,6 +198,10 @@ struct SasResource {
     // path cannot be opened fails the whole effect load - the original
     // destroys the offscreen record and returns failure).
     std::vector<std::pair<std::string, std::string>> defaultEffectMap;
+    // Per-target assignments: path and visibility are independent, and a
+    // material inherits the whole-object entry (-1) when it has no override.
+    std::map<std::pair<unsigned long long, int>, std::string> effectOverrides;
+    std::map<std::pair<unsigned long long, int>, bool> shownOverrides;
     std::string resourceName;   // ANIMATEDTEXTURE "ResourceName" (Phase 3b)
     float       offset = 0.0f;  // ANIMATEDTEXTURE "Offset"
     float       speed = 1.0f;   // ANIMATEDTEXTURE "Speed"

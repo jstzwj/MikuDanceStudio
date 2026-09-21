@@ -164,7 +164,7 @@ void HandleDropFiles(HDROP hDrop) {
         // 0x461360: the original passes cch = 0x200 for a 256-wchar buffer
         // (harmless for real paths); replicated verbatim.
         wchar_t szFile[256];
-        DragQueryFileW(hDrop, iFile, szFile, 0x200);
+        DragQueryFileW(hDrop, iFile, szFile, static_cast<UINT>(sizeof(szFile) / sizeof(szFile[0])));
 
         // ---- .pmm - project file -----------------------------------------
         if (wcsstr(szFile, L".pmm") || wcsstr(szFile, L".PMM") ||

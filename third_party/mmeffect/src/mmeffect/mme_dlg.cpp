@@ -36,9 +36,9 @@
 //     per-tab effect column / checkbox read the resource's DefaultEffect
 //     rows using the render resolver (ordered wildcards and carrier "self"),
 //     the "(default)" row shows the "key=value; "-joined
-//     rows or "*=none;", and edits (set/remove/reset/hide-show) write the
-//     SAME rows - the render-time offscreen resolver reads them each pass,
-//     so reassignments take effect immediately. Tab identity is a stable id
+//     rows or "*=none;". Manual edits write independent per-object/subset
+//     path and visibility overrides shared with the render-time resolver.
+//     Annotation defaults remain unchanged. Tab identity is a stable id
 //     in lParam (the original's wrapper pointer); the set is re-synced when
 //     the plan's offscreen associations change (the original: every plan
 //     rebuild with planDirty set, sub_18002BAA0's tail; the port: a
@@ -161,13 +161,6 @@ struct OffscreenTab {
 std::vector<OffscreenTab> g_offscreenTabs;
 // (效果, 资源) -> 稳定 id 的分配表（原版：id 树中复用的包装对象）。
 std::map<std::pair<SasEffect*, int>, size_t> g_offscreenIds;
-// (效果, 资源) -> 首次见到时的 DefaultEffect 行快照。原版在分配表里把
-// “路径”与“显示覆盖”存成两个独立字段（sub_180042610 写 +0x48/+0x49/+0x60）；
-// 移植端把两者都落在单一行值上，取消隐藏时用快照恢复注解原值（已文档化差异）。
-std::map<std::pair<SasEffect*, int>,
-         std::vector<std::pair<std::string, std::string>>> g_pristineRows;
-// Preserve an assigned path while the row-based adapter temporarily hides it.
-std::map<std::pair<size_t, std::string>, std::string> g_hiddenRowValues;
 size_t g_offscreenSignature = static_cast<size_t>(-1);   // per-frame 轮询签名
 size_t g_nextOffscreenId = 1;
 
@@ -238,18 +231,20 @@ const AnchorEntry kAnchors[] = {
 };
 RECT g_anchorRects[sizeof(kAnchors) / sizeof(kAnchors[0])];
 
-const char* EffectTextForModel(ModelData* model)
+const char* EffectTextForModel(ModelData* model, int subset = -1)
 {
     static std::string text;
     if (model == nullptr) {
         text = "(default)";
         return text.c_str();
     }
-    if (!model->shown()) {
+    if (!MmeEmmEffectiveSubsetShown(model, subset)) {
         text = "(hide)";
         return text.c_str();
     }
-    const std::string& assigned = model->effectFile();
+    const auto found = model->subsetEffects().find(subset);
+    const std::string& assigned = found != model->subsetEffects().end()
+        ? found->second : model->effectFile();
     if (!assigned.empty()) {
         text = assigned;
         return text.c_str();
@@ -264,17 +259,6 @@ const char* EffectTextForModel(ModelData* model)
 LONG_PTR DlgTabSelParamGate();
 
 // 取路径的 basename+扩展名（行键匹配的第二规则）。
-const char* DlgBaseName(const char* path)
-{
-    const char* base = path;
-    for (const char* q = path; q != nullptr && *q != '\0'; ++q) {
-        if (*q == '\\' || *q == '/') {
-            base = q + 1;
-        }
-    }
-    return base;
-}
-
 // [sub_18002CA80 收集 + sub_18002BAA0 0x18002badc-0x18002c60 重灌] 依当前
 // pass 计划重建 offscreen 标签页集：renderPassList 顺序，每条队列项携带的 0x2E
 // 资源关联一个条目，按 (效果, 资源) 去重（首个出现优先），并为新见到的 (效果,
@@ -327,7 +311,6 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
             id = g_nextOffscreenId++;
             g_offscreenIds[key] = id;
             // 首次见到：抓拍注解行快照（恢复“显示”时还原注解原值）。
-            g_pristineRows[key] = sas->resources[resIndex].defaultEffectMap;
         }
         OffscreenTab tab;
         tab.sas = sas;
@@ -366,55 +349,38 @@ std::vector<std::pair<std::string, std::string>>* DlgOffscreenRows(OffscreenTab*
 }
 
 // [sub_18002DB80 读取路径] 首个与对象文件匹配的行。
-const std::pair<std::string, std::string>* DlgFindOffscreenRow(
-    OffscreenTab* tab, ModelData* model)
+SasResource& DlgResource(OffscreenTab* tab)
 {
-    const auto* rows = DlgOffscreenRows(tab);
-    if (rows == nullptr) {
-        return nullptr;
-    }
-    return MmeFindDefaultEffectRow(*rows, model, tab->owner);
+    return tab->sas->resources[tab->resIndex];
 }
 
-// [sub_1800424A0/sub_180042610 写入路径的移植落点] 改派 = 改写注解行；键用
-// 对象当前文件路径（运行期匹配器按全路径或 basename 命中）。
-void DlgUpsertOffscreenRow(OffscreenTab* tab, ModelData* model, const char* value)
+void DlgUpsertOffscreenRow(OffscreenTab* tab, ModelData* model,
+                         const char* value, int subset = -1)
 {
-    std::vector<std::pair<std::string, std::string>>* rows = DlgOffscreenRows(tab);
-    if (rows == nullptr) {
-        return;
-    }
-    MmeSetDefaultEffectOverride(*rows, model, value);
+    DlgResource(tab).effectOverrides[{model->objectId(), subset}] = value;
 }
 
-// [sub_180033570 等值区间擦除] 移除对象在当前 offscreen 上的全部行
-// （40008 Reset with default / 清除改派）。
 void DlgRemoveOffscreenRows(OffscreenTab* tab, ModelData* model)
 {
-    std::vector<std::pair<std::string, std::string>>* rows = DlgOffscreenRows(tab);
-    if (rows == nullptr) {
-        return;
-    }
-    MmeRemoveDefaultEffectOverride(*rows, model);
+    auto& resource = DlgResource(tab);
+    for (auto it = resource.effectOverrides.begin(); it != resource.effectOverrides.end();)
+        if (it->first.first == model->objectId()) it = resource.effectOverrides.erase(it);
+        else ++it;
+    for (auto it = resource.shownOverrides.begin(); it != resource.shownOverrides.end();)
+        if (it->first.first == model->objectId()) it = resource.shownOverrides.erase(it);
+        else ++it;
 }
 
-// [sub_18003FFF0 0x1800411a0-0x180041216] 对象行的效果列文本：命中行显示
-// 行值（none/hide/main_default/绝对路径），无行 -> "(none)"。
-const char* DlgOffscreenRowText(OffscreenTab* tab, ModelData* model)
+const char* DlgOffscreenRowText(OffscreenTab* tab, ModelData* model, int subset = -1)
 {
-    static std::string text;
-    const std::pair<std::string, std::string>* row =
-        DlgFindOffscreenRow(tab, model);
-    if (row != nullptr) {
-        text = row->second;
-        return text.c_str();
-    }
-    text = "(none)";
-    return text.c_str();
+    auto& resource = DlgResource(tab);
+    if (!MmeOffscreenObjectShown(resource, model, tab->owner, subset)) return "(hide)";
+    const auto* value = MmeOffscreenEffectValue(resource, model, tab->owner, subset);
+    if (!value || *value == "none" || *value == "hide") return "(none)";
+    if (*value == "main_default") return EffectTextForModel(model, subset);
+    return value->c_str();
 }
 
-// [sub_18003FFF0 0x180040ef5-0x18004101c] offscreen 页 "(default)" 行文本：
-// 注解行重组为 "key=value; "...（结尾保留 "; "），无任何行时为 "*=none;"。
 std::string DlgOffscreenDefaultRowText(OffscreenTab* tab)
 {
     std::vector<std::pair<std::string, std::string>>* rows = DlgOffscreenRows(tab);
@@ -433,53 +399,15 @@ std::string DlgOffscreenDefaultRowText(OffscreenTab* tab)
     return text;
 }
 
-// The row adapter preserves the previous assignment when hiding. Explicitly
-// showing a default-hidden object overrides "hide" with "none".
-void DlgSetOffscreenHidden(OffscreenTab* tab, ModelData* model, bool hidden)
-{
-    const auto key = std::make_pair(tab->id, std::string(model->filename()));
-    if (hidden) {
-        const auto* current = DlgFindOffscreenRow(tab, model);
-        if (current == nullptr || _stricmp(current->second.c_str(), "hide") != 0) {
-            g_hiddenRowValues[key] = current != nullptr ? current->second : "none";
-        }
-        DlgUpsertOffscreenRow(tab, model, "hide");
-        return;
-    }
-    const auto saved = g_hiddenRowValues.find(key);
-    if (saved != g_hiddenRowValues.end()) {
-        DlgUpsertOffscreenRow(tab, model, saved->second.c_str());
-        g_hiddenRowValues.erase(saved);
-        return;
-    }
-    std::map<std::pair<SasEffect*, int>,
-             std::vector<std::pair<std::string, std::string>>>::const_iterator it =
-        g_pristineRows.find(std::make_pair(tab->sas, tab->resIndex));
-    if (it != g_pristineRows.end()) {
-        const auto* row = MmeFindDefaultEffectRow(it->second, model, tab->owner);
-        if (row != nullptr && _stricmp(row->second.c_str(), "hide") != 0) {
-            DlgUpsertOffscreenRow(tab, model, row->second.c_str());
-            return;
-        }
-    }
-    DlgUpsertOffscreenRow(tab, model, "none");
-}
-
-// 对象行复选框状态（0x1800413e1 处 (v108+1)<<12）：offscreen 页取行值是否
-// 非 "hide"；Main 页维持既有 shown() 语义。
-int DlgRowCheckState(ModelData* model)
+int DlgRowCheckState(ModelData* model, int subset = -1)
 {
     OffscreenTab* tab = DlgCurrentOffscreen();
-    if (tab == nullptr) {
-        return model->shown() ? 2 : 1;
-    }
-    const std::pair<std::string, std::string>* row =
-        DlgFindOffscreenRow(tab, model);
-    return MmeDefaultEffectRowShown(row) ? 2 : 1;
+    const bool shown = tab
+        ? MmeOffscreenObjectShown(DlgResource(tab), model, tab->owner, subset)
+        : MmeEmmEffectiveSubsetShown(model, subset);
+    return shown ? 2 : 1;
 }
 
-// [sub_18003FFF0 0x4e 分支灰化判据] 效果列为 "(none)" 时灰显：offscreen 页看
-// 行是否缺失，Main 页维持既有 effectFile().empty()。
 bool DlgRowEffectIsNone(ModelData* model)
 {
     OffscreenTab* off = DlgCurrentOffscreen();
@@ -569,11 +497,9 @@ void DlgSyncTabs()
         }
         SendMessageA(tab, TCM_SETCURSEL, restore, 0);
     }
-    // id / 快照表不随标签页消失而清理（原版的包装对象长存于 manager 的 id
-    // 树）：offscreen 暂时离开 pass 计划再回来（同一 SasEffect*，引擎缓存不
-    // 变）时 id 与“注解原值”快照仍可复用；效果重载产生新的 SasEffect*，
-    // 旧键自然闲置（量级：每 offscreen 一条，可忽略）。
-    DlgRefreshCaption();
+    // Stable tab IDs remain across dialog rebuilds. Assignment overrides live
+    // on the resource, not on this dialog's lifetime.
+
 }
 
 // per-frame 轮询签名：offscreen 关联变化（计划重建 / 效果重载）时触发标签页
@@ -740,7 +666,7 @@ std::string DlgSelectedEffectPath()
     }
     OffscreenTab* off = DlgCurrentOffscreen();
     if (off != nullptr) {
-        const char* value = DlgOffscreenRowText(off, model);
+        const char* value = DlgOffscreenRowText(off, model, g_rows[index].subset);
         if (value == nullptr || value[0] == '\0' ||
             _stricmp(value, "(none)") == 0 ||
             _stricmp(value, "none") == 0 ||
@@ -810,39 +736,29 @@ void DlgAfterEdit()
 // [FUN_180042610] the checkbox / hide-show applier: write the shown state of
 // every selected object (or the single `singleItem` row when >= 0). The
 // repaint is the 1x1 main-window rect of the original tail.
-// [sub_180042610 0x1800428a9-0x1800428f1 offscreen 分支] offscreen 页写的是
-// (targetId, obj, subset) 分配表上的显示覆盖标志；移植端落在行值上
-// （"hide" / 快照还原），对象主可见性不受影响。
+// Visibility is independent of the assigned path and belongs to the selected
+// target/object/subset. A checkbox notification changes only the clicked row.
 void DlgApplyShown(bool shown, int singleItem)
 {
     OffscreenTab* off = DlgCurrentOffscreen();
     std::vector<SelectedRef> refs;
-    DlgCollectSelected(false, false, refs);
-    if (singleItem >= 0 && singleItem < (int)g_rows.size() &&
-        g_rows[singleItem].model != nullptr) {
-        bool already = false;
-        for (size_t i = 0; i < refs.size(); ++i) {
-            if (refs[i].model == g_rows[singleItem].model) {
-                already = true;
-                break;
-            }
-        }
-        if (!already) {
-            SelectedRef ref;
-            ref.model = g_rows[singleItem].model;
-            ref.subset = g_rows[singleItem].subset;
-            refs.push_back(ref);
-        }
+    if (singleItem >= 0 && singleItem < (int)g_rows.size()) {
+        refs.push_back({g_rows[singleItem].model, g_rows[singleItem].subset});
+    } else {
+        DlgCollectSelected(false, false, refs);
     }
     for (size_t i = 0; i < refs.size(); ++i) {
         if (refs[i].model == nullptr) {
             continue;
         }
         if (off != nullptr) {
-            DlgSetOffscreenHidden(off, refs[i].model, !shown);
+            DlgResource(off).shownOverrides[{refs[i].model->objectId(), refs[i].subset}] = shown;
             continue;
         }
-        refs[i].model->setShown(shown);
+        if (refs[i].subset >= 0)
+            MmeEmmSetSubsetShown(refs[i].model, refs[i].subset, shown);
+        else
+            refs[i].model->setShown(shown);
     }
     if (!refs.empty() && g_mainWindow != nullptr) {
         RECT rect;
@@ -860,11 +776,7 @@ void DlgApplyShown(bool shown, int singleItem)
 // skips the entry outright; collection above already enforces this), and
 // selecting Main + the (default) row then sets the default through the same
 // Set Effect File flow.
-// [sub_1800418b0/sub_180032FB0 0x1800428c3 offscreen 分支] offscreen 页的
-// 改派写 (targetId, obj, subset) 分配表（与 MME_EmmApply/MME_EmdApply 同表）；
-// 移植端直接改写该 offscreen 的 DefaultEffect 注解行（运行期解析的数据源，
-// 改派即时生效）：有路径 -> 前插精确覆盖；清除 -> 精确覆盖为 none。
-// 子集行在注解行模型上无落点（原版经独立表支持 [n] 行），跳过。
+// Offscreen edits target an object/subset assignment, never annotation rows.
 void DlgWriteEffectForSelection(const char* path)
 {
     OffscreenTab* off = DlgCurrentOffscreen();
@@ -878,15 +790,11 @@ void DlgWriteEffectForSelection(const char* path)
             if (model == nullptr) {
                 continue;   // offscreen 页 "(default)" 行已被收集门挡住，保险再挡一次
             }
-            if (refs[i].subset >= 0) {
-                continue;   // 子集行无注解行落点
-            }
             if (path != nullptr && path[0] != '\0') {
-                DlgUpsertOffscreenRow(off, model, path);
+                DlgUpsertOffscreenRow(off, model, path, refs[i].subset);
             } else {
-                DlgUpsertOffscreenRow(off, model, "none");
+                DlgUpsertOffscreenRow(off, model, "none", refs[i].subset);
             }
-            g_hiddenRowValues.erase(std::make_pair(off->id, std::string(model->filename())));
             touchedOffscreen = true;
             continue;
         }
@@ -896,8 +804,9 @@ void DlgWriteEffectForSelection(const char* path)
             continue;
         }
         MmeAssignEffect(model->objectId(), refs[i].subset, path);
-        if (path[0] != 0 && !model->shown()) {
-            model->setShown(true);
+        if (path && path[0] != 0) {
+            if (refs[i].subset >= 0) MmeEmmSetSubsetShown(model, refs[i].subset, true);
+            else model->setShown(true);
         }
     }
     if (touchedDefault || touchedOffscreen) {
@@ -973,15 +882,16 @@ void DlgAddObjectRow(HWND list, ModelData* model)
     row.model = model;
     row.subset = -1;
 
-    const char* base = DlgBaseName(model->filename());
-
-    LVITEMA item;
-    memset(&item, 0, sizeof(item));
+    std::wstring display = model->displayFilename().empty()
+        ? MmeAnsiToWide(model->filename()) : model->displayFilename();
+    const auto slash = display.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) display.erase(0, slash + 1);
+    LVITEMW item = {};
     item.mask = LVIF_TEXT | LVIF_PARAM;
     item.iItem = (int)g_rows.size();
-    item.pszText = const_cast<LPSTR>(base);
+    item.pszText = const_cast<LPWSTR>(display.c_str());
     item.lParam = (LPARAM)g_rows.size();
-    int index = (int)SendMessageA(list, LVM_INSERTITEMA, 0, (LPARAM)&item);
+    int index = (int)SendMessageW(list, LVM_INSERTITEMW, 0, (LPARAM)&item);
     if (index < 0) {
         return;
     }
@@ -1018,9 +928,9 @@ void DlgAddObjectRow(HWND list, ModelData* model)
             g_rows.push_back(sub);
             // [sub_18002DB80 0x18002dbc1 回退] 子集行显示对象级值。
             DlgSetRowText(list, subIndex, kColEffect,
-                          off != nullptr ? DlgOffscreenRowText(off, model)
-                                         : EffectTextForModel(model));
-            DlgSetRowCheck(list, subIndex, DlgRowCheckState(model));
+                          off != nullptr ? DlgOffscreenRowText(off, model, m)
+                                         : EffectTextForModel(model, m));
+            DlgSetRowCheck(list, subIndex, DlgRowCheckState(model, m));
         }
     }
 }
@@ -1081,9 +991,9 @@ void DlgRefreshTexts()
             continue;
         }
         DlgSetRowText(list, (int)i, kColEffect,
-                      off != nullptr ? DlgOffscreenRowText(off, model)
-                                     : EffectTextForModel(model));
-        DlgSetRowCheck(list, (int)i, DlgRowCheckState(model));
+                      off != nullptr ? DlgOffscreenRowText(off, model, g_rows[i].subset)
+                                     : EffectTextForModel(model, g_rows[i].subset));
+        DlgSetRowCheck(list, (int)i, DlgRowCheckState(model, g_rows[i].subset));
     }
     g_rebuilding = false;
 }
@@ -1369,11 +1279,11 @@ void DlgToggleHideShowFlow()
             continue;
         }
         if (off != nullptr) {
-            if (DlgRowCheckState(refs[i].model) == 2) {
+            if (DlgRowCheckState(refs[i].model, refs[i].subset) == 2) {
                 anyShown = true;
                 break;
             }
-        } else if (refs[i].model->shown()) {
+        } else if (MmeEmmEffectiveSubsetShown(refs[i].model, refs[i].subset)) {
             anyShown = true;
             break;
         }
@@ -1433,11 +1343,11 @@ void DlgResetWithDefaultFlow()
         }
         if (off != nullptr) {
             DlgRemoveOffscreenRows(off, model);
-            g_hiddenRowValues.erase(std::make_pair(off->id, std::string(model->filename())));
             continue;
         }
         MmeAssignEffect(model->objectId(), -1, "");
         model->setEffectFile("");
+        MmeEmmClearSubsetShows(model);
     }
     DlgAfterEdit();
 }
@@ -2108,8 +2018,7 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
             g_dlgWindow = nullptr;
         }
         g_rows.clear();
-        // offscreen 标签页集随窗口销毁；id/快照表保留（SasEffect 行上的改派
-        // 在重开对话框后仍然可见，快照继续支撑 unhide 还原）。
+        // Target-local assignments survive closing the dialog.
         g_offscreenTabs.clear();
         return 0;
     }

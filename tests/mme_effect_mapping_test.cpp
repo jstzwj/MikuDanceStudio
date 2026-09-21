@@ -1,5 +1,7 @@
 #include "material_bind.h"
 #include "model_data.h"
+#include "emm_manager.h"
+#include "mme_util.h"
 #include <cstdio>
 
 int main() {
@@ -123,6 +125,47 @@ int main() {
     mme::MmeRemoveDefaultEffectOverride(basenameDefault, &sky);
     check(basenameDefault == originalBasename,
           "Removing full-path overrides must not erase an exact basename default row");
+    // A stage is one model with many materials. Hiding its sky material
+    // must not hide the parent, siblings, another instance, or another tab.
+    mme::MmeEmmSetSubsetShown(&sky, 7, false);
+    check(sky.shown() && !mme::MmeEmmEffectiveSubsetShown(&sky, 7)
+          && mme::MmeEmmEffectiveSubsetShown(&sky, 0), "Main sky-only visibility");
+    mme::SasResource target, otherTarget;
+    target.defaultEffectMap = {{"*.pmx", "shadow.fx"}};
+    otherTarget.defaultEffectMap = target.defaultEffectMap;
+    target.shownOverrides[{sky.objectId(), 7}] = false;
+    check(!mme::MmeOffscreenObjectShown(target, &sky, &ray, 7), "Target sky material hidden");
+    check(mme::MmeOffscreenObjectShown(target, &sky, &ray, 0)
+          && mme::MmeOffscreenObjectShown(target, &sky, &ray), "Target siblings and parent remain shown");
+    check(mme::MmeOffscreenObjectShown(otherTarget, &sky, &ray, 7), "Visibility is target-local");
+    check(mme::MmeOffscreenObjectShown(target, &otherRay, &ray, 7), "Visibility is instance-local");
+    target.effectOverrides[{sky.objectId(), 7}] = "sky_material.fx";
+    check(*mme::MmeOffscreenEffectValue(target, &sky, &ray, 7) == "sky_material.fx",
+          "Hiding does not discard the subset effect path");
+    check(*mme::MmeOffscreenEffectValue(target, &sky, &ray, 0) == "shadow.fx",
+          "Subset assignment leaves sibling default path intact");
+    target.shownOverrides[{sky.objectId(), 7}] = true;
+    check(mme::MmeOffscreenObjectShown(target, &sky, &ray, 7), "Re-enable sky independently");
+    target.shownOverrides[{sky.objectId(), -1}] = false;
+    check(!mme::MmeOffscreenObjectShown(target, &sky, &ray, 0)
+          && mme::MmeOffscreenObjectShown(target, &sky, &ray, 7), "Explicit subset wins over inherited parent");
+    mme::MmeEmmClearSubsetShows(&sky);
+
+    // The host passes the wide loaded filename through the engine's own
+    // code page, never the fixed-size SJIS export or CRT C-locale fallback.
+    const std::wstring wideName = L"C:\\stage\\\u573a\u666f_\u7a7a.pmx";
+    BOOL lost = FALSE;
+    if (GetACP() != CP_UTF8)
+        WideCharToMultiByte(CP_ACP, 0, wideName.c_str(), -1, nullptr, 0, nullptr, &lost);
+    const auto path = mme::MmeWideToAnsi(wideName.c_str());
+    check(!path.empty(), "Loaded model path must not become empty");
+    if (!lost)
+        check(mme::MmeAnsiToWide(path.c_str()) == wideName, "System-code-page path roundtrip");
+    mme::ModelData stage(nullptr, 99, path.c_str(), 0, 0, nullptr);
+    stage.setDisplayFilename(wideName.c_str());
+    check(stage.displayFilename() == wideName, "Original Unicode filename remains available to UI");
+    check(mme::MmeFindDefaultEffectRow(material, &stage, &ray) == &material[9],
+          "Non-SJIS stage filename still matches Ray PMX assignment");
     if (!failures) std::puts("MME effect mapping regression passed");
     return failures ? 1 : 0;
 }

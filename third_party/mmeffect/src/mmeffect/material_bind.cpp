@@ -11,6 +11,7 @@
 #include "mmhack_api.h"  // GetBlendMode / GetCurrentEffect
 
 #include "effect_engine.h"
+#include "emm_manager.h"
 #include "mme_context.h"
 #include "mme_globals.h"
 #include "mme_log.h"       // MmeLogWrite (the name-table shape-error report)
@@ -1031,14 +1032,43 @@ void MmeSetDefaultEffectOverride(
     rows.insert(rows.begin(), overrideRow);
 }
 
+const std::string* MmeOffscreenEffectValue(const SasResource& resource,
+    ModelData* model, ModelData* owner, int subsetIndex)
+{
+    if (!model) return nullptr;
+    auto it = resource.effectOverrides.find({model->objectId(), subsetIndex});
+    if (it == resource.effectOverrides.end() && subsetIndex >= 0)
+        it = resource.effectOverrides.find({model->objectId(), -1});
+    if (it != resource.effectOverrides.end()) return &it->second;
+    const auto* row = MmeFindDefaultEffectRow(resource.defaultEffectMap, model, owner);
+    return row ? &row->second : nullptr;
+}
+
+bool MmeOffscreenObjectShown(const SasResource& resource,
+    ModelData* model, ModelData* owner, int subsetIndex)
+{
+    if (!model) return true;
+    auto it = resource.shownOverrides.find({model->objectId(), subsetIndex});
+    if (it == resource.shownOverrides.end() && subsetIndex >= 0)
+        it = resource.shownOverrides.find({model->objectId(), -1});
+    if (it != resource.shownOverrides.end()) return it->second;
+    const auto* value = MmeOffscreenEffectValue(resource, model, owner, subsetIndex);
+    if (value && *value == "main_default")
+        return MmeEmmEffectiveSubsetShown(model, subsetIndex);
+    return !value || *value != "hide";
+}
+
 // The value of the first staged row whose key matches the model (null when
 // no rows are staged or none match). Keep turn/owner discovery separate from
 // the shared query so the mapping UI can inspect any target without changing
 // the active render turn or loading an effect.
-static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
+static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model, int subsetIndex = -1)
 {
     MmeContext* ctx = g_context;
     if (model == nullptr || ctx == nullptr) return nullptr;
+    if (ctx->currentBindingOffscreen)
+        return MmeOffscreenEffectValue(*ctx->currentBindingOffscreen, model,
+                                      ctx->currentBindingObject, subsetIndex);
     const auto* rowSource = ctx->currentBindingOffscreen != nullptr
         ? &ctx->currentBindingOffscreen->defaultEffectMap : ctx->offscreenDefaultEffect;
     if (rowSource == nullptr) return nullptr;
@@ -1055,7 +1085,7 @@ static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
 
 MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model, int subsetIndex)
 {
-    const std::string* value = MmeOffscreenDefaultEffectRow(model);
+    const std::string* value = MmeOffscreenDefaultEffectRow(model, subsetIndex);
     if (value == nullptr) {
         return nullptr;
     }
@@ -1129,14 +1159,17 @@ MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model, int subsetI
     return binding;
 }
 
-bool MmeHasOffscreenDefaultEffectRow(ModelData* model)
+bool MmeHasOffscreenDefaultEffectRow(ModelData* model, int subsetIndex)
 {
-    return MmeOffscreenDefaultEffectRow(model) != nullptr;
+    return MmeOffscreenDefaultEffectRow(model, subsetIndex) != nullptr;
 }
 
-bool MmeOffscreenDefaultEffectHides(ModelData* model)
+bool MmeOffscreenDefaultEffectHides(ModelData* model, int subsetIndex)
 {
-    const std::string* value = MmeOffscreenDefaultEffectRow(model);
+    if (g_context && g_context->currentBindingOffscreen)
+        return !MmeOffscreenObjectShown(*g_context->currentBindingOffscreen,
+            model, g_context->currentBindingObject, subsetIndex);
+    const std::string* value = MmeOffscreenDefaultEffectRow(model, subsetIndex);
     return value != nullptr && *value == "hide";
 }
 

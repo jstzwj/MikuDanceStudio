@@ -143,13 +143,6 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
             model = MmeFindOrCreateModelEntry(id);                  // [L90]
         }
         if (model != nullptr) {
-            // The assignment-dialog hide gate: an object hidden through the
-            // mapping (the row checkbox / Hide-Show) is not rendered while
-            // MME's effect path drives the frame; disabling the effects
-            // forwards every draw again (the host pipeline takes over).
-            if (!model->shown()) {
-                return;
-            }
             // [sub_18002CA80 @0x18002ce6e / FUN_18002DB10] the [n].show=false
             // subset gate: the original inserts a NULL LoadedEffect node for
             // the (owner, object, subset) key at binding rebuild, so the
@@ -163,7 +156,7 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
             // so checking before the update would always test subset 0.
             // [L94] snapshot update runs whenever the model resolved.
             MmeUpdateModelRenderSnapshot(model, &snap);
-            if (snap.subset_index >= 0 &&
+            if (!MmeInOffscreenRenderTurn() &&
                 !MmeEmmEffectiveSubsetShown(model, snap.subset_index)) {
                 return;
             }
@@ -179,7 +172,7 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
             // Resolve the active turn's own rows; scene script target
             // changes do not redefine which assignment table is in force.
             if (MmeInOffscreenRenderTurn() &&
-                MmeOffscreenDefaultEffectHides(model)) {
+                MmeOffscreenDefaultEffectHides(model, snap.subset_index)) {
                 return;
             }
             // [L93-97] apply gate: draw types 1/2 always; others only when
@@ -227,7 +220,7 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
                 bool swallowOffscreenDraw = false;
                 const bool offscreenWindow = MmeInOffscreenRenderTurn();
                 if (offscreenWindow) {
-                    if (MmeHasOffscreenDefaultEffectRow(model)) {
+                    if (MmeHasOffscreenDefaultEffectRow(model, snap.subset_index)) {
                         binding = MmeResolveOffscreenDefaultBinding(model, snap.subset_index);
                     } else {
                         // No entry for this turn: do not draw through the root binding.
