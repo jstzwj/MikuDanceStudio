@@ -23,6 +23,8 @@ builds Release for x86 and x64 on Windows, and publishes a GitHub Release only
 after both builds succeed. It uploads two ZIPs and their SHA-256 files. A failed
 build can be rerun for the same tag; publishing replaces its matching assets.
 Normal branch pushes do not publish releases. The built-in `GITHUB_TOKEN` is used;
+If a tag push does not start a run, use Actions → Windows release → Run workflow
+on `main` and enter the existing tag. This checks out that tag without moving it.
 no personal access token is needed. Repository/organization policy must permit
 the publish job's `contents: write` permission.
 
