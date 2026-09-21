@@ -117,6 +117,17 @@ void SendMenuCommand(MMDApp* app, int id) {
 void ConsumeLetterHotkeys(MMDApp* app) {
     auto& state = app->state;
     const HWND main = static_cast<HWND>(app->Hwnd());
+    const HWND foreground = GetForegroundWindow();
+    const HWND viewport = app->FloatingWindow();
+    // Polling continues while minimized/inactive. GetFocus is thread-local
+    // and the A/S/D branches below have no per-command focus gate, so require
+    // a live foreground editor before consuming any letter shortcut.
+    const bool mainActive = main != nullptr && foreground == main &&
+                            !IsIconic(main);
+    const bool viewportActive = viewport != nullptr && foreground == viewport &&
+                                !IsIconic(viewport);
+    if (!mainActive && !viewportActive)
+        return;
     const HWND focus = GetFocus();                        // var_14C4
     const bool focusOK =
         focus == main || app->ViewportInputActive() != 0;  // 0x9EDD1
@@ -348,8 +359,8 @@ void ConsumeLetterHotkeys(MMDApp* app) {
     }
 
     // ---- 'A' (0x473092): select all bones (0x1EE) ------------------------
-    // No focus gates at all in the original - fires even while an edit or
-    // another window has focus.
+    // No per-command focus gate; the foreground-editor guard above still
+    // applies. Panel-edit focus behavior is otherwise retained.
     if (pressed(kSlotA))
         SendMenuCommand(app, 0x1EE);                       // case 494
 

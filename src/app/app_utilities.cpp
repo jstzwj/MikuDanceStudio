@@ -171,7 +171,8 @@ bool MakeLineGeometry(MMDApp* app) {  // 0x40AF40
 
     LineVertex* verts = nullptr;
     lineVb->Lock(0, 1440, reinterpret_cast<void**>(&verts), 0);     // 0x40b00b
-    constexpr std::uint32_t kAxisB = 0xFF000001u;   // -16776961 (dark blue)
+    // x64 0x7FF7CB42F4C8 / 0x7FF7CB42F4F4: 0xFF0000FF, not 0xFF000001.
+    constexpr std::uint32_t kAxisB = 0xFF0000FFu;   // -16776961 (blue)
     constexpr std::uint32_t kAxisR = 0xFFFF0000u;   // -65536    (red)
     constexpr std::uint32_t kAxisG = 0xFF00FF00u;   // -16711936 (green)
     constexpr std::uint32_t kGrid  = 0xFFB4B4B4u;   // -4934476  (gray)
@@ -181,7 +182,7 @@ bool MakeLineGeometry(MMDApp* app) {  // 0x40AF40
     verts[2]  = {0.0f, 0.1f, 0.0f, kAxisR};
     verts[3]  = {65.0f, 0.1f, 0.0f, kAxisR};
     verts[4]  = {0.0f, 0.1f, 0.0f, kAxisG};
-    verts[5]  = {0.0f, 0.1f, 65.0f, kAxisG};
+    verts[5]  = {0.0f, 65.0f, 0.0f, kAxisG};    // x64 0x7FF7CB42F584: Y=65
     verts[6]  = {0.0f, 0.1f, 0.0f, kGrid};
     verts[7]  = {0.0f, 0.1f, 50.0f, kGrid};
     verts[8]  = {0.0f, 0.1f, 0.0f, kGrid};
