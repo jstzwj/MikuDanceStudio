@@ -1816,9 +1816,9 @@ static void LoadSceneV2_CameraTrack(PmmV2LoadContext& ctx, int fd) {
         }
     }
     // camera misc (0x4550F5..0x45518C)
-    Rd(fd, &s->state.cameraPosX, 4);
-    Rd(fd, &s->state.cameraPosY, 4);
-    Rd(fd, &s->state.cameraPosZ, 4);
+    Rd(fd, &s->state.cameraPosition[0], 4);
+    Rd(fd, &s->state.cameraPosition[1], 4);
+    Rd(fd, &s->state.cameraPosition[2], 4);
     Rd(fd, &s->state.viewOffsetX, 4);
     Rd(fd, &s->state.viewOffsetY, 4);
     Rd(fd, &s->state.cameraDistance, 4);

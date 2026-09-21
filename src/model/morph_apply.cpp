@@ -326,7 +326,7 @@ void ModelApplyMorphs(unsigned char* m) {
     }
 
     // ---- 3. compose into the material records ------------------------------
-    auto* mats = static_cast<mdl::ModelMaterialRecord*>(model.materials);
+    auto* mats = model.materials;
     auto* baseP = mdl::MaterialMorphBase(m);
     for (int i = 0; i < matCount; ++i) {
         mdl::ModelMaterialRecord& mat = mats[i];

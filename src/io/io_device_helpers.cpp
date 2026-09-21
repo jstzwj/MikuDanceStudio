@@ -1,8 +1,7 @@
 // ===========================================================================
 // io_device_helpers.cpp - assorted gap functions from the 0x403030..0x409700 window
 // ===========================================================================
-// Covers the remaining "io cluster" virtual addresses not yet represented
-// anywhere in the port:
+// Historical x86 address map for the IO helpers implemented here and nearby:
 //   ported here:  0x00407660  texture-name table find (texture slot)
 //                 0x00407830  texture-name table find (average color)
 //                 0x00407470  NVAPI stereo activation toggle (0x4CC0F0 call)
@@ -10,10 +9,8 @@
 //   already present elsewhere (see the banners below for pointers):
 //                 0x00406950  DrawPhysicsCollisionDebug
 //                 0x00403030  Bullet btRigidBodyConstructionInfo ctor
-//   deliberately deferred (DirectShow AVI recording graph cluster - the
-//   port needs byte-exact reproduction of the MMDxShow.dll custom COM
-//   interfaces; the decoded contract lives at the top of
-//   src/app/dshow_record_graph.cpp):
+//   implemented in src/app/dshow_record_graph.cpp (FindPinDShow,
+//   BindSelectedCompressor, FindInputPin and FindOutputPin):
 //                 0x004095D0, 0x00409170, 0x004096D0, 0x00409700
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
@@ -194,8 +191,8 @@ bool DirectShowInit(HWND hWnd) {
 //
 // VA 0x004095D0 / 0x00409170 / 0x004096D0 / 0x00409700 - DirectShow AVI
 //   recording graph cluster (pin finder, compressor moniker bind, ...).
-//   Deliberately deferred; contract decoded at the top of
-//   src/app/dshow_record_graph.cpp.
+//   Implemented in src/app/dshow_record_graph.cpp; see its named helpers
+//   and the custom COM interface contract documented there.
 // ---------------------------------------------------------------------------
 
 }  // namespace mikudancestudio

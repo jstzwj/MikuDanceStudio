@@ -22,6 +22,8 @@ int main() {
     std::memset(bytes, 0, mdl::kSize);
     ModelInitDefaults(bytes);
     auto& model = *mdl::Mdl(bytes);
+    model.materials = static_cast<mdl::ModelMaterialRecord*>(
+        ::operator new(sizeof(mdl::ModelMaterialRecord) * 2));
     model.boneKeyCursors = static_cast<std::uint32_t*>(::operator new(4));
     model.morphKeyCursors = static_cast<std::uint32_t*>(::operator new(4));
     model.reservedMorphTable = ::operator new(16);
@@ -30,7 +32,8 @@ int main() {
     model.undoRings[0].slots[0].bonePose =
         static_cast<mdl::BonePoseSnapshot*>(::operator new(sizeof(mdl::BonePoseSnapshot)));
     ModelDispose(bytes);
-    const bool released = model.boneKeyCursors == nullptr
+    const bool released = model.materials == nullptr
+        && model.boneKeyCursors == nullptr
         && model.morphKeyCursors == nullptr
         && model.reservedMorphTable == nullptr
         && model.pmxTextBuffers[0] == nullptr

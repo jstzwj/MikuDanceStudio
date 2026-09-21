@@ -289,7 +289,7 @@ inline wchar_t*& PmxTextBuffer(unsigned char* m, PmxTextBufferSlot slot) {
 }
 
 inline ModelMaterialRecord*& Materials(unsigned char* m) {
-    return ResourceAs<ModelMaterialRecord>(Mdl(m)->materials);
+    return Mdl(m)->materials;
 }
 
 inline const ModelMaterialRecord& Material(const unsigned char* bytes) {

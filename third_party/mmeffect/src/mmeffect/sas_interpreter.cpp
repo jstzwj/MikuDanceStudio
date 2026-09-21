@@ -18,6 +18,7 @@
 #include "mme_globals.h"   // g_skipValidation (DAT_1800d99d9 - the selector's
                            // validity-byte switch at 0x18001dcb3)
 #include "mme_util.h"
+#include "mme_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2198,11 +2199,11 @@ static bool SasScanTechnique(SasEffect* sas, D3DXHANDLE hTech) {
     tech.name = (td.Name != nullptr) ? td.Name : "";
     tech.empty = (td.Passes == 0);  // "empty technique" convention
 
-    // [L18482-18485] hardware + shader-mix validity flags.
+    // The original keeps D3DX validation and shader capability checks
+    // separate (0x180016A5C/0x180016A70). SkipValidation uses the latter.
     tech.hardwareOk = (effect->ValidateTechnique(hTech) == S_OK);
-    // FUN_1800167d0's vs_3_0/ps_3_0 mix check runs per pass (FUN_180017a80);
-    // the technique flag aggregates it.
-    tech.shaderMixOk = true;
+    D3DCAPS9 caps = {};
+    tech.shaderCapsOk = sas->device != nullptr && sas->device->GetDeviceCaps(&caps) == S_OK;
 
     std::string script;
     for (UINT a = 0; a < td.Annotations; ++a) {
@@ -2314,9 +2315,8 @@ static bool SasScanTechnique(SasEffect* sas, D3DXHANDLE hTech) {
         if (effect->GetPassDesc(hPass, &pdd) == S_OK) {
             pass.name = (pdd.Name != nullptr) ? pdd.Name : "";
             // [L19120-19142] PSIZE15 vertex-input probe + shader version mix.
-            // The token streams in D3DXPASS_DESC are only populated when the
-            // effect was created without cloning (D3DXFX_NOT_CLONEABLE);
-            // UNCERTAIN: the original's effect creation flags may null them.
+            // D3DXFX_NOT_CLONEABLE discards the shader token streams; the
+            // normal effect creation path retains them for this inspection.
             if (pdd.pVertexShaderFunction != nullptr) {
                 pass.hasCustomShaders = true;
                 UINT count = 0;
@@ -2356,6 +2356,10 @@ static bool SasScanTechnique(SasEffect* sas, D3DXHANDLE hTech) {
                                                D3DXGetShaderVersion(
                                                    pdd.pPixelShaderFunction)))
                                      : 0u;
+            if (vsVer > static_cast<unsigned short>(caps.VertexShaderVersion) ||
+                psVer > static_cast<unsigned short>(caps.PixelShaderVersion)) {
+                tech.shaderCapsOk = false;
+            }
             // [L19143 0x180017bc6] (vs >= 3.0 || ps >= 3.0) && vs != ps
             bool mixOk = !(((vsVer >= 0x300u) || (psVer >= 0x300u)) &&
                            (vsVer != psVer));
@@ -2364,14 +2368,21 @@ static bool SasScanTechnique(SasEffect* sas, D3DXHANDLE hTech) {
                 tech.shaderMixOk = false;
                 // [0x1800B4630] "Error: vs_3_0 or ps_3_0 may not be used with
                 // any other shader versions. (pass: %s, technique: %s)\n"
-                // The original also raises a MessageBoxA here; the parent owns
-                // UI, so this port logs only (documented divergence).
-                SasLogFormat(sas,
-                             "Error: vs_3_0 or ps_3_0 may not be used with any other "
-                             "shader versions. (pass: %s, technique: %s)\n",
-                             pass.name.c_str(), tech.name.c_str());
-                sas->hasErrors = true;
-                scanError = true;  // [FUN_180017a80 -> sub_180016900] fatal
+                const std::string error =
+                    "Error: vs_3_0 or ps_3_0 may not be used with any other "
+                    "shader versions. (pass: " + pass.name +
+                    ", technique: " + tech.name + ")\n";
+                // The direct diagnostic precedes the path-qualified modal
+                // message (0x180017D66..0x180017EF8). Each effect path has its
+                // own entry in the shared, phase-scoped suppression set.
+                MmeLogWrite(error.c_str(), 0);
+                const std::string message = sas->path + "\n\n" + error;
+                if (MmeLogShouldShowMessageBox(message.c_str())) {
+                    MessageBoxA(g_mainWindow, message.c_str(), "MikuMikuEffect",
+                                MB_ICONERROR);
+                }
+                // This diagnostic leaves the scan result unchanged. Only
+                // annotation/script failures below reject the effect.
             }
         }
         // Pass "Script" annotation [FUN_180017a80 L19288-19307].
@@ -2833,7 +2844,7 @@ bool SasIsSubsetAllowed(const SasEffect* sas, int techIndex, int subset) {
 //                                   negative (0xFF default) = wildcard,
 //                                   otherwise (byte != 0) == material state
 //   validity byte                   [0x18001dcb3] SkipValidation
-//                                   (DAT_1800d99d9) selects the shader-mix
+//                                   (DAT_1800d99d9) selects the shader-caps
 //                                   record+9 over the ValidateTechnique
 //                                   record+8
 // The FIRST valid match returns immediately; a matched-but-invalid technique
@@ -2896,7 +2907,7 @@ D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
         if (tech->useToon >= 0 && (tech->useToon != 0) != useToon) {
             continue;
         }
-        const bool valid = g_skipValidation ? tech->shaderMixOk
+        const bool valid = g_skipValidation ? tech->shaderCapsOk
                                             : tech->hardwareOk;
         if (valid) {
             return tech->handle;

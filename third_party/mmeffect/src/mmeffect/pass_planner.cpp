@@ -396,9 +396,8 @@ static MaterialBinding* MmeSceneRecordBinding(ModelData* record)
     return binding;
 }
 
-// Flush the sas->log lines appended by a run into MMEffect.txt (the per
-// -effect log string is only written to the file once at load; runtime
-// script errors/warnings would otherwise be invisible).
+// Forward newly appended runtime script diagnostics to the shared log
+// history and log window.
 static void MmeFlushSasLogDelta(SasEffect* sas, size_t logLengthBefore)
 {
     if (sas != nullptr && sas->log.size() > logLengthBefore) {
@@ -941,8 +940,7 @@ void MmeRebuildRenderPassPlan()
         }
     }
 
-    // [L206-253] the accessory scan (+ the Phase 2 CONTROLOBJECT staging and
-    // the GetAcsAttachedPmd attach resolution).
+    // [L206-253] the accessory scan and GetAcsAttachedPmd attach resolution.
     for (int i = 0; i < acsNum; ++i) {
         unsigned long long id =
             reinterpret_cast<unsigned long long>(ExpGetAcsID(i));      // [L210]
@@ -950,7 +948,6 @@ void MmeRebuildRenderPassPlan()
             ModelData* model = MmeFindOrCreateModelEntry(id);          // [L214]
             if (model != nullptr) {
                 MmeRefreshObjectPlan(model, i);                        // [L216]
-                MmeStageControlObjectValues(model, i);   // Phase 3 seam (host values)
                 MmeResolveAccessoryAttach(model, id);    // GetAcsAttachedPmd
                 ctx->modelsByName.Add(model->name(), model->passPlanScratch().renderOrder, model);
                 if (ExpGetAcsDisp(i)) {                                // [L222]
@@ -1111,6 +1108,8 @@ void MmeUpdatePassBookkeeping(MmeContext* ctx)
         // ctx+0x188 (the snapshot success flag) is NOT touched here.
         ctx->persistentClearUsed = 0;
         ctx->persistentLayerEligible = 1;
+        // sub_18005C510 @ 5C7EF..5C846: begin the next usage interval.
+        ctx->snapshotCache.active.clear();
         // [L74287] ctx+0x43a = 1, then [L74303-74313] cleared when any plan-B
         // model is a "normal" object (scriptClass != 1 && drawsGeometry != 0).
         ctx->allObjectsSpecialFlag = 1;
@@ -1128,19 +1127,6 @@ void MmeUpdatePassBookkeeping(MmeContext* ctx)
     // the per-target map; the depth map gets 1.0f). The per-target map is the
     // Phase 3 SAS target table; Phase 2 latches the host clear color.
     if (ctx->lastRepeatCount == 0) {
-        // [FUN_180001320 head, 0x180001335-0x180001346] the per-OnEndScene
-        // cleanup: sub_180067680 x2 unconditionally drops the mgr's persistent
-        // set (mgr+0x08) and saved main set (mgr+0x50). The original runs it
-        // at the frame tail (OnEndScene -> e210 -> 18000132); the port runs
-        // it here at the repeat-0 boundary of the NEXT frame - the last
-        // persistent consumer of the previous frame is the OnEndScene e210's
-        // sub_18005cac0 snapshot, and every sub_180002100/sub_180002440
-        // query of this frame happens after this point, so the fast path
-        // observes an empty persistent pool exactly like the original. The
-        // mgr+0x50 drop is the defensive tail (e70 and the 180001880 failure
-        // path already release it).
-        MmeReleaseTargetSet(ctx->persistentTargetSet);
-        MmeReleaseTargetSet(ctx->mainTargetSet);
         D3DCOLOR clearColor = GetClearColor();                        // [L74318]
         ctx->postClearColor = clearColor;
         IDirect3DDevice9* device = ctx->device;
@@ -1286,8 +1272,8 @@ static void MmeValidateStagedClear(MmeContext* ctx,
 // [FUN_18005da50 L75237-75346 == FUN_18005cac0 failure block] the shared
 // "DirectX Error: <desc> [%08X]\n" log line, the localized
 // "Failed to process post effect:\n" prefix and the MessageBoxA(hWndParent,
-// ..., "MikuMikuEffect", MB_ICONERROR). (The shown-message dedup walk over
-// the byte_1800D99D8 list is a Phase 3 seam.)
+// ..., "MikuMikuEffect", MB_ICONERROR). Repeated dialogs share the log's
+// per-phase message set; every failure still reaches the log history.
 // ---------------------------------------------------------------------------
 
 static void MmeReportPostEffectFailure(unsigned long hr)
@@ -1305,13 +1291,18 @@ static void MmeReportPostEffectFailure(unsigned long hr)
     if (MmeIsEnglishUiMode()) {
         message = "Failed to process post effect:\n";           // 0x1800b5988
     } else {
-        // 0x1800b5958: GBK bytes of the localized release.
-        message += "\xBA\xF3\xC6\xDA\xCC\xD8\xD0\xA7\xB4\xA6\xC0\xED"
-                   "\xD6\xD0\xB7\xA2\xC9\xFA\xB4\xED\xCE\xF3\x3A";
+        // Original Japanese prefix in Shift-JIS, including its trailing LF.
+        // Explicit bytes preserve the MessageBoxA payload on every build host.
+        message = "\x83\x7C\x83\x58\x83\x67\x83\x47\x83\x74\x83\x46"
+                  "\x83\x4E\x83\x67\x8F\x88\x97\x9D\x92\x86\x82\xC9"
+                  "\x83\x47\x83\x89\x81\x5B\x82\xAA\x94\xAD\x90\xB6"
+                  "\x82\xB5\x82\xDC\x82\xB5\x82\xBD:\n";
     }
     message += errorLine;
-    MessageBoxA(g_mainWindow, message.c_str(), "MikuMikuEffect",
-                MB_ICONERROR);                                  // [L75346]
+    if (MmeLogShouldShowMessageBox(message.c_str())) {
+        MessageBoxA(g_mainWindow, message.c_str(), "MikuMikuEffect",
+                    MB_ICONERROR);                              // [L75346]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,9 +1322,7 @@ static void MmeReportPostEffectFailure(unsigned long hr)
 // - a resized request misses and creates a fresh node; the B family
 // (mgr+0x98 per-slot map, flag 1) is keyed by fmt and reuses the cached
 // surface while GetDesc says it is big enough, releasing it when too small.
-// The port keeps one surface per slot: on an A-family key mismatch the
-// displaced surface is released instead of staying in the map (documented
-// divergence from the multi-node A-family map). Failure stores the HRESULT
+// Failure stores the HRESULT
 // at mgr+0x1FC (ctx->snapshotError) and returns null.
 //
 // [0x180002237-0x180002253 / 0x180002590-0x1800025a8, B-branch only] the
@@ -1364,126 +1353,79 @@ static bool MmePersistentSurfaceValid(IDirect3DSurface9* surface,
     D3DSURFACE_DESC desc;
     memset(&desc, 0, sizeof(desc));
     if (FAILED(surface->GetDesc(&desc))) {
-        return false;    // the original checks the desc fields of an
-                         // unzeroed stack on GetDesc failure; the port
-                         // treats a failed probe as a miss (observably
-                         // equivalent: garbage sizes rarely pass)
+        // Defined failure handling; the original reads an uninitialized
+        // description on failure. Do not reproduce that undefined input.
+        return false;
     }
     return width <= desc.Width && height <= desc.Height &&
            (format == 0 || format == desc.Format);
 }
 
-static IDirect3DSurface9* MmeGetSnapshotSurface(MmeContext* ctx,
-                                                IDirect3DDevice9* device,
-                                                int slot, D3DFORMAT format,
-                                                bool familySpecial)
+static IDirect3DSurface9* MmeAcquireSnapshotSurface(
+    MmeContext* ctx, IDirect3DDevice9* device, MmeSnapshotCache::Slot& slot,
+    IDirect3DSurface9* persistent, IDirect3DSurface9* multisampleSource,
+    D3DFORMAT format, bool familySpecial, bool depth)
 {
     const D3DVIEWPORT9& vp = ctx->mainTargetSet.viewport;
-    IDirect3DSurface9* cached = ctx->snapshotSurfaces[slot];
-    if (cached != nullptr) {
-        D3DSURFACE_DESC desc;
-        memset(&desc, 0, sizeof(desc));
-        bool reusable = SUCCEEDED(cached->GetDesc(&desc)) && desc.Format == format &&
-                        (familySpecial
-                             ? (desc.Width >= vp.Width && desc.Height >= vp.Height)
-                             : (desc.Width == vp.Width && desc.Height == vp.Height));
-        if (reusable) {
-            return cached;
-        }
-        cached->Release();
-        ctx->snapshotSurfaces[slot] = nullptr;
+    const MmeSnapshotCache::Key key = {vp.Width, vp.Height, format};
+    if (IDirect3DSurface9* cached = slot.Find(key, familySpecial)) {
+        ctx->snapshotCache.active.insert(cached);
+        return cached;
     }
-    // [0x180002237] family-B only: the persistent fast path.
-    if (familySpecial && ctx->persistentLayerEligible != 0) {
-        IDirect3DSurface9* persistent = ctx->persistentTargetSet.targets[slot];
-        if (MmePersistentSurfaceValid(persistent, vp.Width, vp.Height, format)) {
-            ctx->persistentClearUsed = 1;   // mgr+0x1F8
-            return persistent;              // mgr+0x10+8*slot
-        }
+    // Only family B can borrow the persistent set. This is not a cache
+    // acquisition: neither map ownership nor active membership changes.
+    if (familySpecial && ctx->persistentLayerEligible != 0 &&
+        MmePersistentSurfaceValid(persistent, vp.Width, vp.Height, format)) {
+        ctx->persistentClearUsed = 1;
+        return persistent;
     }
-    // [0x18000230c] the multisample pair: GetDesc on the PERSISTENT set's
-    // slot-0 surface (mgr+0x10). The persistent set can be empty at this
-    // point in the port (the repeat-0 bookkeeping drops it); the original
-    // would dereference null there, the port falls back to the saved main
-    // RT0 (documented divergence).
-    D3DSURFACE_DESC mainDesc;
-    memset(&mainDesc, 0, sizeof(mainDesc));
-    IDirect3DSurface9* multisampleSource = ctx->persistentTargetSet.targets[0];
+
+    D3DSURFACE_DESC sampleDesc = {};
+    // Valid original host calls have a persistent multisample source.
+    // Retain the existing null-source safety fallback for standalone calls.
     if (multisampleSource == nullptr) {
         multisampleSource = ctx->mainTargetSet.targets[0];
     }
-    if (multisampleSource != nullptr) {
-        multisampleSource->GetDesc(&mainDesc);
-    }
-    IDirect3DSurface9* surface = nullptr;
-    HRESULT hr = device->CreateRenderTarget(
-        vp.Width != 0 ? vp.Width : 1, vp.Height != 0 ? vp.Height : 1, format,
-        mainDesc.MultiSampleType, mainDesc.MultiSampleQuality, FALSE,
-        &surface, nullptr);
-    if (FAILED(hr) || surface == nullptr) {
-        ctx->snapshotError = static_cast<unsigned long>(hr);   // mgr+0x1FC
-        if (surface != nullptr) {
-            surface->Release();
-        }
+    if (multisampleSource != nullptr) multisampleSource->GetDesc(&sampleDesc);
+
+    IDirect3DSurface9* created = nullptr;
+    const HRESULT hr = depth
+        ? device->CreateDepthStencilSurface(
+              vp.Width, vp.Height, format, sampleDesc.MultiSampleType,
+              sampleDesc.MultiSampleQuality, FALSE, &created, nullptr)
+        : device->CreateRenderTarget(
+              vp.Width, vp.Height, format, sampleDesc.MultiSampleType,
+              sampleDesc.MultiSampleQuality, FALSE, &created, nullptr);
+    MmeSnapshotCache::Surface owner(created);
+    // Both original creators test hr != 0, not merely FAILED(hr).
+    if (hr != S_OK || created == nullptr) {
+        ctx->snapshotError = static_cast<unsigned long>(
+            hr != S_OK ? hr : E_FAIL);
         return nullptr;
     }
-    ctx->snapshotSurfaces[slot] = surface;   // the cache owns the reference
-    return surface;
+    slot.Store(key, familySpecial, std::move(owner));
+    ctx->snapshotCache.active.insert(created);
+    return created; // borrowed; the slot owns the creation reference
+}
+
+static IDirect3DSurface9* MmeGetSnapshotSurface(MmeContext* ctx,
+                                              IDirect3DDevice9* device,
+                                              int slot, D3DFORMAT format,
+                                              bool familySpecial)
+{
+    return MmeAcquireSnapshotSurface(
+        ctx, device, ctx->snapshotCache.colors[slot],
+        ctx->persistentTargetSet.targets[slot],
+        ctx->persistentTargetSet.targets[0], format, familySpecial, false);
 }
 
 static IDirect3DSurface9* MmeGetSnapshotDepth(MmeContext* ctx,
-                                              IDirect3DDevice9* device,
-                                              D3DFORMAT format, bool familySpecial)
+                                            IDirect3DDevice9* device,
+                                            D3DFORMAT format, bool familySpecial)
 {
-    const D3DVIEWPORT9& vp = ctx->mainTargetSet.viewport;
-    IDirect3DSurface9* cached = ctx->snapshotDepth;
-    if (cached != nullptr) {
-        D3DSURFACE_DESC desc;
-        memset(&desc, 0, sizeof(desc));
-        bool reusable = SUCCEEDED(cached->GetDesc(&desc)) && desc.Format == format &&
-                        (familySpecial
-                             ? (desc.Width >= vp.Width && desc.Height >= vp.Height)
-                             : (desc.Width == vp.Width && desc.Height == vp.Height));
-        if (reusable) {
-            return cached;
-        }
-        cached->Release();
-        ctx->snapshotDepth = nullptr;
-    }
-    // [0x180002590] family-B only: the persistent fast path (mgr+0x30).
-    if (familySpecial && ctx->persistentLayerEligible != 0) {
-        IDirect3DSurface9* persistent = ctx->persistentTargetSet.depth;
-        if (MmePersistentSurfaceValid(persistent, vp.Width, vp.Height, format)) {
-            ctx->persistentClearUsed = 1;   // mgr+0x1F8
-            return persistent;              // mgr+0x30
-        }
-    }
-    // [0x18000265c] the multisample pair: GetDesc on the PERSISTENT set's
-    // depth surface (mgr+0x30) - see MmeGetSnapshotSurface; fall back to the
-    // saved main RT0 when the persistent set is empty.
-    D3DSURFACE_DESC mainDesc;
-    memset(&mainDesc, 0, sizeof(mainDesc));
-    IDirect3DSurface9* multisampleSource = ctx->persistentTargetSet.depth;
-    if (multisampleSource == nullptr) {
-        multisampleSource = ctx->mainTargetSet.targets[0];
-    }
-    if (multisampleSource != nullptr) {
-        multisampleSource->GetDesc(&mainDesc);
-    }
-    IDirect3DSurface9* surface = nullptr;
-    HRESULT hr = device->CreateDepthStencilSurface(
-        vp.Width != 0 ? vp.Width : 1, vp.Height != 0 ? vp.Height : 1, format,
-        mainDesc.MultiSampleType, mainDesc.MultiSampleQuality, FALSE,
-        &surface, nullptr);
-    if (FAILED(hr) || surface == nullptr) {
-        ctx->snapshotError = static_cast<unsigned long>(hr);   // mgr+0x1FC
-        if (surface != nullptr) {
-            surface->Release();
-        }
-        return nullptr;
-    }
-    ctx->snapshotDepth = surface;           // the cache owns the reference
-    return surface;
+    return MmeAcquireSnapshotSurface(
+        ctx, device, ctx->snapshotCache.depth, ctx->persistentTargetSet.depth,
+        ctx->persistentTargetSet.depth, format, familySpecial, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -1530,15 +1472,11 @@ HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
     MmeTargetSet& mgr = ctx->mainTargetSet;
 
     // [prologue, sub_180002C60/sub_180003170 x4+1] clear the inactive cache
-    // family. The port keeps one family; it is dropped when the family flag
-    // changed since the cache was built. The mgr+0x08 persistent set and the
+    // family. The mgr+0x08 persistent set and the
     // mgr+0x50 saved set are NOT dropped here (the original's prologue never
     // touches them).
     const bool familySpecial = ctx->allObjectsSpecialFlag != 0;
-    if (ctx->snapshotFamilySpecial != familySpecial) {
-        ctx->ReleaseSnapshotSurfaceCache();
-        ctx->snapshotFamilySpecial = familySpecial;
-    }
+    ctx->snapshotCache.DiscardInactiveFamily(familySpecial);
 
     // [step 1] the manager's saved set, mask 31.
     MmeSaveTargetSet(mgr, device, 31);
@@ -1562,7 +1500,7 @@ HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
 
     // [step 3] per-slot snapshots; the tracked slots replace the fetched
     // current targets in the working set.
-    bool haveError = false;
+    HRESULT firstError = S_OK;
     for (int i = 0; i < 4; ++i) {
         IDirect3DSurface9* savedTarget = mgr.targets[i];
         if (savedTarget == nullptr) {
@@ -1574,17 +1512,16 @@ HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
         IDirect3DSurface9* snapshot =
             MmeGetSnapshotSurface(ctx, device, i, desc.Format, familySpecial);
         if (snapshot == nullptr) {
-            if (!haveError) {
-                haveError = true;   // hr = mgr+0x1FC (stored by the creator)
-            }
+            if (firstError == S_OK) firstError = static_cast<HRESULT>(ctx->snapshotError);
             continue;
         }
         if (workTargets[i] != snapshot) {
+            snapshot->AddRef();
             if (workOwnsTarget[i] && workTargets[i] != nullptr) {
                 workTargets[i]->Release();
             }
-            workTargets[i] = snapshot;      // borrowed from the cache
-            workOwnsTarget[i] = false;
+            workTargets[i] = snapshot;
+            workOwnsTarget[i] = true;
         }
     }
     if (mgr.depth != nullptr) {
@@ -1594,19 +1531,18 @@ HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
         IDirect3DSurface9* snapshot =
             MmeGetSnapshotDepth(ctx, device, desc.Format, familySpecial);
         if (snapshot == nullptr) {
-            if (!haveError) {
-                haveError = true;
-            }
+            if (firstError == S_OK) firstError = static_cast<HRESULT>(ctx->snapshotError);
         } else if (workDepth != snapshot) {
+            snapshot->AddRef();
             if (workOwnsDepth && workDepth != nullptr) {
                 workDepth->Release();
             }
-            workDepth = snapshot;          // borrowed from the cache
-            workOwnsDepth = false;
+            workDepth = snapshot;
+            workOwnsDepth = true;
         }
     }
 
-    if (haveError) {
+    if (firstError != S_OK) {
         // [LABEL_59] restore the pre-snapshot bindings (sub_1800675E0 on the
         // mgr+0x50 set), drop the manager refs and the caches
         // (sub_180001660), return the stored HRESULT.
@@ -1625,15 +1561,15 @@ HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
             mgr.depth = nullptr;
         }
         ctx->ReleaseMainSnapshotCache();
-        for (int i = 0; i < 4; ++i) {
+        if (workOwnsDepth && workDepth != nullptr) {
+            workDepth->Release();
+        }
+        for (int i = 3; i >= 0; --i) {
             if (workOwnsTarget[i] && workTargets[i] != nullptr) {
                 workTargets[i]->Release();
             }
         }
-        if (workOwnsDepth && workDepth != nullptr) {
-            workDepth->Release();
-        }
-        return static_cast<HRESULT>(ctx->snapshotError);
+        return firstError;
     }
 
     // [step 5, 0x180001cc6-d11] the color-Clear decision. The loop IS the
@@ -1702,13 +1638,13 @@ HRESULT MmeSnapshotMainTargets(MmeContext* ctx, bool clearColorsValid,
         device->Clear(0, nullptr, clearFlags, clearColor, clearDepth, 0);
     }
 
-    for (int i = 0; i < 4; ++i) {
+    if (workOwnsDepth && workDepth != nullptr) {
+        workDepth->Release();
+    }
+    for (int i = 3; i >= 0; --i) {
         if (workOwnsTarget[i] && workTargets[i] != nullptr) {
             workTargets[i]->Release();
         }
-    }
-    if (workOwnsDepth && workDepth != nullptr) {
-        workDepth->Release();
     }
     return S_OK;
 }
@@ -2468,8 +2404,6 @@ void MmeReportDrawError(MmeContext* ctx)
                 device->BeginScene();                                  // [LABEL_89 slot 0x148]
                 MmeReleaseTargetSet(current);                          // [LABEL_89 release]
             }
-            // [L75368-75405] the shown-message dedup walk (DAT_1800d99d8
-            // list) - Phase 3 seam, not reproduced.
         }
     } else {
         // [L75410] FUN_18005cac0(record, device): the bound record's

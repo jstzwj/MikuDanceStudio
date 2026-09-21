@@ -16,6 +16,74 @@
 
 namespace mme {
 
+IDirect3DSurface9* MmeSnapshotCache::Slot::Find(const Key& key, bool special)
+{
+    if (!special) {
+        auto found = exactSize.find(key);
+        return found != exactSize.end() ? found->second.get() : nullptr;
+    }
+    auto found = atLeastSize.find(key.format);
+    if (found == atLeastSize.end() || !found->second) return nullptr;
+    D3DSURFACE_DESC desc = {};
+    if (SUCCEEDED(found->second->GetDesc(&desc)) &&
+        key.width <= desc.Width && key.height <= desc.Height) {
+        return found->second.get();
+    }
+    // The original retains the format node with a null COM pointer before
+    // trying the persistent surface or allocating its larger replacement.
+    found->second.reset();
+    return nullptr;
+}
+
+void MmeSnapshotCache::Slot::Store(const Key& key, bool special, Surface surface)
+{
+    if (special) atLeastSize[key.format] = std::move(surface);
+    else exactSize[key] = std::move(surface);
+}
+
+void MmeSnapshotCache::Slot::Prune(const std::set<IDirect3DSurface9*>& active,
+                                 bool special)
+{
+    auto prune = [&active](auto& entries) {
+        for (auto it = entries.begin(); it != entries.end();) {
+            if (active.count(it->second.get()) == 0) it = entries.erase(it);
+            else ++it;
+        }
+    };
+    if (special) prune(atLeastSize);
+    else prune(exactSize);
+}
+
+void MmeSnapshotCache::DiscardInactiveFamily(bool special)
+{
+    for (auto& slot : colors) {
+        if (special) slot.exactSize.clear();
+        else slot.atLeastSize.clear();
+    }
+    if (special) depth.exactSize.clear();
+    else depth.atLeastSize.clear();
+}
+
+void MmeSnapshotCache::ReleaseSurfaces()
+{
+    for (auto& slot : colors) {
+        slot.atLeastSize.clear();
+        slot.exactSize.clear();
+    }
+    depth.atLeastSize.clear();
+    depth.exactSize.clear();
+    // sub_180001660 does not clear the non-owning active identities. Their
+    // lifetime is controlled by the repeat==plan-size boundary instead.
+}
+
+void MmeSnapshotCache::Prune()
+{
+    for (bool special : {true, false}) {
+        for (auto& slot : colors) slot.Prune(active, special);
+        depth.Prune(active, special);
+    }
+}
+
 EffectOwnerManager::EffectOwnerManager()
     : planDirty(false)
 {
@@ -78,13 +146,11 @@ MmeContext::MmeContext(IDirect3DDevice9* device)
     , ownerManager(nullptr)
     , offscreenDefaultEffect(nullptr)    // offscreen DefaultEffect staging
     , backgroundQuadViewportDirty(1)          // ctx+0x18A [ctor WORD 0x100 at ctx+0x189 -> 1]
-    , snapshotDepth(nullptr)              // ctx+0x240 mgr cache (Phase 3)
-    , snapshotFamilySpecial(false)        // mgr+0x1FA mirror
     , snapshotError(0)                    // mgr+0x1FC mirror
     // persistentTargetSet (mgr+0x08..0x38) default-constructs empty (mask 0,
     // null slots) like the original's manager ctor; it is filled by
-    // MmeUpdatePassBookkeeping's ==N branch and dropped at the repeat-0
-    // boundary / device loss / dtor.
+    // MmeUpdatePassBookkeeping's ==N branch and dropped at EndScene,
+    // device loss or destruction.
 {    // [ctor L10-14] first device reference (AddRef).
     this->device = device;
     if (device != nullptr) {
@@ -100,13 +166,10 @@ MmeContext::MmeContext(IDirect3DDevice9* device)
     if (device != nullptr) {
         device->AddRef();
     }
-    for (int i = 0; i < 4; ++i) {
-        snapshotSurfaces[i] = nullptr;         // ctx+0x240 mgr cache [ctor]
-    }
     memset(&lastPlanViewport, 0, sizeof(lastPlanViewport));
     // The original's ctx+0x240 is the turn-boundary snapshot manager (its
     // ctor FUN_180001000 builds the two saved target sets and the snapshot
-    // cache families - modeled by mainTargetSet/snapshotSurfaces above).
+    // cache families - modeled by the target sets and snapshotCache).
     // The animated-texture registry is a PORT ADDITION (Phase 4,
     // MmeAnimeCreate; see the header note).
     animatedTextures = MmeAnimeCreate();
@@ -234,24 +297,13 @@ void MmeContext::ReleaseBindingContextPool()
     ReleaseBackgroundFixedVbs();
 }
 
-void MmeContext::ReleaseSnapshotSurfaceCache()
+void MmeContext::FinishSnapshotFrame(bool editMode)
 {
-    // [sub_180001880's prologue, sub_180002C60/sub_180003170] the inactive
-    // family's cached surfaces only - neither the mgr+0x08 persistent set
-    // nor the mgr+0x50 saved main set is touched here (the original's
-    // prologue never drops them; the saved set is refetched at step 2
-    // anyway, so the historical mainTargetSet release in this path was a
-    // harmless idempotent extra and is now omitted for 1:1).
-    for (int i = 0; i < 4; ++i) {
-        if (snapshotSurfaces[i] != nullptr) {
-            snapshotSurfaces[i]->Release();
-            snapshotSurfaces[i] = nullptr;
-        }
-    }
-    if (snapshotDepth != nullptr) {
-        snapshotDepth->Release();
-        snapshotDepth = nullptr;
-    }
+    // sub_180001320: both saved sets are released on every EndScene;
+    // only edit mode evicts cache entries not used since the last boundary.
+    MmeReleaseTargetSet(persistentTargetSet);
+    MmeReleaseTargetSet(mainTargetSet);
+    if (editMode) snapshotCache.Prune();
 }
 
 void MmeContext::ReleaseMainSnapshotCache()
@@ -261,18 +313,8 @@ void MmeContext::ReleaseMainSnapshotCache()
     // (mgr+0x98 family, sub_180002100/sub_180002440 cache owners) and the
     // saved main target set's (mgr+0x50) borrowed references.
     MmeReleaseTargetSet(persistentTargetSet);
-    ReleaseSnapshotSurfaceCache();
-    for (int i = 0; i < 4; ++i) {
-        if (mainTargetSet.targets[i] != nullptr) {
-            mainTargetSet.targets[i]->Release();
-            mainTargetSet.targets[i] = nullptr;
-        }
-    }
-    if (mainTargetSet.depth != nullptr) {
-        mainTargetSet.depth->Release();
-        mainTargetSet.depth = nullptr;
-    }
-    mainTargetSet.mask = 0;
+    MmeReleaseTargetSet(mainTargetSet);
+    snapshotCache.ReleaseSurfaces();
 }
 
 MmeContext* MmeGetContext()

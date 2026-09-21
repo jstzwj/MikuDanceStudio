@@ -305,7 +305,8 @@ struct SasTechnique {
     signed char useSpheremap = -1;
     signed char useToon = -1;
     bool        hardwareOk = true;   // ValidateTechnique() == S_OK
-    bool        shaderMixOk = true;  // every pass consistent (FUN_1800167d0)
+    bool        shaderMixOk = true;  // diagnostic: every pass uses compatible versions
+    bool        shaderCapsOk = true; // versions fit device caps (FUN_1800167d0)
     bool        hasScript = false;
     bool        empty = false;       // zero passes
     bool        allSubsets = true;   // no "Subset" annotation

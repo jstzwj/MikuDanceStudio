@@ -463,10 +463,6 @@ int __cdecl Initialize(IDirect3DDevice9* device)
         }
     }
 
-    // Phase 1 divergence: open/create MMEffect.txt in the exe directory
-    // before any logging (see mme_log.h for the rationale).
-    MmeLogInit(g_exeDir.c_str());
-
     // [L74-155] read MMEffect.ini when it exists.
     if (_access_s(g_iniPath.c_str(), 4) == 0) {
         IniFile ini;                               // global IniFile object [L76]
@@ -727,8 +723,9 @@ void __cdecl OnEndScene(IDirect3DDevice9* /*device*/)
     if (ctx != nullptr && ctx->effectEnabled != 0) {
         MmeRunPostEffect(ctx);                     // FUN_18005e210
     }
-    // [L17] animated-texture tick on ctx+0x240 (FUN_180001320).
+    // [L17] snapshot-manager frame tail (FUN_180001320).
     if (ctx != nullptr) {
+        ctx->FinishSnapshotFrame(IsEditMode() != 0);
         MmeTickAnimatedTextures(ctx);
     }
     // [L18] log flush.
@@ -851,9 +848,9 @@ void __cdecl OnLostDevice(IDirect3DDevice9* /*device*/)
         g_context->ReleaseBackgroundFixedVbs();
     }
 
-    // [L41] FUN_18000a990 - clear the engine-side container pair
-    // (DAT_1800d9c60/DAT_1800d9c80). PHASE 2 seam (effect_engine state).
-    MmePassBookkeeping(g_context);
+    // [L41] FUN_18000a990 clears the effect and texture caches. Running
+    // pass bookkeeping here would reacquire saved targets during reset.
+    MmeEngineClearCaches();
 
     // [L42-45] release the offscreen render-target surface.
     if (g_offscreenSurface != nullptr) {

@@ -57,9 +57,37 @@ jobs:
         run: >-
           cmake -S . -B out/ci/build -G "Visual Studio 17 2022" -A ${{ matrix.platform }}
           -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/out/ci/build/generators/conan_toolchain.cmake"
-          -DBUILD_TESTING=OFF -DMIKUDANCESTUDIO_DIAG=OFF
+          -DBUILD_TESTING=ON -DMIKUDANCESTUDIO_DIAG=OFF
       - name: Build Release
         run: cmake --build out/ci/build --config Release --parallel 4
+      - name: Install legacy DirectX test runtime
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'directx_Jun2010_redist.exe'
+          $unpack = Join-Path $env:RUNNER_TEMP 'directx-june2010'
+          New-Item -ItemType Directory -Force $unpack | Out-Null
+          # Microsoft Download Center, id=8109. Keep the exact tested payload.
+          Invoke-WebRequest 'https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '053F76DCBB28802E23341B6A787E3B0791C0FA5C8D4D011B1044172DBF89C73B') {
+            throw 'Unexpected DirectX redistributable payload'
+          }
+          $extract = Start-Process -FilePath $archive -ArgumentList '/Q', ('/T:"{0}"' -f $unpack) -Wait -PassThru -WindowStyle Hidden
+          if ($extract.ExitCode -ne 0) { throw "DirectX extraction failed: $($extract.ExitCode)" }
+          $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
+          if ($install.ExitCode -ne 0) { throw "DirectX installation failed: $($install.ExitCode)" }
+      - name: Run Release regressions
+        run: >-
+          ctest --test-dir out/ci/build -C Release --output-on-failure
+          --timeout 90 --no-tests=error
+          --output-junit "$env:GITHUB_WORKSPACE/out/ci/build/test-results.xml"
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.arch }}
+          path: |
+            out/ci/build/test-results.xml
+            out/ci/build/Testing/Temporary/*.log
+          if-no-files-found: warn
       - name: Package
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}

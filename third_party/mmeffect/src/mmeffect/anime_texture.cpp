@@ -152,8 +152,9 @@ int AnimeObject::FindFrame(double time)
     }
     double total = totalDuration > 0.0 ? totalDuration : 1.0;
     int loops = static_cast<int>(pos / total);
-    // loopCount != 0 && loops >= loopCount -> hold the LAST frame.
-    if (loopCount != 0 && loops >= static_cast<int>(loopCount)) {
+    // The original converts the quotient to signed int (cvttsd2si), but
+    // compares it to the unsigned play count (APNG 0x18000800D: jb).
+    if (loopCount != 0 && static_cast<unsigned int>(loops) >= loopCount) {
         lastResult = static_cast<int>(timeline.back().frame);
         return lastResult;
     }
@@ -399,16 +400,7 @@ void AnimeGif::SetFrame(double time)
         return;   // same node - no reselect / no reupload
     }
     currentFrame = frame;
-    if (texture == nullptr) {
-        // PORT ADDITION (defensive): the original's SetFrame (sub_180005360)
-        // never creates a texture - the post-Reset walk (sub_180016660 case
-        // 45) re-creates it. Kept as a belt-and-braces rebuild for a texture
-        // lost through any path the walk missed.
-        RecreateTexture();
-        if (texture == nullptr) {
-            return;
-        }
-    }
+    // Texture allocation belongs to construction and the device-reset walk.
     DrawFrame(static_cast<unsigned int>(frame));
 }
 
@@ -796,15 +788,7 @@ void AnimePng::SetFrame(double time)
     if (preloadAll) {
         return;   // preloaded frames were decoded in the ctor
     }
-    if (dynamicTexture == nullptr) {
-        // PORT ADDITION (defensive; see AnimeGif::SetFrame): the original's
-        // SetFrame (sub_180008230) never creates a texture - the post-Reset
-        // walk (sub_180016660 case 45) re-creates it.
-        RecreateTexture();
-        if (dynamicTexture == nullptr) {
-            return;
-        }
-    }
+    // Texture allocation belongs to construction and the device-reset walk.
     DecodeFrame(static_cast<unsigned int>(frame), dynamicTexture);
 }
 

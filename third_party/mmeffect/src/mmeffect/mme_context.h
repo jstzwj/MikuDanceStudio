@@ -17,7 +17,10 @@
 
 #include <list>
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -45,6 +48,40 @@ struct MmeTargetSet {
     IDirect3DSurface9* targets[4] = {nullptr, nullptr, nullptr, nullptr};
     IDirect3DSurface9* depth = nullptr;
     D3DVIEWPORT9       viewport = {};
+};
+
+// Each slot has two owning caches. The active set only records identities;
+// it does not extend a surface's COM lifetime (original manager +0x1D8).
+struct MmeSnapshotCache {
+    struct Key {
+        unsigned int width, height;
+        D3DFORMAT format;
+        bool operator<(const Key& other) const {
+            return std::tie(width, height, format) <
+                   std::tie(other.width, other.height, other.format);
+        }
+    };
+    struct ReleaseSurface {
+        void operator()(IDirect3DSurface9* surface) const {
+            if (surface != nullptr) surface->Release();
+        }
+    };
+    using Surface = std::unique_ptr<IDirect3DSurface9, ReleaseSurface>;
+    struct Slot {
+        std::map<Key, Surface> exactSize;
+        std::map<D3DFORMAT, Surface> atLeastSize;
+
+        IDirect3DSurface9* Find(const Key& key, bool special);
+        void Store(const Key& key, bool special, Surface surface);
+        void Prune(const std::set<IDirect3DSurface9*>& active, bool special);
+    };
+    Slot colors[4];
+    Slot depth;
+    std::set<IDirect3DSurface9*> active;
+
+    void DiscardInactiveFamily(bool special);
+    void ReleaseSurfaces();
+    void Prune();
 };
 
 // A render turn belongs to an assignment's OFFSCREENRENDERTARGET resource.
@@ -198,44 +235,16 @@ public:
     // dedup latch observe real failures instead of a constant S_OK.
     unsigned long lastPostEffectHr;
 
-    // ctx+0x240 (original: a manager spanning ctx+0x240..0x440 that
-    // FUN_180001880 / FUN_180001e70 receive as ctx+576). The port models the
-    // parts the turn-boundary snapshot needs:
-    //  - persistentTargetSet (mgr+0x08): the "persistent" saved target set.
-    //    Filled by FUN_18005c510's ==N branch (0x18005c98e-0x18005ca33:
-    //    release the old slots, mask = 31, GetRenderTarget(0..3) into
-    //    mgr+0x10..0x2F, GetDepthStencilSurface into mgr+0x30, GetViewport
-    //    into mgr+0x38 - the CURRENT device targets at the frame's last
-    //    turn boundary, i.e. the snapshot surfaces the previous turn was
-    //    rendering onto); cleared by FUN_180001320's head at every
-    //    OnEndScene (sub_180067680 x2) and by sub_180001660 (the
-    //    180001880 failure path + FUN_18005e640 device loss). Read ONLY by
-    //    the sub_180002100/sub_180002440 fast paths (family-B cache miss +
-    //    the mgr+0x1F9 gate + sub_180002780's w<=W && h<=H && fmt-equality
-    //    check): a hit returns the persistent surface as the snapshot - the
-    //    snapshot IS the current device target, no copy happens - and sets
-    //    mgr+0x1F8. The port drops the set at the repeat-0 boundary of the
-    //    NEXT frame (MmeUpdatePassBookkeeping's ==0 tail) instead of
-    //    OnEndScene: every fast-path query happens after that point, so the
-    //    observable behavior matches. mgr+0x38's viewport is kept though
-    //    nothing reads it (the original saves it at the same refetch).
-    //  - mainTargetSet (mgr+0x50): the saved "main" target set refetched at
-    //    every snapshot (release + GetRenderTarget(0..3) /
-    //    GetDepthStencilSurface / GetViewport, mask 31).
-    //  - snapshotSurfaces / snapshotDepth (the mgr+0x98 per-slot cache
-    //    family): the cached offscreen copies of the main targets
-    //    (sub_180002100 = CreateRenderTarget, sub_180002440 =
-    //    CreateDepthStencilSurface - NOT offscreen-plain surfaces, so they
-    //    can be re-bound as targets). The original's second ping-pong family
-    //    (mgr+0x138, selected by mgr+0x1FA == ctx+0x43A - c510's
-    //    all-planB-special flag) is not reproduced as a second set; the port
-    //    drops the cache when the family flag changes instead.
-    //  - snapshotError (mgr+0x1fc): the creators' last HRESULT.
+    // Turn-boundary snapshot manager (original ctx+0x240):
+    // persistentTargetSet is captured at repeat==plan-size; mainTargetSet
+    // is refetched by each snapshot and restored by copyback. Both saved
+    // sets release their COM references at EndScene and on reset/failure.
+    // snapshotCache owns per-slot exact-size (family A) and format-keyed,
+    // at-least-size (family B) surfaces. allObjectsSpecialFlag selects B.
+    // snapshotError retains the latest creator HRESULT.
     MmeTargetSet       persistentTargetSet;
     MmeTargetSet       mainTargetSet;
-    IDirect3DSurface9* snapshotSurfaces[4];
-    IDirect3DSurface9* snapshotDepth;
-    bool               snapshotFamilySpecial;
+    MmeSnapshotCache   snapshotCache;
     unsigned long      snapshotError;
 
     // ctx+0x3c / ctx+0x42: the per-target clear-color/depth maps (the SAS
@@ -337,17 +346,8 @@ public:
     // fixup attempt (0x18005d762 / 0x18005d9a7).
     unsigned char backgroundQuadViewportDirty;
 
-    // [PORT ADDITION, Phase 4] the animated-texture registry. The original's
-    // ctx+0x240 region is the turn-boundary snapshot manager (modeled above
-    // by persistentTargetSet/mainTargetSet/snapshotSurfaces); its per
-    // -EndScene maintainer FUN_180001320 clears the manager's two saved
-    // target sets (mgr+0x08/mgr+0x50) and prunes the snapshot caches in edit
-    // mode - the port performs the two-set drop at the repeat-0 boundary
-    // (MmeUpdatePassBookkeeping's ==0 tail, observably equivalent: every
-    // persistent fast-path query of the next frame happens after it). It is
-    // NOT the animated-texture tick.
-    // This registry is the port's own container for the CAnimeGIF/CAnimeTex
-    // machinery (FUN_180004810/FUN_180005360) and is ticked from OnEndScene.
+    // Animated-texture registry; independent of the original ctx+0x240
+    // snapshot manager. The registry is ticked from OnEndScene.
     void* animatedTextures;
 
     // ctx+0x440 third device reference (AddRef'd [ctor L66-69]).
@@ -376,11 +376,9 @@ public:
     // block and reset the round-robin index (device loss / context dtor).
     void ReleaseBindingContextPool();
 
-    // Release the snapshot-surface cache ONLY (the mgr+0x98 family slots).
-    // The sub_180001880 prologue's family switch uses this - the original's
-    // sub_180002C60/sub_180003170 walk clears the inactive tree family and
-    // never touches the mgr+0x08 persistent set or the mgr+0x50 saved set.
-    void ReleaseSnapshotSurfaceCache();
+    // EndScene snapshot maintenance: release both saved sets, then in edit
+    // mode prune cache entries absent from the active surface identity set.
+    void FinishSnapshotFrame(bool editMode);
 
     // Release the main-snapshot cache (the ctx+0x240 manager's surfaces are
     // D3DPOOL_DEFAULT render targets: they must go before a device reset) and

@@ -2,7 +2,6 @@
 #include "mme_log.h"
 
 #include <windows.h>
-#include <cstdio>
 #include <cstring>
 #include <set>
 #include <string>
@@ -27,11 +26,6 @@ bool             g_lockInit = false;
 // WM_INITDIALOG (DialogFunc 0x180008e57-0x180008eeb, SetDlgItemTextA 1001).
 std::vector<std::string> g_historyLines;
 
-// Per-phase buffer for the Phase 1 file sink (MMEffect.txt) - a documented
-// divergence: the original has no file sink and needs no per-phase drain, so
-// this list is separate from the never-cleared history above.
-std::vector<std::string> g_pendingLines;
-
 // [big-C 8777-8782] the "\r\n"-joined dialog text (original: local_a8 string).
 std::string g_dialogText;
 
@@ -42,11 +36,7 @@ std::set<std::string> g_shownMessages;
 // [big-C 8936] the flush phase byte (DAT_1800d99d8).
 unsigned char g_flushPhase = 0;
 
-// File sink (Phase 1 divergence - see mme_log.h).
-FILE* g_logFile = nullptr;
-std::string g_logFilePath;
-
-// Phase 2 seam: log-dialog mirror.
+// Attached log-dialog mirror.
 MmeLogMirrorFn g_mirror = nullptr;
 
 void EnsureLock()
@@ -57,40 +47,7 @@ void EnsureLock()
     }
 }
 
-// [big-C 8941-8956] the original's flush drains the pending state; the Phase 1
-// port additionally writes the drained lines into MMEffect.txt (append).
-void WritePendingToFile()
-{
-    if (g_logFile == nullptr || g_pendingLines.empty()) {
-        return;
-    }
-    for (size_t i = 0; i < g_pendingLines.size(); ++i) {
-        fputs(g_pendingLines[i].c_str(), g_logFile);
-        fputc('\r', g_logFile);
-        fputc('\n', g_logFile);
-    }
-    fflush(g_logFile);
-}
-
 } // namespace
-
-void MmeLogInit(const char* directory)
-{
-    EnsureLock();
-
-    if (directory != nullptr) {
-        std::string path = directory;
-        if (!path.empty() && path[path.size() - 1] != '\\' && path[path.size() - 1] != '/') {
-            path += '\\';
-        }
-        path += "MMEffect.txt";
-        g_logFilePath = path;
-        // "wt" = truncate + text mode, matching one file per process run.
-        if (fopen_s(&g_logFile, path.c_str(), "wt") != 0) {
-            g_logFile = nullptr;
-        }
-    }
-}
 
 const char* MmeGetLogDialogText()
 {
@@ -122,7 +79,7 @@ void MmeLogWrite(const char* text, int showMessageBox)
 
     // [big-C 8750-8840] split into lines; on every '\n'/'\r' push the
     // accumulated line into the history list (original: single never-cleared
-    // DAT_1800d9c00 list; the port doubles as the file-sink buffer below) and
+    // DAT_1800d9c00 list) and
     // append "<line>\r\n" to the dialog text; a '\n' directly after '\r' is
     // swallowed [big-C 8791-8800].
     g_dialogText.clear();
@@ -131,7 +88,6 @@ void MmeLogWrite(const char* text, int showMessageBox)
         char c = *p;
         if (c == '\n' || c == '\r') {
             g_historyLines.push_back(line);
-            g_pendingLines.push_back(line);
             g_dialogText += line;
             g_dialogText += "\r\n";
             line.clear();
@@ -144,14 +100,12 @@ void MmeLogWrite(const char* text, int showMessageBox)
     }
     if (!line.empty()) {
         g_historyLines.push_back(line);
-        g_pendingLines.push_back(line);
         g_dialogText += line;
         g_dialogText += "\r\n";
     }
 
     // [big-C 8841-8850] mirror into the log dialog (original appends to the
-    // 0x3e9 edit control via EM_SETSEL/EM_REPLACESEL; Phase 2 installs the
-    // real dialog through MmeSetLogMirror).
+    // 0x3e9 edit control via EM_SETSEL/EM_REPLACESEL).
     if (!g_dialogText.empty() && g_mirror != nullptr) {
         g_mirror(g_dialogText.c_str());
     }
@@ -182,15 +136,10 @@ void MmeLogFlush(unsigned char phase)
     }
     g_flushPhase = phase;
 
-    WritePendingToFile();
-
     // [big-C 8940-8956 / 0x1800094ea-0x18000958e] the original phase flip
     // drains ONLY the MessageBox dedup list/set (DAT_1800d9c20/DAT_1800d9c18)
     // and its size (DAT_1800d9c28); the line history (DAT_1800d9c00) is left
     // intact so a log dialog opened later still sees every earlier line.
-    // g_pendingLines is the Phase 1 file-sink buffer (documented divergence),
-    // so it is drained here to write MMEffect.txt per phase.
-    g_pendingLines.clear();
     g_dialogText.clear();
     g_shownMessages.clear();
 }

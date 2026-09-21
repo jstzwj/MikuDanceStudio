@@ -141,7 +141,7 @@ void SasLogFormat(SasEffect* sas, const char* fmt, ...) {
 // every script walk - including the frame-end epilogue that restores the
 // render targets to the back buffer - is skipped forever.  A latched ray
 // therefore renders into a suspended offscreen target with a frozen/black
-// viewport and NO diagnostic anywhere in MMEffect.txt.  Record the first
+// viewport and no diagnostic in the log dialog. Record the first
 // latch cause once per effect load (the flag is one-way until unload, so
 // logging only when it is still clear matches the latch's own semantics).
 namespace {

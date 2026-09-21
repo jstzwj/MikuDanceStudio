@@ -1257,11 +1257,11 @@ public:
         return state.accessoryTrackActive[slot];
 #endif
     }
-    float* CameraPosition() { return &state.cameraPosX; }
+    float* CameraPosition() { return state.cameraPosition; }
     float* CameraRotation() { return &state.cameraPitch; }
-    float& CameraPositionX() { return state.cameraPosX; }
-    float& CameraPositionY() { return state.cameraPosY; }
-    float& CameraPositionZ() { return state.cameraPosZ; }
+    float& CameraPositionX() { return state.cameraPosition[0]; }
+    float& CameraPositionY() { return state.cameraPosition[1]; }
+    float& CameraPositionZ() { return state.cameraPosition[2]; }
     float& CameraPitch() { return state.cameraPitch; }
     float& CameraYaw() { return state.cameraYaw; }
     float& CameraRoll() { return state.cameraRoll; }

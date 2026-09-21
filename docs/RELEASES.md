@@ -19,8 +19,8 @@ git push origin v10.00
 ```
 
 `.github/workflows/release.yml` checks that the tag exactly matches `VERSION`,
-builds Release for x86 and x64 on Windows, and publishes a GitHub Release only
-after both builds succeed. It uploads two ZIPs and their SHA-256 files. A failed
+builds and runs CTest for x86 and x64 on Windows, and publishes a GitHub Release only
+after both architectures pass. It uploads two ZIPs and their SHA-256 files. A failed
 build can be rerun for the same tag; publishing replaces its matching assets.
 Normal branch pushes do not publish releases. The built-in `GITHUB_TOKEN` is used;
 If a tag push does not start a run, use Actions → Windows release → Run workflow
@@ -42,8 +42,11 @@ Install the Microsoft Visual C++ 2015–2022 Redistributable for the chosen
 architecture, the legacy Visual C++ 2008 runtime required by the retained
 manifest, and the DirectX End-User Runtimes (June 2010). x64 imports `d3dx9_43.dll`;
 x86 imports `d3dx9_32.dll`. These Microsoft runtime installers are not bundled.
-GPU/UI tests require a configured desktop and DirectX runtime; the hosted release
-workflow builds and checks package architecture, but does not claim GPU parity tests.
+The release workflow installs the checksum-pinned Microsoft runtime on its runner
+before CTest and saves JUnit results plus CTest logs, including on failure. GPU
+tests may explicitly skip with code 77 when the required device is unavailable;
+a skip is not a GPU parity result. Optional local `ray.fx` tests are enabled only
+when `MIKUDANCESTUDIO_RAY_TEST_EFFECT` is configured; CI does not supply that asset.
 
 压缩包需完整解压，运行库未打包。CI 构建不依赖本机安装的 MMD 或任何模型。
 
@@ -60,8 +63,11 @@ python -m pip install conan==2.27.1
 conan profile detect --force
 conan create recipes/bullet275 --profile:all profiles/x64 -s compiler.cppstd=17 -s build_type=Release --build=missing --lockfile=""
 conan install . --profile:all profiles/x64 -s compiler.cppstd=17 -s build_type=Release --build=missing --lockfile="" --output-folder=out/ci
-cmake -S . -B out/ci/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$PWD/out/ci/build/generators/conan_toolchain.cmake" -DBUILD_TESTING=OFF -DMIKUDANCESTUDIO_DIAG=OFF
+cmake -S . -B out/ci/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="$PWD/out/ci/build/generators/conan_toolchain.cmake" -DBUILD_TESTING=ON -DMIKUDANCESTUDIO_DIAG=OFF
 cmake --build out/ci/build --config Release --parallel 4
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+ctest --test-dir out/ci/build -C Release --output-on-failure --timeout 90 --no-tests=error
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
 python scripts/release.py --tag v10.00 --build-dir out/ci/build --arch x64
 ```
 

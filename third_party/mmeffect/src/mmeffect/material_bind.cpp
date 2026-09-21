@@ -2044,56 +2044,6 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
     }
 }
 
-// ---------------------------------------------------------------------------
-// CONTROLOBJECT staging + the per-frame resolver (the original's
-// EffectFrameParamSetter walk, sub_180057BC0)
-// ---------------------------------------------------------------------------
-
-// The shared staging table (one entry per scanned object; filled by the pass
-// planner's accessory scan each frame). NOTE: a single table shared by the
-// stage/find pair - the original keeps per-object staging on the ModelData
-// itself; the port keeps the observable behavior (find returns the values
-// staged for the current frame).
-static std::map<ModelData*, ControlObjectStage>& ControlStageTable() {
-    static std::map<ModelData*, ControlObjectStage> table;
-    return table;
-}
-
-ControlObjectStage* MmeStageControlObjectValues(ModelData* model, int hostIndex)
-{
-    if (model == nullptr || hostIndex < 0) {
-        return nullptr;
-    }
-    ControlObjectStage& stage = ControlStageTable()[model];
-
-    if (model->kind() == 0) {
-        // Accessory panel values [ExpGetAcsX/Y/Z/Rx/Ry/Rz/Si/Tr].
-        stage.panel[0] = ExpGetAcsX(hostIndex);
-        stage.panel[1] = ExpGetAcsY(hostIndex);
-        stage.panel[2] = ExpGetAcsZ(hostIndex);
-        stage.panel[3] = ExpGetAcsRx(hostIndex);
-        stage.panel[4] = ExpGetAcsRy(hostIndex);
-        stage.panel[5] = ExpGetAcsRz(hostIndex);
-        stage.panel[6] = ExpGetAcsSi(hostIndex);
-        stage.panel[7] = ExpGetAcsTr(hostIndex);
-    } else {
-        // Model: the ExpGetPmd* calls below read the live values directly;
-        // the stage keeps the frame-valid marker for the resolver.
-    }
-    stage.valid = true;
-    return &stage;
-}
-
-ControlObjectStage* MmeFindControlObjectStage(ModelData* model)
-{
-    std::map<ModelData*, ControlObjectStage>& table = ControlStageTable();
-    std::map<ModelData*, ControlObjectStage>::const_iterator it = table.find(model);
-    if (it == table.end()) {
-        return nullptr;
-    }
-    return const_cast<ControlObjectStage*>(&it->second);
-}
-
 void MmeResolveAccessoryAttach(ModelData* model, unsigned long long accessoryId)
 {
     // [mmhack GetAcsAttachedPmd] which PMD (and bone) the accessory is

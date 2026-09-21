@@ -353,14 +353,13 @@ std::uintptr_t DrawGroundPolygon(MMDApp* app) {  // 0x40E5A0
 //  true  - global tracks: camera tree @+884 (gate +656356, node 21 dwords),
 //          light @+888 (gate +656357, 10 dwords), self-shadow @+892 (gate
 //          +656356+2, 6 dwords), gravity/misc @+896 (gate +656359, 9
-//          dwords), then 255 accessory slots (tree ptr @+900+4i, object
-//          ptr @646512+4i, gate object byte +1196, node 15 dwords).
+//          dwords), then 255 accessory tracks whose rowSelected flag is set
+//          (node 15 dwords).
 //          Tree nodes: [0]=frame, [1]/[2]=child indices; the walk follows
 //          [2] while frame <= current.
 //  false - selected model (slot = byte @+2320 into ptr array @+1920):
 //          bone tree @model+9960 (gate byte +14588, node 7 dwords),
-//          morph tracks @model+9956 (gate count byte +11692, 23-byte
-//          records @*(model+9948)+42: [u16 node][?][flag], node 20 bytes),
+//          selected facial display rows (FrameGroup) and their morph tracks,
 //          morph/tree @model+9952 (count dword +11652, flag array
 //          *(model+11668), node 60 bytes).
 // ===========================================================================
@@ -451,13 +450,12 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
             if (f > cur && f < best)
                 best = f;
         }
-        // 255 accessory slots: tree ptr @app+900+4i, object @app+646512+4i
+        // Scan only selected accessory timeline rows.
         for (int i = 0; i < 255; ++i) {                             // 0x4411d5
             std::uint32_t* n =
                 reinterpret_cast<std::uint32_t*>(s.AccessoryKeys(i));
-            unsigned char* acc =
-                static_cast<unsigned char*>(s.ObjectSlot(i));
-            if (acc != nullptr && acc[1196 /*0x4AC*/] != 0) {       // 0x4411ea
+            const auto* accessory = s.AccessorySlots()[i];
+            if (accessory != nullptr && accessory->rowSelected != 0) {       // 0x4411ea
                 std::uint32_t last = 0;
                 if (n[0] <= cur) {                                  // 0x4411ff
                     const std::uint32_t* p = n;
@@ -513,17 +511,14 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
         if (f > cur && f < 0xFFFFFFFAu)
             best = f;
     }
-    // morph tracks @model+9956 (gate count byte @model+11692; 23-byte
-    // records @*(model+9948)+42 with [u16 node][?][flag], node 20 bytes)
+    // Selected facial display rows refer to the roots of the morph tracks.
     if (mikudancestudio::mdl::Mdl(model)->facialFrameCount != 0) {                                    // 0x441300
-        int count = mikudancestudio::mdl::Mdl(model)->facialFrameCount;
-        mdl::MorphKey* base = mdl::MorphKeys(model);
-        const unsigned char* rec =
-            *reinterpret_cast<unsigned char**>(model + 9948) + 42;
-        do {                                                        // 0x441396
-            if (rec[2] != 0) {                                      // 0x441333
-                std::uint32_t node =
-                    *reinterpret_cast<const std::uint16_t*>(rec);
+        const auto& record = *mdl::Mdl(model);
+        const mdl::MorphKey* base = record.morphKeys;
+        for (int i = 0; i < record.facialFrameCount; ++i) {
+            const mdl::FrameGroup& row = record.displayFrames[i];
+            if (row.selected != 0) {
+                std::uint32_t node = row.targetIndex;
                 if (base[node].frame <= cur) {
                     for (;;) {                                      // 0x441374
                         const std::uint32_t next = base[node].next;
@@ -538,8 +533,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
                 if (f > cur && f < best)
                     best = f;
             }
-            rec += 23;
-        } while (--count != 0);
+        }
     }
     // key tree @model+9952 (count dword @model+11652, flag array
     // *(model+11668), node 60 bytes)
@@ -699,13 +693,12 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                 best = f;
             }
         }
-        // 255 accessory slots: tree ptr @app+900+4i, object @app+646512+4i
+        // Scan only selected accessory timeline rows.
         for (int i = 0; i < 255; ++i) {                             // 0x441685
             std::uint32_t* n =
                 reinterpret_cast<std::uint32_t*>(s.AccessoryKeys(i));
-            unsigned char* acc =
-                static_cast<unsigned char*>(s.ObjectSlot(i));
-            if (acc == nullptr || acc[1196 /*0x4AC*/] == 0)         // 0x4416a0
+            const auto* accessory = s.AccessorySlots()[i];
+            if (accessory == nullptr || accessory->rowSelected == 0)         // 0x4416a0
                 continue;
             std::uint32_t last = 0;
             if (n[0] < cur) {                                       // 0x4416c3
@@ -770,16 +763,14 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
             best = f;
         }
     }
-    // morph tracks @model+9956 (gate count byte @model+11692)
+    // Selected facial display rows refer to the roots of the morph tracks.
     if (mikudancestudio::mdl::Mdl(model)->facialFrameCount != 0) {                                    // 0x441858
-        int count = mikudancestudio::mdl::Mdl(model)->facialFrameCount;
-        mdl::MorphKey* base = mdl::MorphKeys(model);
-        const unsigned char* rec =
-            *reinterpret_cast<unsigned char**>(model + 9948) + 42;
-        do {                                                        // 0x441946
-            if (rec[2] != 0) {                                      // 0x441890
-                std::uint32_t node =
-                    *reinterpret_cast<const std::uint16_t*>(rec);
+        const auto& record = *mdl::Mdl(model);
+        const mdl::MorphKey* base = record.morphKeys;
+        for (int i = 0; i < record.facialFrameCount; ++i) {
+            const mdl::FrameGroup& row = record.displayFrames[i];
+            if (row.selected != 0) {
+                std::uint32_t node = row.targetIndex;
                 if (base[node].frame < cur) {
                     for (;;) {                                      // 0x4418d5
                         const std::uint32_t next = base[node].next;
@@ -800,8 +791,7 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                     best = f;
                 }
             }
-            rec += 23;
-        } while (--count != 0);
+        }
     }
     // key tree @model+9952 (count dword @model+11652, node 60 bytes)
     {

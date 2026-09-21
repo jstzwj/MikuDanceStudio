@@ -150,7 +150,11 @@ void TestSubsetPlanning() {
 void TestRuntimeMeshAbi() {
     // Verify the typed mirror against the installed Microsoft runtime, not
     // against another hand-built fake interface. NULLREF needs no visible UI.
+#ifdef _WIN64
     HMODULE runtime = LoadLibraryW(L"d3dx9_43.dll");
+#else
+    HMODULE runtime = LoadLibraryW(L"d3dx9_32.dll");
+#endif
     CHECK(runtime != nullptr);
     using CreateMesh = HRESULT(WINAPI*)(DWORD, DWORD, DWORD, DWORD,
         IDirect3DDevice9*, ID3DXMesh**);

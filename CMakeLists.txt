@@ -62,7 +62,6 @@ add_library(mikudancestudio_core STATIC
     src/main/charset_conv.cpp
     src/math/quat_to_mat3x4.cpp
     src/math/color_lerp.cpp
-    src/math/math_kernel_ledger.cpp
     src/window/path_utils.cpp
     src/window/window_init.cpp
     src/window/ui_init.cpp
@@ -178,7 +177,6 @@ add_library(mikudancestudio_core STATIC
     src/window/command_frame_register.cpp
     src/features/dialog_helpers.cpp
     src/features/audio_pose_helpers.cpp
-    src/features/subsystem_ledger.cpp
     src/render/draw_glyph.cpp
     src/render/toon_textures.cpp
     src/render/scene_font.cpp
@@ -283,7 +281,6 @@ add_library(MMDxShow SHARED
     src/mmdxshow/push_source.cpp
     src/mmdxshow/push_pin.cpp
     src/mmdxshow/guids.cpp
-    src/mmdxshow/crt_ledger.cpp
 )
 target_include_directories(MMDxShow PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/mmdxshow)
 target_link_libraries(MMDxShow PRIVATE
@@ -375,6 +372,65 @@ if(BUILD_TESTING)
     add_executable(model_key_selection_test tests/model_key_selection_test.cpp)
     target_link_libraries(model_key_selection_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_key_selection COMMAND model_key_selection_test)
+    add_executable(morph_navigation_test tests/morph_navigation_test.cpp
+        src/app/app_utilities.cpp)
+    target_include_directories(morph_navigation_test PRIVATE include)
+    target_compile_options(morph_navigation_test PRIVATE /Gy)
+    target_link_options(morph_navigation_test PRIVATE /OPT:REF)
+    target_link_libraries(morph_navigation_test PRIVATE user32)
+    add_test(NAME morph_navigation COMMAND morph_navigation_test)
+    add_executable(accessory_drag_test tests/accessory_drag_test.cpp)
+    target_link_libraries(accessory_drag_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME accessory_drag COMMAND accessory_drag_test)
+    add_executable(camera_position_test tests/camera_position_test.cpp)
+    target_link_libraries(camera_position_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME camera_position COMMAND camera_position_test)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_executable(drag_precision_test tests/drag_precision_test.cpp)
+        target_link_libraries(drag_precision_test PRIVATE mikudancestudio_core MMEffect dsound)
+        add_test(NAME drag_precision COMMAND drag_precision_test)
+        if(MSVC)
+            add_executable(pmd_skinning_test tests/pmd_skinning_test.cpp)
+            target_include_directories(pmd_skinning_test PRIVATE include third_party/mmeffect/include)
+            target_compile_options(pmd_skinning_test PRIVATE /openmp /Gy)
+            target_link_options(pmd_skinning_test PRIVATE /OPT:REF)
+            target_link_libraries(pmd_skinning_test PRIVATE D3DXRuntime)
+            add_test(NAME pmd_skinning COMMAND pmd_skinning_test)
+        endif()
+    endif()
+    add_executable(accessory_selection_test tests/accessory_selection_test.cpp
+        src/app/app_utilities.cpp src/window/ui_refresh.cpp)
+    target_include_directories(accessory_selection_test PRIVATE include)
+    target_compile_options(accessory_selection_test PRIVATE /Gy)
+    target_link_options(accessory_selection_test PRIVATE /OPT:REF)
+    target_link_libraries(accessory_selection_test PRIVATE user32)
+    add_test(NAME accessory_selection COMMAND accessory_selection_test)
+    add_executable(mme_anime_timeline_test tests/mme_anime_timeline_test.cpp)
+    target_include_directories(mme_anime_timeline_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack)
+    target_link_libraries(mme_anime_timeline_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_anime_timeline COMMAND mme_anime_timeline_test)
+    add_executable(mme_anime_recovery_test tests/mme_anime_recovery_test.cpp)
+    target_include_directories(mme_anime_recovery_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack)
+    target_link_libraries(mme_anime_recovery_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_anime_recovery COMMAND mme_anime_recovery_test)
+    add_executable(mme_posteffect_message_test tests/mme_posteffect_message_test.cpp)
+    target_include_directories(mme_posteffect_message_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack)
+    target_link_libraries(mme_posteffect_message_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_posteffect_message COMMAND mme_posteffect_message_test)
+    add_executable(mme_shader_message_test tests/mme_shader_message_test.cpp)
+    target_include_directories(mme_shader_message_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack)
+    target_link_libraries(mme_shader_message_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_shader_message_gpu COMMAND mme_shader_message_test)
+    set_tests_properties(mme_shader_message_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(mme_log_test tests/mme_log_test.cpp)
+    target_include_directories(mme_log_test PRIVATE third_party/mmeffect/include)
+    target_link_libraries(mme_log_test PRIVATE user32)
+    add_test(NAME mme_log_absent COMMAND mme_log_test)
+    add_test(NAME mme_log_sentinel COMMAND mme_log_test sentinel)
     configure_file(tests/axis_mesh.rc.in ${CMAKE_CURRENT_BINARY_DIR}/axis_mesh_test.rc @ONLY)
     add_executable(axis_mesh_test tests/axis_mesh_test.cpp ${CMAKE_CURRENT_BINARY_DIR}/axis_mesh_test.rc)
     target_link_libraries(axis_mesh_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -425,6 +481,12 @@ if(BUILD_TESTING)
     target_link_libraries(mme_assignment_graph_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME mme_assignment_graph_gpu COMMAND mme_assignment_graph_test)
     set_tests_properties(mme_assignment_graph_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(mme_snapshot_cache_test tests/mme_snapshot_cache_test.cpp)
+    target_include_directories(mme_snapshot_cache_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack)
+    target_link_libraries(mme_snapshot_cache_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_snapshot_cache_gpu COMMAND mme_snapshot_cache_test)
+    set_tests_properties(mme_snapshot_cache_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     target_include_directories(mme_offscreen_turn_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_offscreen_turn_test PRIVATE mikudancestudio_core MMEffect dsound)
     set(MIKUDANCESTUDIO_RAY_TEST_EFFECT "" CACHE FILEPATH

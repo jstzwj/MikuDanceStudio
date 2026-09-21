@@ -1,28 +1,6 @@
-// ===========================================================================
-// VA 0x00440AC0 - RefreshRequest  (original: sub_440AC0)
-// ===========================================================================
-// UI selection-state setter reached from the scroll/wheel handlers, the
-// frame driver (0x46B090) and the command dispatch (0x47E8A0) - the
-// repaint-request funnel for the left-panel object list.  __thiscall with a
-// single stack arg (area); this = the app object (g_Block).
-//
-// area selects the action:
-//   -1..-4: activate track 0..3.  The four one-byte track flags at 0xA03E4
-//           (app+0xA03E4..E7) become (1,0,0,0), (0,1,0,0), (0,0,1,0),
-//           (0,0,0,1) respectively - but only if the target track flag is
-//           currently 0 (an already-active track is a no-op).
-//   other : object index into the 255-entry UI object pointer array at
-//           0x9DD70 (objectSlots, "zeroed 0x3FC").  If the object
-//           exists and its +0x4AC active flag is 0, all four track flags are
-//           cleared and that object's flag is set to 1.
-//
-// Every successful path additionally clears the +0x4AC active flag of all
-// 255 objects (51 groups x 5 pointers, sweep starting at 0x9DD74) and ends
-// with PostLanguageSweep (0x42F1E0).  Note: 0x42F1E0 is called with `this`
-// only - the area selector is consumed by this function and never forwarded.
-//
-// Reference: ../translated/MikuMikuDance/fcn_00440ac0.cpp
-// =========================================================================//
+// Timeline selection setter. Selecting a new global or accessory track clears
+// all accessory row selections and refreshes the panel. Selecting an already
+// active track is a no-op. Reference: MMD 9.32 x64, RVA 0x9F4F0.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -36,21 +14,10 @@
 namespace mikudancestudio {
 namespace {
 
-// --- sub_440AC0 (RefreshRequest) -------------------------------------------
-// Each UI object (bone/expression entry behind the pointer array at
-// 0x9DD70) carries a one-byte active flag at +0x4AC.
-constexpr std::size_t kObjFlag4AC = 0x4AC;   // object active flag (byte)
-constexpr int kSweepGroupCount = 0x33;       // 51 groups x 5 pointers = 255
-
-// Clears the +0x4AC active flag of every object in the array.  This is the
-// sweep shared by all branches (loc_440B00 / loc_440B90 / loc_440C20 /
-// loc_440CB0 / loc_440D41): edx runs base+4 and per group touches
-// [edx-4], [edx], [edx+4], [edx+8], [edx+0Ch], stride 0x14, 0x33 rounds.
-void ClearAllObjectFlags(MMDApp* app) {
-    for (int slot = 0; slot < kSweepGroupCount * 5; ++slot) {
-        void* object = app->ObjectSlot(slot);
-        if (object != nullptr)
-            static_cast<unsigned char*>(object)[kObjFlag4AC] = 0;
+void ClearAccessoryRowSelection(MMDApp* app) {
+    for (int slot = 0; slot < 255; ++slot) {
+        if (auto* accessory = app->AccessorySlots()[slot])
+            accessory->rowSelected = 0;
     }
 }
 
@@ -76,7 +43,7 @@ void RefreshRequest(int area) {
     if (area == -1) {                       // 0x00440AC8 cmp ebx, -1
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
-            ClearAllObjectFlags(app);
+            ClearAccessoryRowSelection(app);
             PostLanguageSweep(app);         // 0x00440B48 call sub_42F1E0
         }
         return;
@@ -86,7 +53,7 @@ void RefreshRequest(int area) {
     if (area == -2) {                       // 0x00440B53 cmp ebx, -2
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
-            ClearAllObjectFlags(app);
+            ClearAccessoryRowSelection(app);
             PostLanguageSweep(app);         // 0x00440BD8 call sub_42F1E0
         }
         return;
@@ -96,7 +63,7 @@ void RefreshRequest(int area) {
     if (area == -3) {                       // 0x00440BE3 cmp ebx, -3
         if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
-            ClearAllObjectFlags(app);
+            ClearAccessoryRowSelection(app);
             PostLanguageSweep(app);         // 0x00440C68 call sub_42F1E0
         }
         return;
@@ -106,23 +73,18 @@ void RefreshRequest(int area) {
     if (area == -4) {                       // 0x00440C73 cmp ebx, -4
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
-            ClearAllObjectFlags(app);
+            ClearAccessoryRowSelection(app);
             PostLanguageSweep(app);         // 0x00440CF8 call sub_42F1E0
         }
         return;
     }
 
-    // ---- default: object index into the 0x9DD70 pointer array ------------
-    void* obj = app->ObjectSlot(area);
-    if (obj != nullptr &&
-        static_cast<unsigned char*>(obj)[kObjFlag4AC] == 0) {
+    auto* accessory = app->AccessorySlots()[area];
+    if (accessory != nullptr && accessory->rowSelected == 0) {
         app->ClearGlobalTimelineTrackSelection();
-        ClearAllObjectFlags(app);
-        // 0x00440D89: the selected pointer is re-read after the sweep (the
-        // sweep cleared its flag too) and only then set to 1.
-        obj = app->ObjectSlot(area);
-        static_cast<unsigned char*>(obj)[kObjFlag4AC] = 1;
-        PostLanguageSweep(app);             // 0x00440D97 call sub_42F1E0
+        ClearAccessoryRowSelection(app);
+        app->AccessorySlots()[area]->rowSelected = 1;
+        PostLanguageSweep(app);
     }
 }
 

@@ -51,11 +51,11 @@
 // 0x1800B36A0 table: the 17 matWorld..SphCMul names plus use_*/opadd/
 // VertexCount/SubsetCount) resolved by enumeration + _stricmp.
 // MATERIALTEXTURE/MATERIALSPHEREMAP/MATERIALTOONTEXTURE bind by semantic.
-// CONTROLOBJECT parameter values are deferred to Phase 3.
+// CONTROLOBJECT parameters are resolved from the live host by
+// MmeUpdateControlObjects during assignment traversal.
 #pragma once
 
 #include <cstddef>
-#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -194,30 +194,6 @@ void MmeBindStandardParameters(ModelData* model, MaterialBinding* binding,
 // GetParameterBySemantic once per binding; called from the standard apply.
 void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
                                const RenderSnapshot& snap);
-
-// CONTROLOBJECT value staging (Phase 3 seam). The SAS interpreter resolves
-// CONTROLOBJECT parameters from the host: accessory panel values
-// (ExpGetAcsX/Y/Z/Rx/Ry/Rz/Si/Tr), bone world matrices (ExpGetPmdBoneWorldMat)
-// and morph values (ExpGetPmdMorphValue). Phase 2 stages the raw host values
-// per scanned object (called once per object from the pass planner) so the
-// Phase 3 resolver only needs the name lookup. The staged table is read-only
-// in Phase 2.
-struct ControlObjectStage {
-    bool      valid;        // staged for the current frame
-    float     panel[8];     // X Y Z Rx Ry Rz Si Tr (accessories)
-    D3DMATRIX boneWorld;    // ExpGetPmdBoneWorldMat (models, bone 0 placeholder)
-    float     morphValue;   // ExpGetPmdMorphValue (models, morph 0 placeholder)
-    ControlObjectStage() : valid(false), morphValue(0.0f)
-    {
-        for (int i = 0; i < 8; ++i) {
-            panel[i] = 0.0f;
-        }
-        memset(&boneWorld, 0, sizeof(boneWorld));
-        boneWorld.m[0][0] = boneWorld.m[1][1] = boneWorld.m[2][2] = boneWorld.m[3][3] = 1.0f;
-    }
-};
-ControlObjectStage* MmeStageControlObjectValues(ModelData* model, int hostIndex);
-ControlObjectStage* MmeFindControlObjectStage(ModelData* model);
 
 // Accessory attach resolution (MMHack GetAcsAttachedPmd). Called by the pass
 // planner for kind != 1 objects with the accessory ID; records the attached

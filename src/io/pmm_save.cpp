@@ -629,9 +629,9 @@ void WritePmmCameraSection(int fd, MMDApp* s) {
     }
 
     // camera misc (0x41CE85..0x41CF3E)
-    W(fd, &s->state.cameraPosX, 4);         // 0x334
-    W(fd, &s->state.cameraPosY, 4);         // 0x338
-    W(fd, &s->state.cameraPosZ, 4);         // 0x33C
+    W(fd, &s->state.cameraPosition[0], 4);         // 0x334
+    W(fd, &s->state.cameraPosition[1], 4);         // 0x338
+    W(fd, &s->state.cameraPosition[2], 4);         // 0x33C
     W(fd, &s->state.viewOffsetX, 4);         // 0x308
     W(fd, &s->state.viewOffsetY, 4);         // 0x30C
     W(fd, &s->state.cameraDistance, 4);     // 0xA08DC

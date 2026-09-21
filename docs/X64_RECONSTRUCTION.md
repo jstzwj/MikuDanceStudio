@@ -4,7 +4,7 @@
 
 ## 二进制身份
 
-2026-09-19 审计使用用户本地 OpenMMD 目录中的以下文件；二进制不由本说明授权再分发：
+2026-09-22 审计重新核验了用户本地 OpenMMD 目录中的以下文件；二进制不由本说明授权再分发：
 
 | 参考文件 | SHA-256 |
 |---|---|
@@ -13,7 +13,7 @@
 
 IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或受到 ASLR 影响时应记录 image base/RVA，不把一次会话的 VA 当作永久运行时地址。session ID 是工具运行状态，不是长期证据标识。
 
-证据入口：[第十轮总报告](../reports/audit10_summary.md)、[原始 IDA 导出](../reports/audit10_ida_evidence.json)、[MME 专项证据](../reports/audit10_mme_render_ida_evidence.md)、[模型初始化/释放导出](../reports/audit10_evidence/)。历史审计描述的是当时工作树；当前修复状态见 [PORTING_STATUS.md](PORTING_STATUS.md)。
+证据入口：[第20轮总报告](../reports/audit20_summary.md)、[应用原始 IDA 导出](../reports/audit20_app_ida_evidence.json)、[MME 原始 IDA 导出](../reports/audit20_mme_ida_evidence.json)、[第21轮修复汇总](../reports/fix21_summary.md)。历史审计描述的是当时工作树；当前修复状态见 [PORTING_STATUS.md](PORTING_STATUS.md)。
 
 ## 如何判定一致
 
@@ -40,7 +40,7 @@ IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或
 
 修改布局时应：记录参考锚点 → 恢复语义成员 → 同步全部消费者 → 更新准确断言 → 运行相关独立测试和完整构建 → 用真实输入补足A/B行为测试。不要先改断言去迁就一个没有证据的结构。
 
-模型修复实例见 [fix11_core.md](../reports/fix11_core.md)：17个标准四元数、23×30个历史样本、23个当前关节以及pose-trace指针被恢复为真实成员，纠正x86字节访问覆盖x64指针的问题。
+布局修复实例见 [相机连续向量修复](../reports/fix21_camera_position.md)：依据原版初始化指令恢复连续 XYZ 及相邻状态，统一 PMM 和运行时消费者，并分别验证 x64/x86。仅移动一个 padding 来通过局部测试不足以证明布局正确。
 
 ## 构建与验证记录
 

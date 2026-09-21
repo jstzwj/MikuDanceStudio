@@ -442,7 +442,7 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
             entry->effect = nullptr;
         } else {
             // Clean parse: the per-effect log (Info/Warning lines) goes to
-            // MMEffect.txt like the original's sas+0x70 dump.
+            // the shared log dialog/history, like the original's sas+0x70 dump.
             const char* sasLog = SasGetLog(entry->sas);
             if (sasLog != nullptr && sasLog[0] != '\0') {
                 MmeLogWrite(sasLog, 0);

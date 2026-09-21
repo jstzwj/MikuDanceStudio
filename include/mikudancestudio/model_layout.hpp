@@ -22,6 +22,7 @@ namespace mikudancestudio::mdl {
 
 struct BoneRecord;
 struct MorphRecord;
+struct ModelMaterialRecord;
 struct BoneKey;
 struct MorphKey;
 struct DisplayKey;
@@ -55,7 +56,7 @@ struct ModelRecord {
     std::uint32_t indexCount;  // 20  (this[5])
     void* indices;  // 24  (WORD*)
     std::uint32_t materialCount;  // 28  (this[7])
-    void* materials;  // 32  (2292-byte material records)
+    ModelMaterialRecord* materials;  // 32 (runtime material table)
     std::uint32_t* boneKeyCursors;  // 36  (one cursor per bone)
     unsigned char* boneTrackActive;  // 40  (one flag per bone)
     std::uint32_t* morphKeyCursors;  // 44  (one cursor per morph)

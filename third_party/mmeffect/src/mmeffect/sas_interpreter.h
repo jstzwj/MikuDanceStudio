@@ -97,7 +97,7 @@ SasScriptOrder SasGetScriptOrder(const SasEffect* sas);
 // The accumulated parse log (English lines with trailing '\n', exactly the
 // strings the original appended at sas+0x70 - "Error: SAS version is
 // invalid...", "Warning: unknown technique name: ..." etc.). The parent
-// writes this into MMEffect.txt. Never returns nullptr; empty when clean.
+// writes this to the shared log. Never returns nullptr; empty when clean.
 const char* SasGetLog(const SasEffect* sas);
 
 // True when the parse recorded at least one "Error: ..." line

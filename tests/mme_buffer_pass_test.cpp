@@ -21,7 +21,11 @@ struct Window {
     ~Window() { if (handle) DestroyWindow(handle); }
 };
 struct Module {
+#ifdef _WIN64
     HMODULE handle = LoadLibraryW(L"d3dx9_43.dll");
+#else
+    HMODULE handle = LoadLibraryW(L"d3dx9_32.dll");
+#endif
     ~Module() { if (handle) FreeLibrary(handle); }
 };
 }
@@ -32,13 +36,20 @@ struct Module {
 int main() {
     Window window;
     Module d3dx;
-    if (!window.handle || !d3dx.handle) {
-        std::fprintf(stderr, "HAL test requires a window and d3dx9_43.dll\n");
+    if (!d3dx.handle) {
+        std::fprintf(stderr, "Required D3DX runtime is unavailable\n");
         return 1;
+    }
+    if (!window.handle) {
+        std::puts("SKIP: test window unavailable");
+        return 77;
     }
     Com<IDirect3D9> d3d;
     d3d.p = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!d3d.p) return 1;
+    if (!d3d.p) {
+        std::puts("SKIP: Direct3D unavailable");
+        return 77;
+    }
     D3DPRESENT_PARAMETERS pp = {};
     pp.BackBufferWidth = pp.BackBufferHeight = 64;
     pp.BackBufferFormat = D3DFMT_A8R8G8B8;
@@ -52,8 +63,13 @@ int main() {
     Com<IDirect3DDevice9> device;
 #define REQUIRE_HR(call) do { const HRESULT result = (call); if (FAILED(result)) { \
     std::fprintf(stderr, "%s failed: 0x%08lX\n", #call, static_cast<unsigned long>(result)); return 1; } } while (0)
-    REQUIRE_HR(d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window.handle,
-        D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &device.p));
+    const HRESULT deviceResult = d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
+        window.handle, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &device.p);
+    if (FAILED(deviceResult)) {
+        std::printf("SKIP: required HAL device unavailable: 0x%08lX\n",
+                    static_cast<unsigned long>(deviceResult));
+        return 77;
+    }
 
     using CreateEffect = HRESULT (WINAPI*)(IDirect3DDevice9*, LPCVOID, UINT,
         const D3DXMACRO*, ID3DXInclude*, DWORD, ID3DXEffectPool*, ID3DXEffect**, ID3DXBuffer**);

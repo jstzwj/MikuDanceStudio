@@ -574,8 +574,6 @@ void MouseInteractionEnd(MMDApp* app) {
 // runtime-initialized in the original (.rdata image differs); the
 // registry-echo conversion pair 0x52B760/0x52B768 turns the stored radian
 // value into the "%3.4f" display figure (best evidence: PI/180 divisor)
-double g_Scale52E9F0 = 0.20000000298023224; // VA 0x0052E9F0
-double g_Scale52E8C8 = 0.019999999552965164;// VA 0x0052E8C8
 double g_AngleDegreesScale = 180.0;               // VA 0x0052B760
 double g_AnglePiTruncated = 3.141592025756836;   // VA 0x0052B768
 
@@ -587,6 +585,23 @@ double g_AnglePiTruncated = 3.141592025756836;   // VA 0x0052B768
 // dy = (this+8) - (this+0x10);  slots: this+0x9DD70[this+0x9E170].
 namespace {
 
+// The x64 build rounds each operation to binary32; the x86 path retains
+// its recovered double intermediates. Keep the distinction local to these
+// operation-panel drag modes.
+#ifdef _WIN64
+using PanelDragScalar = float;
+#else
+using PanelDragScalar = double;
+#endif
+constexpr PanelDragScalar kPositionDragCoarse = 0.5f;
+constexpr PanelDragScalar kPositionDragFine = 0.005f;
+constexpr PanelDragScalar kPositionDragNormal = 0.05f;
+constexpr PanelDragScalar kAngleDragCoarse = 0.2f;
+constexpr PanelDragScalar kAngleDragFine = 0.002f;
+constexpr PanelDragScalar kAngleDragNormal = 0.02f;
+constexpr PanelDragScalar kDisplayPi = 3.141592025756836f;
+constexpr PanelDragScalar kHalfTurnDegrees = 180.0f;
+
 int DyOf(MMDApp* s) {
     return s->MouseY() - s->PreviousMouseY();
 }
@@ -594,15 +609,8 @@ int DyOf(MMDApp* s) {
 bool SelA3(MMDApp* s) { return s->ShiftModifierActive(); }
 bool SelB3(MMDApp* s) { return s->CtrlModifierActive(); }
 
-unsigned char* RegSlotOf(MMDApp* s) {
-    const unsigned idx = s->state.selectedObjectSlot;
-    return reinterpret_cast<unsigned char*>(s->AccessorySlot(idx));
-}
-
 void EchoEdit(MMDApp* s, int dlgItem, const char* text) {
     HWND window = static_cast<HWND>(s->Hwnd());
-    if (window == nullptr)
-        window = static_cast<HWND>(s->Hwnd());
     SetWindowTextA(GetDlgItem(window, dlgItem), text);
 }
 
@@ -611,31 +619,29 @@ void EchoEdit(MMDApp* s, int dlgItem, const char* text) {
 void ModeCameraAdjust(MMDApp* app, int axis) {
     // 0x4786FB..0x4790DF, modes 13..15.  The same operation widgets edit
     // either the camera target or the selected accessory position.
-    static const std::size_t kSlotOff[3] = {0x214, 0x218, 0x21C};
     static const int kEdit[3] = {0x1DE, 0x1DF, 0x1E0};
     if (axis < 0 || axis > 2) { ViewRefreshGate(app); return; }
     const int target = app->state.coordinateSystem;
     const int dy = DyOf(app);
-    double scale;
-    if (SelA3(app)) scale = g_MouseScaleA;            // 0x52B8F0
-    else if (SelB3(app)) scale = g_MouseScaleB;       // 0x52E9C0
-    else scale = g_MouseScaleC;                       // 0x52D738
+    PanelDragScalar scale;
+    if (SelA3(app)) scale = kPositionDragCoarse;
+    else if (SelB3(app)) scale = kPositionDragFine;
+    else scale = kPositionDragNormal;
     if (target == 2 &&
         app->state.optflag[0] != 0) {
-        unsigned char* slot = RegSlotOf(app);
-        if (slot != nullptr) {
-            float& value = *reinterpret_cast<float*>(slot + kSlotOff[axis]);
-            value = static_cast<float>(static_cast<double>(value) -
-                                       static_cast<double>(dy) * scale);
+        auto* accessory = app->AccessorySlot(app->state.selectedObjectSlot);
+        if (accessory != nullptr) {
+            float& value = accessory->position[axis];
+            value = static_cast<float>(static_cast<PanelDragScalar>(value) -
+                                       static_cast<PanelDragScalar>(dy) * scale);
             char buf[0x100];
-            sprintf_s(buf, 0x100, "%3.4f",
-                      *reinterpret_cast<float*>(slot + kSlotOff[axis]));
+            sprintf_s(buf, 0x100, "%3.4f", value);
             EchoEdit(app, kEdit[axis], buf);
         }
     } else if (app->state.cameraParentModel >= 0 || target == 1) {
         app->CameraPosition()[axis] = static_cast<float>(
-            static_cast<double>(app->CameraPosition()[axis]) +
-            static_cast<double>(dy) * scale);
+            static_cast<PanelDragScalar>(app->CameraPosition()[axis]) +
+            static_cast<PanelDragScalar>(dy) * scale);
     } else {
         auto& api = d3dx::Get();
         d3dx::D3DXMATRIXF rx{}, ry{}, rz{}, rotation{};
@@ -645,7 +651,7 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
         api.rotY(&ry, -app->CameraYaw());
         api.multiply(&rotation, &rotation, &ry);
         float local[3]{};
-        local[axis] = static_cast<float>(static_cast<double>(dy) * scale);
+        local[axis] = static_cast<float>(static_cast<PanelDragScalar>(dy) * scale);
         float world[4]{};
         api.vec3Transform(world, local, &rotation);
         app->CameraPositionX() += world[0];
@@ -658,32 +664,31 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
 void ModeAngleAdjust(MMDApp* app, int axis) {
     // 0x4790E0..0x4798xx, modes 16..18.  Stored angles are radians;
     // accessory edit controls display degrees.
-    static const std::size_t kSlotOff[3] = {0x220, 0x224, 0x228};
     static const int kEdit[3] = {0x1E1, 0x1E2, 0x1E3};
     if (axis < 0 || axis > 2) { ViewRefreshGate(app); return; }
     const int target = app->state.coordinateSystem;
     const int dy = DyOf(app);
-    double scale;
-    if (SelA3(app)) scale = g_Scale52E9F0;            // 0.2
-    else if (SelB3(app)) scale = 0.0020000000949949026;
-    else scale = g_Scale52E8C8;                       // 0x52E8C8
-    if (target == 2 &&
-        app->state.optflag[0] != 0) {
-        unsigned char* slot = RegSlotOf(app);
-        if (slot != nullptr) {
-            float& value = *reinterpret_cast<float*>(slot + kSlotOff[axis]);
-            value = static_cast<float>(static_cast<double>(value) +
-                                       static_cast<double>(dy) * scale);
+    PanelDragScalar scale;
+    if (SelA3(app)) scale = kAngleDragCoarse;
+    else if (SelB3(app)) scale = kAngleDragFine;
+    else scale = kAngleDragNormal;
+    // Unlike position dragging, the angle target does not depend on the
+    // camera radio flag (x64 456788/456933/456A78; x86 479153).
+    if (target == 2) {
+        auto* accessory = app->AccessorySlot(app->state.selectedObjectSlot);
+        if (accessory != nullptr) {
+            float& value = accessory->rotation[axis];
+            value = static_cast<float>(static_cast<PanelDragScalar>(value) +
+                                       static_cast<PanelDragScalar>(dy) * scale);
             char buf[0x100];
             sprintf_s(buf, 0x100, "%3.4f",
-                      *reinterpret_cast<float*>(slot + kSlotOff[axis]) /
-                          g_AnglePiTruncated * g_AngleDegreesScale);
+                      value / kDisplayPi * kHalfTurnDegrees);
             EchoEdit(app, kEdit[axis], buf);
         }
     } else {
         app->CameraRotation()[axis] = static_cast<float>(
-            static_cast<double>(app->CameraRotation()[axis]) +
-            static_cast<double>(dy) * scale);
+            static_cast<PanelDragScalar>(app->CameraRotation()[axis]) +
+            static_cast<PanelDragScalar>(dy) * scale);
     }
     ViewRefreshGate(app);
 }

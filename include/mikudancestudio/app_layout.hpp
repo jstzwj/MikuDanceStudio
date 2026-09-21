@@ -122,38 +122,20 @@ struct MMDAppState {
     unsigned char fpsOverlayEnabled;
     RawPad<1> pad31;
     float fpsOverlayElapsedSeconds;
-#if defined(_M_X64)
-    RawPad<4> pad32;
-#endif
     std::uint32_t fpsOverlayFrameCount;
     std::uint32_t framesPerSecond;
     // +0x32C: gizmo row filter (0 = both axis rows active, 1 = upper
     // only, 2 = lower only; frame_modes/sprite_overlay).  No writer
     // exists in either original - read-only zero; semantics unrecovered.
     std::uint32_t v32c;
-#if defined(_M_X64)
-    RawPad<1> pad35;
-#endif
     unsigned char playbackActive;
-#if defined(_M_X64)
-    RawPad<6> pad36;
-#else
     RawPad<3> pad36;
-#endif
-    float cameraPosX;
-    float cameraPosY;
-#if defined(_M_X64)
-    RawPad<4> pad38;
-#endif
-    float cameraPosZ;
+    float cameraPosition[3];
     unsigned char cameraReferenceMode;
     unsigned char playbackLoopEnabled;
     unsigned char playbackReturnsToStartFrame;
     RawPad<1> pad42;
     std::uint32_t viewportToolHovered;   // +0x344
-#if defined(_M_X64)
-    RawPad<4> pad43;
-#endif
     std::uint32_t viewToolDragOperation;   // +0x348
     std::uint32_t interactionDragMode;   // +0x34C
     // Clipboard pointer family.  x86 carries all eight slots in the blob
@@ -162,7 +144,9 @@ struct MMDAppState {
     // to hit unmapped identity offsets there - x64 latent corruption).
     void* boneCopyRecords;    // +0x350 (was v350Clipboard)
 #if defined(_M_X64)
-    RawPad<8> pad46;
+    // Preserve the existing boundary of the remaining clipboard region;
+    // its sibling pointers are still represented by the MMDApp mirrors.
+    RawPad<24> pad46;
 #else
     void* boneClipboard;    // +0x354
     void* morphClipboard;   // +0x358

@@ -3,12 +3,13 @@
 // ===========================================================================
 // 0x4B0C50 restores and accumulates vertex morphs, locks model+8/model+12,
 // and dispatches one of the 0x4A9400-family OpenMP skinning workers. This
-// file closes the PMD path serially and the x64 PMX twin family in full:
+// file implements the PMD path and the x64 PMX twin family:
 // the five stride workers selected by the additional-UV count (x64
-// 0x14013F3A0 / 0x140140D20 / 0x140142720 / 0x140144150 / 0x140145BF0),
+// RVA 0x11F3A0 / 0x120D20 / 0x122720 / 0x124150 / 0x125BF0),
 // the per-frame PMX vertex/UV morph restore+apply pass that feeds them
-// (x64 0x1400E1415..0x1400E2670), and the SDEF quaternion blend helper
-// (x64 0x1400E2D20). The PMD arithmetic keeps its x87 __asm bit-parity
+// (x64 RVA 0xC1415..0xC2670), and the SDEF quaternion blend helper
+// (x64 RVA 0xC2D20). Binary identity and address verification are recorded
+// in reports/fix21_source_evidence.md. The PMD arithmetic keeps its x87 __asm bit-parity
 // branch; the PMX arithmetic follows the x64 SSE orderings, which is the
 // behavior baseline for this port.
 // ===========================================================================
@@ -173,7 +174,7 @@ const float* PmxSkinMatrix(const mdl::BoneRecord* bones, int boneCount,
         : kPmxZeroMatrix;
 }
 
-// x64 PMX worker 0x14013F991: BDEF1 transforms position with the full
+// x64 PMX worker RVA 0x11F991: BDEF1 transforms position with the full
 // matrix and normal without translation into the 32-byte base record.
 void SkinPmxBdef1(const mdl::PmxVertex& source,
                   const mdl::BoneRecord* bones, int boneCount,
@@ -244,7 +245,7 @@ no_translation_0:
 #endif
 }
 
-// x64 PMX worker 0x14013F513: BDEF2 uses bone 1 first with (1-weight),
+// x64 PMX worker RVA 0x11F513: BDEF2 uses bone 1 first with (1-weight),
 // then adds bone 0 scaled by weight. BlendTransformComponent preserves that
 // source order on the x64 path (and bit-exactly on the x87 path).
 void SkinPmxBdef2(const mdl::PmxVertex& source,
@@ -271,7 +272,7 @@ float TransformComponent(const float input[3], const float matrix[16],
     return value;
 }
 
-// x64 PMX worker 0x14013FB7F: BDEF4 retrieves all four matrices with the
+// x64 PMX worker RVA 0x11FB7F: BDEF4 retrieves all four matrices with the
 // same negative-index zero fallback. The scalar chains are ordered
 // differently for positions and normals in the original: the position
 // accumulates bone 1 first and then bones 0, 2 and 3, while the normal
@@ -315,7 +316,7 @@ void SkinPmxBdef4(const mdl::PmxVertex& source,
     }
 }
 
-// x64 helper 0x1400E2D20: SDEF rotates through a blended quaternion that
+// x64 helper RVA 0xC2D20: SDEF rotates through a blended quaternion that
 // the original builds with a dot-sign-corrected normalized lerp (not a
 // true slerp). `t` reaches 1 - weight0, so weight0 = 1 keeps q0.
 void BlendSdefQuaternions(float out[4], const float from[4],
@@ -446,7 +447,7 @@ void CopyPmxAdditionalUvs(const mdl::PmxVertex& source,
 }
 
 // One PMX morph's vertex/UV contribution (the x64 direct ladder at
-// 0x1400E2030..0x1400E2659; group references 0x1400E1870 reuse it with the
+// RVA 0xC2030..0xC2659; group references RVA 0xC1870 reuse it with the
 // group weight folded in after the morph value, one multiply at a time).
 // Bone (2) and material (8) morphs live in ModelApplyMorphs instead.
 void AccumPmxVertexMorph(mdl::PmxVertex* vertices,
@@ -482,7 +483,7 @@ void AccumPmxVertexMorph(mdl::PmxVertex* vertices,
     }
 }
 
-// 0x1400E1415..0x1400E17E8 plus 0x1400E17FE..0x1400E2670: the PMX twin of
+// RVA 0xC1415..0xC17EB plus 0xC17FE..0xC2670: the PMX twin of
 // the PMD morph pass. Morph zero's aggregated position table and the five
 // flattened UV base tables restore every morph-targeted component first,
 // then each morph (including morph zero - unlike PMD) accumulates its
@@ -624,7 +625,16 @@ void SkinPmd(unsigned char* model, float edgeDistance,
     if (vertices == nullptr || bones == nullptr)
         return;
 
+    // The original x64 worker (RVA 0x11F3A0) partitions PMD vertices with
+    // the same default static OpenMP schedule as PMX. Inputs are read-only;
+    // each iteration owns its main/edge output pair. MSVC OpenMP requires
+    // a signed induction variable. Keep the unverified x86 schedule intact.
+#if defined(_M_X64)
+#pragma omp parallel for
+    for (int i = 0; i < static_cast<int>(vertexCount); ++i) {
+#else
     for (std::uint32_t i = 0; i < vertexCount; ++i) {
+#endif
         const mdl::PmdVertex& src = vertices[i];
         mdl::SkinnedVertexBase& main = mainVertices[i];
         mdl::EdgeVertex& edge = edgeVertices[i];
@@ -730,7 +740,7 @@ void SkinPmx(unsigned char* model, float edgeDistance, bool opaqueEdge,
     }
 }
 
-// x64 0x1400E2A5F..0x1400E2CEC: the PMX branch locks the main buffer with
+// x64 RVA 0xC2A5F..0xC2CEC: the PMX branch locks the main buffer with
 // 32 + 16 * additionalUvCount bytes per vertex and the edge buffer with 16,
 // then dispatches the stride worker selected by the additional-UV count.
 // A count above four matches no worker and the original leaves both
@@ -805,9 +815,9 @@ void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
     if (state.loadComplete == 0 || state.vertexCount == 0)
         return;
 
-    // The PMX twin (x64 0x1400E13C0) runs its own restore+morph pass and
-    // dispatches the additional-UV stride workers; PMD keeps the serial
-    // 0x4A9400 path below untouched.
+    // The PMX twin (x64 RVA 0xC13C0) runs its own restore+morph pass and
+    // dispatches the additional-UV stride workers; PMD uses its own
+    // morph pass and the matching per-vertex worker below.
     if (state.physicsMode == 2) {
         UpdatePmxModelVertexBuffers(app, model, frameWorld);
         return;

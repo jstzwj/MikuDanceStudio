@@ -891,9 +891,9 @@ static void LoadSceneV1_CameraTrack(PmmV1LoadContext& ctx, int fd) {
     }
     LogV1Stage("camtrack-done", _tell(fd));
     // camera misc (0x45AEE7..0x45AF93)
-    Rd(fd, &s->state.cameraPosX, 4);
-    Rd(fd, &s->state.cameraPosY, 4);
-    Rd(fd, &s->state.cameraPosZ, 4);
+    Rd(fd, &s->state.cameraPosition[0], 4);
+    Rd(fd, &s->state.cameraPosition[1], 4);
+    Rd(fd, &s->state.cameraPosition[2], 4);
     Rd(fd, &s->state.viewOffsetX, 4);
     Rd(fd, &s->state.viewOffsetY, 4);
     Rd(fd, &s->state.cameraDistance, 4);      // 0xA08DC
