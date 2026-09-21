@@ -265,6 +265,30 @@ MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex
 MaterialBinding* MmeActiveModelBinding(ModelData* model);
 
 // --- offscreen DefaultEffect (sub_180011960 offscreen record +0x78) ---
+// Pure first-match query shared by rendering and the effect mapping UI.
+// The returned row is borrowed from rows. Values (hide/none/effect paths)
+// are not interpreted here. "self" compares model/owner pointer identity;
+// other keys retain the renderer's case-insensitive basename glob matching
+// and its legacy exact full-path compatibility branch.
+const std::pair<std::string, std::string>* MmeFindDefaultEffectRow(
+    const std::vector<std::pair<std::string, std::string>>& rows,
+    ModelData* model, ModelData* owner);
+
+// Mapping-dialog checkbox state: an absent row retains the original -1
+// (shown) state; only an explicit "hide" clears it. This is not a render
+// eligibility test: the renderer may skip a turn with no assigned row.
+bool MmeDefaultEffectRowShown(const std::pair<std::string, std::string>* row);
+
+// Edit only this object's exact full-path overrides. Generic/glob rows and
+// other objects retain their order; an override is prepended to win matching.
+// Removing it exposes the original default rows again. No effects are loaded.
+void MmeSetDefaultEffectOverride(
+    std::vector<std::pair<std::string, std::string>>& rows,
+    ModelData* model, const std::string& value);
+void MmeRemoveDefaultEffectOverride(
+    std::vector<std::pair<std::string, std::string>>& rows,
+    ModelData* model);
+
 // Resolve the active turn's DefaultEffect assignment by first matching row.
 // Resource declaration does not grant the object its root binding in a turn.
 // Missing, none and hide return null; the caller distinguishes missing/hide

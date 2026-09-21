@@ -1,6 +1,7 @@
 // material_bind.cpp - see material_bind.h
 #include "material_bind.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -961,20 +962,13 @@ static ModelData* MmeOffscreenDefaultEffectOwner(MmeContext* ctx)
     return fallback;
 }
 
-// The value of the first staged row whose key matches the model (null when
-// no rows are staged or none match).
-static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
+const std::pair<std::string, std::string>* MmeFindDefaultEffectRow(
+    const std::vector<std::pair<std::string, std::string>>& rows,
+    ModelData* model, ModelData* owner)
 {
-    MmeContext* ctx = g_context;
-    if (model == nullptr || ctx == nullptr) return nullptr;
-    const auto* rowSource = ctx->currentBindingOffscreen != nullptr
-        ? &ctx->currentBindingOffscreen->defaultEffectMap : ctx->offscreenDefaultEffect;
-    if (rowSource == nullptr) return nullptr;
+    if (model == nullptr) return nullptr;
     const char* filename = model->filename();
     const std::string& name = model->name();
-    const std::vector<std::pair<std::string, std::string>>& rows = *rowSource;
-    ModelData* owner = nullptr;          // lazily resolved on the first
-    bool ownerResolved = false;          // "self" row
     for (size_t i = 0; i < rows.size(); ++i) {
         const std::string& key = rows[i].first;
         if (key.empty()) {
@@ -983,12 +977,8 @@ static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
         // [sub_18002ACE0 0x18002b880] "self": exact case-sensitive keyword,
         // then a POINTER comparison against the offscreen owner.
         if (key == "self") {
-            if (!ownerResolved) {
-                owner = MmeOffscreenDefaultEffectOwner(ctx);
-                ownerResolved = true;
-            }
             if (model == owner) {
-                return &rows[i].second;
+                return &rows[i];
             }
             continue;
         }
@@ -999,17 +989,68 @@ static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
         // matching exactly like the previous stricmp port.
         if (MmeWildcardMatch(name.c_str(), name.size(), key.c_str(),
                              key.size(), true)) {
-            return &rows[i].second;
+            return &rows[i];
         }
         // Kept from the pre-wildcard port: an exact FULL-PATH row still
         // matches. (Divergence kept deliberately: the original's matcher
         // would not match an absolute-path key - the '\' of a path is a
         // glob escape and only the basename is compared.)
         if (filename != nullptr && _stricmp(key.c_str(), filename) == 0) {
-            return &rows[i].second;
+            return &rows[i];
         }
     }
     return nullptr;
+}
+
+bool MmeDefaultEffectRowShown(const std::pair<std::string, std::string>* row)
+{
+    return row == nullptr || row->second != "hide";
+}
+
+void MmeRemoveDefaultEffectOverride(
+    std::vector<std::pair<std::string, std::string>>& rows,
+    ModelData* model)
+{
+    if (model == nullptr || model->filename() == nullptr || model->filename()[0] == '\0')
+        return;
+    const std::string filename = model->filename();
+    rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const auto& row) {
+        return _stricmp(row.first.c_str(), filename.c_str()) == 0;
+    }), rows.end());
+}
+
+void MmeSetDefaultEffectOverride(
+    std::vector<std::pair<std::string, std::string>>& rows,
+    ModelData* model, const std::string& value)
+{
+    if (model == nullptr || model->filename() == nullptr || model->filename()[0] == '\0')
+        return;
+    // Copy first: value may refer to an existing row removed below.
+    const std::pair<std::string, std::string> overrideRow(model->filename(), value);
+    MmeRemoveDefaultEffectOverride(rows, model);
+    rows.insert(rows.begin(), overrideRow);
+}
+
+// The value of the first staged row whose key matches the model (null when
+// no rows are staged or none match). Keep turn/owner discovery separate from
+// the shared query so the mapping UI can inspect any target without changing
+// the active render turn or loading an effect.
+static const std::string* MmeOffscreenDefaultEffectRow(ModelData* model)
+{
+    MmeContext* ctx = g_context;
+    if (model == nullptr || ctx == nullptr) return nullptr;
+    const auto* rowSource = ctx->currentBindingOffscreen != nullptr
+        ? &ctx->currentBindingOffscreen->defaultEffectMap : ctx->offscreenDefaultEffect;
+    if (rowSource == nullptr) return nullptr;
+    ModelData* owner = nullptr;
+    for (const auto& row : *rowSource) {
+        if (row.first == "self") {
+            owner = MmeOffscreenDefaultEffectOwner(ctx);
+            break;
+        }
+    }
+    const auto* row = MmeFindDefaultEffectRow(*rowSource, model, owner);
+    return row != nullptr ? &row->second : nullptr;
 }
 
 MaterialBinding* MmeResolveOffscreenDefaultBinding(ModelData* model, int subsetIndex)

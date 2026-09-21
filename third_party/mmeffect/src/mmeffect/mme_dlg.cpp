@@ -34,8 +34,8 @@
 //     (the original wrapper +0x8), the 1004 caption = "Main Render Target"
 //     (0x1800b4e68) / the Description annotation (inner record +0x50), the
 //     per-tab effect column / checkbox read the resource's DefaultEffect
-//     rows (first row matching the object file, full path or basename+ext,
-//     case-insensitive), the "(default)" row shows the "key=value; "-joined
+//     rows using the render resolver (ordered wildcards and carrier "self"),
+//     the "(default)" row shows the "key=value; "-joined
 //     rows or "*=none;", and edits (set/remove/reset/hide-show) write the
 //     SAME rows - the render-time offscreen resolver reads them each pass,
 //     so reassignments take effect immediately. Tab identity is a stable id
@@ -154,6 +154,7 @@ std::set<ModelData*> g_expanded;
 // 标签页顺序跟随 ctx->renderPassList（原版按队列顺序收集 id）。
 struct OffscreenTab {
     SasEffect* sas;        // 持有该 offscreen 资源的效果
+    ModelData* owner;      // scene carrier: the DefaultEffect "self" identity
     int        resIndex;   // sas->resources[] 槽位（OFFSCREENRENDERTARGET 记录）
     size_t     id;         // 稳定身份（lParam），跨重建对应原版的包装对象指针
 };
@@ -165,6 +166,8 @@ std::map<std::pair<SasEffect*, int>, size_t> g_offscreenIds;
 // 移植端把两者都落在单一行值上，取消隐藏时用快照恢复注解原值（已文档化差异）。
 std::map<std::pair<SasEffect*, int>,
          std::vector<std::pair<std::string, std::string>>> g_pristineRows;
+// Preserve an assigned path while the row-based adapter temporarily hides it.
+std::map<std::pair<size_t, std::string>, std::string> g_hiddenRowValues;
 size_t g_offscreenSignature = static_cast<size_t>(-1);   // per-frame 轮询签名
 size_t g_nextOffscreenId = 1;
 
@@ -272,20 +275,6 @@ const char* DlgBaseName(const char* path)
     return base;
 }
 
-// [sub_18002E8D0/sub_18002E6F0 匹配规则，见 material_bind.h] DefaultEffect 行键
-// 与对象文件的匹配：先全路径 _stricmp，再 basename+扩展名 _stricmp。
-bool DlgRowKeyMatchesObject(const std::string& key, ModelData* model)
-{
-    const char* file = model->filename();
-    if (file == nullptr || file[0] == '\0') {
-        return false;
-    }
-    if (_stricmp(key.c_str(), file) == 0) {
-        return true;
-    }
-    return _stricmp(DlgBaseName(key.c_str()), DlgBaseName(file)) == 0;
-}
-
 // [sub_18002CA80 收集 + sub_18002BAA0 0x18002badc-0x18002c60 重灌] 依当前
 // pass 计划重建 offscreen 标签页集：renderPassList 顺序，每条队列项携带的 0x2E
 // 资源关联一个条目，按 (效果, 资源) 去重（首个出现优先），并为新见到的 (效果,
@@ -342,6 +331,7 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
         }
         OffscreenTab tab;
         tab.sas = sas;
+        tab.owner = item.carrier;
         tab.resIndex = resIndex;
         tab.id = id;
         out.push_back(tab);
@@ -377,17 +367,13 @@ std::vector<std::pair<std::string, std::string>>* DlgOffscreenRows(OffscreenTab*
 
 // [sub_18002DB80 读取路径] 首个与对象文件匹配的行。
 const std::pair<std::string, std::string>* DlgFindOffscreenRow(
-    std::vector<std::pair<std::string, std::string>>* rows, ModelData* model)
+    OffscreenTab* tab, ModelData* model)
 {
+    const auto* rows = DlgOffscreenRows(tab);
     if (rows == nullptr) {
         return nullptr;
     }
-    for (size_t i = 0; i < rows->size(); ++i) {
-        if (DlgRowKeyMatchesObject((*rows)[i].first, model)) {
-            return &(*rows)[i];
-        }
-    }
-    return nullptr;
+    return MmeFindDefaultEffectRow(*rows, model, tab->owner);
 }
 
 // [sub_1800424A0/sub_180042610 写入路径的移植落点] 改派 = 改写注解行；键用
@@ -398,12 +384,7 @@ void DlgUpsertOffscreenRow(OffscreenTab* tab, ModelData* model, const char* valu
     if (rows == nullptr) {
         return;
     }
-    const std::pair<std::string, std::string>* row = DlgFindOffscreenRow(rows, model);
-    if (row != nullptr) {
-        rows->at(row - &(*rows)[0]).second = value;
-        return;
-    }
-    rows->push_back(std::make_pair(std::string(model->filename()), std::string(value)));
+    MmeSetDefaultEffectOverride(*rows, model, value);
 }
 
 // [sub_180033570 等值区间擦除] 移除对象在当前 offscreen 上的全部行
@@ -414,11 +395,7 @@ void DlgRemoveOffscreenRows(OffscreenTab* tab, ModelData* model)
     if (rows == nullptr) {
         return;
     }
-    for (size_t i = rows->size(); i-- > 0;) {
-        if (DlgRowKeyMatchesObject((*rows)[i].first, model)) {
-            rows->erase(rows->begin() + i);
-        }
-    }
+    MmeRemoveDefaultEffectOverride(*rows, model);
 }
 
 // [sub_18003FFF0 0x1800411a0-0x180041216] 对象行的效果列文本：命中行显示
@@ -427,7 +404,7 @@ const char* DlgOffscreenRowText(OffscreenTab* tab, ModelData* model)
 {
     static std::string text;
     const std::pair<std::string, std::string>* row =
-        DlgFindOffscreenRow(DlgOffscreenRows(tab), model);
+        DlgFindOffscreenRow(tab, model);
     if (row != nullptr) {
         text = row->second;
         return text.c_str();
@@ -456,26 +433,36 @@ std::string DlgOffscreenDefaultRowText(OffscreenTab* tab)
     return text;
 }
 
-// [sub_180042610] offscreen 页显示/隐藏写：隐藏 = 行值置 "hide"；恢复显示 =
-// 从快照还原注解原值，注解本无行则整行移除（回落到 "(none)"）。
+// The row adapter preserves the previous assignment when hiding. Explicitly
+// showing a default-hidden object overrides "hide" with "none".
 void DlgSetOffscreenHidden(OffscreenTab* tab, ModelData* model, bool hidden)
 {
+    const auto key = std::make_pair(tab->id, std::string(model->filename()));
     if (hidden) {
+        const auto* current = DlgFindOffscreenRow(tab, model);
+        if (current == nullptr || _stricmp(current->second.c_str(), "hide") != 0) {
+            g_hiddenRowValues[key] = current != nullptr ? current->second : "none";
+        }
         DlgUpsertOffscreenRow(tab, model, "hide");
+        return;
+    }
+    const auto saved = g_hiddenRowValues.find(key);
+    if (saved != g_hiddenRowValues.end()) {
+        DlgUpsertOffscreenRow(tab, model, saved->second.c_str());
+        g_hiddenRowValues.erase(saved);
         return;
     }
     std::map<std::pair<SasEffect*, int>,
              std::vector<std::pair<std::string, std::string>>>::const_iterator it =
         g_pristineRows.find(std::make_pair(tab->sas, tab->resIndex));
     if (it != g_pristineRows.end()) {
-        for (size_t i = 0; i < it->second.size(); ++i) {
-            if (DlgRowKeyMatchesObject(it->second[i].first, model)) {
-                DlgUpsertOffscreenRow(tab, model, it->second[i].second.c_str());
-                return;
-            }
+        const auto* row = MmeFindDefaultEffectRow(it->second, model, tab->owner);
+        if (row != nullptr && _stricmp(row->second.c_str(), "hide") != 0) {
+            DlgUpsertOffscreenRow(tab, model, row->second.c_str());
+            return;
         }
     }
-    DlgRemoveOffscreenRows(tab, model);
+    DlgUpsertOffscreenRow(tab, model, "none");
 }
 
 // 对象行复选框状态（0x1800413e1 处 (v108+1)<<12）：offscreen 页取行值是否
@@ -487,11 +474,8 @@ int DlgRowCheckState(ModelData* model)
         return model->shown() ? 2 : 1;
     }
     const std::pair<std::string, std::string>* row =
-        DlgFindOffscreenRow(DlgOffscreenRows(tab), model);
-    if (row != nullptr && _stricmp(row->second.c_str(), "hide") == 0) {
-        return 1;
-    }
-    return 2;
+        DlgFindOffscreenRow(tab, model);
+    return MmeDefaultEffectRowShown(row) ? 2 : 1;
 }
 
 // [sub_18003FFF0 0x4e 分支灰化判据] 效果列为 "(none)" 时灰显：offscreen 页看
@@ -879,8 +863,8 @@ void DlgApplyShown(bool shown, int singleItem)
 // [sub_1800418b0/sub_180032FB0 0x1800428c3 offscreen 分支] offscreen 页的
 // 改派写 (targetId, obj, subset) 分配表（与 MME_EmmApply/MME_EmdApply 同表）；
 // 移植端直接改写该 offscreen 的 DefaultEffect 注解行（运行期解析的数据源，
-// 改派即时生效）：有路径 -> 更新/追加行；清除 -> 移除全部匹配行（显示回落
-// "(none)"）。子集行在注解行模型上无落点（原版经独立表支持 [n] 行），跳过。
+// 改派即时生效）：有路径 -> 前插精确覆盖；清除 -> 精确覆盖为 none。
+// 子集行在注解行模型上无落点（原版经独立表支持 [n] 行），跳过。
 void DlgWriteEffectForSelection(const char* path)
 {
     OffscreenTab* off = DlgCurrentOffscreen();
@@ -900,8 +884,9 @@ void DlgWriteEffectForSelection(const char* path)
             if (path != nullptr && path[0] != '\0') {
                 DlgUpsertOffscreenRow(off, model, path);
             } else {
-                DlgRemoveOffscreenRows(off, model);
+                DlgUpsertOffscreenRow(off, model, "none");
             }
+            g_hiddenRowValues.erase(std::make_pair(off->id, std::string(model->filename())));
             touchedOffscreen = true;
             continue;
         }
@@ -1448,6 +1433,7 @@ void DlgResetWithDefaultFlow()
         }
         if (off != nullptr) {
             DlgRemoveOffscreenRows(off, model);
+            g_hiddenRowValues.erase(std::make_pair(off->id, std::string(model->filename())));
             continue;
         }
         MmeAssignEffect(model->objectId(), -1, "");
