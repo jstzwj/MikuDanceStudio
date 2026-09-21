@@ -1,5 +1,7 @@
 from conan import ConanFile
 from conan.tools.cmake import CMakeDeps, CMakeToolchain, cmake_layout
+from conan.tools.files import load
+import os
 
 
 class MikuDanceStudioConan(ConanFile):
@@ -14,7 +16,10 @@ class MikuDanceStudioConan(ConanFile):
     """
 
     name = "mikudancestudio"
-    version = "0.1.0"
+    exports = "VERSION"
+
+    def set_version(self):
+        self.version = load(self, os.path.join(self.recipe_folder, "VERSION")).strip()
     settings = "os", "compiler", "build_type", "arch"
 
     requires = (

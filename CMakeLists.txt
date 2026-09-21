@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MikuDanceStudio LANGUAGES CXX)
+include(cmake/Version.cmake)
+project(MikuDanceStudio VERSION "${MDS_VERSION_MAJOR}.${MDS_VERSION_MINOR}" LANGUAGES CXX)
+configure_file(cmake/version.hpp.in generated/mikudancestudio/version.hpp @ONLY)
+configure_file(res/version.rc.in generated/version.rc @ONLY)
 
 # ---------------------------------------------------------------------------
 # MikuDanceStudio: behavioural restoration of MikuMikuDance v932.
@@ -234,7 +237,9 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 8)
 else()
     set(MIKUDANCESTUDIO_GEN_RES res/gen_resources.res)
 endif()
+target_include_directories(mikudancestudio_core PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")
 add_executable(MikuDanceStudio WIN32
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
     src/main/winmain.cpp
     res/MMD.rc
     ${MIKUDANCESTUDIO_GEN_RES}
@@ -253,12 +258,12 @@ target_link_libraries(MikuDanceStudio PRIVATE
 # /MANIFEST:NO keeps the linker from adding a default manifest on top of the
 # original one embedded through the .res.
 target_link_options(MikuDanceStudio PRIVATE
-    "/MAP:${CMAKE_CURRENT_BINARY_DIR}/MikuMikuDanceE.map"
+    "/MAP:${CMAKE_CURRENT_BINARY_DIR}/MikuDanceStudio.map"
     "/MANIFEST:NO"
     "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}"
 )
 set_target_properties(MikuDanceStudio PROPERTIES
-    OUTPUT_NAME "MikuMikuDanceE"
+    OUTPUT_NAME "MikuDanceStudio"
     # Export the 37 Exp* symbols from the .def file (ordinals 1..37).
     ENABLE_EXPORTS ON
 )

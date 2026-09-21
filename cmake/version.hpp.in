@@ -1,0 +1,7 @@
+#pragma once
+
+#define MIKUDANCESTUDIO_VERSION "@MDS_VERSION@"
+
+namespace mikudancestudio {
+inline constexpr char kVersion[] = MIKUDANCESTUDIO_VERSION;
+}

@@ -8,8 +8,8 @@ class Bullet275Conan(ConanFile):
     """Bullet Physics 2.75 - the exact version statically linked into
     MikuMikuDance v932 (import-free; MMD compiles Bullet into the EXE).
 
-    Sources are staged from the repo's vendored ``bullet-2.75`` tree by
-    scripts/export_bullet_sources.py before running ``conan create``.
+    Sources, including the project's parity fixes, are versioned in
+    the adjacent ``bullet-src`` tree.
     """
 
     name = "bullet275"

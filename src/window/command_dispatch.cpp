@@ -38,6 +38,7 @@
 
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/version.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
@@ -460,11 +461,11 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
 #endif
         sprintf_s(text, 256,
                   s.EnglishUI() != 0
-                      ? "MikuDanceStudio Ver.%4.2f\n  " MDS_ABOUT_ARCH_TAG "\n\n"
+                      ? "MikuDanceStudio Ver.%s\n  " MDS_ABOUT_ARCH_TAG "\n\n"
                         "programmed by Yu Higuchi"
-                      : "MikuDanceStudio Ver.%4.2f\n  " MDS_ABOUT_ARCH_TAG "\n\n"
+                      : "MikuDanceStudio Ver.%s\n  " MDS_ABOUT_ARCH_TAG "\n\n"
                         "programmed by \x94\xF3\x8C\xFB\x97\x44",
-                  9.32);
+                  kVersion);
 #undef MDS_ABOUT_ARCH_TAG
         const HWND owner = s.state.floatingWindow != 0
                                ? reinterpret_cast<HWND>(s.state.floatingWindow)

@@ -4,7 +4,7 @@ build-*/
 out/
 
 # Conan
-recipes/bullet275/bullet-src/
+# Bullet sources are vendored for clean CI builds, including local parity fixes.
 
 # Python
 __pycache__/
