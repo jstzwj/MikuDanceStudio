@@ -26,3 +26,11 @@
 尚无覆盖全库、社区效果包、设备丢失、长期 Bullet 轨迹和 GUI 图像输出的原版 A/B 矩阵。
 
 v10.01 的 x86/x64 CI 构建及测试通过，双架构 ZIP 和 SHA-256 已发布。v10.02 发布前本地 x64/x86 Release 完整构建和 CTest 分别为 41/41、39/39 通过。PMX 注入测试验证端口弹窗，不代替原程序 GUI A/B；新增 10-bit 通道测试是纯解码测试，不代替设备纹理 readback。原程序与端口的逐帧采集尚未在同一设备、D3DX 运行库、窗口尺寸、输入序列及固定场景下配对，不能给出像素或状态等价结论。
+
+## 2026-09-26 MME 后台窗口 Reset 调查
+
+用户反馈：窗口模式下切到资源管理器，单击任意项目后出现 `Failed to reset MikuMikuEffect`，没有拖入 `.x` 文件。该字符串仅从 MME `OnResetDevice` 的失败分支弹出；文件单击并未加载附件。切出/点击的精确消息序列仍未经用户环境重放。
+
+原版 x64 MMD `SceneConstruct`（IDA `0x7FF7CB4227B0`）创建物理 gizmo 的顶点/索引缓冲区时，设备调用的 pool 实参为数值 `1`，即 `D3DPOOL_MANAGED`；首个顶点缓冲区在 `0x7FF7CB422857` 写入该实参、`0x7FF7CB42286E` 调用。端口 `scene_create.cpp` 错将注释中的 `/*1*/` 写作 `D3DPOOL_DEFAULT`（数值 `0`），十个常驻缓冲区直到场景销毁才释放，设备 Reset 时仍被持有。原版 MMHack `0x180003D30` 先调用 MME `OnLostDevice`，执行真正的设备 Reset，再不检查 Reset HRESULT 调用 MME `OnResetDevice`；原版 MMEffect `0x180058A20` 在恢复资源失败时显示这条弹窗。端口复现了这个调用顺序，但缓冲区 pool 不一致使真正的 Reset 可以先失败。
+
+新增真实 D3D9 `physics_gizmo_reset_test`：修复前 `SceneConstruct` 成功，缓冲区存活时 `Reset` 返回 `0x8876086C` (`D3DERR_INVALIDCALL`)；将两处创建调用改为 `D3DPOOL_MANAGED` 后，同一测试的 Reset 成功。x64/x86 Release 构建及两架构的该测试均通过；x64 `mme_snapshot_cache_gpu`、`mme_assignment_graph_gpu` 亦通过。当前证据确立了端口的设备 Reset 阻断点和原版参数差异；用户机器上是否另有独立失败原因仍需发布后的反馈验证。

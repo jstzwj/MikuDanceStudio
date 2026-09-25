@@ -40,7 +40,7 @@ public:
     D3DRenderer* owner;              // 0 / 0     set by SceneConstruct
 
     // Gizmo geometry for the bone/selection manipulators (FVF 0x42,
-    // XYZ | DIFFUSE, D3DUSAGE_WRITEONLY, D3DPOOL_DEFAULT; INDEX16).
+    // XYZ | DIFFUSE, D3DUSAGE_WRITEONLY, D3DPOOL_MANAGED; INDEX16).
     IDirect3DVertexBuffer9* gizmoSphereVB;     // 4 / 8
     IDirect3DIndexBuffer9* gizmoSphereIB;      // 8 / 0x10
     IDirect3DVertexBuffer9* gizmoCubeVB;       // 12 / 0x18

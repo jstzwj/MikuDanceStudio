@@ -5,7 +5,7 @@
 // mikudancestudio::PhysicsScene in include/mikudancestudio/physics_scene.hpp; the original
 // field offsets are pinned there by static_assert on both architectures):
 //   10 gizmo vertex/index buffers, FVF 0x42 (XYZ | DIFFUSE, 16 B stride),
-//   D3DUSAGE_WRITEONLY, D3DPOOL_DEFAULT, INDEX16, then the Bullet world
+//   D3DUSAGE_WRITEONLY, D3DPOOL_MANAGED, INDEX16, then the Bullet world
 //   stack and the static ground btRigidBody: plane (0,1,0,0) + default
 //   motion state, added with group 0x8000 / mask -1, restitution 0.88.
 //
@@ -54,7 +54,7 @@ bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot,
     IDirect3DVertexBuffer9* vb = nullptr;
     if (FAILED(dev->CreateVertexBuffer(
             len, 0x8 /*D3DUSAGE_WRITEONLY*/, 0x42 /*XYZ|DIFFUSE*/,
-            D3DPOOL_DEFAULT /*1*/, &vb, nullptr)))
+            D3DPOOL_MANAGED /*1*/, &vb, nullptr)))
         return false;
     *slot = vb;
     void* p = nullptr;
@@ -70,7 +70,7 @@ bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot,
            unsigned len, const void* data) {
     IDirect3DIndexBuffer9* ib = nullptr;
     if (FAILED(dev->CreateIndexBuffer(
-            len, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_DEFAULT /*1*/, &ib,
+            len, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_MANAGED /*1*/, &ib,
             nullptr)))
         return false;
     *slot = ib;
