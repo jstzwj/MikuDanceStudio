@@ -89,7 +89,8 @@ HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
 
 // 在 EndScene 之前回读主渲染目标（后台缓冲捕获/AVI 采样）前调用：若本帧
 // OnEndScene 尚未触发则先触发（保证读到的是后处理后的结果）。
-void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device);
+void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device,
+                                        IDirect3DSurface9* source);
 
 // 帧 EndScene：触发一次 OnEndScene（后处理链运行）后调用真实 EndScene。
 HRESULT __cdecl MmeHostEndScene(IDirect3DDevice9* device);

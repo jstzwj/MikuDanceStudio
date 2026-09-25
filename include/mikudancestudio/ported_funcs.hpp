@@ -110,7 +110,7 @@ void CloseDataFile(void* file);                       // VA 0x004C2680 (ui_refre
 // WaveStartPlayback supersedes the old void 0x4C2760(void*) stub decl
 // (that stub body has since been deleted from stubs.cpp).
 void WaveCtxReset(void* obj);                         // VA 0x004C2660
-void WaveFindDataChunk(void* obj, FILE* stream);      // VA 0x004C26F0
+bool WaveFindDataChunk(void* obj, FILE* stream);      // VA 0x004C26F0
 bool WaveStartPlayback(void* obj);                      // VA 0x004C2760
 bool WaveStreamRead(void* obj, void* buf, int bytes); // VA 0x004C2960
 bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2,

@@ -305,6 +305,8 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
     auto** backBuffer = &sub->backbufferSurface;
     if (*backBuffer == nullptr)
         device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backBuffer);
+    if (*backBuffer != nullptr && textureSurface != nullptr)
+        mme::PreRenderTargetCopy(app, device, *backBuffer);
     if (mode == 1 && textureSurface != nullptr && *backBuffer != nullptr) {
         const RECT* sourceRect;
         RECT captureRect{};
@@ -411,11 +413,6 @@ void RenderFrameScene(MMDApp* app) {
 
     ComposeSelfShadow(app, sub, device);
     ComposeCallbackTexture(app, device);
-
-    // MME: 主渲染目标即将被回读（捕获/AVI 采样）——若本帧后处理链尚未
-    // 运行则先触发（对应原版 MMHack 对 UpdateSurface/GetRenderTargetData/
-    // StretchRect 槽 30/32/34 的拦截）。
-    mme::PreRenderTargetCopy(app, device);
 
     // 0x46DFDE: mirror the full-size capture RT into the secondary-window
     // back buffer.  The original reacquires the back buffer after a reset.

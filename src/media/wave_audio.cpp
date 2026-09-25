@@ -86,6 +86,7 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/wave_audio_context.hpp"
+#include "mikudancestudio/wave_data_chunk.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -152,22 +153,15 @@ void WaveCtxReset(void* obj) {
 // VA 0x004C26F0 - WaveFindDataChunk(this, FILE*): scan the RIFF stream with
 // getc() until the literal bytes 'd','a','t','a' are consumed, then fread
 // the chunk size into ctx+0x238, reset the write cursor and record ftell()
-// (the data-chunk file offset) in ctx+0x240.  No error checking in the
-// original: a stream without a 'data' chunk spins forever on EOF (-1).
+// (the data-chunk file offset) in ctx+0x240.  The original spins at EOF;
+// return false for missing or truncated chunks instead.
 // ---------------------------------------------------------------------------
-void WaveFindDataChunk(void* obj, FILE* stream) {
+bool WaveFindDataChunk(void* obj, FILE* stream) {
     auto* audio = static_cast<WaveAudioContext*>(obj);
-    for (;;) {
-        do {
-        } while (getc(stream) != 'd');          // 0x4C26F8
-        if (getc(stream) != 'a') continue;      // 0x4C2701
-        if (getc(stream) != 't') continue;      // 0x4C270F
-        if (getc(stream) != 'a') continue;      // 0x4C271D
-        break;
-    }
-    std::fread(&audio->dataSize, 4, 1, stream);                    // 0x4C273C
+    if (!ScanWaveDataChunk(stream, audio->dataSize, audio->dataOffset))
+        return false;
     audio->readCursor = 0;                                        // 0x4C2742
-    audio->dataOffset = static_cast<std::int32_t>(std::ftell(stream));
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +279,28 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
     std::fread(&audio->format.nAvgBytesPerSec, 4, 1, stream);
     std::fread(&audio->format.nBlockAlign, 2, 1, stream);
     std::fread(&audio->format.wBitsPerSample, 2, 1, stream);        // 0x4C30EE
-    WaveFindDataChunk(audio, stream);                               // 0x4C30F6
+    if (!WaveFindDataChunk(audio, stream)) {
+        std::fclose(stream);
+        stream = nullptr;
+        return false;
+    }
+
+    const float avgF = static_cast<float>(
+        static_cast<std::uint32_t>(audio->format.nAvgBytesPerSec));
+    const int blockAlign = audio->format.nBlockAlign;
+    if (blockAlign == 0) {
+        std::fclose(stream);
+        stream = nullptr;
+        return false;
+    }
+    const int colUnits = static_cast<int>(
+        avgF * (1.0f / 30.0f) / 13.0f / static_cast<float>(blockAlign));
+    const int colBytes = colUnits * blockAlign;
+    if (colBytes <= 0) {
+        std::fclose(stream);
+        stream = nullptr;
+        return false;
+    }
 
     audio->bufferBytes = static_cast<std::int32_t>(
         audio->format.nAvgBytesPerSec * 2);                         // 0x4C310C
@@ -293,12 +308,12 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
                               GENERIC_READ, 1, nullptr,
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
                               nullptr);                            // 0x4C311C
-    audio->fileHandle = file;                                      // 0x4C312E
-    SetFilePointer(file, audio->dataOffset, nullptr,
-                   FILE_BEGIN);                                    // 0x4C3134
+    audio->fileHandle = file == INVALID_HANDLE_VALUE ? nullptr : file;
+    if (file != INVALID_HANDLE_VALUE)
+        SetFilePointer(file, audio->dataOffset, nullptr, FILE_BEGIN);
     std::fclose(stream);                                           // 0x4C313D
     stream = nullptr;
-    if (file == nullptr)                                           // 0x4C3145
+    if (file == INVALID_HANDLE_VALUE)
         return false;                                              // 0x4C347F
 
     free(audio->waveformMax);                                      // 0x4C3158
@@ -309,13 +324,6 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
     // as a dword, ZERO-extended into rax and cvtsi2ss'd (the x86 fild +
     // 2^32 fixup collapses to the zero extension), then mulss 1/30f,
     // divss 13.0f, divss (float)blockAlign, cvttss2si, integer imul.
-    const float avgF = static_cast<float>(
-        static_cast<std::uint32_t>(audio->format.nAvgBytesPerSec));
-    const int blockAlign = audio->format.nBlockAlign;
-    const int colUnits = static_cast<int>(
-        avgF * (1.0f / 30.0f) / 13.0f / static_cast<float>(blockAlign));
-    const int colBytes = colUnits * blockAlign;
-
     unsigned char* scratch = static_cast<unsigned char*>(malloc(colBytes));
     memset(scratch, 0, static_cast<size_t>(colBytes));              // 0x4C31BE
 
@@ -439,7 +447,13 @@ bool WaveStartPlayback(void* obj) {
         std::fread(&audio->format.nBlockAlign, 2, 1, stream);
         std::fread(&audio->format.wBitsPerSample, 2, 1, stream);
     }
-    WaveFindDataChunk(audio, stream);                               // 0x4C2895
+    if (!WaveFindDataChunk(audio, stream) ||
+        audio->format.nBlockAlign == 0 ||
+        audio->format.nAvgBytesPerSec == 0) {
+        std::fclose(stream);
+        stream = nullptr;
+        return false;
+    }
 
     const std::int32_t bufBytes = static_cast<std::int32_t>(
         audio->format.nAvgBytesPerSec * 2);                         // 0x4C28A8
@@ -448,12 +462,12 @@ bool WaveStartPlayback(void* obj) {
                               GENERIC_READ, 1, nullptr,
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
                               nullptr);                             // 0x4C28BF
-    audio->fileHandle = file;                                      // 0x4C28D1
-    SetFilePointer(file, audio->dataOffset, nullptr,
-                   FILE_BEGIN);                                     // 0x4C28D7
+    audio->fileHandle = file == INVALID_HANDLE_VALUE ? nullptr : file;
+    if (file != INVALID_HANDLE_VALUE)
+        SetFilePointer(file, audio->dataOffset, nullptr, FILE_BEGIN);
     std::fclose(stream);                                            // 0x4C28E0
     stream = nullptr;                                               // 0x4C28EF
-    if (file == nullptr)                                            // 0x4C28E8
+    if (file == INVALID_HANDLE_VALUE)
         return false;
 
     DSBUFFERDESC desc = {};                                         // 0x4C27C4..

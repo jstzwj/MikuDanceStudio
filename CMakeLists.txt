@@ -72,6 +72,7 @@ add_library(mikudancestudio_core STATIC
     src/window/frame_line_edit.cpp
     src/window/accessory_paste.cpp
     src/media/wave_audio.cpp
+    src/media/wave_data_chunk.cpp
     src/media/media_load.cpp
     src/window/command_impl.cpp
     src/app/frame_driver.cpp
@@ -359,6 +360,15 @@ target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(wave_data_chunk_test tests/wave_data_chunk_test.cpp
+        src/media/wave_data_chunk.cpp)
+    target_include_directories(wave_data_chunk_test PRIVATE include)
+    add_test(NAME wave_data_chunk COMMAND wave_data_chunk_test)
+    add_executable(pmx_buffer_failure_test tests/pmx_buffer_failure_test.cpp)
+    target_link_libraries(pmx_buffer_failure_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmx_buffer_failure COMMAND pmx_buffer_failure_test)
+    set_tests_properties(pmx_buffer_failure PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(charset_conv_test tests/charset_conv_test.cpp src/main/charset_conv.cpp)
     target_include_directories(charset_conv_test PRIVATE include)
     add_test(NAME charset_conv COMMAND charset_conv_test)

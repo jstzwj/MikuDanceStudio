@@ -357,11 +357,14 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
 
 // [0x180003b50/0x180003bd0/0x180003c50] 槽 34/30/32：EndScene 之前回读跟踪
 // 渲染目标时提前触发一次 OnEndScene（后台缓冲捕获/AVI 采样路径）。
-void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device)
+void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device,
+                                        IDirect3DSurface9* source)
 {
-    if (device == nullptr)
+    if (device == nullptr || source == nullptr)
         return;
-    if (g_host.endSceneFired == 0) {
+    // MMHack's copy interceptors only fire when the copy reads the render
+    // target captured at BeginScene (wrapper+0x20).
+    if (g_host.endSceneFired == 0 && source == g_host.trackedRT) {
         OnEndScene(device);
         g_host.endSceneFired = 1;
     }

@@ -91,7 +91,9 @@
 #include <commdlg.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <algorithm>
 #include <cstdio>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -165,7 +167,7 @@ size_t g_offscreenSignature = static_cast<size_t>(-1);   // per-frame 轮询签�
 size_t g_nextOffscreenId = 1;
 
 HWND g_dlgWindow = nullptr;      // the modeless dialog handle (DAT_1800d9a48)
-size_t g_lastModelCount = 0;     // the per-frame list-refresh bookkeeping
+std::vector<ModelData*> g_lastModelOrder;
 bool g_dirty = false;            // pending edits -> Apply enables
 bool g_skipValidation = false;   // DAT_1800d99d9 ([System] SkipValidation)
 bool g_clickLatch = false;       // DAT_1800d9f4b (swallow the post-checkbox click)
@@ -702,7 +704,7 @@ bool DlgExpandedProbe()
     return true;
 }
 
-void DlgRebuildList();
+void DlgRebuildList(bool preserveSelection = false);
 void DlgRefreshTexts();
 void DlgSyncSelectionState();
 
@@ -931,11 +933,54 @@ void DlgAddObjectRow(HWND list, ModelData* model)
     }
 }
 
-void DlgRebuildList()
+std::vector<ModelData*> DlgOrderedModels()
+{
+    MmeContext* ctx = MmeGetContext();
+    if (ctx == nullptr) return {};
+
+    std::map<unsigned long long, int> drawOrders;
+    for (int index = 0; index < ExpGetPmdNum(); ++index) {
+        drawOrders[reinterpret_cast<unsigned long long>(ExpGetPmdID(index))] =
+            ExpGetPmdOrder(index);
+    }
+    for (int index = 0; index < ExpGetAcsNum(); ++index) {
+        const int order = ExpGetAcsOrder(index);
+        drawOrders[reinterpret_cast<unsigned long long>(ExpGetAcsID(index))] =
+            order < 0 ? -order : order;
+    }
+
+    std::vector<ModelData*> models;
+    for (ModelData* model : ctx->models) {
+        if (model != nullptr) models.push_back(model);
+    }
+    std::stable_sort(models.begin(), models.end(), [&drawOrders](ModelData* left, ModelData* right) {
+        if (left->renderClass() != right->renderClass()) {
+            return left->renderClass() < right->renderClass();
+        }
+        const auto leftOrder = drawOrders.find(left->objectId());
+        const auto rightOrder = drawOrders.find(right->objectId());
+        if (leftOrder == drawOrders.end()) return false;
+        if (rightOrder == drawOrders.end()) return true;
+        return leftOrder->second < rightOrder->second;
+    });
+    return models;
+}
+
+void DlgRebuildList(bool preserveSelection)
 {
     HWND list = DlgList();
     if (list == nullptr) {
         return;
+    }
+    std::vector<RowRef> selected;
+    if (preserveSelection) {
+        int index = (int)SendMessageA(list, LVM_GETNEXTITEM, (WPARAM)-1,
+                                      MAKELPARAM(LVNI_SELECTED, 0));
+        while (index != -1) {
+            if (index >= 0 && index < (int)g_rows.size()) selected.push_back(g_rows[index]);
+            index = (int)SendMessageA(list, LVM_GETNEXTITEM, (WPARAM)index,
+                                      MAKELPARAM(LVNI_SELECTED, 0));
+        }
     }
     g_rebuilding = true;   // DAT_1800d99db
     SendMessageA(list, WM_SETREDRAW, FALSE, 0);
@@ -944,19 +989,23 @@ void DlgRebuildList()
 
     // The "(default)" row is always row 0 (the original lists it first).
     DlgAddDefaultRow(list);
-    MmeContext* ctx = MmeGetContext();
-    if (ctx != nullptr) {
-        for (size_t i = 0; i < ctx->models.size(); ++i) {
-            ModelData* model = ctx->models[i];
-            if (model != nullptr) {
-                DlgAddObjectRow(list, model);
-            }
+    g_lastModelOrder = DlgOrderedModels();
+    for (ModelData* model : g_lastModelOrder) DlgAddObjectRow(list, model);
+    for (size_t index = 0; index < g_rows.size(); ++index) {
+        const RowRef& row = g_rows[index];
+        if (std::find_if(selected.begin(), selected.end(), [&row](const RowRef& old) {
+                return old.model == row.model && old.subset == row.subset;
+            }) != selected.end()) {
+            LVITEMA item = {};
+            item.stateMask = LVIS_SELECTED;
+            item.state = LVIS_SELECTED;
+            SendMessageA(list, LVM_SETITEMSTATE, index, (LPARAM)&item);
         }
-        g_lastModelCount = ctx->models.size();
     }
     SendMessageA(list, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(list, nullptr, FALSE);
     g_rebuilding = false;
+    if (preserveSelection) DlgSyncSelectionState();
 }
 
 // [FUN_18003fff0-lite] refresh the visible Effect File texts and the
@@ -2082,11 +2131,8 @@ void MmeDlgRefreshIfModelCountChanged()
     if (g_dlgWindow == nullptr) {
         return;
     }
-    MmeContext* ctx = MmeGetContext();
-    size_t count = (ctx != nullptr) ? ctx->models.size() : 0;
-    if (count != g_lastModelCount) {
-        g_lastModelCount = count;
-        DlgRebuildList();
+    if (DlgOrderedModels() != g_lastModelOrder) {
+        DlgRebuildList(true);
     }
     size_t signature = DlgOffscreenSignature();
     if (signature != g_offscreenSignature) {

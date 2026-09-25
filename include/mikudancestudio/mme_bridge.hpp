@@ -41,7 +41,8 @@ HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device);
 HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
                 const RECT* source, const RECT* destination,
                 HWND destinationWindow, const RGNDATA* dirtyRegion);
-void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device);
+void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
+                         IDirect3DSurface9* source);
 
 // 绘制转发（当前对象/材质/技术等状态由 Exp* 查询面提供）。
 HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,

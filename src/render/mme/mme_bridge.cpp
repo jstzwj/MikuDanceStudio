@@ -232,10 +232,11 @@ HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
     return device->Present(source, destination, destinationWindow, dirtyRegion);
 }
 
-void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device) {
+void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
+                         IDirect3DSurface9* source) {
     if (!g_deviceRegistered)
         return;
-    MmeHostPreRenderTargetCopy(device);
+    MmeHostPreRenderTargetCopy(device, source);
 }
 
 // ---------------------------------------------------------------------------

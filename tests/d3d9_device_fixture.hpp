@@ -7,7 +7,9 @@
 struct SnapshotDeviceFixture : IDirect3DDevice9 {
     IDirect3DDevice9* real; // borrowed; forwarded AddRef/Release keep it alive
     unsigned colorCreates = 0, depthCreates = 0;
+    unsigned vertexCreates = 0, indexCreates = 0;
     std::deque<HRESULT> colorResults, depthResults;
+    std::deque<HRESULT> vertexResults, indexResults;
     explicit SnapshotDeviceFixture(IDirect3DDevice9* device) : real(device) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,  void** ppvObj) override {
         return real->QueryInterface(riid, ppvObj);
@@ -88,9 +90,19 @@ struct SnapshotDeviceFixture : IDirect3DDevice9 {
         return real->CreateCubeTexture(EdgeLength, Levels, Usage, Format, Pool, ppCubeTexture, pSharedHandle);
     }
     HRESULT STDMETHODCALLTYPE CreateVertexBuffer(UINT Length, DWORD Usage, DWORD FVF, D3DPOOL Pool, IDirect3DVertexBuffer9** ppVertexBuffer, HANDLE* pSharedHandle) override {
+        ++vertexCreates;
+        if (!vertexResults.empty()) {
+            const HRESULT result = vertexResults.front(); vertexResults.pop_front();
+            if (FAILED(result)) { *ppVertexBuffer = nullptr; return result; }
+        }
         return real->CreateVertexBuffer(Length, Usage, FVF, Pool, ppVertexBuffer, pSharedHandle);
     }
     HRESULT STDMETHODCALLTYPE CreateIndexBuffer(UINT Length, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DIndexBuffer9** ppIndexBuffer, HANDLE* pSharedHandle) override {
+        ++indexCreates;
+        if (!indexResults.empty()) {
+            const HRESULT result = indexResults.front(); indexResults.pop_front();
+            if (FAILED(result)) { *ppIndexBuffer = nullptr; return result; }
+        }
         return real->CreateIndexBuffer(Length, Usage, Format, Pool, ppIndexBuffer, pSharedHandle);
     }
     HRESULT STDMETHODCALLTYPE CreateRenderTarget(UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MultiSample, DWORD MultisampleQuality, BOOL Lockable, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override {

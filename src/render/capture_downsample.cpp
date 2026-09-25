@@ -13,6 +13,7 @@
 #include <cstdint>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -50,6 +51,7 @@ ULONG DownsampleCaptureSurface(MMDApp* app) {
     device->CreateOffscreenPlainSurface(sourceWidth, sourceHeight, format,
                                         D3DPOOL_SYSTEMMEM, &systemSurface,
                                         nullptr);
+    mme::PreRenderTargetCopy(app, device, sub->captureSurface);
     device->GetRenderTargetData(sub->captureSurface,
                                 systemSurface);
 

@@ -1048,6 +1048,10 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
     wchar_t* const ofnTitle = ctx.ofnTitle;
             unsigned char slotByte = 0;
             Rd(fd, &slotByte, 1);                               // 0x4504C2
+            if (slotByte >= kModelSlotCount) {
+                AbortV2Load(s, fd, workspaces, modelCount);
+                return false;
+            }
             unsigned char* nm =
                 static_cast<unsigned char*>(operator new(mdl::kSize));
             if (nm != nullptr) IdentityCtor(nm);                   // 0x4504E9
@@ -1922,6 +1926,12 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
     // ---- light-misc tail (0x45593E..0x45595E) -----------------------------
     Rd(fd, &s->SelectedAccessorySlot(), 1);
     Rd(fd, &s->DisplayObjectListScrollPosition(), 4);
+    if (s->SelectedAccessorySlot() >= kModelSlotCount) {
+        _close(fd);
+        ResetAppState(s);
+        HandleWindowSize(s);
+        return false;
+    }
 
     // ---- accessory block (0x455955..0x456617) ------------------------------
     SendMessageA(GetDlgItem(main, panel::kAccessoryCombo), CB_RESETCONTENT, 0, 0);
@@ -1940,6 +1950,12 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
     for (unsigned char i = 0; i < accCount; ++i) {
         unsigned char accSlot = 0;
         Rd(fd, &accSlot, 1);                                    // 0x455A3F
+        if (accSlot >= kModelSlotCount) {
+            _close(fd);
+            ResetAppState(s);
+            HandleWindowSize(s);
+            return false;
+        }
         auto* acc = static_cast<mdl::AccessoryRecord*>(operator new(
             sizeof(mdl::AccessoryRecord)));
         if (acc != nullptr) IdentityCtor(acc);
@@ -2958,6 +2974,12 @@ void LoadSceneV2(MMDApp* app, int fd) {  // VA 0x00450000
     Rd(fd, &s->SelectedModelSlot(), 1);                         // 0x45045F
     unsigned char modelCount = 0;
     Rd(fd, &modelCount, 1);                                     // 0x45046C
+    if (s->SelectedModelSlot() >= kModelSlotCount) {
+        _close(fd);
+        ResetAppState(s);
+        HandleWindowSize(s);
+        return;
+    }
     auto* const workspaces = new PmmModelLoadWorkspace[modelCount];
     unsigned char modelIdx = 0;
 
@@ -2980,7 +3002,11 @@ void LoadSceneV2(MMDApp* app, int fd) {  // VA 0x00450000
     LoadSceneV2_ReallocateTracks(ctx);                  // 0x454C9A..0x454DFB
     LoadSceneV2_CameraTrack(ctx, fd);                   // 0x454E07..0x455286
     LoadSceneV2_LightTrack(ctx, fd);                    // 0x455286..0x45593E
-    if (!LoadSceneV2_AccessoryBlock(ctx, fd)) return;   // 0x45593E..0x456617
+    if (!LoadSceneV2_AccessoryBlock(ctx, fd)) {
+        FreeRecordArrays(workspaces, modelCount);
+        delete[] workspaces;
+        return;
+    }
     LoadSceneV2_ConfigBlock(ctx, fd);                   // 0x456617..0x45776E
     LoadSceneV2_PhysicsTracksAndClose(ctx, fd, modelCount);  // 0x45777C..0x458112
     LoadSceneV2_SuccessTail(ctx, workspaces, modelCount);    // 0x458120..0x458F53
