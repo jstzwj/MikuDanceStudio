@@ -781,6 +781,10 @@ void WritePmmConfigBlock(int fd, MMDApp* s, HWND main, char* text) {
         const unsigned char b = s->state.waveEnabled != 0;
         W(fd, &b, 1);
     }
+    // WideToSjis leaves the destination untouched for an empty path.  Each
+    // fixed-width PMM field must start empty, otherwise the previous field
+    // (often the WAV path) is saved as an unset AVI or picture path.
+    std::memset(text, 0, 0x100);
     WideToSjis(s->Renderer(), text,                                       // 0x41DC85
                    reinterpret_cast<const wchar_t*>(
                        &s->state.wavPath),
@@ -793,6 +797,7 @@ void WritePmmConfigBlock(int fd, MMDApp* s, HWND main, char* text) {
     W(fd, &s->AviOffsetX(), 4);
     W(fd, &s->AviOffsetY(), 4);
     W(fd, &s->AviScale(), 4);
+    std::memset(text, 0, 0x100);
     WideToSjis(s->Renderer(), text, s->AviBackgroundPath(), 0x100);        // 0x41DD32
     W(fd, text, 0x100);                                        // 0x41DD46
     W(fd, &s->AviBackgroundEnabled(), 4);
@@ -803,6 +808,7 @@ void WritePmmConfigBlock(int fd, MMDApp* s, HWND main, char* text) {
     W(fd, &s->PictureOffsetX(), 4);
     W(fd, &s->PictureOffsetY(), 4);
     W(fd, &s->PictureScale(), 4);
+    std::memset(text, 0, 0x100);
     WideToSjis(s->Renderer(), text, s->PictureBackgroundPath(), 0x100);    // 0x41DDD6
     W(fd, text, 0x100);                                        // 0x41DDEA
     {
@@ -949,10 +955,9 @@ void SaveSceneFile(MMDApp* app) {
     // whatever stack history preceded the save - deterministic in the
     // original's codegen, run-to-run garbage in ours.  Zero-initialize the
     // buffer once: first conversion gets zero tails (a documented deviation
-    // - the original's garbage is unreproducible by design), later
-    // conversions still carry the previous path's bytes exactly like the
-    // original's buffer reuse.  This makes our own back-to-back saves
-    // byte-identical, matching the original's determinism property.
+    // - the original's garbage is unreproducible by design).  The config
+    // block clears this buffer for each optional media path, so an empty
+    // path cannot inherit the previous field's contents.
     char text[0x100] = {};
     char hdr[0x100];    // sprintf buffer at stack -0x34
     wchar_t title[0x100];
