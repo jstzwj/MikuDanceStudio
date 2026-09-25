@@ -27,7 +27,7 @@ int main() {
     IDirect3DDevice9* device = nullptr;
     const HRESULT create = d3d->CreateDevice(
         D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
-        D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &device);
+        D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &device);
     if (FAILED(create)) {
         d3d->Release();
         DestroyWindow(window);
