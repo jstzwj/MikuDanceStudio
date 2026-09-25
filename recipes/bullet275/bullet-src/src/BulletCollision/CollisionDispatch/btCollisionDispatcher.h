@@ -65,6 +65,7 @@ class btCollisionDispatcher : public btDispatcher
 
 
 public:
+	BT_DECLARE_ALIGNED_ALLOCATOR();
 
 	///registerCollisionCreateFunc allows registration of custom/alternative collision create functions
 	void	registerCollisionCreateFunc(int proxyType0,int proxyType1, btCollisionAlgorithmCreateFunc* createFunc);
