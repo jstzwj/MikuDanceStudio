@@ -1176,6 +1176,16 @@ HRESULT MmeAnimeOnDeviceReset(MmeAnimatedTextureSet* set)
 
 namespace {
 
+void DecodeA2TenBit(unsigned int pixel, bool redHigh, float* destination)
+{
+    const unsigned int redShift = redHigh ? 20 : 0;
+    const unsigned int blueShift = redHigh ? 0 : 20;
+    destination[0] = static_cast<float>((pixel >> redShift) & 0x3FFu) / 1023.0f;
+    destination[1] = static_cast<float>((pixel >> 10) & 0x3FFu) / 1023.0f;
+    destination[2] = static_cast<float>((pixel >> blueShift) & 0x3FFu) / 1023.0f;
+    destination[3] = static_cast<float>(pixel >> 30) / 3.0f;
+}
+
 // IEEE half -> float (the A16B16G16R16F readback; D3DXFloat16To32Array is
 // not forwarded by the port's d3dx9 shim, and the bit twiddle is exact).
 float HalfToFloat(unsigned short half)
@@ -1235,7 +1245,6 @@ bool ReadSurfaceFloat4s(IDirect3DSurface9* surface, float* out,
     }
     const unsigned char* base = static_cast<const unsigned char*>(locked.pBits);
     const unsigned int width = desc.Width;
-    const float kInv255 = 1.0f / 255.0f;
     bool supported = true;
     for (unsigned int i = 0; i < count; ++i) {
         unsigned int x = i % width;
@@ -1247,9 +1256,9 @@ bool ReadSurfaceFloat4s(IDirect3DSurface9* surface, float* out,
         switch (desc.Format) {
             case D3DFMT_R8G8B8: {
                 const unsigned char* t = p + static_cast<size_t>(x) * 3;
-                dst[0] = t[2] * kInv255;
-                dst[1] = t[1] * kInv255;
-                dst[2] = t[0] * kInv255;
+                dst[0] = t[2] / 255.0f;
+                dst[1] = t[1] / 255.0f;
+                dst[2] = t[0] / 255.0f;
                 dst[3] = 0.0f;
                 break;
             }
@@ -1257,18 +1266,26 @@ bool ReadSurfaceFloat4s(IDirect3DSurface9* surface, float* out,
             case D3DFMT_X8R8G8B8: {
                 unsigned int pixel;
                 memcpy(&pixel, p + static_cast<size_t>(x) * 4, 4);
-                dst[0] = ((pixel >> 16) & 0xFF) * kInv255;
-                dst[1] = ((pixel >> 8) & 0xFF) * kInv255;
-                dst[2] = (pixel & 0xFF) * kInv255;
-                dst[3] = ((pixel >> 24) & 0xFF) * kInv255;
+                dst[0] = ((pixel >> 16) & 0xFF) / 255.0f;
+                dst[1] = ((pixel >> 8) & 0xFF) / 255.0f;
+                dst[2] = (pixel & 0xFF) / 255.0f;
+                dst[3] = desc.Format == D3DFMT_A8R8G8B8
+                    ? ((pixel >> 24) & 0xFF) / 255.0f : 0.0f;
                 break;
             }
             case D3DFMT_A8B8G8R8: {
                 const unsigned char* t = p + static_cast<size_t>(x) * 4;
-                dst[0] = t[0] * kInv255;
-                dst[1] = t[1] * kInv255;
-                dst[2] = t[2] * kInv255;
-                dst[3] = t[3] * kInv255;
+                dst[0] = t[0] / 255.0f;
+                dst[1] = t[1] / 255.0f;
+                dst[2] = t[2] / 255.0f;
+                dst[3] = t[3] / 255.0f;
+                break;
+            }
+            case D3DFMT_A2B10G10R10:
+            case D3DFMT_A2R10G10B10: {
+                unsigned int pixel;
+                memcpy(&pixel, p + static_cast<size_t>(x) * 4, 4);
+                DecodeA2TenBit(pixel, desc.Format == D3DFMT_A2R10G10B10, dst);
                 break;
             }
             case D3DFMT_R5G6B5: {
@@ -1298,21 +1315,7 @@ bool ReadSurfaceFloat4s(IDirect3DSurface9* surface, float* out,
                 break;
             }
             case D3DFMT_A8: {
-                dst[3] = p[x] * kInv255;
-                break;
-            }
-            case D3DFMT_L8: {
-                float l = p[x] * kInv255;
-                dst[0] = dst[1] = dst[2] = l;
-                dst[3] = 1.0f;
-                break;
-            }
-            case D3DFMT_A8L8: {
-                unsigned short pixel;
-                memcpy(&pixel, p + static_cast<size_t>(x) * 2, 2);
-                float l = (pixel & 0xFF) * kInv255;
-                dst[0] = dst[1] = dst[2] = l;
-                dst[3] = ((pixel >> 8) & 0xFF) * kInv255;
+                dst[3] = p[x] / 255.0f;
                 break;
             }
             case D3DFMT_A16B16G16R16F: {
@@ -1329,9 +1332,8 @@ bool ReadSurfaceFloat4s(IDirect3DSurface9* surface, float* out,
                 break;
             }
             default:
-                // The original's 97-case switch covers every D3DFMT; the
-                // port converts the formats a bound texture can realistically
-                // carry and reports failure (-> zeroed values) for the rest.
+                // The original's 97-entry lookup has only 24 targets; most
+                // entries share the no-conversion path, including L8/A8L8.
                 supported = false;
                 break;
         }

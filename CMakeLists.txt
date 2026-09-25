@@ -60,7 +60,6 @@ add_library(mikudancestudio_core STATIC
     src/app/app_ctor.cpp
     src/app/app_defaults.cpp
     src/main/charset_conv.cpp
-    src/math/quat_to_mat3x4.cpp
     src/math/color_lerp.cpp
     src/window/path_utils.cpp
     src/window/window_init.cpp

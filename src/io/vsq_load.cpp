@@ -29,8 +29,9 @@
 //   fclose + _close.
 //
 // Phase 2 - re-read the txt  (0x43647B..0x4366C8)
-//   tempoTable = malloc(ntracks*8) (pairs {time,tempo}; only tempoCount of
-//   them filled); _wfopen_s(path, L"r"); sequential fgets scan:
+//   tempoTable = malloc(ntracks*8) in the original (pairs {time,tempo});
+//   tempoCount can exceed ntracks, so the port allocates tempoCount entries.
+//   _wfopen_s(path, L"r"); sequential fgets scan:
 //   tempoCount x "[ChangeTempo time=" lines -> atoi of the text between
 //   the first '=' and ',' / the next '=' and ']'.
 //   Then find "[EventList]", fgets/fgets, then count the lines that contain
@@ -420,7 +421,7 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     // ---- 0x43648F: tempo table out of the txt -----------------------
     TempoEntry* tempoTable =
         static_cast<TempoEntry*>(malloc(
-            static_cast<std::size_t>(ntracks) * 8));
+            static_cast<std::size_t>(tempoCount) * sizeof(TempoEntry)));
     FILE* rd = nullptr;
     _wfopen_s(&rd, path, L"r");                                     // 0x52BCB4
     for (int k = 0; k < tempoCount; ++k) {                          // 0x4364C9

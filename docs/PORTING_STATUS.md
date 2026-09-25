@@ -1,21 +1,17 @@
 # 移植与验证状态
 
-更新：2026-09-22。行为基准及维护规则见 [X64_RECONSTRUCTION.md](X64_RECONSTRUCTION.md)。项目仍处于行为对照与结构恢复阶段，没有全库严格等价证明，也不声称取得原作者源码。
+更新：2026-09-25。行为基准及维护规则见 [X64_RECONSTRUCTION.md](X64_RECONSTRUCTION.md)。项目仍处于行为对照与结构恢复阶段，没有全库严格等价证明，也不声称取得原作者源码。
 
 ## 当前证据入口
 
 | 记录 | 用途与边界 |
 |---|---|
-| [第21轮修复汇总](../reports/fix21_summary.md) | 当前修复、实际验收结果和剩余边界 |
-| [第21轮清单](../reports/fix21_checklist.md) | 逐问题验证与修复状态 |
-| [第20轮审计](../reports/audit20_summary.md) | 修复前基线 `6eb00ed` 的问题和证据，不是当前未修列表 |
-| [应用/UI审计](../reports/audit20_app_ui.md) | 关键帧、附件操作与 x64 算序 |
-| [核心审计](../reports/audit20_core.md) | 模型、IO、物理、数学及调度 |
-| [MME审计](../reports/audit20_mme_render.md) | 动画纹理、错误处理、缓存及遗留结构 |
-| [源码结构审计](../reports/audit20_structure_validation.md) | 类型、所有权、历史注释和验证门槛 |
-| [审计清单](../reports/audit20_inventory.json) | 当时的文件及参考二进制 hash；不代表逐行正确性证明 |
+| [本轮对齐记录](ALIGNMENT_WORKLOG.md) | 2026-09-25 的二进制锚点、修复和未完成验证 |
+| [x64 重建基准](X64_RECONSTRUCTION.md) | 参考二进制身份与证据规则 |
+| [架构与偏差](ARCHITECTURE.md) | 内置 MME、所有权和有意保留的安全偏差 |
+| [历史 x86 ledger](reconstruction/subsystem_ledger_x86.md) | 旧 x86 材料，不能代替 x64 证据 |
 
-本轮开始时，旧状态页链接的 audit10、fix11、fix12、audit18、fix19 报告不在工作树中。这里不再把无法访问的历史报告作为当前验收依据；也不据此推断其历史测试未曾执行。当前结果以实际保存的本轮报告、源码和测试为准。
+旧 `reports/` 目录和 `translated/` 语料不在工作树中，历史源码注释对它们的引用仅是溯源线索，不作为当前可访问证据。不能据此推断历史测试未曾执行；当前结果以可访问的二进制、源码和测试为准。
 
 ## 恢复原则
 

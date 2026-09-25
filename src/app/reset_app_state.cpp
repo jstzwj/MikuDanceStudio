@@ -407,7 +407,7 @@ void ResetAppState(MMDApp* app) {
     CheckMenuItem(GetMenu(hwnd), 0xE9, 0u);
     {
         char title[0x100];
-        sprintf_s(title, 0x100, "MikuMikuDance");
+        sprintf_s(title, 0x100, "MikuDanceStudio");
         SetWindowTextA(hwnd, title);
     }
     app->state.envFileName[0] = 0;

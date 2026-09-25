@@ -38,6 +38,9 @@ HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
                    D3DCOLOR color, float z, unsigned long stencil);
 HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device);
 HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device);
+HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
+                const RECT* source, const RECT* destination,
+                HWND destinationWindow, const RGNDATA* dirtyRegion);
 void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device);
 
 // 绘制转发（当前对象/材质/技术等状态由 Exp* 查询面提供）。

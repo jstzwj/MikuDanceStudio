@@ -5,10 +5,6 @@
 
 namespace mikudancestudio {
 
-// Quaternion normalization numerator. Original x64 .rdata RVA 0x132B08
-// contains 2.0f, read by sub_140001000 at RVA 0x1075.
-extern const float g_QuatScaleFactor;
-
 // VA 0x00529688 - L"%s%s"; used by WinMain's no-command-line branch as the
 // swprintf_s format for the env file name buffer.  The original calls it
 // with zero varargs (verified in disassembly at 0x004C44CA..0x004C44DA) -

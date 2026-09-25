@@ -207,28 +207,6 @@ HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device) {
         MmeHostSetMainWindow(window);
         g_registeredWindow = window;
     }
-    // [0x180003cf0] Present 拦截（设备 vtable 槽 17，call [r10+0x88]；审计
-    // 记录误作 GetBackBuffer——那是槽 18，且"第 4 参"恰为 Present 的
-    // hDestWindowOverride，非凭空读取）：原版每次 Present 用
-    // qword_18006e7c0（GetDrawnWindow 数据源）= hDestWindowOverride 非空 ?
-    // override : qword_18006e7c8（[0x180004040 CreateDevice / 0x180003d30
-    // Reset] 跟踪的 d3dpp.hDeviceWindow ?: hFocusWindow，MMD 即主窗口）。
-    // MMD 主泵（本工程 frame_driver.cpp 同源移植）窗口模式 Present 必传非
-    // 空 override：AVI 窗口化录制传 RecWindow(0xA0D24)、浮动视口传浮动窗口
-    // (0xA0D38)、常态传主窗口(0xA06B8)，仅全屏传 NULL（回落设备窗口=主窗
-    // 口）。MME OnBeginScene [0x1800574e0] 消费 GetDrawnWindow：非主窗口时
-    // 子类化该窗口挂鼠标尾巴（特效 MOUSE 语义需读实际呈现窗口）。帧内
-    // BeginScene 到 Present 之间无消息泵，门控值不会变化，此处按主泵同一
-    // 优先级预置本帧 override（相对原版"Present 时刻写、次帧 BeginScene
-    // 消费"最多提前一帧，子类切换终态等价）。
-    HWND presentOverride = window;
-    if (app->FullscreenMode() == 0) {
-        if (app->RecordingWindow() != nullptr)
-            presentOverride = app->RecordingWindow();
-        else if (app->FloatingWindow() != nullptr)
-            presentOverride = app->FloatingWindow();
-    }
-    MmeHostSetDrawnWindow(presentOverride);
     // 原版语义（sub_18000EFF0 / MmhProbeEditMode）：帧编辑框（317 回落
     // 417）被禁用，或 RecWindow 类窗口（AVI 窗口化录制窗；全屏 3D Vision
     // 录制时 RecordingWindow==主窗口、类名非 RecWindow，不参与判定）出现
@@ -242,6 +220,16 @@ HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device) {
     if (!g_deviceRegistered)
         return device->EndScene();
     return MmeHostEndScene(device);
+}
+
+HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
+                const RECT* source, const RECT* destination,
+                HWND destinationWindow, const RGNDATA* dirtyRegion) {
+    if (g_deviceRegistered) {
+        MmeHostSetDrawnWindow(destinationWindow != nullptr
+            ? destinationWindow : static_cast<HWND>(app->Hwnd()));
+    }
+    return device->Present(source, destination, destinationWindow, dirtyRegion);
 }
 
 void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device) {

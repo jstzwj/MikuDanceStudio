@@ -779,9 +779,8 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                         bone->trans[axis] = ppos[axis];
                     } else {
                         const float e = BoneEase(m, axis, cursorIdx, tF);
-                        bone->trans[axis] =
-                            (float)((double)e * (double)delta +
-                                    (double)ppos[axis]);
+                        const float easedDelta = e * delta;
+                        bone->trans[axis] = easedDelta + ppos[axis];
                     }
                 }
             }

@@ -341,9 +341,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             || vb == nullptr) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
-                : "\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x91\xAB\x82\xE8"
-                  "\x82\xDC\x82\xB9\x82\xF1");
-            MessageBoxA(hwnd, text, "D3DXCreateVertexBuffer", 0);
+                : kMsgNoPerfJp);
+            MessageBoxA(hwnd, text,
+                        enData ? "open file" : kTitleOpenFailJp, 0);
             _close(fh);
             return false;
         }
@@ -355,9 +355,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             || vb2 == nullptr) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
-                : "\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x91\xAB\x82\xE8"
-                  "\x82\xDC\x82\xB9\x82\xF1");
-            MessageBoxA(hwnd, text, "D3DXCreateVertexBuffer", 0);
+                : kMsgNoPerfJp);
+            MessageBoxA(hwnd, text,
+                        enData ? "open file" : kTitleLoad2Jp, 0);
             _close(fh);
             return false;
         }
@@ -508,8 +508,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                 D3DPOOL_MANAGED, &ib, nullptr))) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
-                : "\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x91\xAB\x82\xE8"
-                  "\x82\xDC\x82\xB9\x82\xF1");
+                : kMsgNoPerfJp);
             MessageBoxA(hwnd, text, "CreateIndexBuffer", 0);
             _close(fh);
             return false;
@@ -528,6 +527,13 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             default: _read(fh, &value, 4); return value;
             }
         };
+        const auto showIndexLockFailure = [&]() {
+            sprintf_s(text, 0x100, enData
+                ? "The performance of the graphics card doesn't suffice."
+                : kMsgNoPerfJp);
+            MessageBoxA(hwnd, text, "pIndBuf->Lock", 0);
+            _close(fh);
+        };
         if (wideIdx) {
             std::uint32_t* gpuIndices = nullptr;
             if (SUCCEEDED(ib->Lock(0, 0,
@@ -538,6 +544,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                     gpuIndices[i] = static_cast<std::uint32_t>(value);
                 }
                 ib->Unlock();
+            } else {
+                showIndexLockFailure();
+                return false;
             }
         } else {
             std::uint16_t* gpuIndices = nullptr;
@@ -549,6 +558,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                     gpuIndices[i] = static_cast<std::uint16_t>(value);
                 }
                 ib->Unlock();
+            } else {
+                showIndexLockFailure();
+                return false;
             }
         }
     }
@@ -946,6 +958,13 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         default: { std::int32_t v; _read(fh, &v, 4); return v; }
         }
     };
+    auto readVertexIdx = [fh](int size) -> std::int32_t {
+        switch (size) {
+        case 1: { std::uint8_t value; _read(fh, &value, 1); return value; }
+        case 2: { std::uint16_t value; _read(fh, &value, 2); return value; }
+        default: { std::int32_t value; _read(fh, &value, 4); return value; }
+        }
+    };
     if (morphCount > 0) {
         mdl::Morphs(m) = static_cast<mdl::MorphRecord*>(
             operator new(sizeof(mdl::MorphRecord) * morphCount));
@@ -1021,7 +1040,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                             sizeof(*morph.vertexEntries) * cnt);
                 for (int o = 0; o < cnt; ++o) {
                     mdl::PmdVertexMorphEntry& entry = morph.vertexEntries[o];
-                    entry.vertexIndex = readIdxS(vertIdxSize);
+                    entry.vertexIndex = readVertexIdx(vertIdxSize);
                     _read(fh, entry.offset, sizeof(entry.offset));
                     vmap[entry.vertexIndex] = 1;
                 }
@@ -1094,7 +1113,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                             sizeof(*morph.uvEntries[family]) * cnt);
                 for (int o = 0; o < cnt; ++o) {
                     mdl::PmxUvMorphEntry& entry = morph.uvEntries[family][o];
-                    entry.vertexIndex = readIdxS(vertIdxSize);
+                    entry.vertexIndex = readVertexIdx(vertIdxSize);
                     _read(fh, entry.offset, sizeof(entry.offset));
                     // load-time dedup within the family: a vertex
                     // already offered by an earlier same-family morph

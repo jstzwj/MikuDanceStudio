@@ -73,6 +73,7 @@
 
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -199,7 +200,7 @@ bool RecordingReadbackPass(MMDApp* app) {
     if (*backBuffer == nullptr)
         device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
                               backBuffer);
-    if (device->Present(nullptr, nullptr, nullptr, nullptr) ==
+    if (mme::Present(app, device, nullptr, nullptr, nullptr, nullptr) ==
         D3DERR_DEVICELOST) {
         while (device->TestCooperativeLevel() !=
                D3DERR_DEVICENOTRESET) {

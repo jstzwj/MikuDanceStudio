@@ -137,12 +137,13 @@ void SaveVmdFile(const wchar_t* path) {
 
     // ---- open ------------------------------------------------------------
     int fd;
-    if (_wsopen_s(&fd, path, 0x8301, 0x40, 0x80) != 0) {
+    const errno_t openError = _wsopen_s(&fd, path, 0x8301, 0x40, 0x80);
+    if (openError != 0) {
         char text[256];
         if (s.state.englishUI != 0)
-            sprintf_s(text, 0x100, "Cannot save file:%d", errno);
+            sprintf_s(text, 0x100, "Cannot save file:%d", openError);
         else
-            sprintf_s(text, 0x100, kJpCannotSave, errno);
+            sprintf_s(text, 0x100, kJpCannotSave, openError);
         MessageBoxA(static_cast<HWND>(s.Hwnd()), text, "", 0);
         return;
     }

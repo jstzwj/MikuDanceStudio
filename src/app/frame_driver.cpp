@@ -48,6 +48,7 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/mme_bridge.hpp"
 #include "pump_input.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
@@ -592,7 +593,8 @@ void FrameDriver(MMDApp* app) {
             s.AviStereoOutput() == 0) {
             presented = true;
             if (s.FullscreenMode() != 0) {
-                hr = device->Present(nullptr, nullptr, nullptr, nullptr);
+                hr = mme::Present(app, device, nullptr, nullptr,
+                                  nullptr, nullptr);
             } else if (s.RecordingWindow() != nullptr) {          // 0xA0D24
                 RECT r;
                 r.left = 0;
@@ -601,18 +603,16 @@ void FrameDriver(MMDApp* app) {
                 // slips landing inside the dirModel path buffer)
                 r.right = static_cast<LONG>(s.RenderWidth());
                 r.bottom = static_cast<LONG>(s.RenderHeight());
-                hr = device->Present(&r, &r,
-                                     s.RecordingWindow(), nullptr);
+                hr = mme::Present(app, device, &r, &r,
+                                  s.RecordingWindow(), nullptr);
             } else if (s.FloatingWindow() != nullptr) {
                 RECT r = s.ViewportRect();                        // 0xA0D40
-                hr = device->Present(&r, &r,
-                                     s.state.floatingWindow,
-                                     nullptr);
+                hr = mme::Present(app, device, &r, &r,
+                                  s.state.floatingWindow, nullptr);
             } else {
                 RECT r = s.ViewportRect();                        // 0xA0D40
-                hr = device->Present(&r, &r,
-                                     static_cast<HWND>(s.Hwnd()),
-                                     nullptr);
+                hr = mme::Present(app, device, &r, &r,
+                                  static_cast<HWND>(s.Hwnd()), nullptr);
             }
             if (hr == D3DERR_DEVICELOST) {
                 // x64 0x4570B3..0x457139: only NOTRESET ends the wait;

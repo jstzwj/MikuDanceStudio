@@ -2322,13 +2322,13 @@ static void Cmd400_FrameReversePaste(MMDApp* app, HWND hwnd) {
     undo.frame = frame;
     void* p = undo.bonePose;
     if (p != nullptr) {
-        free(p);
+        ::operator delete(p);
         undo.bonePose = nullptr;
     }
     const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
     auto* undoBone = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-        malloc(static_cast<std::uint32_t>(boneCount) *
-               sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
+        ::operator new(static_cast<std::uint32_t>(boneCount) *
+                       sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
     if (undoBone != nullptr) {
         ConstructArrayElements(undoBone,
                                sizeof(mikudancestudio::mdl::BonePoseSnapshot),
@@ -2353,11 +2353,11 @@ static void Cmd400_FrameReversePaste(MMDApp* app, HWND hwnd) {
     undo.dirty = 0;
     p = undo.auxiliaryPose;
     if (p != nullptr) {
-        free(p);
+        ::operator delete(p);
         undo.auxiliaryPose = nullptr;
     }
     unsigned char* undoLight =
-        static_cast<unsigned char*>(malloc(boneSel * 3 * 0x40));
+        static_cast<unsigned char*>(::operator new(boneSel * 3 * 0x40));
     if (undoLight != nullptr) {
         ConstructArrayElements(undoLight, 0x40, boneSel * 3,
                                reinterpret_cast<void*>(&IdentityCtor));

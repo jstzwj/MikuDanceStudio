@@ -39,6 +39,23 @@ void Check(Timeline& animation, double time, int expected)
 
 int main()
 {
+    float redHigh[4]{};
+    float redLow[4]{};
+    const unsigned int pixel = (2u << 30) | (769u << 20) |
+                               (513u << 10) | 257u;
+    mme::DecodeA2TenBit(pixel, true, redHigh);
+    mme::DecodeA2TenBit(pixel, false, redLow);
+    if (redHigh[0] != 769.0f / 1023.0f ||
+        redHigh[1] != 513.0f / 1023.0f ||
+        redHigh[2] != 257.0f / 1023.0f ||
+        redHigh[3] != 2.0f / 3.0f ||
+        redLow[0] != 257.0f / 1023.0f ||
+        redLow[1] != 513.0f / 1023.0f ||
+        redLow[2] != 769.0f / 1023.0f ||
+        redLow[3] != 2.0f / 3.0f) {
+        std::fputs("10-bit texture channels differ\n", stderr);
+        ++failures;
+    }
     for (unsigned int plays : {0u, 1u, 2u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
         Timeline animation(plays);
         Check(animation, -1.0, 0);

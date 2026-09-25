@@ -44,3 +44,6 @@ crashdump/
 # Smoke-test artifacts
 _smoke_dump/
 _smoke_*.txt
+
+
+.ida-mcp

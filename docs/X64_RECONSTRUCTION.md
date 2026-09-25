@@ -13,7 +13,7 @@
 
 IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或受到 ASLR 影响时应记录 image base/RVA，不把一次会话的 VA 当作永久运行时地址。session ID 是工具运行状态，不是长期证据标识。
 
-证据入口：[第20轮总报告](../reports/audit20_summary.md)、[应用原始 IDA 导出](../reports/audit20_app_ida_evidence.json)、[MME 原始 IDA 导出](../reports/audit20_mme_ida_evidence.json)、[第21轮修复汇总](../reports/fix21_summary.md)。历史审计描述的是当时工作树；当前修复状态见 [PORTING_STATUS.md](PORTING_STATUS.md)。
+当前可访问的证据与修复边界见 [对齐记录](ALIGNMENT_WORKLOG.md) 和 [移植状态](PORTING_STATUS.md)。旧 `reports/` 目录不在工作树中，不能把其链接当作当前证据。
 
 ## 如何判定一致
 
@@ -40,7 +40,7 @@ IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或
 
 修改布局时应：记录参考锚点 → 恢复语义成员 → 同步全部消费者 → 更新准确断言 → 运行相关独立测试和完整构建 → 用真实输入补足A/B行为测试。不要先改断言去迁就一个没有证据的结构。
 
-布局修复实例见 [相机连续向量修复](../reports/fix21_camera_position.md)：依据原版初始化指令恢复连续 XYZ 及相邻状态，统一 PMM 和运行时消费者，并分别验证 x64/x86。仅移动一个 padding 来通过局部测试不足以证明布局正确。
+布局修复必须依据原版初始化及全部读写者恢复连续成员，并分别验证 x64/x86。仅移动一个 padding 来通过局部测试不足以证明布局正确。
 
 ## 构建与验证记录
 

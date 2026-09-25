@@ -40,9 +40,6 @@ void ShutdownCleanup(MMDApp* app);
 
 
 // ---- math -----------------------------------------------------------------
-// VA 0x00401000 - quaternion (x,y,z,w) -> row-major 3x4 rotation matrix.
-void QuaternionToMatrix3x4(float* outMatrix, const float* quaternion);
-
 // VA 0x0040AD00 - COLORREF lerp: a - (a - b) * t per channel, truncated.
 std::uint32_t ColorLerp(std::uint32_t a, std::uint32_t b, float t);
 

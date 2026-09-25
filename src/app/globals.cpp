@@ -5,8 +5,6 @@
 
 namespace mikudancestudio {
 
-const float g_QuatScaleFactor = 2.0f;
-
 // VA 0x00529688 - L"%s%s"
 const wchar_t g_SourceFormat[] = L"%s%s";
 
