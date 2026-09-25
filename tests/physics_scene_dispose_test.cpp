@@ -3,6 +3,7 @@
 #include "btBulletDynamicsCommon.h"
 #include "BulletCollision/BroadphaseCollision/btAxisSweep3.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -37,6 +38,10 @@ struct Constraint : btPoint2PointConstraint {
 
 int main() {
     using namespace mikudancestudio;
+    btCollisionShape* plane = new btStaticPlaneShape(btVector3(0, 1, 0), 0);
+    if (reinterpret_cast<std::uintptr_t>(plane) % 16 != 0) std::abort();
+    delete plane;
+
     PhysicsScene scene{};
     DisposePhysicsWorld(&scene);  // partially initialized startup cleanup
     scene.collisionConfig = new btDefaultCollisionConfiguration;
