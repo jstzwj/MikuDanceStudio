@@ -1,6 +1,6 @@
 // Keyframe editor commands: selection, undo, curves and model controls.
 // Clipboard operations and global registration live in their own modules.
-// Original command ledger: docs/reconstruction/source_refactoring.md.
+// Module boundaries and compatibility rules: docs/ARCHITECTURE.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "mikudancestudio/dialog_resources.h"

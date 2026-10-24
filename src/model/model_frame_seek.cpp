@@ -1,6 +1,6 @@
 // Rebuild a model pose at an arbitrary frame, in display/morph/bone order.
 // Architecture-specific expressions preserve the original rounding stages.
-// Reconstruction evidence: docs/reconstruction/source_refactoring.md.
+// Architecture and numerical compatibility rules: docs/X64_RECONSTRUCTION.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>

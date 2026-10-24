@@ -14,7 +14,7 @@ MikuDanceStudio 使用 C++、Win32 和 DirectX 9，内置 Bullet 2.75 与 MME。
 | `third_party/mmeffect` | 静态链接的效果引擎 |
 | `recipes/bullet275` | 带数值兼容修正的本地 Bullet 源码和 Conan 配方 |
 
-帧复制粘贴由 `src/window/frame_clipboard.cpp` 处理；相机、灯光、阴影和重力轨道注册位于 `src/model/global_key_registration.cpp`。拆分依据与行为约束见 [源码重构记录](reconstruction/source_refactoring.md)。
+帧复制粘贴由 `src/window/frame_clipboard.cpp` 处理；相机、灯光、阴影和重力轨道注册位于 `src/model/global_key_registration.cpp`。
 
 ## 所有权与边界
 
@@ -24,6 +24,6 @@ MikuDanceStudio 使用 C++、Win32 和 DirectX 9，内置 Bullet 2.75 与 MME。
 
 ## 有意偏差与历史注释（旧注释中的 §8）
 
-有效输入下保持原版行为；对于越界输入、未初始化读取和资源泄漏，不为字面复刻而重新引入内存破坏。品牌标题和版本使用本项目身份。具体修复与限制见 [历史对齐记录](archive/alignment_worklog_2026-09_10.md)。
+有效输入下保持原版行为；对于越界输入、未初始化读取和资源泄漏，不为字面复刻而重新引入内存破坏。品牌标题和版本使用本项目身份。
 
 源码中的原版 VA、FLIRT 命名、测试模型和旧报告路径是定位线索，不证明原作者命名或当前等价性。复用历史结论前，应重新核对相应架构、二进制、读写者和实际输入。
