@@ -26,6 +26,8 @@ def package(build_dir, arch, output):
         "README.md": ROOT / "README.md",
         "VERSION": ROOT / "VERSION",
         "RELEASES.md": ROOT / "docs/RELEASES.md",
+        "licenses/MikuMikuDance.txt": ROOT / "licenses/MikuMikuDance.txt",
+        "res/README.md": ROOT / "res/README.md",
         "licenses/Bullet.txt": ROOT / "recipes/bullet275/LICENSE.txt",
     }
     for source in files.values():

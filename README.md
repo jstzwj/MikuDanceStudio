@@ -76,8 +76,12 @@ are embedded; optional `Data/toon01.bmp..toon10.bmp` override them.
 
 ### License
 
-This project is licensed under the same freeware terms as MikuMikuDance —
-see [LICENSE](LICENSE). Third-party components follow their own licenses:
+MikuDanceStudio's own code is licensed under the [MIT License](LICENSE).
+Original MikuMikuDance material retains its original terms; the permission
+statement and disclaimer from its readme are preserved in
+[licenses/MikuMikuDance.txt](licenses/MikuMikuDance.txt). The extracted resources
+described in [res/README.md](res/README.md) are outside the MIT grant.
+Third-party components follow their own licenses:
 Bullet Physics (zlib), DirectX SDK / Windows SDK (Microsoft EULA).
 
 ---
@@ -133,7 +137,10 @@ cmake --build out/ci/build --config Release
 
 ### 许可
 
-本工程采用与 MikuMikuDance 相同的免费软件条款，详见 [LICENSE](LICENSE)。
+MikuDanceStudio 自有代码采用 [MIT 许可](LICENSE)。原版 MikuMikuDance 的内容保留原有条款，
+其 readme 中的许可声明和免责声明原文保存在
+[licenses/MikuMikuDance.txt](licenses/MikuMikuDance.txt)。
+[res/README.md](res/README.md) 所述的原版提取资源不在 MIT 授权范围内。
 第三方组件遵循各自许可：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（微软 EULA）。
 
@@ -203,7 +210,10 @@ cmake --build out/ci/build --config Release
 
 ### ライセンス
 
-本プロジェクトは MikuMikuDance と同じフリーウェア条項の下で配布されます。
-詳細は [LICENSE](LICENSE) を参照してください。サードパーティコンポーネントは
+MikuDanceStudio 独自のコードは [MIT ライセンス](LICENSE) で提供されます。
+オリジナルの MikuMikuDance に由来する素材には元の条項が適用され、readme に記載された
+許諾文と免責事項の原文は [licenses/MikuMikuDance.txt](licenses/MikuMikuDance.txt) に保存しています。
+[res/README.md](res/README.md) に記載した抽出リソースは MIT 許諾の対象外です。
+サードパーティコンポーネントは
 それぞれのライセンスに従います：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（マイクロソフト EULA）。

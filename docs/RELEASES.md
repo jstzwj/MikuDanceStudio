@@ -35,6 +35,10 @@ the publish job's `contents: write` permission.
 
 Each ZIP contains `MikuDanceStudio.exe`, `Data/MMDxShow.dll`, version/readme and
 license files. MME and the default toon textures are embedded in the executable.
+`LICENSE` contains the MIT license for MikuDanceStudio's own code.
+`licenses/MikuMikuDance.txt` preserves the original MikuMikuDance permission
+statement and disclaimer; the extracted resources described in `res/README.md`
+retain their original terms. `licenses/Bullet.txt` contains the Bullet license.
 External models, motions and effects are not included. Extract the entire folder
 and keep the `Data` subdirectory next to the EXE.
 

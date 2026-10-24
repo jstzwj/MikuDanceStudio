@@ -1,0 +1,18 @@
+MikuMikuDance v9.32 - Original permission statement and disclaimer
+==============================================================
+
+Author: Yu Higuchi (樋口優)
+Source: readme.txt distributed with MikuMikuDanceE_v932x64
+
+The original English distribution has no separate LICENSE file. The permission
+statement and disclaimer below are reproduced from its readme.txt, with only
+line endings normalized. They are retained for original MikuMikuDance material;
+the MIT license for MikuDanceStudio's own work does not relicense that material.
+
+--------------------------------------------------------------------------
+
+It is not necessary to apply me for the report and permission when the image or animation produced with this tool are opened to the public.
+
+DISCLAIMER
+ IN NO EVENT WILL THESE AUTHORS OF THIS SOFTWARE,3D MODELS,AND TUTORIAL BE LIABLE TO YOU FOR ANY AND ALL DAMAGES,GENERAL,SPECIAL,INCIDENTAL OR CONSEQUENTIAL,ARISING OUT OF THE USE OR INABILITY TO USE THE SOFTWARE,3D MODELS,AND RELATED FILES.
+USE THEM AT YOUR OWN RISK.

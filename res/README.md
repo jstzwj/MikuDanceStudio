@@ -12,6 +12,10 @@
 持有，经 rc.exe 编译逐字节再生）。它们仍是原作者的受版权保护作品；
 本项目不主张对其所有权。发行前请确认你已获得相应授权，或用自制素材替换。
 
+这些原版素材不在项目自有代码的 [MIT 许可](../LICENSE) 授权范围内。
+原版 readme 中的许可声明和免责声明原文保存在
+[licenses/MikuMikuDance.txt](../licenses/MikuMikuDance.txt)。
+
 ## 目录结构
 
 ```
