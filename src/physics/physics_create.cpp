@@ -196,14 +196,14 @@ void TransformJointPointOriginal(float out[3], const float point[3], const float
 #endif
 }
 
-// 关节过拉伸限位半径上界：distA/distB 为关节锚点经两刚体逆变换后的
-// 局部距离，限位项按轴取 |lim[axis]| 与 |lim[3+axis]| 的较大者再求
-// 欧氏范数。x64 原版在两个加载器里是同一段内联数学——
-//   PMD sub_7FF7CB4D2670 @0x7FF7CB4D51B0..0x4D526D（lim 表 +0x48..0x5C，
-//   三对比较 0x48/0x54、0x4C/0x58、0x50/0x5C，平方和过 sqrtf 后累加
-//   进关节记录 +0x94）；
-//   PMX sub_7FF7CB4C9AC0 @0x7FF7CB4D1B8A..0x4D1C4A（指令形态逐条一致）。
-// 物理编辑对话框（physics_model_dialog.cpp）的逐轴 maxAbs 写法与此同源。
+// Joint overstretch radius upper bound: distA/distB are the local distances from the joint anchor after
+// inverse transformation by both rigid bodies. For each axis, take the larger of |lim[axis]| and |lim[3+axis]|, then compute
+// the Euclidean norm. The x64 original inlines the same math in both loaders:
+//   PMD sub_7FF7CB4D2670 at 0x7FF7CB4D51B0..0x4D526D (lim table +0x48..0x5C,
+//   compare pairs 0x48/0x54, 0x4C/0x58, 0x50/0x5C; sum squares, apply sqrtf and add
+//   to joint record +0x94);
+//   PMX sub_7FF7CB4C9AC0 at 0x7FF7CB4D1B8A..0x4D1C4A (identical instruction sequence).
+// The physics editor dialog (physics_model_dialog.cpp) uses the same per-axis maxAbs calculation.
 float JointRadiusBound(const float limits[6], float distA, float distB) {
     float maxAbs[3];
     for (int axis = 0; axis < 3; ++axis) {

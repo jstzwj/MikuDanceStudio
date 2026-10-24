@@ -56,7 +56,7 @@ const char kHeadGroundCombo[] = "ground";
 const char kHeadNormalCombo[] = "normal";
 
 // The morph combo lists morphs[1..]; the group combo lists display groups
-// starting after the fixed "Root"/"表情" slots - slot 3 when the model owns
+// starting after the fixed "Root"/"Morph" slots - slot 3 when the model owns
 // facial frame groups, slot 2 otherwise.
 int MorphNameSlot(MMDApp* app) {
     return app->EnglishNameComboCursor(1) + 1;

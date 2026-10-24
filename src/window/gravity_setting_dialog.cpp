@@ -173,7 +173,7 @@ void ApplyGravitySettingDialog(MMDApp* app) { // VA 0x00460080
 
 // ===========================================================================
 // 0x479E90 - case 266 gravity-setting dialog (template caption "gravity
-// setting" / 重力設定; 0x323 EN / 0x322 JP), modeless
+// setting" / gravity settings; 0x323 EN / 0x322 JP), modeless
 // at app+0xA0CCC.  WM_INITDIALOG: top-most gate; subclass edits 709..713
 // with sub_466370 (old proc of 709 saved at app+0xA0C50); sub_423160 init.
 // WM_COMMAND: checkbox 731 mirrors app+0xA0CD4 and enables edit 713;

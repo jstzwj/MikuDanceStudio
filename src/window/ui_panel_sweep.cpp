@@ -35,7 +35,7 @@
 //      model+0x2DBC.
 //   4. 0x42F252  display mode (optflag[0] != 0): fixed headers camera / light
 //      / "s shadow" / gravity at y = 17/31/45/59 (EN literals, JP
-//      Shift-JIS カメラ/照 明/セルフ影/重 力 @0x52C980..0x52C964),
+//      Shift-JIS camera/lighting/self-shadow/gravity at 0x52C980..0x52C964),
 //      highlighted per the toggle bytes this+0xA03E4..0xA03E7.
 //   5. 0x42F5F6  joint list: the 255 joint pointers (this+0x9DD70) are
 //      walked per type byte (record+0x49D) 0..254; rows below the joint
@@ -81,9 +81,9 @@ constexpr std::size_t kListLeft = 91; // 0x5B  label column width
 constexpr char kJpPlus[] = "\x81\x7b";                           // ＋ (0x52C95C)
 constexpr char kJpMinus[] = "\x81\x7c";                          // － (0x52C958)
 constexpr char kJpCamera[] = "\x83\x4a\x83\x81\x83\x89";         // カメラ (0x52C980)
-constexpr char kJpLight[] = "\x8f\xc6\x81\x40\x96\xbe";          // 照 明 (0x52C978)
-constexpr char kJpShadow[] = "\x83\x5a\x83\x8b\x83\x74\x89\x65"; // セルフ影 (0x52C96C)
-constexpr char kJpGravity[] = "\x8f\x64\x81\x40\x97\xcd";        // 重 力 (0x52C964)
+constexpr char kJpLight[] = "\x8f\xc6\x81\x40\x96\xbe";          // lighting (0x52C978)
+constexpr char kJpShadow[] = "\x83\x5a\x83\x8b\x83\x74\x89\x65"; // self-shadow (0x52C96C)
+constexpr char kJpGravity[] = "\x8f\x64\x81\x40\x97\xcd";        // gravity (0x52C964)
 
 // Current model slot for the slot-order index (this+0x910) - 0x42F74B.
 unsigned char* CurrentModel(MMDApp* app, std::size_t slotIdx) {

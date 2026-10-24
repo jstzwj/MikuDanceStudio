@@ -197,7 +197,7 @@ add_library(mikudancestudio_core STATIC
 )
 
 target_include_directories(mikudancestudio_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# 内置 MMEffect 的宿主集成面（mme_bridge → MmeHost* 声明）。
+# Host integration surface for embedded MMEffect (mme_bridge -> MmeHost* declarations).
 target_include_directories(mikudancestudio_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include)
 target_link_libraries(mikudancestudio_core PUBLIC
@@ -334,16 +334,16 @@ target_include_directories(MMEffect PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/src/mmhack   # mmhack_state.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp（运行时 d3dx9 转发）
+    ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp (runtime d3dx9 forwarding)
 )
 target_compile_definitions(MMEffect PUBLIC MIKUDANCESTUDIO_MME_EMBEDDED=1)
 target_link_libraries(MMEffect PUBLIC D3DXRuntime)
 target_link_libraries(MMEffect PRIVATE
-    user32       # 窗口/菜单/消息
-    gdi32        # GDI+ 底层
-    gdiplus      # 动画纹理（GIF/APNG 解码）
-    comctl32     # 分配对话框列表视图
-    comdlg32     # 特效文件选择对话框
+    user32       # Windows, menus and messages
+    gdi32        # GDI+ backend
+    gdiplus      # Animated textures (GIF/APNG decoding)
+    comctl32     # Assignment dialog list view
+    comdlg32     # Effect file selection dialog
     shell32
     ole32
     winmm        # timeGetTime

@@ -77,7 +77,7 @@ namespace {
 const char kJpRoot[] = "\x83\x8b\x81\x5b\x83\x67";
 // JP 0x52E7DC "なし" (none) - combo 673 entry 0
 const char kJpNone[] = "\x82\xc8\x82\xb5";
-// JP 0x52E7D4 "地面" (ground) - combo 673 entry 1
+// JP 0x52E7D4 "ground" - combo 673 entry 1
 const char kJpGround[] = "\x92\x6e\x96\xca";
 
 unsigned char* ActiveModel(MMDApp* app) {

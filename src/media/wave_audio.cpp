@@ -123,18 +123,18 @@ inline void WaveTrace(const char*, ...) {
 }
 #endif
 
-// 0x52BB2C: "DirectSoundの初期化に失敗しているため、WAVは鳴らせません"
+// 0x52BB2C: "WAV playback is unavailable because DirectSound initialization failed"
 static const char kMsgWaveNoSoundJp[] =
     "DirectSound\x82\xCC\x8F\x89\x8A\xFA\x89\xBB\x82\xC9\x8E\xB8\x94\x73"
     "\x82\xB5\x82\xC4\x82\xA2\x82\xE9\x82\xBD\x82\xDF\x81\x41WAV\x82\xCD"
     "\x96\xC2\x82\xE7\x82\xB9\x82\xDC\x82\xB9\x82\xF1";
 // 0x52BB68: "DirectSoundエラー"
 static const char kMsgWaveErrCaptionJp[] = "DirectSound\x83\x47\x83\x89\x81\x5B";
-// 0x531728: "WAVEファイルが見つかりません"
+// 0x531728: "WAVE file not found"
 static const char kMsgWaveNotFoundJp[] =
     "WAVE\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x8C\xA9\x82\xC2\x82\xA9"
     "\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
-// 0x531748: "WAVE読込"
+// 0x531748: "Load WAVE"
 static const char kMsgWaveCaptionJp[] = "WAVE\x93\xC7\x8D\x9E";
 // 0x5316D0: "WAVE(PCM)ファイルではありません"
 static const char kMsgWaveNotPcmJp[] =
@@ -202,9 +202,9 @@ bool WaveStreamRead(void* obj, void* buf, int bytes) {
 // ---------------------------------------------------------------------------
 // VA 0x004C2C90 - WaveStreamFeed(this, buf, bytes, buf2, bytes2): read
 // (buf, bytes) and then, when buf2 != 0, (buf2, bytes2); returns 0 on any
-// short read.  注意：x64 sub_7FF7CB4FAC90 里并不自增 failureCount——计数统一
-// 由调用方完成（装载循环 0x7FF7CB4FA755/0x7FF7CB4FA770、推流线程
-// 0x7FF7CB4FAE1A/0x7FF7CB4FAF35，每回合至多 +1），这里保持纯读。
+// short read. Note: x64 sub_7FF7CB4FAC90 does not increment failureCount; counting is always
+// done by callers (load loop 0x7FF7CB4FA755/0x7FF7CB4FA770, streaming thread
+// 0x7FF7CB4FAE1A/0x7FF7CB4FAF35, at most +1 per iteration). Keep this function read-only.
 // ---------------------------------------------------------------------------
 bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2, int bytes2) {
     auto* audio = static_cast<WaveAudioContext*>(obj);
@@ -353,8 +353,8 @@ bool WaveLoadFile(void* obj, const wchar_t* path, PathResolutionWorkspace& paths
                                         static_cast<unsigned>(blockAlign); // 0x4C32AA
             if (static_cast<int>(skipBlocks) > 0) {                        // 0x4C32B0
                 const int skip = blockAlign * static_cast<int>(skipBlocks);
-                // x64 0x7FF7CB4FA74C/0x7FF7CB4FA755：skip 段读失败同样
-                // 自增 failureCount，不因是跳过段而不计。
+                // x64 0x7FF7CB4FA74C/0x7FF7CB4FA755: a failed skip-section read also
+                // increments failureCount; skipped sections are still counted.
                 if (!WaveStreamFeed(audio, scratch, skip, nullptr, 0)) // 0x4C32C1
                     ++audio->failureCount;                             // 0x7FF7CB4FA755
                 bytesSoFar += skip;                                    // 0x4C32C6

@@ -190,7 +190,7 @@ namespace {
 // copies too - single .rdata originals (0x52D770 / 0x52D788 / 0x52D848 /
 // 0x52DAE0) referenced by both loader bodies (v1 sites 0x45E4FC /
 // 0x45E4DA / 0x45E37A / 0x45B9B7; v2 sites 0x458B54 / 0x458B32 /
-// 0x458A22 / 0x455B8C); the v2 file's former 以下 / ブ / 替 / no-し直
+// 0x458A22 / 0x455B8C); the v2 file's former "and below" / bu / substitute / missing "retry"
 // readings were transcription errors, corrected in Wave5-C.  Per-body
 // duplicates stay until the loader split lands, then belong in
 // pmm_io_common.hpp.

@@ -1096,9 +1096,9 @@ void SetProjectedStencil(D3DRenderer* sub, IDirect3DDevice9* device, bool projec
 void BeginProjectedShadowPass(D3DRenderer* sub, IDirect3DDevice9* device) {
     // Original frame trace: NORMALIZENORMALS is cleared by the preceding
     // accessory pass, then the projected geometry uses stencil value 2,
-    // no culling, and strict depth comparison.  x64 pass 起始段
-    // （0x7FF7CB4C0319..0x7FF7CB4C0402）不写 ALPHABLENDENABLE：混合态由配件
-    // 投射循环逐配件重写，循环收尾再按透明地面影开关统一重写。
+    // no culling, and strict depth comparison. The x64 pass preamble
+    // (0x7FF7CB4C0319..0x7FF7CB4C0402) does not write ALPHABLENDENABLE: the accessory
+    // projection loop rewrites blending per accessory, then its tail rewrites it from the transparent-ground-shadow toggle.
     device->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
     SetProjectedStencil(sub, device, true);
     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
@@ -1216,9 +1216,9 @@ void DrawPreModelQuad(IDirect3DDevice9* device, IDirect3DTexture9* texture,
     device->SetTexture(0, texture);
     device->SetStreamSource(0, vertices, 0, 28);
     device->SetFVF(324);
-    // 原版两处背景四边形均为 DrawPrimitive(TRIANGLELIST, 0, 2)（图片
-    // 0x7FF7CB4BFD24 / AVI 0x7FF7CB4BFDFA：edx=4、r8d=0、r9d=2，6 顶点 LIST
-    // 布局）；STRIP 只消费 4 顶点会漏画一半。
+    // Both original background quads use DrawPrimitive(TRIANGLELIST, 0, 2) (image
+    // 0x7FF7CB4BFD24 / AVI 0x7FF7CB4BFDFA: edx=4, r8d=0, r9d=2, six-vertex LIST
+    // layout); STRIP consumes only four vertices and misses half the image.
     mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     device->SetRenderState(D3DRS_ZENABLE, TRUE);
 }
@@ -1253,11 +1253,11 @@ bool UseEffectModelRenderer(MMDApp* app) {
 void RenderModelsFixed(MMDApp* app) { // 0x425D20
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    // x64 帧头 0x7FF7CB4BFC08 仅一条 SetTextureStageState(2, TEXCOORDINDEX,
-    // 0x10000)（= D3DTSS_TCI_CAMERASPACENORMAL，原版立即数，与 accessory.cpp
-    // 一致写字面量）：不解绑纹理 2、不写 COLOROP/TTF。完整的球面贴图级联
-    // 关闭保留在 ConfigureMaterialStages 的逐材质循环里（0x491470.. 的逐材质
-    // 行为）。
+    // x64 frame head 0x7FF7CB4BFC08 issues only SetTextureStageState(2, TEXCOORDINDEX,
+    // 0x10000) (= D3DTSS_TCI_CAMERASPACENORMAL, the original immediate, written literally as in accessory.cpp):
+    // it does not unbind texture 2 or write COLOROP/TTF. Full sphere-map stage teardown
+    // remains inside ConfigureMaterialStages' per-material loop (per-material behavior at 0x491470..).
+    //
     device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
     if (sub->d3dInitialized != 0) {
         device->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_ALWAYS);
@@ -1266,10 +1266,10 @@ void RenderModelsFixed(MMDApp* app) { // 0x425D20
     }
     DrawPreModelQuads(app, device);
     DrawGroundGeometry(app, device);
-    // FILLMODE 排在背景图/AVI 四边形与地面之后：x64 sub_7FF7CB4BFB20 先画
-    // 背景四边形（0x7FF7CB4BFC74 图片 / 0x7FF7CB4BFD4A AVI）、地面
-    // （0x7FF7CB4BFE20），然后才在 0x7FF7CB4BFE88..0x7FF7CB4BFEA8 按线框开关
-    // 写 RS(8) 并紧跟 RS(137)=1——线框模式下背景与地面仍实体填充。
+    // FILLMODE follows the background image/AVI quads and ground: x64 sub_7FF7CB4BFB20 first draws
+    // the background quads (0x7FF7CB4BFC74 image / 0x7FF7CB4BFD4A AVI), then ground
+    // (0x7FF7CB4BFE20), then writes RS(8) according to the wireframe toggle at 0x7FF7CB4BFE88..0x7FF7CB4BFEA8,
+    // immediately followed by RS(137)=1; backgrounds and ground remain solid in wireframe mode.
     device->SetRenderState(
         D3DRS_FILLMODE, app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
     device->SetRenderState(D3DRS_LIGHTING, TRUE);

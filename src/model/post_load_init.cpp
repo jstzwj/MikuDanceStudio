@@ -26,8 +26,8 @@
 //              "All facial", facial-display groups (m+9948, 46 B stride,
 //              byte count m+11692), "All bone", then disp frames
 //              (m+9944, 46 B stride, count m+11696); JP labels are the
-//              wide strings 全ﾌﾚｰﾑ/表示･IK･外親/選択ﾎﾞｰﾝ/選択表情/
-//              全表情ﾌﾚｰﾑ/全ボーンﾌﾚｰﾑ sent via SendMessageW and the
+//              wide strings for all frames/display-IK-external parent/selected bones/selected morphs/
+//              all morph frames/all bone frames sent via SendMessageW and the
 //              SJIS format "ﾎﾞｰﾝ%02d" (0x531054).  Final
 //              CB_SETCURSEL with m+314608.
 // =========================================================================//
@@ -48,12 +48,13 @@ namespace {
 
 // JP wide labels (.rdata 0x531090/0x53107C/0x53106C/0x531048/0x531038/
 // 0x531024) and the SJIS name/format constants (0x5310A8 / 0x531054).
-const wchar_t* kJpAllFrame = L"\x5168\xFF8C\xFF9A\xFF70\xFF91";                  // 全ﾌﾚｰﾑ
-const wchar_t* kJpDispIkOp = L"\x8868\x793A\xFF65I\x004B\xFF65\x5916\x89AA";     // 表示･IK･外親
-const wchar_t* kJpSelBone = L"\x9078\x629E\xFF8E\xFF9E\xFF70\xFF9D";             // 選択ﾎﾞｰﾝ
-const wchar_t* kJpSelFacial = L"\x9078\x629E\x8868\x60C5";                       // 選択表情
-const wchar_t* kJpAllFacial = L"\x5168\x8868\x60C5\xFF8C\xFF9A\xFF70\xFF91";     // 全表情ﾌﾚｰﾑ
-const wchar_t* kJpAllBone = L"\x5168\x30DC\x30FC\x30F3\xFF8C\xFF9A\xFF70\xFF91"; // 全ボーンﾌﾚｰﾑ
+const wchar_t* kJpAllFrame = L"\x5168\xFF8C\xFF9A\xFF70\xFF91"; // all frames
+const wchar_t* kJpDispIkOp =
+    L"\x8868\x793A\xFF65I\x004B\xFF65\x5916\x89AA";                  // display/IK/external parent
+const wchar_t* kJpSelBone = L"\x9078\x629E\xFF8E\xFF9E\xFF70\xFF9D"; // selected bones
+const wchar_t* kJpSelFacial = L"\x9078\x629E\x8868\x60C5";           // selected morphs
+const wchar_t* kJpAllFacial = L"\x5168\x8868\x60C5\xFF8C\xFF9A\xFF70\xFF91";     // all morph frames
+const wchar_t* kJpAllBone = L"\x5168\x30DC\x30FC\x30F3\xFF8C\xFF9A\xFF70\xFF91"; // all bone frames
 const char kJpBoneFmt[] = "\xCE\xDE\xB0\xDD"
                           "%02d"; // ﾎﾞｰﾝ%02d
 const char kDummyBoneName[13] = {char(0x83), char(0x5F), char(0x83), char(0x7E), char(0x81),

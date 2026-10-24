@@ -19,7 +19,7 @@
 //         for ver 2, self-shadow keys (sub_4120B0).  Tail: ReloadModels +
 //         three list refreshers.
 //   == 0  MODEL path - model name check against ModelRecord::name (20-byte SJIS;
-//         "カメラ・照明" is rejected with its own message, anything else
+//         JP "camera/lighting" is rejected with its own message, anything else
 //         prompts OK/CANCEL), then:
 //           * all three key arrays' allocation marks are cleared
 //             (bone +56 of kBoneKeyCapacity x60B records, morph +16 of
@@ -90,9 +90,9 @@ void ApplyGravityTrack(MMDApp* app);      // 0x412330 (void in port)
 namespace {
 
 // SJIS constants from .rdata (byte-exact)
-const char kCameraLightName[] = // 0x52BCB8 "カメラ・照明"
+const char kCameraLightName[] = // 0x52BCB8 JP "camera/lighting"
     "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe";
-const char kJpTitleMotionLoad[] = // 0x52CD58 "モーション読込"
+const char kJpTitleMotionLoad[] = // 0x52CD58 "Load motion"
     "\x83\x82\x81\x5b\x83\x56\x83\x87\x83\x93\x83\x66\x81\x5b\x83\x5e"
     "\x93\xc7\x8d\x9e";
 const char kJpNotVmd[] = // 0x52CACC
@@ -231,9 +231,9 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
                 _read(fileHandle, rec + 45, 1);
                 _read(fileHandle, rec + 39, 1);
                 _read(fileHandle, rec + 51, 1);
-                // x64 @0x7FF7CB48D5A5..0x7FF7CB48D5EF: 每个共享字节只填充
-                // 其后的 5 字节（20 次赋值，rec+33/39/45/51 起各成一组
-                // 6 字节均匀曲线）；rec[57] 保持清零不被触碰
+                // x64 at 0x7FF7CB48D5A5..0x7FF7CB48D5EF: fill only the five bytes after
+                // each shared byte (20 assignments; groups starting at rec+33/39/45/51 each form a
+                // uniform six-byte curve); rec[57] stays zero and untouched
                 for (int c = 1; c <= 5; ++c) {
                     rec[33 + c] = rec[33];
                     rec[45 + c] = rec[45];
@@ -367,10 +367,10 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     if (undo.bonePose != nullptr)
         operator delete(undo.bonePose); // x64 @0x7FF7CB48DE1C ??3
     const int boneCnt = static_cast<int>(record.boneCount);
-    // x64 @0x7FF7CB48DE70..0x7FF7CB48E013: 每骨骼一个 36 字节槽位
-    // (boneIndex / trans / rotQuat / 物理标志)，源端等价于按
-    // BoneRecord 类型化字段读取（x64 骨骼表 624 字节 stride 下
-    // trans@+328、rotQuat@+340），物理标志取 model+12584[b]
+    // x64 at 0x7FF7CB48DE70..0x7FF7CB48E013: one 36-byte slot per bone
+    // (boneIndex / trans / rotQuat / physics flag), read equivalently through
+    // typed BoneRecord fields (624-byte stride in the x64 bone table,
+    // trans at +328, rotQuat at +340); physics flag from model+12584[b]
     auto* const snap = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(operator new(
         boneCnt * sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
     undo.bonePose = snap;

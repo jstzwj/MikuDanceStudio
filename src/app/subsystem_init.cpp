@@ -81,8 +81,8 @@ void __cdecl WaveFeedThread(void* ctx) {
     DWORD l1 = 0;
     DWORD l2 = 0;
     if (lock(0, &p1, &l1, &p2, &l2) >= 0) { // 0x4C2D0D
-        // x64 0x7FF7CB4FADFA..0x7FF7CB4FAE1A：两段读任一失败，本回合只
-        // 自增一次 failureCount（计数在调用方，不在 feed 里）。
+        // x64 0x7FF7CB4FADFA..0x7FF7CB4FAE1A: failure of either read increments failureCount only
+        // once per iteration (counted by the caller, not by feed).
         if (!WaveStreamFeed(ctx, p1, static_cast<int>(l1), p2,
                             static_cast<int>(l2))) // 0x4C2D69
             ++audio->failureCount;                 // 0x7FF7CB4FAE1A

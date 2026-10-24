@@ -42,8 +42,8 @@
 
 namespace mikudancestudio {
 
-// WM_CLOSE 确认框的 JP 文案，SJIS 字节自 x64 实读回填（MainWndProc
-// 0x7FF7CB4FBBF0 引用；x86 侧地址 0x531810/0x531794/0x531864 已弃用）：
+// Japanese WM_CLOSE confirmation text, filled from SJIS bytes read directly from x64 (referenced by MainWndProc
+// 0x7FF7CB4FBBF0; x86 addresses 0x531810/0x531794/0x531864 are no longer used):
 static const char kMsgQuitEnhancedJp[] = // x64 0x7FF7CB552700
     "\x27\x8A\x67\x92\xA3\x83\x82\x83\x66\x83\x8B\x95\xDB\x91\xB6\x27"
     "\x82\xB5\x82\xC4\x82\xA2\x82\xC8\x82\xA2\x8A\x67\x92\xA3\x95\xD2\x8F\x57"
@@ -51,14 +51,14 @@ static const char kMsgQuitEnhancedJp[] = // x64 0x7FF7CB552700
     "\x82\xB7\n\n"
     "\x8F\x49\x97\xB9\x82\xB5\x82\xC4\x82\xE6\x82\xEB\x82\xB5\x82\xA2\x82\xC5"
     "\x82\xB7\x82\xA9\x81\x48";
-// "'拡張モデル保存'していない拡張編集したモデルがあります\n\n終了してよろしいですか！"
+// "An edited extended model has not been saved with 'Save extended model'.\n\nAre you sure you want to exit?"
 static const char kMsgQuitModifiedJp[] = // x64 0x7FF7CB552798
     "\x95\xDB\x91\xB6\x82\xB5\x82\xC4\x82\xA2\x82\xC8\x82\xA2\x95\xCF\x8D\x58"
     "\x93\x5F\x82\xAA\x82\xA0\x82\xE8\x82\xDC\x82\xB7\n\n"
     "\x8F\x49\x97\xB9\x82\xB5\x82\xC4\x82\xE6\x82\xEB\x82\xB5\x82\xA2\x82\xC5"
     "\x82\xB7\x82\xA9\x81\x48";
-// "保存していない変更点があります\n\n終了してよろしいですか！"
-static const char kCaptionQuitJp[] = "\x8F\x49\x97\xB9"; // x64 0x7FF7CB5526F8 "終了"
+// "There are unsaved changes.\n\nAre you sure you want to exit?"
+static const char kCaptionQuitJp[] = "\x8F\x49\x97\xB9"; // x64 0x7FF7CB5526F8 "Exit"
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MMDApp* app = g_Block;
@@ -157,10 +157,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                               hwnd,
                               "There is a enhanced model not preserved by 'save enhanced model'.\n\nDo you realy quit?",
                               "quit", 0x40001)
-                        : MessageBoxA(hwnd, kMsgQuitEnhancedJp, kCaptionQuitJp,
-                                      (MB_OKCANCEL |
-                                       MB_TOPMOST)); // x64 正文 0x7FF7CB4FBCE7/标题 0x7FF7CB4FBCEE
-                if (r == IDOK)                       // original: == 1
+                        : MessageBoxA(
+                              hwnd, kMsgQuitEnhancedJp, kCaptionQuitJp,
+                              (MB_OKCANCEL |
+                               MB_TOPMOST)); // x64 body 0x7FF7CB4FBCE7/caption 0x7FF7CB4FBCEE
+                if (r == IDOK)               // original: == 1
                     return DefWindowProcA(hwnd, msg, wParam, lParam);
             } else {
                 if (s.SceneModified() == 0) // 658189
@@ -172,7 +173,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                               "quit", 0x40001)
                         : MessageBoxA(
                               hwnd, kMsgQuitModifiedJp, kCaptionQuitJp,
-                              (MB_OKCANCEL | MB_TOPMOST)); // x64 正文 0x7FF7CB4FBD44/标题共用
+                              (MB_OKCANCEL | MB_TOPMOST)); // x64 body 0x7FF7CB4FBD44/shared caption
                 if (r == IDOK)
                     return DefWindowProcA(hwnd, msg, wParam, lParam);
             }

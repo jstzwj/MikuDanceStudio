@@ -71,7 +71,7 @@ struct LineVertex {
 static_assert(sizeof(LineVertex) == 16);
 
 // Original Japanese message @0x52A294/0x52A234/0x52A1F8 (Shift-JIS):
-// "グラフィックカードの性能が足りません(MakeLine[23])"
+// "The graphics card is not powerful enough (MakeLine[23])"
 const char kJpMakeLine[] = "\203O\203\211\203t\203B\203b\203N\203J\201[\203h"
                            "\202\314\220\253\224\\\202\252\221\253\202\350\202\334\202\271\202\361";
 

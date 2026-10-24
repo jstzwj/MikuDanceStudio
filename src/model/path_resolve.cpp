@@ -241,9 +241,9 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) { // 0x407490
     *entryName = static_cast<wchar_t*>(malloc(2 * plen));
     wcscpy_s(*entryName, plen, path);
 
-    // 内置 MMEffect：按路径登记新纹理（对应原版对
-    // D3DXCreateTextureFromFileExW 的 hook 记录；toonNN.bmp 裸名别名由
-    // MME 侧自动登记）。
+    // Embedded MMEffect: register new textures by path (corresponding to original
+    // D3DXCreateTextureFromFileExW hook records; bare toonNN.bmp aliases are
+    // registered automatically by MME).
     mme::RecordTexture(path, *entryTex);
 
     D3DLOCKED_RECT lr;

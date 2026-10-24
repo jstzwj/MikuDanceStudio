@@ -72,7 +72,7 @@ rc.exe（10.0.19041 / 10.0.26100 双版验证）重发的模板字节与原版**
 ## 重新生成
 
 ```sh
-python scripts/gen_resources.py gen   # 重建 gen_resources*.res（需 rc.exe）
-python scripts/gen_resources.py verify # 校验与入库版本逐字节一致
-python scripts/dialog_rc.py verify    # .rc 编译产物 == 锚点 .res 内模板
+python scripts/gen_resources.py gen   # Rebuild gen_resources*.res (requires rc.exe)
+python scripts/gen_resources.py verify # Verify byte-for-byte equality with the checked-in version
+python scripts/dialog_rc.py verify    # .rc compilation output == templates in the reference .res
 ```

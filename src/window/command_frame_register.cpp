@@ -375,11 +375,11 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     case panel::kRegisterFrameButton: {
         // (0x48026F) dirty flag, then the frame-register helper
         // sub_4C2080(model, frame, app+0xA0CC4).
-        // 原版（x64 0x7FF7CB461045..54）对空槽同样无守卫；它靠键盘轮询
-        // （每帧把非按下键写 0/2，sub_140012090 对应原版同类扫描）在 G3
-        // 读到之前清掉对话路径遗留的 1。内置 MME 的帧内消息分发会让该
-        // 清理窗口偶发失效（幽灵 0x1F4/0x1F5，crashdump/ray_*），故此处
-        // 按空模型语义（无操作）防御——与原版可观察行为一致。
+        // The original (x64 0x7FF7CB461045..54) likewise has no null-slot guard; keyboard polling
+        // (writing 0/2 for released keys each frame; sub_140012090 matches the original scan) clears the dialog path's residual 1 before G3
+        // reads it. Embedded MME's intra-frame message dispatch can occasionally defeat this
+        // cleanup window (phantom 0x1F4/0x1F5, crashdump/ray_*), so guard the null model
+        // as a no-op here, preserving the original observable behavior.
         if (ActiveModel(app) == nullptr) {
             break;
         }
@@ -400,7 +400,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         // (0x47F93D) check the 0x1EA checkbox, re-dispatch WM_COMMAND
         // 0x1EA, then copy the per-bone selection flags 0x2D98 into the
         // 0x2D94 byte array and reset the selected index 0x2D90 to -1.
-        // 同 case 500：空槽防御（原版 0x7FF7CB4610AA 同样裸解引用）。
+        // As in case 500: guard a null slot (the original 0x7FF7CB4610AA also dereferences without checking).
         if (ActiveModel(app) == nullptr) {
             break;
         }

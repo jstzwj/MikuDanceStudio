@@ -29,7 +29,7 @@ void RefreshAfterFrameApply(MMDApp* app); // VA 0x432FA0 (ui_frame_step.cpp),
 
 void PushBoneEditUndo(MMDApp* app); // VA 0x42D6E0 (bone_edit_undo.cpp)
 
-// 0x52EB80: "録画を中断してもよいですか" / 0x52EB9C: "録画中断確認"
+// 0x52EB80: "May recording be interrupted?" / 0x52EB9C: "Confirm recording interruption"
 static const char kJpRecStopText[] =
     "\x98\x5e\x89\xe6\x82\xf0\x92\x86\x92\x66\x82\xb5\x82\xc4\x82\xe0"
     "\x82\xe6\x82\xa2\x82\xc5\x82\xb7\x82\xa9";

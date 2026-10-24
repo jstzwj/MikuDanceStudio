@@ -18,7 +18,7 @@
 namespace mikudancestudio {
 namespace {
 
-// 0x52D370 / 0x52D368 / 0x52D360: JP wide labels "ｶﾒﾗ･照明･ｱｸｾｻﾘ" / "画面" /
+// 0x52D370 / 0x52D368 / 0x52D360: JP wide labels "camera/lighting/accessory" / "screen" /
 // "なし" (half-width katakana mixed with kanji; sent via SendMessageW).
 static const wchar_t kJpCamLightAcc[] = {0xFF76, 0xFF92, 0xFF97, 0xFF65, 0x7167, 0x660E, 0xFF65,
                                          0xFF71, 0xFF78, 0xFF7E, 0xFF7B, 0xFF98, 0x0000};
@@ -101,7 +101,7 @@ void ApplyModelDisplayOrderDialog(MMDApp* app, int count, HWND hDlg) { // VA 0x0
 
 // ===========================================================================
 // 0x42E370 - case 289 model calculate-order dialog (template caption "model
-// calculate order" / モデル計算順設定; 0x32B EN / 0x32A JP), modal.
+// calculate order" / model calculation order settings; 0x32B EN / 0x32A JP), modal.
 // WM_INITDIALOG: top-most gate; g_calculateOrderDialogCount =
 // CB_GETCOUNT(main combo 0x1B4) - 1; sub_41E810 fills listbox 628 from the
 // raw slot-index array at app+0xA0B1C, sorted by calculation order.
@@ -184,7 +184,7 @@ INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 
 // ===========================================================================
 // 0x4641F0 - case 288 model display-order dialog (template caption "model
-// disply order" / モデル描画順設定; 0x325 EN / 0x324 JP), modal.
+// disply order" / model drawing order settings; 0x325 EN / 0x324 JP), modal.
 // WM_INITDIALOG: top-most gate; g_displayOrderDialogCount = CB_GETCOUNT
 // (main combo 0x1B4); allocate the int array app+0xA0B1C; CB_GETLBTEXT(main
 // combo 0x1B4,
@@ -192,7 +192,7 @@ INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // WM_COMMAND ids 630/631: move the listbox 0x274 entry up/down and swap the
 // adjacent dwords of the app+0xA0B1C array.  id 632 (OK): rebuild the main
 // combos 0x1B4/0x1DA/0x1C1 (EN: "camera/light/accessory" / "ground" / "non",
-// JP wide: "ｶﾒﾗ･照明･ｱｸｾｻﾘ" / "画面" / "なし") from the listbox contents
+// JP wide: "camera/lighting/accessory" / "screen" / "none") from the listbox contents
 // (count-1 entries), CB_SETCURSEL(0x1B4, 0), sub_45EC80 apply,
 // EndDialog(1).  id 2: EndDialog(2).  Both free app+0xA0B1C.
 // Reference: MikuMikuDance.exe sub_4641F0 (decompiled by hand from the

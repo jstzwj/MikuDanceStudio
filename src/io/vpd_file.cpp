@@ -9,8 +9,8 @@
 // SAVE (0x418750): _wfopen(path, L"wt") then a fixed fprintf sequence with
 // byte-exact .rdata formats (0x52BBDC..0x52BC6C):
 //   "Vocaloid Pose Data file\n\n"
-//   "%s.osm;\t\t// <SJIS 親ファイル名>"   arg = model+0x2248 name
-//   "%d;\t\t\t\t// <SJIS 総ポーズボーン数>" arg = count of selected bones
+//   "%s.osm;\t\t// <SJIS parent filename>" arg = model+0x2248 name
+//   "%d;\t\t\t\t// <SJIS total pose bone count>" arg = count of selected bones
 //   per selected bone i (ModelRecord selection bitmap/count/BoneRecord table):
 //     "Bone%d{%s\n"      running selected index, bone name at record +0
 //     pose source pick (0x418860): bone->hasRigidBody != 0 && bone->physicsDisabled == 0 &&

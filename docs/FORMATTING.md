@@ -7,10 +7,10 @@ VS Code 使用 Microsoft C/C++ 扩展（`ms-vscode.cpptools`）的 clang-format�
 在项目根目录执行：
 
 ```powershell
-# 格式化 include/mikudancestudio 和 src 下的源码（包含 .inc）
+# Format sources under include/mikudancestudio and src (including .inc)
 python scripts/format_sources.py
 
-# 只检查，格式不符时返回非零退出码
+# Check only; return a nonzero exit code on formatting violations
 python scripts/format_sources.py --check
 ```
 

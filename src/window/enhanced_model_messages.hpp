@@ -3,13 +3,13 @@
 namespace mikudancestudio {
 
 // Shared by the English-name editor and toon-texture save reminders.
-// 0x52E724: "編集結果を'強化モデル保存'で保存してモデルとして保存して下さい"
+// 0x52E724: "Save the edited result as a model using 'Save enhanced model'"
 inline constexpr char kMsgEnhanceModelJp[] =
     "\x95\xD2\x8F\x57\x8C\x8B\x89\xCA\x82\xCD\x27\x8A\x67\x92\xA3"
     "\x83\x82\x83\x66\x83\x8B\x95\xDB\x91\xB6\x27\x82\xC5\x90\x56"
     "\x82\xB5\x82\xA2\x83\x82\x83\x66\x83\x8B\x82\xC6\x82\xB5\x82"
     "\xC4\x95\xDB\x91\xB6\x82\xB5\x82\xC4\x89\xBA\x82\xB3\x82\xA2";
-// 0x52E764: "モデル強化"
+// 0x52E764: "Model enhancement"
 inline constexpr char kCaptionEnhanceModelJp[] = "\x83\x82\x83\x66\x83\x8B\x8A\x67\x92\xA3";
 
 } // namespace mikudancestudio

@@ -87,9 +87,9 @@ int CollectToonFileNames(HWND hDlg) { // VA 0x0041EA20
                           name, name);
                 caption = "toon texture";
             } else {
-                // 0x52F0F0: "ﾂｰﾝﾃｷｽﾁｬｱ:%sが見つかりません。\n\n
-                //            %sをモデルファイル(*.pmd)と同じフォルダ内に
-                //            置いてください。"
+                // 0x52F0F0: "Toon texture:%s was not found.\n\n
+                //            Place %s in the same folder as the model file (*.pmd).
+                //            "
                 sprintf_s(text, 0x100,
                           "\xc3\xb8\xbd\xc1\xac\xcc\xa7\xb2\xd9\x81\x46%s"
                           "\x82\xaa\x8c\xa9\x82\xc2\x82\xa9\x82\xe8\x82\xdc"
@@ -141,7 +141,7 @@ void SaveEnhancedModel(MMDApp* app, const wchar_t* path) { // 0x41EC10
         char text[0x100];
         if (model.physicsFlags != 0) // English-data byte (set at load)
             sprintf_s(text, 0x100, "Cannot save file:%d", openErr);
-        else // 0x54FED0: "ファイルが保存できません:%d"
+        else // 0x54FED0: "Cannot save file:%d"
             sprintf_s(text, 0x100,
                       "\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xaa\x95\xdb"
                       "\x91\xb6\x82\xc5\x82\xab\x82\xdc\x82\xb9\x82\xf1"

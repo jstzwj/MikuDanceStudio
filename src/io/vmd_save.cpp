@@ -18,7 +18,7 @@
 //             0x40 _SH_DENYNO, 0x80 _S_IREAD)
 //   sprintf_s(buf,0x100,"Vocaloid Motion Data 0002"); write(fd,buf,30)
 //   name: model mode -> write(model+0x2248, 20); camera mode ->
-//         strcpy_s(buf, "カメラ・照明"@0x52BCB8) + write(buf,20)
+//         strcpy_s(buf, <JP "camera/lighting" at 0x52BCB8>) + write(buf,20)
 //   boneCount(4) [0 in camera mode]
 //   per bone key: name(15) frame(4) pos(12) quat(16) interp 4x16B
 //     (ch0 = u16 x1 + u16 3939-marker + 3 dwords, ch1..3 = 4 dwords; the
@@ -59,7 +59,7 @@ unsigned char* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-const char kCameraLightName[] = // 0x52BCB8 "カメラ・照明" (byte-exact)
+const char kCameraLightName[] = // 0x52BCB8 JP "camera/lighting" (byte-exact)
     "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe";
 const char kJpCannotSave[] = // 0x52BCE4
     "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xaa\x95\xdb\x91\xb6\x82\xc5\x82"
@@ -167,10 +167,10 @@ void SaveVmdFile(const wchar_t* path) {
         Wr(fd, buf, 20); // 0x41984F
     }
 
-    // x64 sub_7FF7CB48C450：相机/照明模式（app+808 != 0）下完全不碰 model
-    // 指针——模型名取常量"カメラ・照明"，bone/morph/IK 三段直接写 0 计数
-    // 并跳过循环（计数全来自全局键表 app+976/984/992）。这些 model 侧的
-    // 计数与表指针只在模型模式读取；相机模式下 model 可能为空。
+    // x64 sub_7FF7CB48C450: camera/lighting mode (app+808 != 0) never touches the model
+    // pointer; the model name uses the JP "camera/lighting" constant, and bone/morph/IK sections write zero counts
+    // and skip their loops (counts all come from global key tables app+976/984/992). These model-side
+    // counts and table pointers are read only in model mode; model may be null in camera mode.
     int boneCount = 0, morphCount = 0, ikChainCount = 0;
     mikudancestudio::mdl::BoneRecord* bones = nullptr;
     mikudancestudio::mdl::MorphRecord* morphs = nullptr;

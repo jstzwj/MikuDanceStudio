@@ -768,10 +768,10 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     if (count > 0 && !windRan) {
         float dir[3] = {s.state.gravityX, s.state.gravityY, s.state.gravityZ};
         if (dir[0] == 0.0f && dir[1] == 0.0f && dir[2] == 0.0f)
-            // x64 0x7FF7CB44C03A: 三轴 ucomiss 判全零后
-            // `mov dword ptr [app+0x9FCC8], 3DCCCCCDh` - 0.1f 直接写回
-            // 重力 Y 状态字段，不只是本地副本：后续风力 Y 基准、PMM 保存、
-            // 重力对话框读到的都是被拨正后的 0.1。
+            // x64 0x7FF7CB44C03A: after ucomiss tests confirm all three axes are zero,
+            // `mov dword ptr [app+0x9FCC8], 3DCCCCCDh` writes 0.1f directly back to
+            // the gravity Y state field, not just a local copy: subsequent wind Y calculations, PMM saving and
+            // the gravity dialog all observe the corrected 0.1 value.
             s.state.gravityY = dir[1] = 0.1f; // flt 0x529624
         D3dxVec3Normalize(dir, dir);          // 0x46F741
         const float mag = s.state.gravityMagnitude;
@@ -819,18 +819,18 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     if (selActive != 0 && s.CameraMode() == 0 && // 0x2F8 model-mode flag
         s.state.frameStepPlayback == 0) {        // 0x9ED90 frame-step flag
         // 0x46F7FF..0x46F808 / x64 0x7FF7CB44C12E..0x7FF7CB44C138：
-        // 两版同一上升沿闩锁语义。x86 `cmp byte [app+0xA03E8],0 /
+        // Both versions use the same rising-edge latch semantics. x86 `cmp byte [app+0xA03E8],0 /
         // jnz 0x46F80F / mov byte [app+0x9EDB5],1`，x64 `cmp
         // [app+0xA137C],r15b / jnz / mov byte [app+0x9FCC1],1`。
-        // 0xA03E8 与 0xA137C 都是上一趟泵的 selActive 滞留闩锁（x86 泵尾
-        // 0x47985A..0x47985E、x64 泵尾 0x7FF7CB456F1C..0x7FF7CB456F21 把
-        // 本趟 selActive 写回；初始化 x86 0x40ABDE / x64 0x7FF7CB42CA4C
-        // 清零；layout_pins.hpp 把 selectionActiveLatch 钉在
-        // 0xA03E8/0xA137C）。0xA03E8 不是"未播放"独立条件——2026-09 审计
-        // 把闩锁本身误读成了第三个丢失条件。settle 只在 selActive 上升沿
-        // （上一趟未激活）请求一次；持续激活期间闩锁抑制重复请求。两版
-        // 唯一差异在泵尾写回的外围门（x86 0x4797C2 套 model+0x2D90>=0 &&
-        // app+0x330==0，x64 无条件），见文件头注释与 frame_driver.cpp。
+        // 0xA03E8 and 0xA137C both latch selActive from the previous pump iteration (x86 tail
+        // 0x47985A..0x47985E and x64 tail 0x7FF7CB456F1C..0x7FF7CB456F21 store
+        // this iteration's selActive; initialization at x86 0x40ABDE / x64 0x7FF7CB42CA4C
+        // clears it; layout_pins.hpp pins selectionActiveLatch to
+        // 0xA03E8/0xA137C). 0xA03E8 is not an independent "not playing" condition; the 2026-09 audit
+        // misread the latch as a third missing condition. Settling is requested once on selActive's rising edge
+        // (previously inactive); the latch suppresses repeats while active. The two versions'
+        // only difference is the outer gate around the tail store (x86 0x4797C2 requires model+0x2D90>=0 &&
+        // app+0x330==0; x64 is unconditional); see the file header and frame_driver.cpp.
         if (s.state.selectionActiveLatch == 0)
             s.PhysicsResetPending() = 1;
     }

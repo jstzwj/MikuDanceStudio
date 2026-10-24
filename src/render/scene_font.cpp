@@ -38,13 +38,13 @@ struct Glyph {
 
 // exact draw list from the decompilation (size 30, color 255,255,255, normal);
 // SJIS bytes decoded from the original .rdata (row 0 spells
-// カメラ照明アクセサリ glyph-by-glyph for per-char positioning)
+// camera/lighting/accessory glyph-by-glyph for per-char positioning)
 constexpr Glyph kAtlas[] = {
     {"\xb6", 0, 0},
     {"\xd2", 16, 0},
     {"\xd7", 32, 0},
     {"\xa5", 48, 0},
-    {"\x8f\xc6\x96\xbe", 64, 0}, // 照明
+    {"\x8f\xc6\x96\xbe", 64, 0}, // lighting
     {"\xa5", 128, 0},
     {"\xb1", 144, 0},
     {"\xb8", 160, 0},
@@ -121,19 +121,19 @@ constexpr Glyph kAtlas[] = {
     {"7", 112, 96},
     {"8", 128, 96},
     {"9", 144, 96},
-    {"\x92\x86\x90\x53", 160, 96}, // 中心
+    {"\x92\x86\x90\x53", 160, 96}, // center
     {"X", 240, 96},
     {":", 256, 96},
-    {"\x8ap\x93x", 288, 96}, // 視点度
+    {"\x8ap\x93x", 288, 96}, // view angle
     {"X", 368, 96},
     {":", 384, 96},
-    {"\x8b\x97\x97\xa3", 416, 96}, // 距離
+    {"\x8b\x97\x97\xa3", 416, 96}, // distance
     {"global", 0, 128},
     {"local", 96, 128},
     {"Recording(Esc:Stop)", 176, 128},
     {"\x98^\x89\xe6\x92\x86(Esc:\x92\x86\x92"
      "\xf)",
-     0, 160}, // 録画中(Esc:中断)
+     0, 160}, // recording (Esc: interrupt)
     {"P", 256, 160},
     {"l", 272, 160},
     {"a", 288, 160},
@@ -141,7 +141,7 @@ constexpr Glyph kAtlas[] = {
     {"i", 320, 160},
     {"n", 336, 160},
     {"g", 352, 160},
-    {"\x8d\xc4\x90\xb6\x92\x86", 384, 160}, // 再生中
+    {"\x8d\xc4\x90\xb6\x92\x86", 384, 160}, // playing
     {"0", 0, 192},
     {"1", 16, 192},
     {"2", 32, 192},
@@ -156,7 +156,7 @@ constexpr Glyph kAtlas[] = {
     {".", 208, 192},
     {"-", 224, 192},
     {"1fps or less", 0, 224},
-    {"1fps \x96\xA2\x96\xBA", 208, 224}, // JP 未満 (x64 0x7FF7CB54B430)
+    {"1fps \x96\xA2\x96\xBA", 208, 224}, // JP "less than" (x64 0x7FF7CB54B430)
 
     {"0", 0, 256},
     {"1", 16, 256},

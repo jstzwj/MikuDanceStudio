@@ -740,8 +740,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path, D3DRenderer*
                 const float bx = pivotB[0], by = pivotB[1], bz = pivotB[2];
                 const float distA = std::sqrt(ax * ax + ay * ay + az * az);
                 const float distB = std::sqrt(bx * bx + by * by + bz * bz);
-                // 过拉伸限位半径：限位范数叠加两锚点距离
-                // （x64 @0x7FF7CB4D51B0..0x4D526D，见 JointRadiusBound）
+                // Overstretch limit radius: limit norm plus the distances to both anchors
+                // (x64 at 0x7FF7CB4D51B0..0x4D526D; see JointRadiusBound)
                 joint.radiusBound = JointRadiusBound(joint.limits, distA, distB);
                 d3dx->rotZ(&rot, joint.rotation[2]);
                 D3DXMATRIXF t2;

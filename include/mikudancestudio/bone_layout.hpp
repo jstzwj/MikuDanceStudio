@@ -44,8 +44,8 @@ static_assert(sizeof(PmxIkLinkRecord) == 32, "PMX IK link ABI");
 //      (type == 1 || type == 2);
 //   3. the PMD files shipped inside the original (Miku_Hatsune.pmd,
 //      KAITO.pmd, Dammy_Bone.pmd): every ＩＫ bone is type 2, the translate
-//      controls (センター/袖) are type 1, IK links are 4 with tailIdx holding
-//      the driving IK bone, eyes are 5, IK chain ends are 6 and every 「先」
+//      controls (center/sleeve) are type 1, IK links are 4 with tailIdx holding
+//      the driving IK bone, eyes are 5, IK chain ends are 6 and every "tip"
 //      tip marker is 7 - no file contains a type 3 at all.
 //
 // NOTE: public PMD spec tables that read "1=rotate, 2=translate, 3=IK" match
@@ -53,29 +53,29 @@ static_assert(sizeof(PmxIkLinkRecord) == 32, "PMX IK link ABI");
 // behaviour (see the audit trail above).
 // ---------------------------------------------------------------------------
 enum class BoneType : unsigned char {
-    RotateMove = 0,  // standard joint bone, rotate + translate (回転移動);
+    RotateMove = 0,  // standard joint bone, rotate + translate;
                      // the default after memset(0)
-    Move = 1,        // translate-only control bone (移動; files: センター,
-                     // 袖); PMX loader maps flag 0x04 translatable -> here
-    Ik = 2,          // IK chain driver bone (files: 全ＩＫ bones); PMX IK
+    Move = 1,        // translate-only control bone (translation; files: center,
+                     // sleeve); PMX loader maps flag 0x04 translatable -> here
+    Ik = 2,          // IK chain driver bone (files: all IK bones); PMX IK
                      // bones map here; gets an IK-off selector slot with Move
     Unused3 = 3,     // never emitted by the shipped files; MMD compares no
                      // explicit == 3 anywhere (only the <= 6 ranges cover it)
-    UnderIk = 4,     // IK影響下: IK chain link driven by the IK bone whose
-                     // index sits in tailIdx (files: 足/ひざ/髪 tgt=ＩＫ);
+    UnderIk = 4,     // under IK influence: IK chain link driven by the IK bone whose
+                     // index sits in tailIdx (files: leg/knee/hair tgt=IK);
                      // PMX loader marks every IK link here; resets the scale
                      // quat each pass (bone_transform B/E)
-    RotateGrant = 5, // 回転付与: quat = source(tailIdx).quat * own quat
-                     // (files: 左目/右目 tgt=両目)
-    Effector = 6,    // 接続先表示用: IK chain end-effector / inert chain tip
-                     // (files: つま先, ﾏﾌﾗｰ５); PMX ikTarget bones map here
-    InertTip = 7,    // display-only tail marker (all 「先」bones); never
+    RotateGrant = 5, // rotation grant: quat = source(tailIdx).quat * own quat
+                     // (files: left eye/right eye tgt=both eyes)
+    Effector = 6,    // connection-target display: IK chain end-effector / inert chain tip
+                     // (files: toe, scarf 5); PMX ikTarget bones map here
+    InertTip = 7,    // display-only tail marker (all "tip" bones); never
                      // keyframe-registered; PMX loader maps !(flags &
                      // kBoneFlagVisible) here
     FixedAxis = 8,   // axis-limited twist bone: rotation constrained to the
                      // bone axis (key/VPD registration applies the twist-axis
                      // correction); PMX flag 0x0400 fixed axis maps here
-    CoRotate = 9,    // 対象ボーン回転付与 (co-rotate): rotation is the tail
+    CoRotate = 9,    // target-bone rotation grant (co-rotate): rotation is the tail
                      // bone's quat re-scaled about its own axis by
                      // tailIdx/100 (bone_transform 0x493F1F / 0x4968F3)
 };

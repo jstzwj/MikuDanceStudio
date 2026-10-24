@@ -267,8 +267,8 @@ inline void LogPmmHeapState(int, const char*) {
 // kJpChainFmtDisp 0x52D848, kJpCannotOpenAcc 0x52DAE0 - and BOTH loader
 // bodies reference those single copies (this body at 0x458B54 / 0x458B32 /
 // 0x458A22 / 0x455B8C, the v1 body at 0x45E4FC / 0x45E4DA / 0x45E37A /
-// 0x45B9B7).  The former v2 variants (以下 for 以降, ブ for プ,
-// \x91\xB7=替 for \x91\xD6=換, and a dropped し直 in the display format)
+// 0x45B9B7). The former v2 variants ("and below" for "and later", bu for pu,
+// \x91\xB7="substitute" for \x91\xD6="replace", and a dropped "retry" in the display format)
 // were transcription errors - those byte sequences exist nowhere in the
 // original - and are now byte-identical to the v1 copies.  They stay
 // duplicated per-body only while the loader split is in flight; merge
@@ -1288,12 +1288,12 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd, PmmModelLoadWo
                                                                    ? MDS_DLG_PMM_MODEL_MISMATCH_EN
                                                                    : MDS_DLG_PMM_MODEL_MISMATCH_JP),
                                               main, DialogFuncStub, 0);
-            // x64 分派表（0x7FF7CB49AA72..0x7FF7CB49BB78）：
-            //   r==2/r==5 -> 中止装载（0x49AA88 jnz 0x49D73F）
-            //   r==3      -> 丢弃当前模型、弹文件对话框重载（0x49AA8E）
-            //   r==4      -> 跳过该模型（0x49B29D cmp 4）
-            //   其余值    -> 0x49B2A1 jnz 0x49BB78，与双匹配成立时
-            //                （0x49AA2F 的 jz）同一出口：继续状态装载
+            // x64 dispatch table (0x7FF7CB49AA72..0x7FF7CB49BB78):
+            //   r==2/r==5 -> abort loading (0x49AA88 jnz 0x49D73F)
+            //   r==3      -> discard the current model and open a file dialog to reload (0x49AA8E)
+            //   r==4      -> skip this model (0x49B29D cmp 4)
+            //   other     -> 0x49B2A1 jnz 0x49BB78, the same exit as when both matches succeed
+            //                (jz at 0x49AA2F): continue loading state
             if (r == IDCANCEL || r == 5) {
                 AbortV2Load(s, fd, workspaces, modelCount);
                 return false;
@@ -1311,7 +1311,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd, PmmModelLoadWo
                 break;
             }
             if (r != 3)
-                break; // 非 3 非 4：直接走状态装载，不重载
+                break; // Neither 3 nor 4: proceed directly to state loading without reloading
             // r == 3: re-load a different file
             if (model != nullptr) { // 0x451A5A
                 ModelDispose(model);
@@ -2436,7 +2436,7 @@ static void LoadSceneV2_SuccessTail(PmmV2LoadContext& ctx, PmmModelLoadWorkspace
                reinterpret_cast<const wchar_t*>(s->state.envFileName));
     SetWindowTextW(main, wndText);
 
-    // 内置 MMEffect：场景加载成功通知（EMM 自动加载）。
+    // Embedded MMEffect: notify successful scene loading (automatic EMM loading).
     mme::NotifyPmmLoaded(s);
 
     // record post-processing (0x458309..0x458996)

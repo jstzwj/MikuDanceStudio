@@ -781,11 +781,11 @@ public:
     void*& Hwnd() { return reinterpret_cast<void*&>(state.hwnd); } // 657080
     void*& HInstance() { return m_runtime.platform.instance; }
     void*& OpenniTrackingCallback() { return m_runtime.platform.oniExports[5]; }
-    // Kinect 捕获阶段字节（x64 0xA1E14 / x86 0xA0D68——已定谳，即
-    // state.autoRepeat 本尊：菜单 0x124/WM_COMMAND 292 置 1、WM_TIMER 0x65
-    // 每 1.5s 递增到 4 后停摆、泵块 0x7FF7CB44C560 以 ==4 判“录制中”、
-    // OpenNiInit/DisableKinect/满 12600 样本/丢失跟踪时清零）。别名访问器，
-    // 供泵块按语义取名；写读一律走同一字节。
+    // Kinect capture-stage byte (x64 0xA1E14 / x86 0xA0D68; verified to be
+    // state.autoRepeat itself: menu 0x124/WM_COMMAND 292 sets it to 1; WM_TIMER 0x65
+    // increments it every 1.5s until 4, then stops; pump block 0x7FF7CB44C560 tests ==4 for recording;
+    // OpenNiInit/DisableKinect/12600 samples/lost tracking clear it). This alias accessor
+    // gives the pump block a semantic name; every read and write uses the same byte.
     std::uint8_t& KinectCaptureStage() { return state.autoRepeat; }
     std::uint8_t KinectCaptureStage() const { return state.autoRepeat; }
     // Seven native pointer slots for DxOpenNI.dll exports on both builds.

@@ -44,29 +44,29 @@
 namespace mikudancestudio {
 namespace {
 
-// 0x52BA94: "AVIデータ読込"
+// 0x52BA94: "Load AVI data"
 static const char kMsgAviCaptionJp[] = "AVI\x83\x66\x81\x5B\x83\x5E\x93\xC7\x8D\x9E";
-// 0x52CA3C: "AVIファイルが読み込めません"
+// 0x52CA3C: "Cannot load AVI file"
 static const char kMsgAviOpenFailJp[] =
     "AVI\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x93\xC7\x82\xDD\x8D\x9E"
     "\x82\xDF\x82\xDC\x82\xB9\x82\xF1";
-// 0x52BA28: "AVIファイルを読み込めません"
+// 0x52BA28: "Cannot load AVI file"
 static const char kMsgAviOpenFail2Jp[] =
     "AVI\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xF0\x93\xC7\x82\xDD\x8D\x9E"
     "\x82\xDF\x82\xDC\x82\xB9\x82\xF1";
-// 0x52CA04: "AVIFILEINFOを読み込めません"
+// 0x52CA04: "Cannot read AVIFILEINFO"
 static const char kMsgAviInfoFailJp[] =
     "AVIFILEINFO\x82\xF0\x93\xC7\x82\xDD\x8D\x9E\x82\xDF\x82\xDC\x82\xB9"
     "\x82\xF1";
-// 0x52C9D4: "AVIFileGetStream失敗"
+// 0x52C9D4: "AVIFileGetStream failed"
 static const char kMsgAviGetStreamFailJp[] = "AVIFileGetStream\x8E\xB8\x94\x73";
-// 0x52C9A8: "AVIStreamInfo失敗"
+// 0x52C9A8: "AVIStreamInfo failed"
 static const char kMsgAviStreamInfoFailJp[] = "AVIStreamInfo\x8E\xB8\x94\x73";
-// 0x52CA70: "BMPファイルを読み込めませんでした"
+// 0x52CA70: "Could not load BMP file"
 static const char kMsgBmpFailJp[] =
     "BMP\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xF0\x93\xC7\x82\xDD\x8D\x9E"
     "\x82\xDF\x82\xDC\x82\xB9\x82\xF1\x82\xC5\x82\xB5\x82\xBD";
-// 0x52CA94: "BMPファイル読込"
+// 0x52CA94: "Load BMP file"
 static const char kMsgBmpCaptionJp[] = "BMP\x83\x74\x83\x40\x83\x43\x83\x8B"
                                        "\x93\xC7\x8D\x9E";
 
@@ -75,8 +75,8 @@ struct ImgInfo { // first fields of D3DXIMAGE_INFO
     UINT Width, Height, Depth, MipLevels;
 };
 
-// x64 端纵横比数学用的 .rdata float 常量（SSE 单精度乘除，
-// sub_7FF7CB487A20 @0x7ff7cb487ed3/0x7ff7cb487f03 引用）。
+// .rdata float constant used by x64 aspect-ratio calculations (SSE single-precision multiply/divide,
+// referenced by sub_7FF7CB487A20 at 0x7ff7cb487ed3/0x7ff7cb487f03).
 constexpr float kOverlaySpan = 1.2f; // float @0x7FF7CB552B3C (3F 99 99 9A)
 constexpr float kOverlayHalf = 0.5f; // float @0x7FF7CB55298C (3F 00 00 00)
 
@@ -98,21 +98,21 @@ void AviFailTail(MMDApp* app) {
     app->AviBackgroundEnabled() = 0;                  // 0x43333F
 }
 
-// 背景媒体（AVI/图片）的纵横比参数，AVI 路径与图片路径共用。
-// x64 定谳（全 SSE 单精度，求值序即下式书写序）：
+// Background-media (AVI/image) aspect-ratio parameters shared by AVI and image paths.
+// Verified against x64 (all SSE single precision, evaluated in the order written below):
 //   AVI   sub_7FF7CB487A20 @0x7ff7cb487ec5..0x7ff7cb487f1b
-//   图片  sub_7FF7CB488970 @0x7ff7cb488bf2..0x7ff7cb488c55（同式）
-//   zoom = ((hideRectW / viewScale) * 1.2f) / mediaW     -> 写 app+652036
-//   posY = h2 - ((mediaH * zoom * viewScale) / 1.2f) * 0.5f  -> 写 app+652032
-//   h2 = (hideBottom - hideTop) / 2（整数除法）
-// 物理含义：媒体恰好铺满视口宽并垂直居中——消费端 ComputeOverlayRect
-// (src/render/bg_overlay.cpp) 的 W*zoom*ratio/1.2 恰好还原出 hideRectW，
-// 即本 zoom 正是该公式所需。
-// 历史注记：旧版写成 scale/offsetY 双倒数+反号，根因是 x86 x87 的
-// fdivrp/fsubrp 反操作数伪影误导；x64 SSE 版（divss/mulss/subss 操作
-// 数顺序直观可见）证明上述才是原意。
-// 另：hideLeft 实为右缘、hideRight 实为左缘（见 mmd_app.hpp 的 RECT
-// 视图），故 hideLeft - hideRight 是正的视口宽；h2 同理取正半高。
+//   image sub_7FF7CB488970 at 0x7ff7cb488bf2..0x7ff7cb488c55 (same formula)
+//   zoom = ((hideRectW / viewScale) * 1.2f) / mediaW     -> written to app+652036
+//   posY = h2 - ((mediaH * zoom * viewScale) / 1.2f) * 0.5f  -> written to app+652032
+//   h2 = (hideBottom - hideTop) / 2 (integer division)
+// Meaning: fit the media exactly to the viewport width and center it vertically. ComputeOverlayRect's
+// (src/render/bg_overlay.cpp) W*zoom*ratio/1.2 reconstructs hideRectW exactly,
+// so this zoom is precisely what that formula requires.
+// Historical note: the old scale/offsetY used reciprocal expressions and reversed signs, caused by misleading x86 x87
+// fdivrp/fsubrp operand-reversal artifacts. The x64 SSE version (divss/mulss/subss operand
+// order is explicit) confirms the formulas above.
+// Also, hideLeft is actually the right edge and hideRight the left edge (see mmd_app.hpp's RECT
+// view), so hideLeft - hideRight is a positive viewport width; h2 likewise uses positive half-height.
 void MediaAspect(MMDApp* app, std::int32_t width, std::int32_t height, float& scaleOut,
                  std::int32_t& posOut) {
     auto& s = *app;
@@ -188,10 +188,10 @@ void LoadAviFile(MMDApp* app) {
     }
     s.AviFile() = file;
 
-    // x64 在 AVIFileOpenW 成功后立即把解析后的绝对路径回写存储槽
-    // (wcscpy_s app+651448, @0x7ff7cb487b62)——PMM 保存/重开时原版
-    // 保留的正是这条解析后路径；图片侧同款回写见 0x43386D（本文件
-    // LoadBackgroundPicture 内 wcscpy_s(stored, 0x100, path)）。
+    // x64 stores the resolved absolute path immediately after AVIFileOpenW succeeds
+    // (wcscpy_s app+651448 at 0x7ff7cb487b62). This resolved path is what the original retains
+    // when saving/reopening PMM; the equivalent image-path store is at 0x43386D (this file's
+    // wcscpy_s(stored, 0x100, path) inside LoadBackgroundPicture).
     wcscpy_s(s.AviBackgroundPath(), 0x100, path);
 
     AVIFILEINFOA info{};

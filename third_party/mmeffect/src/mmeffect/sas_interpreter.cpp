@@ -206,12 +206,12 @@ static bool SasGetAnnotationString(ID3DXEffect* effect, D3DXHANDLE param,
 //   values         [0x1800B39A0..0x1800B3A90)  (60 dwords)
 // 60 entries, matched with stricmp after a strnicmp("FMT_",4) /
 // strnicmp("D3DFMT_",7) prefix strip [sub_180011960, 0x180012C43..0x180012DE7;
-// 反查 sub_180011920——两处循环上界均为 0x3C=60，名字/值表同索引配对].
-// NOTE (2026-09 复核，前注有误): 前版注释称 "x64 值表 [32..53] 区间整体
-// 错位一格且缺 0x6F，两份原版不一致"。逐字节重读 x64 0x1800B39A0 全部
-// 60 项后否证：FourCC 段 'UYVY','RGBG','YUY2','GRGB','DXT1'..'DXT5','MET1'
-// 与 L16=0x51、R16F=0x6F 均逐项就位，x64 序列与 x86 完全一致——本表
-// 即 x64 1:1 转录，D24S8=0x4B 等争议项无任何偏差，勿再"修复"。
+// Cross-checked against sub_180011920: both loops are bounded by 0x3C=60, pairing names/values at the same index].
+// NOTE (2026-09 recheck; the previous comment was wrong): the previous comment claimed "x64 values [32..53] are all
+// shifted by one and omit 0x6F, so the two originals differ". A byte-by-byte reread of all x64 0x1800B39A0
+// 60 entries disproved this: the FourCC sequence 'UYVY','RGBG','YUY2','GRGB','DXT1'..'DXT5','MET1'
+// and L16=0x51, R16F=0x6F are all in place; the x64 sequence exactly matches x86. This table
+// is a 1:1 x64 transcription; disputed entries such as D24S8=0x4B have no discrepancy. Do not "fix" them again.
 // ===========================================================================
 
 struct SasFormatEntry {

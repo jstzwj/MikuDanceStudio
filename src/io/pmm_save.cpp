@@ -995,7 +995,7 @@ void SaveSceneFile(MMDApp* app) {
     MessageBeep(0x40);
     s->state.windowLayoutReady = 1;
 
-    // 内置 MMEffect：场景保存成功通知（EMM 自动保存）。
+    // Embedded MMEffect: notify successful scene saving (automatic EMM saving).
     mme::NotifyPmmSaved(s);
 }
 

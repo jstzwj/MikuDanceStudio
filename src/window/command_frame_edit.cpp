@@ -410,15 +410,15 @@ static bool TextEqN(const char* buf, const char* lit, std::size_t n) {
 }
 
 // Case-415 frame-range editor combo literals.  The JP strings mix SJIS
-// kanji with half-width katakana in the original (0x530BF0 "全ﾌﾚｰﾑ",
-// 0x530BD8 "全表情ﾌﾚｰﾑ", 0x530BBC "全ボーンフﾚｰﾑ", 0x530BA4 "選択ボーン",
-// 0x530B8C "選択表情").
-static const char kJpAllFrame[] = "\x91\x53\xCC\xDA\xB0\xD1";                  // 全ﾌﾚｰﾑ
-static const char kJpAllFacial[] = "\x91\x53\x95\x5C\x8F\xEE\xCC\xDA\xB0\xD1"; // 全表情ﾌﾚｰﾑ
+// kanji with half-width katakana in the original (0x530BF0 "all frames",
+// 0x530BD8 "all morph frames", 0x530BBC "all bone frames", 0x530BA4 "selected bones",
+// 0x530B8C "selected morphs").
+static const char kJpAllFrame[] = "\x91\x53\xCC\xDA\xB0\xD1";                  // all frames
+static const char kJpAllFacial[] = "\x91\x53\x95\x5C\x8F\xEE\xCC\xDA\xB0\xD1"; // all morph frames
 static const char kJpAllBone[] =
-    "\x91\x53\x83\x7B\x81\x5B\x83\x93\xCC\xDA\xB0\xD1";                // 全ボーンフﾚｰﾑ
-static const char kJpSelBone[] = "\x91\x49\x91\xF0\xCE\xDE\xB0\xDD";   // 選択ボーン
-static const char kJpSelFacial[] = "\x91\x49\x91\xF0\x95\x5C\x8F\xEE"; // 選択表情
+    "\x91\x53\x83\x7B\x81\x5B\x83\x93\xCC\xDA\xB0\xD1";                // all bone frames
+static const char kJpSelBone[] = "\x91\x49\x91\xF0\xCE\xDE\xB0\xDD";   // selected bones
+static const char kJpSelFacial[] = "\x91\x49\x91\xF0\x95\x5C\x8F\xEE"; // selected morphs
 // 0x52D354: light-record name "ルート" (root) used by case 420.
 
 template <typename Key>
@@ -465,9 +465,9 @@ static void SelectModelFrameRange(Key* keys, std::size_t capacity, std::uint32_t
 
 // ---------------------------------------------------------------------------
 // Case-437 strings (Shift-JIS byte-exact).
-// 0x530C10: "モデル：%sを削除します\nモデルのフレームデータも全て削除されます\n
-//            またはアクセサリでこのモデルに追加するものは全て変更されます\n
-//            (この操作は元に戻す事はできません)\n\n削除してもよろしいですか？"
+// 0x530C10: "Delete model: %s.\nAll of the model's frame data will also be deleted.\n
+//            All items attached to this model, including accessories, will also be changed.\n
+//            (This operation cannot be undone.)\n\nAre you sure you want to delete it?"
 static const char kMsgDelModelJp[] =
     "\x83\x82\x83\x66\x83\x8b\x81\x46"
     "%s"
@@ -485,7 +485,7 @@ static const char kMsgDelModelJp[] =
     "\x82\xF1\x29\n\n"
     "\x8D\xED\x8F\x9C\x82\xB5\x82\xC4\x82\xE0\x82\xE6\x82\xEB\x82\xB5"
     "\x82\xA2\x82\xC5\x82\xB7\x82\xA9\x81\x48";
-// 0x530C00: "モデル削除"
+// 0x530C00: "Delete model"
 static const char kCaptionDelModelJp[] = "\x83\x82\x83\x66\x83\x8b\x8d\xed\x8f\x9c";
 // 0x530CF0: EN delete-model message.
 static const char kMsgDelModelEn[] = "Trying to delete Model(%s). \n"
@@ -501,7 +501,7 @@ static const wchar_t kInitDirModel[] = L"UserFile\\Model";
 static const wchar_t kDefExtPmd[] = L"pmd;pmx";
 // 0x52DC94: "load model"
 static const wchar_t kTitleLoadModel[] = L"load model";
-// 0x52DC84: JP title "ファイルを開く"
+// 0x52DC84: JP title "Open file"
 static const wchar_t kTitleOpenFileJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
 
 // ---------------------------------------------------------------------------
@@ -686,9 +686,9 @@ static void ApplyPlaybackRangeEdits(MMDApp* app, HWND hwnd) {
 // 415 (0x004829E4): frame-range editor.  Edits 0x1A9/0x1AA hold the
 // from/to frames (atol); 0x1B2 holds the target text/combo.  With
 // byte 0x2F8 == 0 the 0x1B2 text is compared byte-exact (repe cmpsb
-// over N bytes incl. the NUL) against "全ﾌﾚｰﾑ"/"All frame" (bone+morph+
-// camera sweep), "全表情ﾌﾚｰﾑ"/"All facial" (morph), "全ボーンフﾚｰﾑ"/
-// "All bone" (bone), "選択ボーン"/"Sel Bone" and "選択表情"/"Sel facial"
+// over N bytes incl. the NUL) against JP "all frames"/"All frame" (bone+morph+
+// camera sweep), JP "all morph frames"/"All facial" (morph), JP "all bone frames"/
+// "All bone" (bone), JP "selected bones"/"Sel Bone" and JP "selected morphs"/"Sel facial"
 // (0x4A27F0 per selected item), else 0x4A27F0 with the raw text.
 // With 0x2F8 != 0 the 0x1B2 combo cursor selects the app-level table
 // (0x374/0x378/0x37C/0x380 or the accessory slot whose byte +0x49D
@@ -1128,7 +1128,7 @@ static void ResetInterpolationCurves(MMDApp* app, HWND hwnd) {
 // owner = dword 0xA0D38 ?: hwnd, filter "All Model files(*.pmd,*.pmx)"
 // (both locales), initial dir = DirModel() when menu 0x12D checked
 // else "UserFile\\Model", def-ext "pmd;pmx", title "load model" (JP:
-// "ファイルを開く"); on OK and menu gate: ExtractDirFromPath(app+0x9F338,
+// JP "Open file"); on OK and menu gate: ExtractDirFromPath(app+0x9F338,
 // path) -> CopyDirPathW(DirModel(), dir); LoadModelFile(app, path);
 // always SelectTimelineTrack(GlobalTimelineTrack::Camera) (also when cancelled).
 // ------------------------------------------------------------------
@@ -1165,11 +1165,11 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
 // ------------------------------------------------------------------
 // 437 (0x0047FCF5): delete model selected in combo 0x1B4.  Gate
 // dword[0xA0B50]; CB_GETCURSEL(0x1B4) -> slot lookup by model byte
-// +0x2D7C (x64 为 255 槽：查找环 0x7FF7CB460A73 mov r13d,0FFh、
-// any-model 环 0x7FF7CB460C2C、逐槽修复环 0x7FF7CB460DB5 均以
-// r13=0xFF 为界); confirm MessageBox (JP caption "モデル削除"
+// +0x2D7C (x64 has 255 slots: search loop 0x7FF7CB460A73 mov r13d,0FFh,
+// any-model loop 0x7FF7CB460C2C and per-slot fixup loop 0x7FF7CB460DB5 all use
+// r13=0xFF as the bound); confirm MessageBox (JP caption "Delete model"
 // unconditionally; EN text "Trying to delete Model(%s)...", JP
-// "モデル：%sを削除します..."; name at model+0x227A EN / +0x2248 JP;
+// JP "Delete model: %s..."; name at model+0x227A EN / +0x2248 JP;
 // flags 0x40001 when 0xA0D38 else 1); teardown of the model-edit
 // sub-window (SeekSelectedModelToCurrentFrame, free 0xA0B7C/0xA0C30, DestroyWindow 0xA0B74,
 // enable 0x1B4/0x198); dispose model (0x40A710(model, 1)), clear the
@@ -1190,7 +1190,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_GETCURSEL, 0, 0);
     app->state.enterKeyState = 1;
     std::int32_t found = -1;
-    // 槽查找环：x64 0x7FF7CB460A73 mov r13d,0FFh（界 255）
+    // Slot search loop: x64 0x7FF7CB460A73 mov r13d,0FFh (bound 255)
     for (std::int32_t i = 0; i < kModelSlotCount; ++i) {
         unsigned char* m = app->ModelSlot(i);
         if (m != nullptr && mdl::Mdl(m)->comboSelIndex == sel) {
@@ -1238,7 +1238,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     app->ModelSlot(found) = nullptr;
     app->SceneModified() = 1;
     app->state.mainModelComboSelection = 0;
-    // any-model 扫描环：x64 0x7FF7CB460C2C mov rcx,r13（=0xFF，同界）
+    // Any-model scan loop: x64 0x7FF7CB460C2C mov rcx,r13 (=0xFF, same bound)
     for (std::int32_t i = 0; i < kModelSlotCount; ++i) {
         if (app->ModelSlot(i) != nullptr) {
             app->state.mainModelComboSelection = 1;
@@ -1264,7 +1264,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     }
     EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_DRAW_ORDER, 1);
     EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_CALCULATION_ORDER, 1);
-    // per-slot fixup：x64 0x7FF7CB460DB5 mov rax,r13（=0xFF）+ 尾部 dec rax/jne
+    // Per-slot fixup: x64 0x7FF7CB460DB5 mov rax,r13 (=0xFF) + trailing dec rax/jne
     for (std::int32_t j = 0; j < kModelSlotCount; ++j) {
         unsigned char* m = app->ModelSlot(j);
         if (m == nullptr) {

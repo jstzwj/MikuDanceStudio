@@ -33,7 +33,7 @@ const char kErrLoad[]   = "Error: failed to load file: ";
 // PE 0x1800b5338 (English) and 0x1800b52f0 (localized variant; Japanese
 // Shift-JIS, byte-verified in the PE image: 71 bytes incl. NUL =
 // "MikuMikuEffect ver.0.37 " + 0x82CD..0x8142, i.e.
-// "はこの形式のファイルをサポートできません。:\n" - NOT a GBK/Chinese string).
+// JP "does not support this file format.:\n" - NOT a GBK/Chinese string).
 const char kErrFormatEn[] = "MikuMikuEffect ver.0.37 cannot support this file format:\n";
 const char kErrFormatLocal[] =
     "MikuMikuEffect ver.0.37 "

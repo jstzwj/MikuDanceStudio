@@ -24,7 +24,7 @@ constexpr const char* kMsgOpenFailJp = "\x83"
                                        "\xf1"
                                        "\x3a"
                                        "\x25"
-                                       "\x64"; // 0x52CDD4 ファイルが読み込めません:%d
+                                       "\x64"; // 0x52CDD4 Cannot load file:%d
 constexpr const char* kTitleOpenFailJp = "\x83"
                                          "\x74"
                                          "\x83"
@@ -36,7 +36,7 @@ constexpr const char* kTitleOpenFailJp = "\x83"
                                          "\x93"
                                          "\xc7"
                                          "\x8d"
-                                         "\x9e"; // 0x52DB80 ファイル読込
+                                         "\x9e"; // 0x52DB80 Load file
 constexpr const char* kMsgNotPmdJp =
     "\x82"
     "\xb1"
@@ -100,7 +100,7 @@ constexpr const char* kMsgNotPmdJp =
     "\x82"
     "\xb9"
     "\x82"
-    "\xf1"; // 0x531548 このファイルはPloygon Movie Maker用モデルファイルではありません
+    "\xf1"; // 0x531548 This is not a model file for Ploygon Movie Maker
 constexpr const char* kTitleModelInfoJp = "\x83"
                                           "\x82"
                                           "\x83"
@@ -110,7 +110,7 @@ constexpr const char* kTitleModelInfoJp = "\x83"
                                           "\x8f"
                                           "\xee"
                                           "\x95"
-                                          "\xf1"; // 0x53153C モデル情報
+                                          "\xf1"; // 0x53153C Model information
 constexpr const char* kMsgNoPerfJp = "\x83"
                                      "\x4f"
                                      "\x83"
@@ -146,7 +146,7 @@ constexpr const char* kMsgNoPerfJp = "\x83"
                                      "\x82"
                                      "\xb9"
                                      "\x82"
-                                     "\xf1"; // 0x531304 グラフィックカードの性能が足りません
+                                     "\xf1"; // 0x531304 The graphics card is not powerful enough
 constexpr const char* kTitleLoad2Jp = "\x83"
                                       "\x74"
                                       "\x83"
@@ -159,7 +159,7 @@ constexpr const char* kTitleLoad2Jp = "\x83"
                                       "\xc7"
                                       "\x8d"
                                       "\x9e"
-                                      "\x32"; // 0x5312F4 ファイル読込2
+                                      "\x32"; // 0x5312F4 Load file 2
 constexpr const char* kLblDispIkOpJp = "\x95"
                                        "\x5c"
                                        "\x8e"
@@ -171,11 +171,11 @@ constexpr const char* kLblDispIkOpJp = "\x95"
                                        "\x8a"
                                        "\x4f"
                                        "\x90"
-                                       "\x65"; // 0x531120 表示･IK･外親
+                                       "\x65"; // 0x531120 Display/IK/external parent
 constexpr const char* kLblFacialJp = "\x95"
                                      "\x5c"
                                      "\x8f"
-                                     "\xee"; // 0x5311E8 表情
+                                     "\xee"; // 0x5311E8 Morphs
 constexpr const char* kMsgModelLimitJp = "\x92"
                                          "\xc7"
                                          "\x89"
@@ -213,7 +213,7 @@ constexpr const char* kMsgModelLimitJp = "\x92"
                                          "\x82"
                                          "\xc5"
                                          "\x82"
-                                         "\xb7"; // 0x52E198 追加できるモデルの最大数は%d個までです
+                                         "\xb7"; // 0x52E198 At most %d models can be added
 constexpr const char* kTitleAddModelJp = "\x83"
                                          "\x82"
                                          "\x83"
@@ -223,7 +223,7 @@ constexpr const char* kTitleAddModelJp = "\x83"
                                          "\x92"
                                          "\xc7"
                                          "\x89"
-                                         "\xc1"; // 0x52E18C モデル追加
+                                         "\xc1"; // 0x52E18C Add model
 constexpr const char* kNameCenter2Jp = "\x91"
                                        "\x80"
                                        "\x8d"
@@ -231,7 +231,7 @@ constexpr const char* kNameCenter2Jp = "\x91"
                                        "\x92"
                                        "\x86"
                                        "\x90"
-                                       "\x53"; // 0x5312C0 操作中心
+                                       "\x53"; // 0x5312C0 Operation center
 constexpr const char* kNameCenterJp = "\x83"
                                       "\x5a"
                                       "\x83"

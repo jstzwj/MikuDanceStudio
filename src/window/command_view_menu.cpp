@@ -106,7 +106,7 @@
 //                          grow locale render size (0x1D4E4/0x1D4E8 ->
 //                          0x1D4FC/0x1D500) + PostDeviceReset when render
 //                          W/H grew; CreateWindowExA "RecWindow" class
-//                          (title 0x52F1C0 "描画中(0 frame)", style
+//                          (title 0x52F1C0 "Rendering (0 frame)", style
 //                          0x80C80000, X = sidebar+0x32, Y = 0x64,
 //                          AdjustWindowRect 0x80C00000) stored at
 //                          app+0xA0D24; CreateWindow-failed MessageBox
@@ -360,17 +360,17 @@ void BoneRotationWriteback(MMDApp* app, const d3dx::D3DXMATRIXF& m) {
 // ---------------------------------------------------------------------------
 
 // ---- JP strings, byte-exact Shift-JIS as in the binary ------------------
-// 0x52F5E0: "物理エンジンについて"
+// 0x52F5E0: "About the physics engine"
 static const char kCaptionPhysEngineJp[] =
     "\x95\xA8\x97\x9D\x83\x47\x83\x93\x83\x57\x83\x93\x82\xC9\x82\xC2"
     "\x82\xA2\x82\xC4";
-// 0x52DFF8: "描画ウィンドウ作成"
+// 0x52DFF8: "Create render window"
 static const char kCaptionCreateWndJp[] =
     "\x98\x5E\x89\xE6\x83\x45\x83\x42\x83\x93\x83\x68\x83\x45\x8D\xEC"
     "\x90\xAC";
-// 0x52F1C0: window title "描画中(0 frame)" (ANSI)
+// 0x52F1C0: window title "Rendering (0 frame)" (ANSI)
 static const char kRecWndTitle[] = "\x98\x5E\x89\xE6\x92\x86(0 frame)";
-// 0x52E2F4: "モデルを選択していないとoniデータは読めません"
+// 0x52E2F4: "Select a model before loading oni data"
 static const char kMsgOpenOniJp[] =
     "\x83\x4A\x83\x81\x83\x89\x81\x45\x8F\xC6\x96\xBE\x83\x82\x81\x5B"
     "\x83\x68\x82\xC5\x82\xCD"
@@ -378,18 +378,18 @@ static const char kMsgOpenOniJp[] =
     "\x83\x66\x81\x5B\x83\x5E\x82\xCD"
     "\x93\xC7\x82\xDF\x82\xDC\x82\xB9\x82\xF1";
 
-// 0x52F650: JP title "拡張モデル保存"
+// 0x52F650: JP title "Save extended model"
 static const wchar_t kTitleSaveModelJp[] = L"\x62E1\x5F35\x30E2\x30C7\x30EB\x4FDD\x5B58";
-// 0x52F218: JP picture filter label "書きの画像フォーマット" (label is
+// 0x52F218: JP picture filter label "Image formats below" (label is
 // followed by a double NUL in the binary - the pattern list is empty).
 static const wchar_t kFilterPicJp[] =
     L"\x5168\x3066\x306E\x5BFE\x5FDC\x30D5\x30A9\x30FC\x30DE\x30C3\x30C8"
     L"\x00\x00"
     L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\x00\x00"
     L"Bmp files(*.bmp)\x00\x00*.bmp\x00\x00";
-// 0x52F1D0: JP title "画像ファイル出力"
+// 0x52F1D0: JP title "Output image file"
 static const wchar_t kTitleRenderJp[] = L"\x753B\x50CF\x30D5\x30A1\x30A4\x30EB\x51FA\x529B";
-// 0x52DC84: JP title "ファイルを開く"
+// 0x52DC84: JP title "Open file"
 static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
 
 // ---- dialog helpers retained in this translation unit ----------------------
@@ -404,12 +404,12 @@ void FillToonTextureEdits(MMDApp* app, HWND hDlg) { // VA 0x0041E9C0
 }
 
 // ---- JP strings of the dialogs, byte-exact -------------------------------
-// 0x52E628: "ON (X印)" (SJIS 0x88F3 = 印); 0x52E624: "OFF".
+// 0x52E628: "ON (X mark)" (SJIS 0x88F3 = mark); 0x52E624: "OFF".
 static const char kOnXMarkJp[] = "ON (X\x88\xF3)";
 static const char kOff[] = "OFF";
 // "fine shadow mode" notice (x64 0x7FF7CB54D6A0 / 0x7FF7CB54D6B0): JP
 // caption = the Fshadow button's two-kanji label + "モード"; JP text =
-// "この命令は画面右上の「<Fshadow label>」ボタンに取って変わりました"
+// "This command has been replaced by the '<Fshadow label>' button at the upper right of the screen"
 // (SJIS, byte-exact).
 static const char kCaptionFineShadowJp[] = "\x94\xFC\x89\x65\x83\x82\x81\x5B\x83\x68";
 static const char kMsgFineShadowJp[] =
@@ -420,7 +420,7 @@ static const char kMsgFineShadowJp[] =
 
 // ===========================================================================
 // 0x44D3F0 - case 251 bone-frame multiply dialog (template caption
-// "multiply of bone position-angle" / ﾎﾞｰﾝﾌﾚｰﾑ位置角度補正; 0x294 EN /
+// "multiply of bone position-angle" / bone-frame position/angle correction; 0x294 EN /
 // 0x27C JP).  WM_INITDIALOG: top-most the dialog when the accessory column
 // exists (app+0xA0D38), prefill the 12 edit boxes 686..697 (even columns
 // "1.0", odd columns "0.0" via EM_REPLACESEL), focus 686 and select all.
@@ -459,7 +459,7 @@ INT_PTR CALLBACK BoneFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 
 // ===========================================================================
 // 0x44D510 - case 252 facial-multiply dialog (template caption "multiply of
-// facial expression" / 表情大きさ補正; 0x295 EN / 0x283 JP).
+// facial expression" / morph magnitude correction; 0x295 EN / 0x283 JP).
 // WM_INITDIALOG: same top-most gate, but only edits 686 ("1.0") and 687
 // ("0.0") are prefilled; focus 686 + select all.
 // WM_COMMAND: id 1 -> sub_43E680 apply + EndDialog(1); id 2 -> EndDialog(2).
@@ -529,9 +529,9 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 
 // ===========================================================================
 // 0x461CE0 - case 275 physics ON/OFF frame dialog (template caption "change
-// physics ON/OFF frame" / 物理ON/OFFフレーム変換; 0x32D EN / 0x32C JP).
+// physics ON/OFF frame" / physics ON/OFF frame conversion; 0x32D EN / 0x32C JP).
 // WM_INITDIALOG: CB_RESETCONTENT(669), CB_ADDSTRING "ON (X mark)" / JP
-// "ON (X印)" then "OFF", CB_SETCURSEL(0).  WM_COMMAND: id 1 -> sub_4403C0
+// "ON (X mark)" then "OFF", CB_SETCURSEL(0). WM_COMMAND: id 1 -> sub_4403C0
 // (CB_GETCURSEL != 0) then EndDialog(1); id 2 -> EndDialog(1) as well (the
 // caller of case 275 never inspects the result).
 // Reference: MikuMikuDance.exe sub_461CE0.
@@ -568,7 +568,7 @@ INT_PTR CALLBACK PhysicsOnOffFrameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 
 // ===========================================================================
 // 0x40FBC0 - case 300 camera numeric-input dialog (template caption
-// "numeric input(camera)" / 数値入力(カメラ); 0x298 EN / 0x289 JP).
+// "numeric input(camera)" / numeric input (camera); 0x298 EN / 0x289 JP).
 // WM_INITDIALOG: top-most gate; the seven temp floats app+0xA0B28..0xA0B40
 // (set by the case-300 camera path: posx/y/z, -cam2.., cam3.., cam4..,
 // -camangle) are written as "%7.3f" into edits 637..642 + 644 via
@@ -609,7 +609,7 @@ INT_PTR CALLBACK CameraNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 
 // ===========================================================================
 // 0x40F860 - case 300 bone numeric-input dialog (template caption "numeric
-// input(bone)" / 数値入力(ボーン); 0x297 EN / 0x288 JP).
+// input(bone)" / numeric input (bone); 0x297 EN / 0x288 JP).
 // WM_INITDIALOG: top-most gate; the six temp floats app+0xA0B28..0xA0B3C
 // (pos x/y/z + the three euler angles in degrees, set by the case-300 bone
 // path) are written as "%7.3f" into edits 637..642; focus 637 + select all.
@@ -1219,7 +1219,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // ------------------------------------------------------------------
     // 277 (0x0048B2F7): shadow toggle - menu 0x115 from GetMenuState bit
     // 8, SetRenderState(0xA1, on/off) (x64 sub_7FF7CB45F550 0x7FF7CB46FAB4:
-    // vtable+0x1C8 = 槽 57; x86 +0xE4/4 = 槽 57).
+    // vtable+0x1C8 = slot 57; x86 +0xE4/4 = slot 57).
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_ANTIALIASING: {
         app->LetterKeyState(LetterKey::H) = 1;

@@ -102,7 +102,7 @@ static bool InitTimelineAudio(MMDApp* app, HWND hwnd, HDC timeline, bool english
     if (FAILED(DirectSoundCreate(nullptr, &directSound, nullptr))) {
         // x64 sub_7FF7CB4FA070 @ 0x7FF7CB4FA0C9: JP text is the full blob at
         // 0x7FF7CB552568 =
-        // "DirectSoundが生成できません\nDirectSoundの使用が不可能です".
+        // "Cannot create DirectSound.\nDirectSound is unavailable".
         // Caption stays the empty string: the original passes a pointer at
         // a NUL byte (IDA name "Locale" resolves to zeroed data).
         static const char kJpCannotMakeDirectSound[] =
@@ -115,7 +115,7 @@ static bool InitTimelineAudio(MMDApp* app, HWND hwnd, HDC timeline, bool english
     }
     if (FAILED(directSound->SetCooperativeLevel(hwnd, DSSCL_PRIORITY))) {
         // JP text at x64 0x7FF7CB5525C8:
-        // "DirectSoundの協調に失敗しました".
+        // "Failed to set DirectSound cooperative level".
         static const char kJpFailedCooperateDirectSound[] =
             "DirectSound\x82\xCC\x8B\xA2\x92\xB2\x82\xC9\x8E\xB8\x94\x73\x82\xB5\x82\xDC\x82\xB5\x82\xBD";
         MessageBoxA(hwnd,
@@ -383,7 +383,7 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         // texture are PNG resources 102 and 114 in the original image.
         // PNG 102 load failure gets the original's error box (x64
         // 0x7FF7CB4328EE, caption "InitFont"): EN "cannot load splite.tga"
-        // / JP "splite.tga読込失敗" (0x7FF7CB54B4C0/B4D9).  The original
+        // / JP "Failed to load splite.tga" (0x7FF7CB54B4C0/B4D9). The original
         // asset was named splite.tga; preserve the original message even
         // though the embedded sheet is maintained as hud_sprites.png.
         // Non-fatal: the original shows the box and falls through to

@@ -452,9 +452,9 @@ void FrameDriver(MMDApp* app) {
         auto cb = reinterpret_cast<OpenNIIsTrackingFn>(s.OpenniTrackingCallback()); // 0xA03D4
         if (cb != nullptr)
             cb(&selActive);
-        // 0x46DCCF..0x46DD61（x64 0x7FF7CB44A34C..0x7FF7CB44A3EC）：原版
-        // 泵在探测之后立即做的深度图请求与菜单 0x124 卫生（oni_skeleton_
-        // pump.cpp 含地址锚点）。
+        // 0x46DCCF..0x46DD61 (x64 0x7FF7CB44A34C..0x7FF7CB44A3EC): the original
+        // pump's depth-map request and menu 0x124 maintenance immediately after detection (address anchors in oni_skeleton_
+        // pump.cpp).
         ManageKinectRecordGate(app, selActive);
     }
 
@@ -508,18 +508,18 @@ void FrameDriver(MMDApp* app) {
 
     // ---- 6. playback catch-up + physics (0x46EEE0..0x46FEB8) ------------
     PlaybackCatchup(app, selActive);
-    // ---- 6.5 Kinect 骨架驱动泵块（x64 0x7FF7CB44C12E..0x7FF7CB44C656）----
-    // 原版位于物理帧内部：settle 上升沿请求（0x7FF7CB44C12E）之后、gate B
-    // （0x7FF7CB44C65B）之前。settle 请求已移植在 physics_frame.cpp，该文件
-    // 本轮冻结，故此处按同一三重门先行调用（门输入互不影响；块尾与
-    // DisableKinect 都会补置 settle，先后次序无观测差异）。
-    // oni_skeleton_pump.cpp 含完整地址锚点。
+    // ---- 6.5 Kinect skeleton driver pump block (x64 0x7FF7CB44C12E..0x7FF7CB44C656) ----
+    // Originally inside the physics frame, after the settle rising-edge request (0x7FF7CB44C12E) and before gate B
+    // (0x7FF7CB44C65B). The settle request is already ported in physics_frame.cpp, which was
+    // frozen for this pass, so invoke it first here under the same three conditions (the gate inputs are independent; both the block tail and
+    // DisableKinect request settling again, so their order has no observable difference).
+    // oni_skeleton_pump.cpp contains the complete address anchors.
     PumpKinectSkeleton(app, selActive);
     PhysicsFrame(app, selActive);
-    // x64 0x7FF7CB456F21（泵尾，紧随 previousMouse 回写 0x7FF7CB456F08..F17）:
-    // 把本趟 selActive 滞留进 app+0xA137C；下一趟物理帧的 settle 请求
-    // （0x7FF7CB44C12E）读它做上升沿判定。物理帧已消费完上一趟的值，
-    // 此处回写不影响本趟。
+    // x64 0x7FF7CB456F21 (pump tail, immediately after previousMouse stores at 0x7FF7CB456F08..F17):
+    // latch this iteration's selActive into app+0xA137C; the next physics frame's settle request
+    // (0x7FF7CB44C12E) reads it to detect a rising edge. This frame has already consumed the previous value,
+    // so writing it here does not affect the current iteration.
     s.state.selectionActiveLatch = selActive;
 
     // The original produces text at 0x46FECF and resets/rebuilds the

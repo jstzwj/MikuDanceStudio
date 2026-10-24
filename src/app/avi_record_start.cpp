@@ -72,13 +72,13 @@ bool BuildRecordingGraph(DShowRecorder* recorder, HWND hwnd, unsigned char engli
 
 namespace {
 
-// 0x52E040: "録画中…" / 0x52E04C: "Recording..."
+// 0x52E040: "Recording..." (JP) / 0x52E04C: "Recording..." (EN)
 const char kRecTitleJp[] = "\x98\x5E\x89\xE6\x92\x86\x81\x63";
 const char kRecTitleEn[] = "Recording...";
-// 0x52DFF8: "録画ウィンドウ作成" (caption), text 0x52E00C "CreateWindow failed"
+// 0x52DFF8: "Create recording window" (caption), text 0x52E00C "CreateWindow failed"
 const char kCaptionRecWndJp[] =
     "\x98\x5E\x89\xE6\x83\x45\x83\x42\x83\x93\x83\x68\x83\x45\x8D\xEC\x90\xAC";
-// 0x52E060/0x52E0B8: "出力ファイルを作成できません。..." / "AVI出力"
+// 0x52E060/0x52E0B8: "Cannot create the output file..." / "AVI output"
 const char kMsgSaveFailJp[] =
     "\x8F\x6F\x97\xCD\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xF0\x8D\xEC\x90\xAC"
     "\x82\xC5\x82\xAB\x82\xDC\x82\xB9\x82\xF1\x81\x42\x0A\x91\xBC\x82\xCC\x83"
@@ -90,7 +90,7 @@ const char kCaptionAviOutJp[] = "\x41\x56\x49\x8F\x6F\x97\xCD";
 const char kMsgSaveFailEn[] =
     "Cannot make save file.\nPlease check whether other application open it.";
 const char kCaptionAviOutEn[] = "AVI save failed";
-// 0x52E690: "3D Vision出力時は、画面解像度以上のサイズのAVIは出力できません"
+// 0x52E690: "3D Vision output cannot produce an AVI larger than the screen resolution"
 const char kMsg3dVisionJp[] =
     "\x33\x44\x20\x56\x69\x73\x69\x6F\x6E\x8F\x6F\x97\xCD\x8E\x9E\x82\xCD\x81"
     "\x41\x89\x66\x96\xCA\x89\xF0\x91\xFC\x93\x78\x88\xC8\x8F\xE3\x82\xCC\x83"

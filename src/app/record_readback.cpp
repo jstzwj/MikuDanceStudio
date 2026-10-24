@@ -24,7 +24,7 @@
 //     ended) break; Sleep(1) } - paces the push to the pin's FillBuffer
 //     consumption (SetBitmapInfo seeds the ack, each push clears it,
 //     FillBuffer re-sets it); vtable slot 4, x64 call [vt+0x20] at
-//     0x7FF7CB44B1EF / 轮询循环头 0x7FF7CB44B200                 0x46E8D9
+//     0x7FF7CB44B1EF / polling loop head 0x7FF7CB44B200                 0x46E8D9
 //     lazy GetBackBuffer (sub+0x1D538) + Present(NULL, NULL, NULL,
 //     NULL) + D3DERR_DEVICELOST recovery (message pump + 0x440DB0)
 //                                                                   0x46E92C
@@ -48,7 +48,7 @@
 //     (dst walks down from (capH-1)*capW*4, src up by Pitch)       0x46EE16
 //     push: rec+0x68 vtable slot 5 fn(push, [0x9F334]) - the
 //     per-frame bits handoff to MMDxShow (x64 call [vt+0x28] at
-//     0x7FF7CB44B836; x86 原版同一槽的字节偏移是 +0x14)         0x46EEB0
+//     0x7FF7CB44B836; the x86 original uses byte offset +0x14 for the same slot) 0x46EEB0
 //     UnlockRect([0x9EB8C])                                        0x46EECC
 //   then falls into the catch-up counter/display (0x46EFBE, already
 //   ported as PlaybackCatchup section 1).
@@ -107,17 +107,17 @@ inline void TraceRec(const char*, ...) {
 }
 #endif
 
-// 与 dshow_record_graph.cpp / shutdown_cleanup.cpp 相同的 vtable 槽索引
-// 惯用法：槽号是 ABI 无关的（x86 槽距 4 字节、x64 槽距 8 字节），按索引
-// 取就不会把 x86 的字节偏移带进 x64 构建。
+// Same vtable-slot-index convention as dshow_record_graph.cpp / shutdown_cleanup.cpp:
+// slot indices are ABI-independent (4-byte slots on x86, 8-byte slots on x64). Using indices
+// avoids carrying x86 byte offsets into x64 builds.
 // The push interface (app+0xA06C0 object, +0x68 field).  IPushSource is
 // an STDMETHODCALLTYPE (stdcall) interface: `this` travels as the first
 // stack argument (the ABI the original binary's push-style call sites
 // use).  A cdecl cast here drifts the stack 8 bytes per call and corrupts
 // the caller's locals.
 long CallStreamingState(IPushSource* push, void* flagPtr) {
-    // GetStreamingState = 槽 4：x64 原版 call [vt+0x20] @0x7FF7CB44B1EF
-    // （轮询循环头 0x7FF7CB44B217，返回值与 0x80004005 比较即流结束）。
+    // GetStreamingState = slot 4: original x64 call [vt+0x20] at 0x7FF7CB44B1EF
+    // (polling loop head 0x7FF7CB44B217; comparing the result with 0x80004005 detects stream end).
     return push->GetStreamingState(flagPtr);
 }
 
@@ -284,8 +284,8 @@ bool RecordingReadbackPass(MMDApp* app) {
                  "\n",
                  passCount, (void*)push, (int)capW, (int)capH);
     if (push != nullptr) { // 0x46EEB0
-        // 帧推送 = 槽 5：x64 原版 call [vt+0x28] @0x7FF7CB44B836，
-        // rdx = 像素缓冲（[r12+0xA0298]），返回值不检查。
+        // Frame submission = slot 5: original x64 call [vt+0x28] at 0x7FF7CB44B836,
+        // rdx = pixel buffer ([r12+0xA0298]); the return value is ignored.
         push->StartStreaming(reinterpret_cast<DWORD_PTR>(s.CaptureReadbackPixels()));
     }
     (*sysSlot)->UnlockRect(); // 0x46EECC

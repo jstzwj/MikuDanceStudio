@@ -142,76 +142,76 @@ namespace mikudancestudio {
 // ---------------------------------------------------------------------------
 // Japanese strings, byte-exact Shift-JIS as in the binary.
 // ---------------------------------------------------------------------------
-// 0x52FC88: "不要ポイントの削除" (delete-unused-frame caption, 0xDE)
-static const char kCaptionDelUnusedJp[] = "\x95\x73\x97\x76"                 // 不要
+// 0x52FC88: "Delete unused points" (delete-unused-frame caption, 0xDE)
+static const char kCaptionDelUnusedJp[] = "\x95\x73\x97\x76"                 // unused
                                           "\x83\x7C\x83\x43\x83\x93\x83\x67" // ポイント
-                                          "\x82\xCC\x8D\xED\x8F\x9C";        // の削除
-// 0x52FB60: "リップフレーム削除" (delete-lip-frame caption, 0xE2)
+                                          "\x82\xCC\x8D\xED\x8F\x9C";        // delete
+// 0x52FB60: "Delete lip frames" (delete-lip-frame caption, 0xE2)
 static const char kCaptionDelLipJp[] =
     "\x83\x8A\x83\x62\x83\x76\x83\x74\x83\x8C\x81\x5B\x83\x80" // リップフレーム
-    "\x8D\xED\x8F\x9C";                                        // 削除
-// 0x52FB08: "リップのフレームを全て削除します\n表情フレームの変更は元に戻せません\n\nよろしいですか？"
+    "\x8D\xED\x8F\x9C";                                        // delete
+// 0x52FB08: "Delete all lip frames.\nMorph-frame changes cannot be undone.\n\nAre you sure?"
 static const char kMsgDelLipJp[] =
     "\x83\x8A\x83\x62\x83\x76\x82\xCC"                                  // リップの
     "\x83\x74\x83\x8C\x81\x5B\x83\x80\x82\xF0"                          // フレームを
-    "\x91\x53\x82\xC4\x8D\xED\x8F\x9C\x82\xB5\x82\xDC\x82\xB7\n"        // 全て削除します
-    "\x95\x5C\x8F\xEE\x83\x74\x83\x8C\x81\x5B\x83\x80"                  // 表情フレーム
-    "\x82\xCC\x95\xCF\x8D\x58\x82\xCD"                                  // の変更は
-    "\x8C\xB3\x82\xC9\x96\xDF\x82\xB9\x82\xDC\x82\xB9\x82\xF1\n\n"      // 元に戻せません
+    "\x91\x53\x82\xC4\x8D\xED\x8F\x9C\x82\xB5\x82\xDC\x82\xB7\n"        // delete all
+    "\x95\x5C\x8F\xEE\x83\x74\x83\x8C\x81\x5B\x83\x80"                  // morph frames
+    "\x82\xCC\x95\xCF\x8D\x58\x82\xCD"                                  // changes
+    "\x8C\xB3\x82\xC9\x96\xDF\x82\xB9\x82\xDC\x82\xB9\x82\xF1\n\n"      // cannot be undone
     "\x82\xE6\x82\xEB\x82\xB5\x82\xA2\x82\xC5\x82\xB7\x82\xA9\x81\x48"; // よろしいですか？
-// 0x52FA58: "目のフレームを全て削除します\n表情フレームの変更は元に戻せません\n\nよろしいですか？"
+// 0x52FA58: "Delete all eye frames.\nMorph-frame changes cannot be undone.\n\nAre you sure?"
 static const char kMsgDelEyesJp[] =
-    "\x96\xDA\x82\xCC\x83\x74\x83\x8C\x81\x5B\x83\x80\x82\xF0"          // 目のフレームを
-    "\x91\x53\x82\xC4\x8D\xED\x8F\x9C\x82\xB5\x82\xDC\x82\xB7\n"        // 全て削除します
-    "\x95\x5C\x8F\xEE\x83\x74\x83\x8C\x81\x5B\x83\x80"                  // 表情フレーム
-    "\x82\xCC\x95\xCF\x8D\x58\x82\xCD"                                  // の変更は
-    "\x8C\xB3\x82\xC9\x96\xDF\x82\xB9\x82\xDC\x82\xB9\x82\xF1\n\n"      // 元に戻せません
+    "\x96\xDA\x82\xCC\x83\x74\x83\x8C\x81\x5B\x83\x80\x82\xF0"          // eye frames
+    "\x91\x53\x82\xC4\x8D\xED\x8F\x9C\x82\xB5\x82\xDC\x82\xB7\n"        // delete all
+    "\x95\x5C\x8F\xEE\x83\x74\x83\x8C\x81\x5B\x83\x80"                  // morph frames
+    "\x82\xCC\x95\xCF\x8D\x58\x82\xCD"                                  // changes
+    "\x8C\xB3\x82\xC9\x96\xDF\x82\xB9\x82\xDC\x82\xB9\x82\xF1\n\n"      // cannot be undone
     "\x82\xE6\x82\xEB\x82\xB5\x82\xA2\x82\xC5\x82\xB7\x82\xA9\x81\x48"; // よろしいですか？
-// 0x52F9A8: "まゆのフレームを全て削除します\n表情フレームの変更は元に戻せません\n\nよろしいですか？"
+// 0x52F9A8: "Delete all eyebrow frames.\nMorph-frame changes cannot be undone.\n\nAre you sure?"
 static const char kMsgDelEyebrowJp[] =
     "\x82\xDC\x82\xE4\x82\xCC\x83\x74\x83\x8C\x81\x5B\x83\x80\x82\xF0"  // まゆのフレームを
-    "\x91\x53\x82\xC4\x8D\xED\x8F\x9C\x82\xB5\x82\xDC\x82\xB7\n"        // 全て削除します
-    "\x95\x5C\x8F\xEE\x83\x74\x83\x8C\x81\x5B\x83\x80"                  // 表情フレーム
-    "\x82\xCC\x95\xCF\x8D\x58\x82\xCD"                                  // の変更は
-    "\x8C\xB3\x82\xC9\x96\xDF\x82\xB9\x82\xDC\x82\xB9\x82\xF1\n\n"      // 元に戻せません
+    "\x91\x53\x82\xC4\x8D\xED\x8F\x9C\x82\xB5\x82\xDC\x82\xB7\n"        // delete all
+    "\x95\x5C\x8F\xEE\x83\x74\x83\x8C\x81\x5B\x83\x80"                  // morph frames
+    "\x82\xCC\x95\xCF\x8D\x58\x82\xCD"                                  // changes
+    "\x8C\xB3\x82\xC9\x96\xDF\x82\xB9\x82\xDC\x82\xB9\x82\xF1\n\n"      // cannot be undone
     "\x82\xE6\x82\xEB\x82\xB5\x82\xA2\x82\xC5\x82\xB7\x82\xA9\x81\x48"; // よろしいですか？
-// 0x52FAAC: "新規作成" - the original reuses this string as the JP caption
+// 0x52FAAC: "New" - the original reuses this string as the JP caption
 // of the delete-eyes / delete-eyebrow confirmations (shared constant).
-static const char kCaptionNewJp[] = "\x90\x56\x8B\x4B\x8D\xEC\x90\xAC"; // 新規作成
-// 0x52F900: "このモデルの表情に「まばたき」がない為\n自動リップブランクはできません"
+static const char kCaptionNewJp[] = "\x90\x56\x8B\x4B\x8D\xEC\x90\xAC"; // New
+// 0x52F900: "This model has no 'blink' morph, so\nautomatic blinking is unavailable"
 static const char kMsgNoBlinkMorphJp[] =
     "\x82\xB1\x82\xCC\x83\x82\x83\x66\x83\x8B\x82\xCC\x95\x5C\x8F\xEE\x82\xC9"
     "\x81\x68\x82\xDC\x82\xCE\x82\xBD\x82\xAB\x81\x68\x82\xAA\x82\xC8\x82\xA2"
     "\x88\xD7\n\x8E\xA9\x93\xAE\x83\x8A\x83\x62\x83\x76\x83\x56\x83\x93\x83\x4E"
     "\x82\xCD\x82\xC5\x82\xAB\x82\xDC\x82\xB9\x82\xF1";
-// 0x52A570: "まばたきランダム登録"
+// 0x52A570: "Register random blinks"
 static const char kCaptionRegBlinkJp[] =
     "\x82\xDC\x82\xCE\x82\xBD\x82\xAB\x83\x89\x83\x93\x83\x5F\x83\x80\x93\x6F\x98\x5E";
-// 0x52F8A0: "まばたき追加" (blink-count report caption)
+// 0x52F8A0: "Add blinks" (blink-count report caption)
 static const char kCaptionBlinkCntJp[] = "\x82\xDC\x82\xCE\x82\xBD\x82\xAB\x92\xC7\x89\xC1";
-// x64 0x7FF7CB54EB38 (x86 0x52FC9C): "%d個のポイントを削除しました" - the
+// x64 0x7FF7CB54EB38 (x86 0x52FC9C): "Deleted %d points" - the
 // delete-unused-frames report format (case 222, JP branch of
 // "%d point was deleted.").
 static const char kFmtPointsDeletedJp[] = "%d"
-                                          "\x8C\xC2"                          // 個
+                                          "\x8C\xC2"                          // item count
                                           "\x82\xCC"                          // の
                                           "\x83\x7C\x83\x43\x83\x93\x83\x67"  // ポイント
                                           "\x82\xF0"                          // を
-                                          "\x8D\xED\x8F\x9C"                  // 削除
+                                          "\x8D\xED\x8F\x9C"                  // deleted
                                           "\x82\xB5\x82\xDC\x82\xB5\x82\xBD"; // しました
-// x64 0x7FF7CB54EF80 (x86 0x52F8B0): "%d回のまばたきを追加しました" - the
+// x64 0x7FF7CB54EF80 (x86 0x52F8B0): "Added %d blinks" - the
 // random-blink-registration report format (case 227, JP branch of
 // "%d blinking is registerd").
 static const char kFmtBlinksAddedJp[] = "%d"
-                                        "\x89\xF1"                          // 回
+                                        "\x89\xF1"                          // occurrence count
                                         "\x82\xCC"                          // の
                                         "\x82\xDC\x82\xCE\x82\xBD\x82\xAB"  // まばたき
                                         "\x82\xF0"                          // を
-                                        "\x92\xC7\x89\xC1"                  // 追加
+                                        "\x92\xC7\x89\xC1"                  // added
                                         "\x82\xB5\x82\xDC\x82\xB5\x82\xBD"; // しました
 // 0x52F99C: "まばたき" + NULs - the blink-morph name compared by 9 bytes.
 static const char kNameMabataki[] = "\x82\xDC\x82\xCE\x82\xBD\x82\xAB\x00\x00\x00\x00";
-// 0x530A88: "別コピー先へペースト" (case 250 caption)
+// 0x530A88: "Paste to another copy destination" (case 250 caption)
 static const char kCaptionPasteJp[] = "\x95\xCA\xCC\xDA\xB0\xD1\x82\xD6\xCD\xDF\xB0\xBD\xC4";
 // 0x5309A0: accessary paste confirmation (case 250)
 static const char kMsgPasteAccJp[] =
@@ -235,7 +235,7 @@ static const char kMsgPasteBoneJp[] =
     "\x82\xF0\x91\x49\x91\xF0\x82\xB5\x82\xC4\n\x8D\xED\x8F\x9C\x82\xB5"
     "\x82\xDC\x82\xB7\n\n\x82\xE6\x82\xEB\x82\xB5\x82\xA2\x82\xC5\x82\xB7"
     "\x82\xA9\x81\x48";
-// 0x530878 / 0x530834: "操作対象アクセサリ/ボーン(画面左上に表示)を選択して下さい"
+// 0x530878 / 0x530834: "Select the target accessory/bone (shown at the upper left of the screen)"
 static const char kMsgSelectAccJp[] =
     "\x91\x80\x8D\xEC\x91\xCE\x8F\xDB\x83\x41\x83\x4E\x83\x5A\x83\x54"
     "\x83\x8A\x28\x89\xE6\x96\xCA\x8D\xB6\x8F\xE3\x82\xC9\x95\x5C\x8E\xA6"
@@ -251,33 +251,33 @@ static const char kMsgSelectBoneJp[] =
 // read (only silence the compiler's format-string warning).
 static const wchar_t kEmptyPathFormat[] = L"\x0\x0%s%s";
 
-// 0x52B834: "このPCで処理できる大きさを超えています" (canvas-size dialog
+// 0x52B834: "The size exceeds what this PC can handle" (canvas-size dialog
 // "too big for your PC!" JP text, 0x40ECE0; x64 0x7FF7CB54F9E8 is
 // byte-identical)
 static const char kMsgCanvasTooBigJp[] = "\x82\xB1\x82\xCC\x50\x43\x82\xC5" // このPCで
-                                         "\x8F\x88\x97\x9D\x82\xC5\x82\xAB" // 処理でき
-                                         "\x82\xE9\x91\xE5\x82\xAB\x82\xB3" // る大きさ
-                                         "\x82\xF0\x92\xB4\x82\xA6\x82\xC4" // を超えて
+                                         "\x8F\x88\x97\x9D\x82\xC5\x82\xAB" // can handle
+                                         "\x82\xE9\x91\xE5\x82\xAB\x82\xB3" // size
+                                         "\x82\xF0\x92\xB4\x82\xA6\x82\xC4" // exceeds
                                          "\x82\xA2\x82\xDC\x82\xB7";        // います
-// 0x52B884: "終了フレームが開始フレームより小さいです" (AVI end<start JP
+// 0x52B884: "End frame is smaller than start frame" (AVI end<start JP
 // text, 0x40F2F0).  The bytes mix SJIS kanji with half-width katakana
 // (ﾌﾚｰﾑ = CC DA B0 D1) exactly as stored in the binary - copied verbatim.
-static const char kMsgEndLessJp[] = "\x98\x5E\x89\xE6"         // 終了
+static const char kMsgEndLessJp[] = "\x98\x5E\x89\xE6"         // end
                                     "\x8F\x49\x97\xB9"         // ﾌﾚｰﾑ (JIS X 0212 form of フレーム)
                                     "\xCC\xDA\xB0\xD1"         // ﾌﾚｰﾑ (half-width)
                                     "\x82\xAA"                 // が
-                                    "\x98\x5E\x89\xE6"         // 終了
-                                    "\x8A\x4A\x8E\x6E"         // 開始
+                                    "\x98\x5E\x89\xE6"         // end
+                                    "\x8A\x4A\x8E\x6E"         // start
                                     "\xCC\xDA\xB0\xD1"         // ﾌﾚｰﾑ (half-width)
                                     "\x82\xE6\x82\xE8\x82\xE0" // よりも
-                                    "\x8F\xAC\x82\xB3\x82\xA2\x82\xC5\x82\xB7"; // 小さいです
-// 0x52B784: "カメラ" / 0x52D390: "照明" / 0x52D398: "セルフ影" /
-// 0x52D3A4: "重力" - accessory-type combo entries of the modal dialog
+                                    "\x8F\xAC\x82\xB3\x82\xA2\x82\xC5\x82\xB7"; // is smaller
+// 0x52B784: "Camera" / 0x52D390: "Lighting" / 0x52D398: "Self-shadow" /
+// 0x52D3A4: "Gravity" - accessory-type combo entries of the modal dialog
 // (0x44CA40), sent as wide strings (SendMessageW).
 static const wchar_t kAccTypeCameraJp[] = L"\x30AB\x30E1\x30E9";           // カメラ
-static const wchar_t kAccTypeLightJp[] = L"\x7167\x660E";                  // 照明
-static const wchar_t kAccTypeSelfShadowJp[] = L"\x30BB\x30EB\x30D5\x5F71"; // セルフ影
-static const wchar_t kAccTypeGravityJp[] = L"\x91CD\x529B";                // 重力
+static const wchar_t kAccTypeLightJp[] = L"\x7167\x660E";                  // lighting
+static const wchar_t kAccTypeSelfShadowJp[] = L"\x30BB\x30EB\x30D5\x5F71"; // self-shadow
+static const wchar_t kAccTypeGravityJp[] = L"\x91CD\x529B";                // gravity
 
 // 0x529679: the original's "Locale" label - a zero-initialised string blob,
 // so the canvas "too big" MessageBox caption is EMPTY (the original pushes
@@ -425,7 +425,7 @@ void ApplyAccessorySettingsDialog(MMDApp* app, int count, HWND hDlg);           
 LRESULT __stdcall GroundShadowColorEditSubclassProc(HWND, UINT, WPARAM, LPARAM); // VA 0x0040F730
 
 // VA 0x0040ECE0 - screen-size dialog proc (template caption "screen size" /
-// 出力画面サイズ変更; case 212, tpl 0x28D/0x25F).
+// change output image size; case 212, tpl 0x28D/0x25F).
 // WM_INITDIALOG: topmost, edits 0x26D/0x26E pre-filled with "%3d" of
 // app+0xA08D4/0xA08D8 (render w/h), focus + select-all on 0x26D.  OK: atol
 // both edits; when either exceeds the D3D wrapper caps (maxTextureWidth/
@@ -495,7 +495,7 @@ INT_PTR __stdcall ModelOffsetDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 }
 
 // VA 0x0040F0B0 - frame-shift dialog proc (template caption "frame number
-// to shift" / シフトするﾌﾚｰﾑ数; case 225, tpl 0x28F/
+// to shift" / number of frames to shift; case 225, tpl 0x28F/
 // 0x267).  WM_INITDIALOG: topmost, edit 0x268 pre-filled "0", focus +
 // select-all.  OK: app+0xA08F4 = atol(edit 0x268) and EndDialog(1).
 // Cancel: EndDialog(2).
@@ -622,7 +622,7 @@ INT_PTR __stdcall AviOutDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 }
 
 // VA 0x0044D2D0 - camera-frame multiply dialog proc (template caption
-// "multiply of camera frame position-angle" / ｶﾒﾗﾌﾚｰﾑ位置角度補正; case 242,
+// "multiply of camera frame position-angle" / camera-frame position/angle correction; case 242,
 // tpl 0x291/0x26F).
 // WM_INITDIALOG: topmost; the 8 scale/edit pairs 0x2AE..0x2BD are
 // pre-filled ("1.0" on the even ids, "0.0" on the odd ids), focus +
@@ -658,7 +658,7 @@ INT_PTR __stdcall CameraFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 }
 
 // VA 0x0042DFF0 - modeless ground-shadow-color dialog proc (template caption
-// "ground shadow color" / 地面影色設定; case 248, tpl 0x292/
+// "ground shadow color" / ground shadow color settings; case 248, tpl 0x292/
 // 0x270).  WM_INITDIALOG: topmost; the value edit 0x272 is subclassed
 // (old wndproc saved to app+0xA0B18, new proc sub_40F730) and filled with
 // "%3.2f" of the scale float app+0xA0BF0; the trackbar 0x271 gets range
@@ -1205,7 +1205,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         ofn.nMaxFileTitle = 0x100;
         ofn.lpstrFileTitle = fileTitle;
         ofn.lpstrTitle = app->EnglishUI() != 0 ? L"output AVI file"  // 0x52F700
-                                               : L"AVI\x51FA\x529B"; // 0x52F6F4 "AVI出力"
+                                               : L"AVI\x51FA\x529B"; // 0x52F6F4 "AVI output"
         if (!GetSaveFileNameW(&ofn)) {
             break;
         }
@@ -1820,8 +1820,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
 
     // ------------------------------------------------------------------
     // 232 (0x00487266): load background picture.  GetOpenFileNameW with
-    // the multi-part picture filter (EN "All Picture files" / JP "全ての
-    // 対応フォーマット", 8 extensions, defext "bmp"), initial dir
+    // the multi-part picture filter (EN "All Picture files" / JP "All supported
+    // formats", 8 extensions, defext "bmp"), initial dir
     // "UserFile\BackGround" or DirBg when the 0x12D menu gate is checked;
     // dir-copy into DirBg + path-copy into app+0x9E448, then
     // LoadBackgroundPicture and the dirty flag.
@@ -1873,9 +1873,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         wchar_t fileTitle[0x100];
         ofn.nMaxFileTitle = 0x100;
         ofn.lpstrFileTitle = fileTitle;
-        ofn.lpstrTitle = app->EnglishUI() != 0 ? L"load picture data"               // 0x530140
-                                               : L"\x80CC\x666F\x753B\x50CF"        // 背景画像
-                                                 L"\x30C7\x30FC\x30BF\x8AAD\x8FBC"; // データ読込
+        ofn.lpstrTitle = app->EnglishUI() != 0 ? L"load picture data"        // 0x530140
+                                               : L"\x80CC\x666F\x753B\x50CF" // background image
+                                                 L"\x30C7\x30FC\x30BF\x8AAD\x8FBC"; // load data
         if (!GetOpenFileNameW(&ofn)) {
             break;
         }

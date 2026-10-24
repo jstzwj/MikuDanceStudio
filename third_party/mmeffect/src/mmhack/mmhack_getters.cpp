@@ -5,7 +5,7 @@
 #include "mmhack_state.h"
 #include "mmhack_api.h"
 
-// 宿主附件对象布局：GetAcsAttachedPmd 的借位读取面（+0x240/+0x244）。
+// Host accessory layout: direct-read view for GetAcsAttachedPmd (+0x240/+0x244).
 #include "mikudancestudio/accessory_layout.hpp"
 
 MmhState g_mmh;
@@ -16,21 +16,21 @@ extern "C" {
 BOOL __cdecl GetAcsAttachedPmd(unsigned long long accessory_id,
                                unsigned long long* model_id, int* bone_index)
 {
-    // 原版数据流：[0x1800012ea] sub_18000F2B0 对不在 objData 图中的 id 在
-    // [0x18000f331] 直接 return a1——把 id 当宿主附件对象指针借位使用，随后
-    // [0x1800012ef] mov ecx,[rax+240h] / [0x1800012f5] mov ebp,[rax+244h] 从
-    // 该对象内存实时抽取附属模型索引（+0x240，-1 = 未附属，宿主侧即
-    // AccessoryRecord::parentModel）与附属骨骼索引（+0x244 =
-    // AccessoryRecord::parentBone）。原版 ObjData 自身从不写这两个字段
-    // （MMHack.dll 全库无 +0x240 写入点，仅有本函数一处读取），借位读取是
-    // 唯一真实数据源；本工程对象 id 同为宿主附件对象指针（ExpGetAcsID 返回
-    // AccessoryRecord*，x64 侧不再 32 位截断），因此同样直接借用、每调用
-    // 实时读取。
-    // [0x1800012fd] 仅精确 -1 判未附属；非 -1 时 [0x180001306] ecx 保持
-    // attachPmdIndex 调 ExpGetPmdID（槽枚举失败返回 0 同样落 FALSE），
-    // [0x18000130c] mov eax,eax 零扩展后写 64 位模型 id 出参、[0x18000131e]
-    // 写 32 位骨骼出参（原版两个出参无条件写，仅 FALSE 时模型 id 为 0），
-    // [0x180001325] setnz 返回 (PmdID != 0)。
+    // Original data flow: [0x1800012ea] for an id absent from the objData map, sub_18000F2B0
+    // directly returns a1 at [0x18000f331], treating the id as a host accessory pointer. Then
+    // [0x1800012ef] mov ecx,[rax+240h] / [0x1800012f5] mov ebp,[rax+244h] read
+    // the attached model index (+0x240, -1 = unattached, AccessoryRecord::parentModel on the host) and
+    // attached bone index (+0x244 =
+    // AccessoryRecord::parentBone) directly from that object's current memory. The original ObjData never writes these fields
+    // (MMHack.dll has no +0x240 writes anywhere, only this function's read); the direct read is
+    // the sole real data source. Object ids in this project are also host accessory pointers (ExpGetAcsID returns
+    // AccessoryRecord*, no longer truncated to 32 bits on x64), so read the host object directly on every
+    // call as well.
+    // [0x1800012fd] Only exactly -1 means unattached; otherwise [0x180001306] keeps ecx as
+    // attachPmdIndex and calls ExpGetPmdID (slot enumeration failure returns 0 and also yields FALSE).
+    // [0x18000130c] mov eax,eax zero-extends the value before writing the 64-bit model id output; [0x18000131e]
+    // writes the 32-bit bone output (the original writes both outputs unconditionally; on FALSE, the model id is 0).
+    // [0x180001325] setnz returns (PmdID != 0).
     int pmdIndex = -1;
     int boneIndex = 0;
     if (accessory_id != 0) {
@@ -173,9 +173,9 @@ BOOL __cdecl IsEffectFileUsed(void)
 // --- ordinal 20 [0x180001110 IsToonUsed] -------------------------------------
 BOOL __cdecl IsToonUsed(void)
 {
-    // [0x180001122] 原版是纯 bool:
+    // [0x180001122] The original is a pure bool:
     //   (DAT_18006e798 == 1 || DAT_18006e798 == 2) && BYTE3(qword_18006e788) == 0
-    // drawType 非 1/2 时恒 FALSE（原版没有 technic 高位数值返回路径）。
+    // Always FALSE when drawType is neither 1 nor 2 (the original has no path returning numeric technic high bits).
     return ((g_mmh.currentDrawType == 1 || g_mmh.currentDrawType == 2) &&
             g_mmh.diffuseFlag == 0)
                ? TRUE

@@ -294,7 +294,7 @@ void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
         // errorText with prefix and path directly concatenated.
         const char* prefix = MmeIsEnglishUiMode()
             ? "Failed to load effect file:"   // 0x1800b3b18 (EN)
-            // unk_1800B3AE8, Shift-JIS "エフェクトファイルの読み込みに失敗しました:"
+            // unk_1800B3AE8, Shift-JIS "Failed to load effect file:"
             : "\x83\x47\x83\x74\x83\x46\x83\x4E\x83\x67\x83\x74"
               "\x83\x40\x83\x43\x83\x8B\x82\xCC\x93\xC7\x82\xDD"
               "\x8D\x9E\x82\xDD\x82\xC9\x8E\xB8\x94\x73\x82\xB5"
@@ -1004,9 +1004,9 @@ void MmeEmmSetDefaultEffect(const std::string& path)
 
 void MmeEmmSetSubsetShown(ModelData* model, int subsetIndex, bool shown)
 {
-    // 写侧共三个入口：EMM 应用（MmeEmmLoad）、EMD 应用（MmeEmdLoad，先整表
-    // 替换）与分配对话框 Hide/Show 的转接缝（原版写入工作映射 (0, object,
-    // subset) 节点的 +0x30）。subsetIndex < 0 属整对象，走 ModelData::setShown。
+    // Three write entry points: applying EMM (MmeEmmLoad), applying EMD (MmeEmdLoad, replacing the whole table
+    // first), and assignment-dialog Hide/Show integration (the original writes working-map (0, object,
+    // subset) node +0x30). subsetIndex < 0 denotes the whole object and uses ModelData::setShown.
     if (model == nullptr || subsetIndex < 0) {
         return;
     }
@@ -1015,7 +1015,7 @@ void MmeEmmSetSubsetShown(ModelData* model, int subsetIndex, bool shown)
 
 bool MmeEmmSubsetShowRecorded(const ModelData* model, int subsetIndex, bool* shown)
 {
-    // hasShow 查询：内层 map 命中 == 该 "[n].show" 行存在。
+    // hasShow query: an inner-map hit means the "[n].show" line exists.
     if (model == nullptr || subsetIndex < 0 || shown == nullptr) {
         return false;
     }
@@ -1034,10 +1034,10 @@ bool MmeEmmSubsetShowRecorded(const ModelData* model, int subsetIndex, bool* sho
 
 bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex)
 {
-    // [FUN_18002DB10 0x18002db10] 绘制/绑定路径的有效可见性查询：
-    // [0x18002db34] 子集节点 hasShow → 取其值；[0x18002db42-0x18002db5b]
-    // 否则回退整对象记录（键 -1；移植侧为 ModelData::shown()）；
-    // [0x18002db61] 都未记录 → 默认可见（true）。
+    // [FUN_18002DB10 0x18002db10] Effective visibility query for drawing/binding paths:
+    // [0x18002db34] If the subset node hasShow, use its value; [0x18002db42-0x18002db5b]
+    // otherwise fall back to the whole-object record (key -1; ModelData::shown() in the port);
+    // [0x18002db61] if neither is recorded, default to visible (true).
     bool shown = false;
     if (MmeEmmSubsetShowRecorded(model, subsetIndex, &shown)) {
         return shown;
@@ -1050,8 +1050,8 @@ bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex)
 
 void MmeEmmClearSubsetShows(ModelData* model)
 {
-    // [FUN_180031980] EMD 应用是整表替换：先清对象的整条 show 记录（对应
-    // 原版工作映射对该对象既有节点的擦除），再写入文件中的行。
+    // [FUN_180031980] Applying EMD replaces the whole table: first clear all show records for the object (matching
+    // erasure of its existing working-map nodes in the original), then write the file's lines.
     if (model == nullptr) {
         return;
     }
@@ -1208,11 +1208,11 @@ bool MmeEmmLoad(const char* path)
                     assignedPaths.push_back(sit->second);
                 }
             }
-            // [FUN_18002E8D0 @0x18002fe7c-0x18002ffa9] "[n].show" 行与路径行
-            // 同一循环落地：仅有 show 行（无路径行）的子集也 find-or-create
-            // 一个工作节点（hasShow=+1，值=+0x30），遍历上界是对象材质数
-            // (*(object+0x38))——越界的 n 整行忽略。运行时生效见
-            // MmeEmmEffectiveSubsetShown（绘制门转接缝）。
+            // [FUN_18002E8D0 at 0x18002fe7c-0x18002ffa9] Apply "[n].show" lines in the same loop as path lines:
+            // subsets containing only a show line (without a path line) also find or create
+            // a working node (hasShow=+1, value=+0x30). The iteration bound is the object's material count
+            // (*(object+0x38)); ignore an entire line if n is out of range. Runtime behavior is in
+            // MmeEmmEffectiveSubsetShown (draw-gate integration).
             const int emmShowCount = model->materialCount();
             for (std::map<int, bool>::const_iterator sit = entry.subsetShows.begin();
                  sit != entry.subsetShows.end(); ++sit) {
@@ -1298,11 +1298,11 @@ bool MmeEmmSave(const char* path)
                                 it->second.empty() ? kNone : AbsPathCopy(it->second);
                         }
                         // [FUN_180030590 @0x180030db2-0x180030e30] "[n].show"
-                        // 行合成：每个 hasShow 的子集节点写一行（值取 +0x30），
-                        // 遍历上界是材质数（*(object+0x38)）——只在管理层的
-                        // 注册表里记录过的子集才输出（原版同：无记录即无行）。
-                        // EmmFile::Save 按 n = 0..max(path,show) 与 "[n]" 行
-                        // 交错输出（[FUN_18004C160]）。
+                        // Line synthesis: write one line for each subset node with hasShow (value from +0x30),
+                        // bounded by material count (*(object+0x38)); output only subsets recorded in the manager's
+                        // registry (as in the original: no record means no line).
+                        // EmmFile::Save interleaves these with "[n]" lines for n = 0..max(path,show)
+                        // ([FUN_18004C160]).
                         bool emmRowShown = false;
                         for (int n = 0; n < row.model->materialCount(); ++n) {
                             if (MmeEmmSubsetShowRecorded(row.model, n, &emmRowShown)) {
@@ -1405,8 +1405,8 @@ bool MmeEmdLoad(const char* path, const std::vector<ModelData*>& targets)
                 assignedPaths.push_back(resolved);
             }
         }
-        // "[n].show" 行与 "[n]" 同一界内落地（材质数上界，越界忽略），运行
-        // 时生效见 MmeEmmEffectiveSubsetShown。
+        // Apply "[n].show" within the same bounds as "[n]" (material-count limit; ignore out-of-range lines); runtime
+        // behavior is in MmeEmmEffectiveSubsetShown.
         for (std::map<int, bool>::const_iterator it = entry.subsetShows.begin();
              it != entry.subsetShows.end(); ++it) {
             if (it->first >= 0 && it->first < materialCount) {
@@ -1531,38 +1531,38 @@ bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::st
     return true;
 }
 
-// --- [FUN_18002DEF0 / sub_18000B880] 热重载的绑定重解析 ----------------------
-// 参见 emm_manager.h 的总注释：这一族入口绝不触碰分配映射（effectFile /
-// subsetEffects / show 记录），只按当前分配表重建绑定对缓存条目的引用。
+// --- [FUN_18002DEF0 / sub_18000B880] Re-resolve bindings during hot reload ----------------------
+// See the general comment in emm_manager.h: these entry points never modify assignment maps (effectFile /
+// subsetEffects / show records); they rebuild binding references to cache entries from current assignments.
 
 namespace {
 
-// path 为空串 = Reload All 的“全部受影响绑定”；否则精确匹配绑定路径。
+// Empty path means all affected bindings for Reload All; otherwise match binding paths exactly.
 bool EffectPathInReloadScope(const std::string& bindingPath, const std::string& path)
 {
     return path.empty() || bindingPath == path;
 }
 
-// [0x18000ba10-0x18000bbcf] sub_18000B880 失败报告块的热重载版：errorText +
-// "\n" 日志、失败缓存条目卸载（[0x18000ba43]）、语言分支的
-// "Failed to load effect file:" 弹窗（dedup 门）。与 ApplyEffectToModel 的
-// 失败块唯一差别：不清除分配——原版重载失败后工作映射原样保留，绑定维持
-// 无效果直到文件再次变化（stamp 已更新，轮询静默）。
+// [0x18000ba10-0x18000bbcf] Hot-reload version of sub_18000B880's failure reporting: errorText +
+// "\n" log, unload the failed cache entry ([0x18000ba43]), language-specific
+// "Failed to load effect file:" dialog (dedup gate). The only difference from ApplyEffectToModel's
+// failure block is retaining the assignment: original reload failures preserve the working map; the binding remains
+// without an effect until the file changes again (stamp is updated, polling is silent).
 void ReportReloadFailure(const std::string& effectPath,
                          const std::shared_ptr<LoadedEffect>& loaded)
 {
     if (loaded == nullptr) {
         return;
     }
-    // [0x18000ba10] 第一段：原始 errorText + 一个 "\n"（空行分隔）。
+    // [0x18000ba10] First part: original errorText + one "\n" (blank-line separator).
     MmeLogWrite((loaded->errorText + "\n").c_str(), 0);
-    // [0x18000ba43] 先卸载失败条目，再组装弹窗文本。
+    // [0x18000ba43] Unload the failed entry before assembling the dialog text.
     MmeEngineUnloadEffectFile(effectPath);
-    // [0x18000ba52-0x18000ba74] ExpGetEnglishMode（回退 byte_1800D99DD=0，
-    // 日文）选择前缀；文本 = 前缀 + 路径 + "\n\n" + errorText。
+    // [0x18000ba52-0x18000ba74] ExpGetEnglishMode (fallback byte_1800D99DD=0,
+    // Japanese) selects the prefix; text = prefix + path + "\n\n" + errorText.
     const char* prefix = MmeIsEnglishUiMode()
         ? "Failed to load effect file:"   // 0x1800b3b18 (EN)
-        // unk_1800B3AE8, Shift-JIS "エフェクトファイルの読み込みに失敗しました:"
+        // unk_1800B3AE8, Shift-JIS "Failed to load effect file:"
         : "\x83\x47\x83\x74\x83\x46\x83\x4E\x83\x67\x83\x74"
           "\x83\x40\x83\x43\x83\x8B\x82\xCC\x93\xC7\x82\xDD"
           "\x8D\x9E\x82\xDD\x82\xC9\x8E\xB8\x94\x73\x82\xB5"
@@ -1574,7 +1574,7 @@ void ReportReloadFailure(const std::string& effectPath,
     MmeLogWrite(message.c_str(), 1);   // dedup + MessageBoxA (FUN_180009080 flag)
 }
 
-// 装载（失败时已按 sub_18000B880 失败路径报告），成功返回缓存条目。
+// Load (failures have already been reported through sub_18000B880's failure path); return the cached entry on success.
 std::shared_ptr<LoadedEffect> ReloadEffectForRebind(IDirect3DDevice9* device,
                                                     const std::string& effectPath)
 {
@@ -1583,15 +1583,15 @@ std::shared_ptr<LoadedEffect> ReloadEffectForRebind(IDirect3DDevice9* device,
         if (loaded != nullptr && !loaded->errorText.empty()) {
             ReportReloadFailure(effectPath, loaded);
         }
-        // errorText 为空 = 文件缺失（stamp==0）：sub_18000BC90 @0x18000bd19
-        // 的静默早退，无日志无弹窗。
+        // Empty errorText = missing file (stamp==0): sub_18000BC90 at 0x18000bd19
+        // returns early and silently, without a log or dialog.
         return std::shared_ptr<LoadedEffect>();
     }
     return loaded;
 }
 
-// [0x18000bc10-0x18000bc53] "done.\n\n"（0x1800B3AE0）的 v11 闩：只有本轮
-// 真正跑过装载器的文件记一次（LoadedEffect::doneLogged），缓存命中静默。
+// [0x18000bc10-0x18000bc53] v11 latch for "done.\n\n" (0x1800B3AE0): log only once for files
+// actually passed through the loader this round (LoadedEffect::doneLogged); cache hits are silent.
 void LogDoneOnce(const std::shared_ptr<LoadedEffect>& loaded)
 {
     if (loaded != nullptr && !loaded->doneLogged) {
@@ -1604,10 +1604,10 @@ void LogDoneOnce(const std::shared_ptr<LoadedEffect>& loaded)
 
 void MmeReleaseEffectBindings(const std::string& path)
 {
-    // 消费半程 A：受影响绑定原位置空 effect/sas/owner（MmeEnsureMaterialBinding
-    // 的原位更新分支），旧缓存条目在最后一个引用死亡时经 ~LoadedEffect 执行
-    // FUN_18000B210 语义。分配映射不动；绑定不存在时创建无效果占位（原版
-    // 工作映射节点在分配时即建立，装载失败的节点同样以无效果绑定存在）。
+    // Consumption phase A: clear effect/sas/owner in affected bindings in place (MmeEnsureMaterialBinding's
+    // in-place update branch); the old cache entry executes FUN_18000B210 semantics through ~LoadedEffect
+    // when its last reference dies. Assignments remain unchanged; absent bindings get no-effect placeholders (the original
+    // creates working-map nodes at assignment time, and failed-load nodes likewise exist as no-effect bindings).
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return;
@@ -1617,12 +1617,12 @@ void MmeReleaseEffectBindings(const std::string& path)
         if (model == nullptr) {
             continue;
         }
-        // 整对象节点 (0, model, -1)
+        // Whole-object node (0, model, -1)
         const std::string& whole = model->effectFile();
         if (!whole.empty() && EffectPathInReloadScope(whole, path)) {
             MmeEnsureMaterialBinding(0, model, -1, nullptr, whole, nullptr);
         }
-        // [n] 子集节点 (0, model, n)——分配表原样遍历，只释放引用
+        // [n] subset node (0, model, n): traverse assignments unchanged, releasing only references
         for (std::map<int, std::string>::const_iterator it = model->subsetEffects().begin();
              it != model->subsetEffects().end(); ++it) {
             if (it->second.empty() || !EffectPathInReloadScope(it->second, path)) {
@@ -1635,11 +1635,11 @@ void MmeReleaseEffectBindings(const std::string& path)
 
 bool MmeRebindEffectAssignments(const std::string& path)
 {
-    // 消费半程 B：按当前分配表重跑解析。逐模型先整对象后子集（原版
-    // sub_18002C910 的遍历序：每对象先 (object, -1) 再 (object, 0..count-1)，
-    // 模型序 = 注册序）。装载失败的分配保留原值，等待文件修复后的下一次
-    // stamp 变化——与 MmeAssignEffect/ApplyEffectToModel 的“失败即清分配”
-    // 语义相反，正是原版热重载的行为。
+    // Consumption phase B: resolve again from current assignments, whole-object then subsets per model (original
+    // sub_18002C910 traversal: (object, -1) followed by (object, 0..count-1) for each object,
+    // in model registration order). Failed-load assignments retain their values, waiting for the next
+    // stamp change after file repair, unlike MmeAssignEffect/ApplyEffectToModel's "clear assignment on failure"
+    // semantics; this matches original hot reload.
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return false;
@@ -1655,8 +1655,8 @@ bool MmeRebindEffectAssignments(const std::string& path)
         if (!whole.empty() && EffectPathInReloadScope(whole, path)) {
             std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, whole);
             if (fresh != nullptr) {
-                // 场景类接线（renderClass/drawsGeometry/sceneTechIndex）随解析重建；
-                // 类别降级为 object 时由解析内部 ClearSasBinding。
+                // Rebuild scene-class wiring (renderClass/drawsGeometry/sceneTechIndex) during resolution;
+                // resolution internally calls ClearSasBinding when the class falls back to object.
                 MmeResolveModelEffectBinding(model);
                 LogDoneOnce(fresh);
                 any = true;
@@ -1680,9 +1680,9 @@ bool MmeRebindEffectAssignments(const std::string& path)
 
 bool MmeAnyEffectBindingForPath(const std::string& path)
 {
-    // [0x18000b972 `if (!*(a1))`] 文件级等价：是否仍有引用该 .fx 且持有
-    // 效果的活绑定。直接走管理器绑定树（不经 MmeFindMaterialBinding 的
-    // offscreen DefaultEffect 短接缝——轮询语义与绘制窗口无关）。
+    // [0x18000b972 `if (!*(a1))`] File-level equivalent: whether any live binding still references this .fx and holds
+    // an effect. Traverse the manager binding tree directly (without MmeFindMaterialBinding's
+    // offscreen DefaultEffect shortcut; polling semantics are independent of the drawing window).
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr) {
         return false;
@@ -1764,13 +1764,13 @@ void MmeAutoSaveEmmForPmm(const wchar_t* pmmPath)
     if (!MmeBuildEmmPathForPmm(pmmAnsi.c_str(), &emmPath)) {
         return;
     }
-    // [FUN_1800431E0 @0x180043307-0x1800433ea] 无对话框、静默直存（行为级
-    // 一致，非 divergence）：FUN_180057290 把预构建的 .emm 路径作为第二参
-    // 传入（0x1800573ed: mov r8, rbx / Buffer），FUN_1800431E0 在 a2 != NULL
-    // 时直接 strcpy_s 后调 FUN_1800315F0 序列化——GetSaveFileNameA 分支
-    // （a2 == NULL）只属于 40010 菜单命令（sub_180044080 @0x1800451b9:
-    // xor edx, edx）。用户取消对话框（返回 0）时菜单路径不保存，与自动
-    // 保存无关。
+    // [FUN_1800431E0 at 0x180043307-0x1800433ea] Save directly and silently without a dialog (behaviorally
+    // identical, no divergence): FUN_180057290 passes the prebuilt .emm path as the second argument
+    // (0x1800573ed: mov r8, rbx / Buffer); when a2 != NULL, FUN_1800431E0
+    // directly calls strcpy_s then FUN_1800315F0 to serialize. The GetSaveFileNameA branch
+    // (a2 == NULL) belongs only to menu command 40010 (sub_180044080 at 0x1800451b9:
+    // xor edx, edx). Canceling the dialog (return 0) skips saving on the menu path and has no bearing on automatic
+    // saving.
     MmeEmmSave(emmPath.c_str());
 }
 

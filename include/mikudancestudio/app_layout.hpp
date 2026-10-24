@@ -190,11 +190,11 @@ struct MMDAppState {
     std::int32_t scrollNPos;
     RawPad<20> pad67;
     std::int32_t timelineScrollNPage; // +0x970 timeline scrollbar cached nPage
-                                      //  (x64 app+0x1440, PanelPaint 内嵌
-                                      //  SCROLLINFO 的 nPage，HScroll case 2/3 回读)
+                                      //  (x64 app+0x1440, nPage in PanelPaint's embedded
+                                      //  SCROLLINFO; read back by HScroll cases 2/3)
     std::int32_t timelineScrollNPos;  // +0x974 timeline scrollbar cached nPos
-                                      //  (x64 app+0x1444, HScroll case 5 回读
-                                      //  的是 nPos 而非 nMin)
+                                      //  (x64 app+0x1444, HScroll case 5 reads back
+                                      //  nPos rather than nMin)
     RawPad<4> pad67b;
     std::int32_t timelineStartFrame;
     std::int32_t currentFrame;
@@ -543,10 +543,10 @@ struct MMDAppState {
     // timeline row-selected flags (was a03E4..a03E7); the original walks
     // them as four consecutive bytes (0x441097 / 0x472C5F).
     unsigned char globalTrackSelected[4];
-    // +0xA03E8 / x64 0xA137C: 上一趟泵的 selActive 滞留闩锁。x64 泵尾
-    // 0x7FF7CB456F21 把本趟 var_1784（OpenNI 选择回调的 selActive）写回
-    // 此处，App 初始化 0x7FF7CB42CA4C 清零；物理帧 0x46F7FF /
-    // x64 0x7FF7CB44C12E 只在它为零（上一趟未激活，上升沿）时请求 settle。
+    // +0xA03E8 / x64 0xA137C: latched selActive from the previous pump iteration. The x64 pump tail
+    // at 0x7FF7CB456F21 stores this iteration's var_1784 (selActive from the OpenNI selection callback)
+    // here; app initialization at 0x7FF7CB42CA4C clears it. The physics frame at 0x46F7FF /
+    // x64 0x7FF7CB44C12E requests settling only when it is zero (previously inactive; rising edge).
     unsigned char selectionActiveLatch;
     unsigned char automaticFrameAdvanceEnabled;
     unsigned char openniVersion;

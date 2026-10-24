@@ -164,7 +164,7 @@ void EnableSceneLight(MMDApp* app) {
 }
 
 // Japanese strings, byte-exact Shift-JIS as in the binary.
-// 0x530648: "アクセサリ：%sを削除します\nアクセサリのフレームデータも全て削除されます\n(この操作は元に戻す事はできません)\n\n削除してもよろしいですか？"
+// 0x530648: "Delete accessory: %s.\nAll of the accessory's frame data will also be deleted.\n(This operation cannot be undone.)\n\nAre you sure you want to delete it?"
 static const char kMsgDelAccessoryJp[] =
     "\x83\x41\x83\x4E\x83\x5A\x83\x54\x83\x8A\x81\x46"
     "%s"
@@ -177,7 +177,7 @@ static const char kMsgDelAccessoryJp[] =
     "\x82\xF1\x29\n\n"
     "\x8D\xED\x8F\x9C\x82\xB5\x82\xC4\x82\xE0\x82\xE6\x82\xEB\x82\xB5"
     "\x82\xA2\x82\xC5\x82\xB7\x82\xA9\x81\x48";
-// 0x530638: "アクセサリ削除"
+// 0x530638: "Delete accessory"
 static const char kCaptionDelAccessoryJp[] =
     "\x83\x41\x83\x4E\x83\x5A\x83\x54\x83\x8A\x8D\xED\x8F\x9C";
 
@@ -188,11 +188,11 @@ static const char kCaptionDelAccessoryJp[] =
 static const wchar_t kEmptyPathFormat[] = L"\x0\x0%s%s";
 
 // 0x52D948: JP open-filter for accessories (double-NUL terminated):
-// "読込可能ファイル(*.x,*.vac)"
+// "Supported files (*.x,*.vac)"
 static const wchar_t kFilterAccJp[] = L"\x8AAD\x8FBC\x53EF\x80FD\x30D5\x30A1\x30A4\x30EB"
                                       L"(*.x,*.vac)\x00*.x;*.vac\x00x files(*.x)\x00*.x\x00"
                                       L"vac files(*.vac)\x00";
-// 0x52DC84: JP dialog title "ファイルを開く"
+// 0x52DC84: JP dialog title "Open file"
 static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
 
 // ---------------------------------------------------------------------------

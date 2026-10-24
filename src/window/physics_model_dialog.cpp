@@ -189,40 +189,40 @@ static_assert(__builtin_bit_cast(std::uint32_t, kPiShort) == 0x40490FD8u, "trunc
 
 // ---- JP strings, byte-exact Shift-JIS as in the binary --------------------
 // x64 0x7FF7CB54F2A0 / x86 0x52E724:
-// "編集結果を'拡張モデル保存'で新しいモデルとして保存して下さい"
+// "Save the edited result as a new model using 'Save extended model'"
 static const char kMsgEnhanceModelJp[] =
     "\x95\xd2\x8f\x57\x8c\x8b\x89\xca\x82\xcd\x27\x8a\x67\x92\xa3"
     "\x83\x82\x83\x66\x83\x8b\x95\xdb\x91\xb6\x27\x82\xc5\x90\x56"
     "\x82\xb5\x82\xa2\x83\x82\x83\x66\x83\x8b\x82\xc6\x82\xb5\x82"
     "\xc4\x95\xdb\x91\xb6\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
-// x64 0x7FF7CB54F290 / x86 0x52E764: "モデル拡張"
+// x64 0x7FF7CB54F290 / x86 0x52E764: "Model extension"
 static const char kCaptionEnhanceModelJp[] = "\x83\x82\x83\x66\x83\x8b\x8a\x87\x92\xa3";
-// x64 0x7FF7CB551198: "Joint角度制限"
+// x64 0x7FF7CB551198: "Joint angle limits"
 static const char kCaptionAngleLimitJp[] = "Joint\x8a\x70\x93\x78\x90\xa7\x8c\xc0";
 // x64 0x7FF7CB5511A8:
-// "Bulletの仕様上、y軸の角度制限は-90<y<90の間しか設定できません"
+// "Bullet only supports Y-axis angle limits within -90<y<90"
 static const char kMsgAngleLimitJp[] =
     "Bullet\x82\xcc\x8e\x64\x97\x6c\x8f\xe3\x81\x41y\x8e\xb2\x82"
     "\xcc\x8a\x70\x93\x78\x90\xa7\x8c\xc0\x82\xcd-90<y<90\x82\xcc"
     "\x8a\xd4\x82\xb5\x82\xa9\x90\xdd\x92\xe8\x82\xc5\x82\xab\x82"
     "\xdc\x82\xb9\x82\xf1";
-// x64 0x7FF7CB551240: "ジョイント追加"
+// x64 0x7FF7CB551240: "Add joint"
 static const char kCaptionAddJointJp[] = "\x83\x57\x83\x87\x83\x43\x83\x93\x83\x67\x92\xc7\x89\xc1";
 // x64 0x7FF7CB551250:
-// "剛体が一つもありません\n先に剛体を追加して下さい"
+// "There are no rigid bodies.\nAdd a rigid body first."
 static const char kMsgNoBodyJp[] = "\x8d\x84\x91\xcc\x82\xaa\x88\xea\x82\xc2\x82\xe0\x82\xa0\x82"
                                    "\xe8\x82\xdc\x82\xb9\x82\xf1\x0a\x90\xe6\x82\xc9\x8d\x84\x91"
                                    "\xcc\x82\xf0\x92\xc7\x89\xc1\x82\xb5\x82\xc4\x89\xba\x82\xb3"
                                    "\x82\xa2";
 // x64 0x7FF7CB55129C: last group-combo entry (Shift-JIS)
 static const char kGroup16Jp[] = "16(\x8f\xb0)";
-// x64 0x7FF7CB5512B8 / x86 0x52BF90: "半径" (径 = 0x8C61; 0x8CA1 would be 牽)
+// x64 0x7FF7CB5512B8 / x86 0x52BF90: "Radius" (the second character = 0x8C61; 0x8CA1 means 'pull')
 static const char kLabelRadiusJp[] = "\x94\xbc\x8c\x61";
-// x64 0x7FF7CB5512D8: "　幅" (full-width space + width)
+// x64 0x7FF7CB5512D8: " width" (full-width space + width)
 static const char kLabelWidthJp[] = "\x81\x40\x95\x9d";
-// x64 0x7FF7CB5512E0: "高さ"
+// x64 0x7FF7CB5512E0: "Height"
 static const char kLabelHeightJp[] = "\x8d\x82\x82\xb3";
-// x64 0x7FF7CB5512E8: "奥行"
+// x64 0x7FF7CB5512E8: "Depth"
 static const char kLabelDepthJp[] = "\x89\x9c\x8d\x73";
 
 namespace {

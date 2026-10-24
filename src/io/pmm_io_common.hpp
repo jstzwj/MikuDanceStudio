@@ -15,8 +15,8 @@
 // wide UI string table are byte-identical between the dialects.
 //
 // Wave5-C IDA verdict (x86 original): the four SJIS texts once believed to
-// differ per dialect (the chain formats' 以降, the セープデータ caption, the
-// 代換可 accessory note) are SINGLE .rdata copies referenced by both loader
+// differ per dialect (the chain formats' "and later", the "save data" caption, the
+// "substitution allowed" accessory note) are SINGLE .rdata copies referenced by both loader
 // bodies; byte-per-body duplicates live in pmm_load_v1/v2.cpp (merge
 // candidates once the loader split lands).
 //

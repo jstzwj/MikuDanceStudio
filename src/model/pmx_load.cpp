@@ -75,8 +75,8 @@ using mdl::At;
 using d3dx::D3DXMATRIXF;
 
 // ---- JP header-error texts (byte-exact Shift-JIS as in the x64 .rdata) ----
-// x64 0x7FF7CB551D38 / x86 0x53140C: "PMXファイルのバージョンは2.0しか読み
-// 込めません" - the version-gate message (JP branch of "PMX files version is
+// x64 0x7FF7CB551D38 / x86 0x53140C: JP "Only PMX version 2.0 can be
+// loaded" - the version-gate message (JP branch of "PMX files version is
 // different from 2.0.").  The x64 lists the blob as "PMX"; the SJIS tail
 // follows inline.
 static const char kMsgPmxVersionJp[] = "PMX"
@@ -86,42 +86,42 @@ static const char kMsgPmxVersionJp[] = "PMX"
                                        "\x82\xCD"                                 // は
                                        "2.0"
                                        "\x82\xB5\x82\xA9"                 // しか
-                                       "\x93\xC7\x82\xDD\x8D\x9E\x82\xDF" // 読み込め
+                                       "\x93\xC7\x82\xDD\x8D\x9E\x82\xDF" // can load
                                        "\x82\xDC\x82\xB9\x82\xF1";        // ません
-// x64 0x7FF7CB551DA8 / x86 0x531390: "MMDではエンコード方式がUTF16のPMXファ
-// イルしか読み込めません" - the encoding-gate message (JP branch of
+// x64 0x7FF7CB551DA8 / x86 0x531390: JP "MMD can only load PMX files
+// encoded in UTF16" - the encoding-gate message (JP branch of
 // "MMD can't read UTF8 encorded PMX.\nPlease exchange it to UTF16.").
 static const char kMsgPmxUtf8Jp[] = "MMD"
                                     "\x82\xC5\x82\xCD"                         // では
                                     "\x83\x47\x83\x93\x83\x52\x81\x5B\x83\x68" // エンコード
-                                    "\x95\xFB\x8E\xAE"                         // 方式
+                                    "\x95\xFB\x8E\xAE"                         // method
                                     "\x82\xAA"                                 // が
                                     "UTF16"
                                     "\x82\xCC" // の
                                     "PMX"
                                     "\x83\x74\x83\x40\x83\x43\x83\x8B" // ファイル
                                     "\x82\xB5\x82\xA9"                 // しか
-                                    "\x93\xC7\x82\xDD\x8D\x9E\x82\xDF" // 読み込め
+                                    "\x93\xC7\x82\xDD\x8D\x9E\x82\xDF" // can load
                                     "\x82\xDC\x82\xB9\x82\xF1";        // ません
-// JP caption of both header errors: "ファイル読込" - same blob the PMD open
+// JP caption of both header errors: "Load file" - same blob the PMD open
 // path uses (x64 0x7FF7CB550880, x86 0x52DB80; = kTitleOpenFailJp).
-// x64 0x7FF7CB551FF0: モデル"%s"の表情"%s"に不正なデータが含まれています
-// \n強制的に変換します - the wrong-morph-data message (JP branch of
-// "%s include wrong data in morph %s"; 表情 is MMD's word for a morph).
+// x64 0x7FF7CB551FF0: Morph "%s" in model "%s" contains invalid data
+// \nForcibly converting - the wrong-morph-data message (JP branch of
+// "%s include wrong data in morph %s"; the Japanese expression means a morph in MMD).
 static const wchar_t kFmtPmxWrongMorphDataJp[] = L"\x30E2\x30C7\x30EB" // モデル
                                                  L"\"%s\""
                                                  L"\x306E"       // の
-                                                 L"\x8868\x60C5" // 表情
+                                                 L"\x8868\x60C5" // morph
                                                  L"\"%s\""
                                                  L"\x306B"                   // に
-                                                 L"\x4E0D\x6B63\x306A"       // 不正な
+                                                 L"\x4E0D\x6B63\x306A"       // invalid
                                                  L"\x30C7\x30FC\x30BF"       // データ
                                                  L"\x304C"                   // が
-                                                 L"\x542B\x307E\x308C\x3066" // 含まれて
+                                                 L"\x542B\x307E\x308C\x3066" // contained
                                                  L"\x304A\x308A\x307E\x3059" // おります
                                                  L"\n"
-                                                 L"\x5F37\x5236\x7684\x306B"        // 強制的に
-                                                 L"\x5909\x63DB\x3057\x307E\x3059"; // 変換します
+                                                 L"\x5F37\x5236\x7684\x306B"        // forcibly
+                                                 L"\x5909\x63DB\x3057\x307E\x3059"; // convert
 
 IDirect3DDevice9* DevOf(D3DRenderer* sub) {
     return sub->device; // wrapper + 120032
@@ -285,7 +285,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo, std::uin
             if (i == 3)
                 swprintf_s(buf, 0x14, L"NoInfo");
             else if (i == 2) // empty JP comment slot (x64 0x7FF7CB4C9F5A)
-                swprintf_s(buf, 0x14, L"\x60C5\x5831\x306A\x3057"); // 情報なし
+                swprintf_s(buf, 0x14, L"\x60C5\x5831\x306A\x3057"); // no information
             else
                 swprintf_s(buf, 0x14, L"Null_%02d", nullIdx++);
         }
@@ -313,8 +313,8 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo, std::uin
         };
         static const VbSpec kSpec[5] = {
             {32, 274}, {48, 524818}, {64, 2622226}, {80, 11011090}, {96, 44565778}};
-        // additional-UV 数正常域 0..4；畸形文件的 5..7 回落 0 档（原版
-        // default 分支同取 32/274，掩码本身是原版的 UB，不复制越界读）。
+        // Valid additional-UV counts are 0..4; malformed counts 5..7 fall back to mode 0 (the original
+        // default also uses 32/274; the mask itself invokes original UB, whose out-of-bounds read is not copied).
         const std::uint32_t uvLadder =
             model.pmxAdditionalUvCount < 5 ? model.pmxAdditionalUvCount : 0;
         const VbSpec& s = kSpec[uvLadder];
@@ -756,7 +756,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo, std::uin
             WideToSjis(sub, reinterpret_cast<char*>(bone),
                        reinterpret_cast<const wchar_t*>(bone->jpText), 0x14);
             // center bone detection (SJIS memcmp, 9 bytes with NUL; x64
-            // 0x7FF7CB4CC36D: 操作中心 first, センター as pre-flag
+            // 0x7FF7CB4CC36D: operation center first, center as pre-flag
             // fallback - same pair/order as the PMD path)
             if (!std::memcmp(bone->name, kNameCenter2Jp, 9)) {
                 model.centerBone = i;
@@ -1534,9 +1534,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo, std::uin
             if (rb.mode == 0)
                 rb.staticFlag = 1;
             // PMX positions are bone-relative - subtract the bone pos.
-            // 负 boneIndex 时原版同样以 bones[0].position 做重定基并在正向
-            // 平移加回：sub_7FF7CB4C9AC0 @0x7FF7CB4D0DF4..0x7FF7CB4D0E9D
-            // （重定基三分量 +13Ch/+140h/+144h）、@0x7FF7CB4D0FEA（正向平移）
+            // For negative boneIndex, the original also rebases using bones[0].position and adds it back in the forward
+            // translation: sub_7FF7CB4C9AC0 at 0x7FF7CB4D0DF4..0x7FF7CB4D0E9D
+            // (three rebase components +13Ch/+140h/+144h), at 0x7FF7CB4D0FEA (forward translation)
             const std::int32_t bi = rb.boneIndex;
             const float* bp = bones[bi >= 0 ? bi : 0].position;
             rb.position[0] -= bp[0];
@@ -1626,8 +1626,8 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo, std::uin
                     const float bx = pivotB[0], by = pivotB[1], bz = pivotB[2];
                     const float distA = std::sqrt(ax * ax + ay * ay + az * az);
                     const float distB = std::sqrt(bx * bx + by * by + bz * bz);
-                    // 过拉伸限位半径：限位范数叠加两锚点距离
-                    // （x64 @0x7FF7CB4D1B8A..0x4D1C4A，见 JointRadiusBound）
+                    // Overstretch limit radius: limit norm plus the distances to both anchors
+                    // (x64 at 0x7FF7CB4D1B8A..0x4D1C4A; see JointRadiusBound)
                     jt.radiusBound = JointRadiusBound(jt.limits, distA, distB);
                     D3DXMATRIXF rot, t2;
                     float qa[4], qb[4];

@@ -39,7 +39,7 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) { // 0x460430
     int slot = 0;
     while (app->ModelSlot(slot) != nullptr) {
         ++slot;
-        if (slot >= kModelSlotCount) { // x64 槽扫描界 255 @0x7FF7CB4B6705
+        if (slot >= kModelSlotCount) { // x64 slot scan bound 255 at 0x7FF7CB4B6705
             app->state.enterKeyState = 1;
             char text[256];
             if (app->EnglishUI() == 0) {
@@ -110,15 +110,15 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) { // 0x460430
             EnableMenuItem(GetMenu(hwnd), j, 0);
         for (UINT k = 273; k <= 275; ++k)
             EnableMenuItem(GetMenu(hwnd), k, 0);
-        // x64 在 273..275 启用循环后从 0xED 起依次禁用 237..242
-        // (@0x7FF7CB4B6CBC..0x4B6D75)，无 EnableMenuItem(menu, 1, 0) 调用。
+        // After enabling 273..275, x64 disables 237..242 in order starting at 0xED
+        // (0x7FF7CB4B6CBC..0x4B6D75), with no EnableMenuItem(menu, 1, 0) call.
         static const UINT kDisable[] = {0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2};
         for (UINT item : kDisable)
             EnableMenuItem(GetMenu(hwnd), item, 1);
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), 1);
 
         // x64 @0x7FF7CB4B6DBD..0x4B6DFC：cbSize=80(=sizeof on x64)、fMask=MIIM_STATE，
-        // fState 按 physicsMode==2 置 MFS_GRAYED|MFS_DISABLED，按位置 2 寻址。
+        // Set fState to MFS_GRAYED|MFS_DISABLED when physicsMode==2; address by position 2.
         MENUITEMINFOA mii{};
         mii.cbSize = sizeof(mii);
         mii.fMask = MIIM_STATE;

@@ -31,15 +31,15 @@ namespace mikudancestudio {
 namespace panel {
 
 // ---- main window: frame / timeline row ------------------------------------
-constexpr int kUndoButton = 400; // 0x190 元に戻す / undo
-constexpr int kRedoButton = 401; // 0x191 やり直し / redo
+constexpr int kUndoButton = 400; // 0x190 undo
+constexpr int kRedoButton = 401; // 0x191 redo
 constexpr int kViewFrontButton = 402;
 constexpr int kViewBackButton = 403;
 constexpr int kViewTopButton = 404;
 constexpr int kViewLeftButton = 405;
 constexpr int kViewRightButton = 406;
 constexpr int kViewBottomButton = 407;   // bottom / reset view, depending on mode
-constexpr int kPlayButton = 408;         // 0x198 再生 / play
+constexpr int kPlayButton = 408;         // 0x198 play
 constexpr int kPlayStartFrameEdit = 409; // 0x199 frame-zone start edit (ﾌﾚｿﾞｰﾄ)
 constexpr int kPlayStopFrameEdit = 410;  // 0x19A frame-zone stop edit (ﾌﾚｿﾞﾄｯﾌﾟ)
 constexpr int kPlaybackLoopCheckbox = 411;
@@ -56,25 +56,25 @@ constexpr int kRangeStopEdit = 426;      // 0x1AA range-select stop edit (mirror
 constexpr int kTimelineVScroll = 427;    // 0x1AB timeline vertical scrollbar
 constexpr int kTimelineHScroll = 428;    // 0x1AC timeline horizontal scrollbar
 constexpr int kPasteButton = 421;        // 0x1A5 ペースト / paste (camera/light/acc)
-constexpr int kReversePasteButton = 422; // 0x1A6 反転P / reverse paste
+constexpr int kReversePasteButton = 422; // 0x1A6 reverse paste
 constexpr int kDeleteFramesButton = 423;
-constexpr int kExpandShrinkButton = 424; // 0x1A8 拡大縮小 / frame-range scale dialog
+constexpr int kExpandShrinkButton = 424; // 0x1A8 scale / frame-range scale dialog
 constexpr int kShowCurrentFrameButton = 429;
-constexpr int kCurveCopyButton = 430;   // 0x1AE 補間曲線コピー (curve-panel copy)
-constexpr int kCurvePasteButton = 431;  // 0x1AF 補間曲線ペースト (curve-panel paste)
-constexpr int kCurveLinearButton = 432; // 0x1B0 線形補間 (curve reset to linear)
+constexpr int kCurveCopyButton = 430;   // 0x1AE copy interpolation curve (curve-panel copy)
+constexpr int kCurvePasteButton = 431;  // 0x1AF paste interpolation curve (curve-panel paste)
+constexpr int kCurveLinearButton = 432; // 0x1B0 linear interpolation (curve reset to linear)
 
 // ---- main window: camera / light / accessory register panel ----------------
 constexpr int kCameraRefModelCheckbox = 412; // 0x19C camera reference = model root (vs 531)
-constexpr int kInterpCurveCombo = 433;       // 0x1B1 interpolation channel (Ｘ移動..すべて)
+constexpr int kInterpCurveCombo = 433;       // 0x1B1 interpolation channel (X translation..all)
 constexpr int kRegisterScopeCombo = 434; // 0x1B2 frame-op scope / accessory list (mode-dependent)
 constexpr int kLoadModelButton = 435;
 constexpr int kMainComboModel = 436; // 0x1B4 camera･light･accessory / model selector
 constexpr int kDeleteModelButton = 437;
 constexpr int kRegisterModelDisplayButton = 438;
 constexpr int kModelVisibleCheckbox = 439; // 0x1B7 model-visible toggle (mirrors loadComplete)
-constexpr int kShadowCheckbox = 440;       // 0x1B8 影 / shadow toggle
-constexpr int kAddBlendCheckbox = 441;     // 0x1B9 加算 / additive blend toggle
+constexpr int kShadowCheckbox = 440;       // 0x1B8 shadow toggle
+constexpr int kAddBlendCheckbox = 441;     // 0x1B9 additive blend toggle
 constexpr int kEditExternalParentButton = 442;
 constexpr int kIkChainCombo = 443;        // 0x1BB IK-chain selector
 constexpr int kIkOnRadio = 444;           // 0x1BC IK on
@@ -112,7 +112,7 @@ constexpr int kDeleteAccessoryButton = 473;
 constexpr int kMainComboGround = 474; // 0x1DA "ground" + model names (accessory parent model)
 constexpr int kAttachBoneCombo = 475; // 0x1DB accessory / self-shadow attach (parent) bone
 constexpr int kAccessoryVisibleCheckbox = 476;  // 0x1DC accessory display toggle (byte 0x210)
-constexpr int kAccessoryAddBlendCheckbox = 477; // 0x1DD 加算 / accessory additive blend
+constexpr int kAccessoryAddBlendCheckbox = 477; // 0x1DD accessory additive blend
 constexpr int kAccPosXEdit = 478;               // 0x1DE accessory position X edit
 constexpr int kAccPosYEdit = 479;               // 0x1DF accessory position Y edit
 constexpr int kAccPosZEdit = 480;               // 0x1E0 accessory position Z edit
@@ -127,17 +127,17 @@ constexpr int kCollapseAccessoryPanelButton = 488;
 constexpr int kExpandAccessoryPanelButton = 489;
 
 // ---- main window: bone-manipulation mode group ------------------------------
-constexpr int kBoneSelectRadio = 490; // 0x1EA 選択 / select mode
-constexpr int kBoxSelectRadio = 491;  // 0x1EB BOX選択 / box-select mode
-constexpr int kBoneMoveRadio = 492;   // 0x1EC 移動 / move mode
-constexpr int kBoneRotateRadio = 493; // 0x1ED 回転 / rotate mode
+constexpr int kBoneSelectRadio = 490; // 0x1EA select mode
+constexpr int kBoxSelectRadio = 491;  // 0x1EB box-select mode
+constexpr int kBoneMoveRadio = 492;   // 0x1EC move mode
+constexpr int kBoneRotateRadio = 493; // 0x1ED rotate mode
 constexpr int kSelectAllBonesButton = 494;
 constexpr int kResetBonePoseButton = 495;
 constexpr int kCopyBonePoseButton = 496;
 constexpr int kBonePasteButton = 497;        // 0x1F1 bone-pose paste
 constexpr int kBoneReversePasteButton = 498; // 0x1F2 bone-pose reverse paste
-constexpr int kPhysicsCheckbox = 499;        // 0x1F3 物理演算 / physics on-off
-constexpr int kRegisterFrameButton = 500;    // 0x1F4 登録 / keyframe register
+constexpr int kPhysicsCheckbox = 499;        // 0x1F3 physics on-off
+constexpr int kRegisterFrameButton = 500;    // 0x1F4 keyframe register
 constexpr int kSelectUnregisteredBonesButton = 501;
 constexpr int kCollapseBonePanelButton = 502;
 constexpr int kExpandBonePanelButton = 503;
@@ -176,15 +176,15 @@ constexpr int kCameraRefBoneCheckbox = 531; // 0x213 camera reference = selected
 constexpr int kNextKeyframeButton = 532;
 constexpr int kPreviousKeyframeButton = 533;
 constexpr int kFrameVolumeSlider = 534;    // 0x216 frame-volume slider (100 - FrameNormalization)
-constexpr int kFollowCameraCheckbox = 535; // 0x217 追従 / camera follow model
-constexpr int kModelEditToggle = 536;      // モデル編 / "To model" - panel mode toggle
+constexpr int kFollowCameraCheckbox = 535; // 0x217 camera follow model
+constexpr int kModelEditToggle = 536;      // "To model" - panel mode toggle
 constexpr int kResetPositionXButton = 537;
 constexpr int kResetPositionYButton = 538;
 constexpr int kResetPositionZButton = 539;
 constexpr int kResetRotationXButton = 540;
 constexpr int kResetRotationYButton = 541;
 constexpr int kResetRotationZButton = 542;
-constexpr int kCameraDistanceButton = 543; // 距離 / camera distance reset
+constexpr int kCameraDistanceButton = 543; // camera distance reset
 constexpr int kReadoutPosXEdit = 544;      // 0x220 camera/bone position X readout
 constexpr int kReadoutPosYEdit = 545;      // 0x221 position Y readout
 constexpr int kReadoutPosZEdit = 546;      // 0x222 position Z readout
@@ -192,13 +192,13 @@ constexpr int kReadoutRotXEdit = 547;      // 0x223 camera/bone angle X readout 
 constexpr int kReadoutRotYEdit = 548;      // 0x224 angle Y readout
 constexpr int kReadoutRotZEdit = 549;      // 0x225 angle Z readout
 constexpr int kReadoutDistEdit = 550;      // 0x226 camera distance readout (model-mode extra)
-constexpr int kInfoCheckbox = 551;         // 0x227 情報 / info window
-constexpr int kFrameVolumeCheckbox = 552;  // 0x228 省エネ / frame-volume control enable
+constexpr int kInfoCheckbox = 551;         // 0x227 info window
+constexpr int kFrameVolumeCheckbox = 552;  // 0x228 energy saving / frame-volume control enable
 constexpr int kGoToFrameButton = 553;
 constexpr int kGotoFrameEdit = 554; // 0x22A go-to-frame edit
 constexpr int kSetGoToFrameButton = 555;
-constexpr int kSelfShadowCheckbox = 556; // 0x22C 美影 / self-shadow enable
-constexpr int kCoordAxisCheckbox = 557;  // 0x22D 座標軸 / coordinate axis display
+constexpr int kSelfShadowCheckbox = 556; // 0x22C self-shadow enable
+constexpr int kCoordAxisCheckbox = 557;  // 0x22D coordinate axis display
 constexpr int kFirstFrameButton = 558;
 constexpr int kLastFrameButton = 559;
 constexpr int kSelfShadowRangeSlider = 560; // 0x230 self-shadow range trackbar (0..9999)
@@ -216,12 +216,12 @@ constexpr int kBiasYEdit = 602; // 0x25A bias Y
 constexpr int kBiasZEdit = 603; // 0x25B bias Z
 
 // ---- dialog 606/652: frame-range scale --------------------------------------
-constexpr int kScaleRateEdit = 605;       // 倍率 magnification
+constexpr int kScaleRateEdit = 605;       // magnification
 constexpr int kScaleFromEdit = 686;       // 0x2AE frame FROM (mirror of 425)
 constexpr int kScaleToEdit = 687;         // frame TO (mirror of 426)
 constexpr int kScaleBoneCheckbox = 688;   // ボーン bone frames
-constexpr int kScaleMorphCheckbox = 689;  // 表情 facial frames
-constexpr int kScaleDispIkCheckbox = 690; // 表示･IK･外親 disp/IK/OP frames
+constexpr int kScaleMorphCheckbox = 689;  // facial frames
+constexpr int kScaleDispIkCheckbox = 690; // display/IK/external-parent frames
 
 // ---- dialog 607/653: output screen size -------------------------------------
 constexpr int kScreenWidthEdit = 621;  // 0x26D width
@@ -233,10 +233,10 @@ constexpr int kAviEndFrameEdit = 610;   // 0x262 record frame TO
 constexpr int kAviFpsEdit = 611;        // 0x263 frame rate
 constexpr int kAviWidthEdit = 612;      // 0x264 record width
 constexpr int kAviHeightEdit = 613;     // 0x265 record height
-constexpr int kAviWaveCheckbox = 614;   // 0x266 WAVEも出力する
+constexpr int kAviWaveCheckbox = 614;   // 0x266 also output WAVE
 constexpr int kAviCodecCombo = 628;     // 0x274 video compressor (list box in other dialogs)
 constexpr int kAviSettingsButton =
-    724; // 0x2D4 詳細設定 / codec settings (physics dialog: copy body)
+    724; // 0x2D4 detailed settings / codec settings (physics dialog: copy body)
 constexpr int kAvi3dVisionCheckbox = 806; // NVIDIA 3D Vision output
 constexpr int kAviLeftHalfCheckbox = 807; // left half only (Discover)
 
@@ -244,8 +244,8 @@ constexpr int kAviLeftHalfCheckbox = 807; // left half only (Discover)
 constexpr int kShiftFramesEdit = 616; // 0x268 frames to shift
 
 // ---- dialog 617/656: register blinking ----------------------------------------
-constexpr int kBlinkStartEdit = 618; // 開始フレーム
-constexpr int kBlinkEndEdit = 619;   // 終了フレーム
+constexpr int kBlinkStartEdit = 618; // start frame
+constexpr int kBlinkEndEdit = 619;   // end frame
 
 // ---- dialog 624/658: ground shadow color (modeless) ---------------------------
 constexpr int kGroundShadowSlider = 625; // 0x271 brightness trackbar
@@ -254,22 +254,22 @@ constexpr int kGroundShadowEdit = 626;   // 0x272 brightness edit
 // ---- dialogs 627/659, 804/805, 810/811: ordering / accessory settings ----------
 constexpr int kOrderListBox = 628;       // 0x274 accessory / model order list
 constexpr int kAccessoryNameEdit = 629;  // 0x275 accessory name (rename)
-constexpr int kOrderUpButton = 630;      // 上 / move up
-constexpr int kOrderDownButton = 631;    // 下 / move down
-constexpr int kDialogOkButton = 632;     // OK (決定)
+constexpr int kOrderUpButton = 630;      // move up
+constexpr int kOrderDownButton = 631;    // move down
+constexpr int kDialogOkButton = 632;     // OK (confirm)
 constexpr int kAccessoryOrderEdit = 635; // 0x27B order-number edit
 
 // ---- dialogs 648/663, 649/664: numeric input (bone / camera) -------------------
-constexpr int kNumInputPosXEdit = 637; // 0x27D 位置X (gravity dialog: dir-X slider)
-constexpr int kNumInputPosYEdit = 638; // 0x27E 位置Y (gravity dialog: dir-Y slider)
-constexpr int kNumInputPosZEdit = 639; // 0x27F 位置Z (gravity dialog: dir-Z slider)
-constexpr int kNumInputRotXEdit = 640; // X軸 angle X
-constexpr int kNumInputRotYEdit = 641; // Y軸
-constexpr int kNumInputRotZEdit = 642; // Z軸
-constexpr int kNumInputDistEdit = 644; // 距離 distance (camera variant only)
+constexpr int kNumInputPosXEdit = 637; // 0x27D position X (gravity dialog: dir-X slider)
+constexpr int kNumInputPosYEdit = 638; // 0x27E position Y (gravity dialog: dir-Y slider)
+constexpr int kNumInputPosZEdit = 639; // 0x27F position Z (gravity dialog: dir-Z slider)
+constexpr int kNumInputRotXEdit = 640; // X-axis angle X
+constexpr int kNumInputRotYEdit = 641; // Y-axis
+constexpr int kNumInputRotZEdit = 642; // Z-axis
+constexpr int kNumInputDistEdit = 644; // distance (camera variant only)
 
 // ---- dialog 645/662: edge thickness (modeless) --------------------------------
-constexpr int kEdgeThicknessEdit = 646;   // 太さ (0..2)
+constexpr int kEdgeThicknessEdit = 646;   // thickness (0..2)
 constexpr int kEdgeThicknessSlider = 647; // paired trackbar
 
 // ---- dialog 665/666: English-name editor ----------------------------------------
@@ -294,7 +294,7 @@ constexpr int kGravityDirZEdit = 712;      // gravity dir Z (physics dialog: pos
 constexpr int kGravityNoiseEdit = 713;     // noise amount
 constexpr int kBodyACombo = 741;           // joint rigid-body A (physics model dialog)
 constexpr int kBodyBCombo = 742;           // joint rigid-body B
-constexpr int kGravityNoiseCheckbox = 731; // 0x2DB ﾉｲｽﾞ付加 / noise enable
+constexpr int kGravityNoiseCheckbox = 731; // 0x2DB add noise / noise enable
 constexpr int kGravityDirXSlider = 637;    // gravity dir-X slider (numeric dialogs: pos-X edit)
 constexpr int kGravityDirYSlider = 638;    // gravity dir-Y slider
 constexpr int kGravityDirZSlider = 639;    // gravity dir-Z slider
@@ -311,8 +311,8 @@ constexpr int kCamMulPosXScaleEdit = 686;   // camera pos X * (frame-scale dialo
 constexpr int kCamMulPosXOffsetEdit = 687;  // camera pos X + (frame-scale dialog: TO edit)
 constexpr int kBoneMulPosXScaleEdit = 686;  // bone-frame multiply pos X * (dialog 636)
 constexpr int kBoneMulPosXOffsetEdit = 687; // bone-frame multiply pos X +
-constexpr int kMorphMulScaleEdit = 686;     // facial 大きさ * (dialog 643)
-constexpr int kMorphMulOffsetEdit = 687;    // facial 大きさ +
+constexpr int kMorphMulScaleEdit = 686;     // facial magnitude * (dialog 643)
+constexpr int kMorphMulOffsetEdit = 687;    // facial magnitude +
 
 } // namespace panel
 } // namespace mikudancestudio

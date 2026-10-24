@@ -67,7 +67,7 @@
 //       1. facial display-frame group name (displayFrames, SJIS name
 //          ONLY - an English-mode group text never matches, original
 //          quirk) -> morph-key track rooted at targetIndex;
-//       2. 表示･IK･外親 (13-byte memcmp) / "disp/IK/OP" -> display-key
+//       2. Display/IK/external parent (13-byte memcmp) / "disp/IK/OP" -> display-key
 //          track (record 0);
 //       3. the root bone's own name, bones[0] SJIS or English (combo
 //          434's center-bone entry) -> bone-key record 0;
@@ -114,7 +114,7 @@ const char kJpOverflow[] = "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67\x90
                            "\x81\x75\xcc\xda\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75\x95"
                            "\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c\x81\x76\x82\xf0\x8e\xc0"
                            "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
-const char kJpFrameRegTitle[] = // 0x52B908 "フレーム登録"
+const char kJpFrameRegTitle[] = // 0x52B908 "Register frame"
     "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
 
 // shared overflow message (limit differs per registrar); the box owner
@@ -122,7 +122,7 @@ const char kJpFrameRegTitle[] = // 0x52B908 "フレーム登録"
 void OverflowBox(unsigned char* m, int limit) {
     char text[256];
     // x64 sub_7FF7CB4E9390 @0x7FF7CB4E9D4B: language byte selects both the
-    // format and the caption ("register frame" / フレーム登録).
+    // format and the caption ("register frame" / JP "register frame").
     if (mikudancestudio::mdl::Mdl(m)->physicsFlags != 0) {
         sprintf_s(text, 0x100,
                   "You cannot regist over %d point\n"
@@ -160,7 +160,7 @@ void FillMirroredBoneRecord(mdl::BoneKey& dst, const unsigned char* rec) {
 }
 
 int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
-    // Shift-JIS: 0x89 0x45 = 右, 0x8D 0xB6 = 左. MMD swaps the first
+    // Shift-JIS: 0x89 0x45 = right, 0x8D 0xB6 = left. MMD swaps the first
     // matching marker and compares the suffix after the two-byte character.
     static const char kRight[] = "\x89\x45";
     static const char kLeft[] = "\x8D\xB6";
@@ -183,9 +183,9 @@ int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
         return -1;
     };
 
-    // x64 sub_7FF7CB4E9DB0: first 左 in the source name (0x7FF7CB4E9DE6,
-    // strstr @0x7FF7CB4E9DF7) -> bones containing 右; only when the name
-    // lacks 左 does the 右-in-source -> 左-in-bones pass run (0x7FF7CB4E9E7C).
+    // x64 sub_7FF7CB4E9DB0: first "left" in the source name (0x7FF7CB4E9DE6,
+    // strstr at 0x7FF7CB4E9DF7) -> bones containing "right"; only when the name
+    // lacks "left" does the right-in-source -> left-in-bones pass run (0x7FF7CB4E9E7C).
     int index = findOpposite(kLeft, kRight);
     if (index >= 0)
         return index;
@@ -202,7 +202,7 @@ int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
 // Name probes of 0x4A27F0 (SJIS byte-exact, compare lengths as in the
 // binary, NUL included; x86 0x531120 / 0x531118 = x64 0x552048 /
 // 0x5524D8).
-const unsigned char kJpDispIkOp[] = // 表示･IK･外親 (13)
+const unsigned char kJpDispIkOp[] = // Display/IK/external parent (13)
     {0x95, 0x5C, 0x8E, 0xA6, 0xA5, 0x49, 0x4B, 0xA5, 0x8A, 0x4F, 0x90, 0x65, 0x00};
 const unsigned char kJpBone01[] = // ﾎﾞｰﾝ01 (7)
     {0xCE, 0xDE, 0xB0, 0xDD, 0x30, 0x31, 0x00};
@@ -731,10 +731,10 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
     unsigned char* const m = model;
     mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
     const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset + frameArg);
-    // 注意：x64（sub_7FF7CB4EB3C0 完整反编译）注册显示键时 *不* 写
-    // displayKeyframesPresent。该字段是左面板 表示/IK 行的轨道选中开关，
-    // 只在行点击时翻转（0x7FF7CB45A2DD..0x7FF7CB45A2EA，port 见
-    // ui_editor_click.cpp），控制关键帧跳转命令的搜索范围。
+    // Note: x64 (complete decompilation of sub_7FF7CB4EB3C0) does not write
+    // displayKeyframesPresent when registering display keys. This field selects the left-panel display/IK track,
+    // toggles only on row clicks (0x7FF7CB45A2DD..0x7FF7CB45A2EA; port in
+    // ui_editor_click.cpp), and controls the search range for keyframe-jump commands.
 
     // fill the per-IK byte array and the selector pair array of the
     // record at index (shared by all three insert paths)
@@ -868,9 +868,9 @@ void RegisterDisplayKeyCurrent(unsigned char* model, int frameArg) {
     unsigned char* const m = model;
     mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
     const std::uint32_t frame = static_cast<std::uint32_t>(frameArg);
-    // 同上：x64（sub_7FF7CB4EAF80）此处也不写 displayKeyframesPresent——
-    // 它是左面板 表示/IK 行的选中开关（点击翻转，0x7FF7CB45A2DD..EA），
-    // 不是“模型拥有显示键”的存在标志。
+    // As above: x64 (sub_7FF7CB4EAF80) does not write displayKeyframesPresent here either;
+    // it is the left-panel display/IK row selection toggle (toggled on clicks, 0x7FF7CB45A2DD..EA),
+    // not a flag indicating that the model has display keys.
 
     const auto fill = [&](int index) {
         mdl::DisplayKey& rec = keys[index];
@@ -950,7 +950,7 @@ int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from, std::uint3
         }
     }
 
-    // 2. 表示･IK･外親 / "disp/IK/OP" (0x4A285F..0x4A2892): display track.
+    // 2. Display/IK/external parent / "disp/IK/OP" (0x4A285F..0x4A2892): display track.
     if (std::memcmp(name, kJpDispIkOp, 13) == 0 || std::strcmp(name, "disp/IK/OP") == 0) {
         return MarkTrackRange(mdl::DisplayKeys(model), 0, from, to);
     }

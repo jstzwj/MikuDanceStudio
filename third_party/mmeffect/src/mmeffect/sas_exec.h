@@ -369,11 +369,11 @@ struct SasEffect {
 // Returns TRUE when at least one hard error was logged (FUN_180018200's v29:
 // the compile itself always runs to completion - a bad token never aborts
 // the tokenizer; FUN_1800169D0/FUN_180017A80 OR v29 into their error
-// returns). [原版事实，勿再错记] 编译错误会使加载被拒绝，而不是只跳过
-// 后续扫描：sub_180016900（0x180016938-0x1800169b9）把 ScanTechnique/
-// ScanPass 的任何非零 OR 成返回值 1，FUN_18000BC90（0x18000c423-0x18000c432）
-// 在其非零时直接向上返回非零错误码（加载失败）——只有全部扫描通过
-// 才会继续 sub_18001DD20，效果绝不会被带着脚本错误加载。
+// returns). [Original behavior; do not misstate again] Compilation errors reject loading rather than merely skipping
+// further scanning: sub_180016900 (0x180016938-0x1800169b9) ORs any nonzero ScanTechnique/
+// ScanPass result into a return value of 1, and FUN_18000BC90 (0x18000c423-0x18000c432)
+// directly propagates a nonzero error code (load failure) when that result is nonzero. Only if all scans pass
+// does execution continue to sub_18001DD20; an effect is never loaded with script errors.
 bool SasCompileScript(SasEffect* sas, const std::string& script,
                       D3DXHANDLE technique, D3DXHANDLE pass,
                       const std::string& techniqueName,

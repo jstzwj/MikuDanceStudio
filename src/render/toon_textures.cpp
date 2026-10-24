@@ -143,8 +143,8 @@ bool InitToonTextures(MMDApp* app) {
             }
         }
         if (*slot != nullptr) {
-            // 内置 MMEffect：登记内置 toon 纹理（GetToonTexture 的
-            // "toonNN.bmp" 裸名查询经 MME 侧别名机制解析）。
+            // Embedded MMEffect: register embedded toon textures (bare-name GetToonTexture queries for
+            // "toonNN.bmp" resolve through MME aliases).
             mme::RecordTexture(widePath, *slot);
         }
     }

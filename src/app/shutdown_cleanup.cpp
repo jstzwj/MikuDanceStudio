@@ -444,8 +444,8 @@ void ShutdownCleanup(MMDApp* app) {
         s.Audio() = nullptr;
     }
     if (D3DRenderer* render = s.Renderer()) { // 0x4632A1
-        // 内置 MMEffect：设备销毁前的 Cleanup（对应原版设备 Release 归零
-        // 路径上的 MMHack 销毁钩子）。
+        // Embedded MMEffect: Cleanup before device destruction (corresponding to the original MMHack destruction hook
+        // on the device Release-to-zero path).
         mme::OnDeviceDestroyed(app);
         DisposeRenderSubsystem(render); // 0x4632AD
         ::operator delete(render);      // 0x4632B3

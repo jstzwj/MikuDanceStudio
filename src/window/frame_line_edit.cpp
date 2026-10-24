@@ -148,7 +148,7 @@ void CopyBoneKeyPayload(mdl::BoneKey& dst, const mdl::BoneKey& src) {
 // Copy every payload field of an 84B camera record into another slot
 // (0x43AA6A..0x43ABF5): the frame-value dwords and the 16 interpolation
 // bytes - 4 per curve at +0x28..+0x2B/+0x2E..+0x31/+0x34..+0x37/+0x3A..+0x3D
-// (x64 0x7FF7CB4AA3BD..0x7FF7CB4AA4BC；行间 2 字节 padding 不拷).
+// (x64 0x7FF7CB4AA3BD..0x7FF7CB4AA4BC; the two padding bytes between rows are not copied).
 void CopyCameraKeyPayload(mdl::CameraKey& dst, const mdl::CameraKey& src) {
     dst.distance = src.distance;
     std::memcpy(dst.eye, src.eye, sizeof(dst.eye));
@@ -162,8 +162,8 @@ void CopyCameraKeyPayload(mdl::CameraKey& dst, const mdl::CameraKey& src) {
 // Zero a removed camera record (0x43A939..0x43A96F): the exact dword/byte
 // set of the original - eye[2](+0x18)/target[2](+0x24) and the per-curve
 // 2-byte padding are NOT cleared (frame 0 marks the slot free).
-// 插值清零字节集按曲线走：每曲线前 4 字节（x64 0x7FF7CB4AA173..0x7FF7CB4AA2E7，
-// 即 +0x28..+0x2B/+0x2E..+0x31/+0x34..+0x37/+0x3A..+0x3D）。
+// Zero interpolation bytes per curve: the first four bytes of each (x64 0x7FF7CB4AA173..0x7FF7CB4AA2E7,
+// namely +0x28..+0x2B/+0x2E..+0x31/+0x34..+0x37/+0x3A..+0x3D).
 void ClearCameraKeyRecord(mdl::CameraKey& key) {
     key.next = 0;
     key.previous = 0;
@@ -204,8 +204,8 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
 
         BeginUndoEdit(model, currentFrame); // 0x43A02F..
         SnapshotPose(model);                // 0x43A275..
-        // undo 键缓冲按受影响键数分配：x64 0x7FF7CB4A9F98
-        // operator new(saturated_mul(v9, 0x40))，v9 即上面数出的 affected。
+        // Allocate the undo key buffer by affected key count: x64 0x7FF7CB4A9F98
+        // operator new(saturated_mul(v9, 0x40)), where v9 is the affected count calculated above.
         AllocUndoKeys(model, // 0x43A4DE..
                       static_cast<std::size_t>(affected) * 0x40);
         std::memset(mdl::Mdl(model)->keyVisitMap, 0,

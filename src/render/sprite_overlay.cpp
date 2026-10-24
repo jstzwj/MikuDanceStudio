@@ -221,7 +221,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
             const mdl::IkChain* relationships = mdl::IkChains(model);
             const int relationshipCount = static_cast<int>(mdl::Mdl(model)->ikChainCount);
             const int cursorKind = static_cast<int>(app->EditMode());
-            // 658628 = playbackPhysicsMode（原 boneFilter 误名）
+            // 658628 = playbackPhysicsMode (formerly misnamed boneFilter)
             const int physMode = app->PlaybackPhysicsMode();
             D3DMATRIX world{};
             D3DMATRIX viewMatrix{};
@@ -277,10 +277,10 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                         const int linked = bone->tailBone;
                         if (linked <= 0 || linked >= boneCount)
                             return false;
-                        // 尾骨骼的已投影屏幕坐标（原版 x64 0x7FF7CB4E56xx 读
-                        // [linked]+460/+464 = selState/selState2）；结构体成员
-                        // 访问双架构取对偏移——此前裸写 x86 字节偏移 452/456，
-                        // x64 上会读到 ikWorkingQuat 浮点位模式，连线飞散。
+                        // The tail bone's projected screen coordinates (original x64 0x7FF7CB4E56xx reads
+                        // [linked]+460/+464 = selState/selState2); typed member access
+                        // selects the correct offsets on both architectures. The previous hardcoded x86 byte offsets 452/456
+                        // read ikWorkingQuat floating-point bit patterns on x64, scattering the bone lines.
                         *x = bones[linked].selState;
                         *y = bones[linked].selState2;
                         return true;

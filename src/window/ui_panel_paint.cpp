@@ -303,12 +303,12 @@ void PanelPaint(MMDApp* app) {
     // it, which is a no-op difference for display mode since a == b there).
     auto FinishPanel = [&](std::uint32_t a, std::uint32_t b) {
         const std::uint32_t pos = static_cast<std::uint32_t>(scroll);
-        // x64 @0x7FF7CB482963：SCROLLINFO 内嵌在 app+0x1430（cbSize=1Ch、
-        // fMask=SIF_ALL），nPage/nPos 落在 app+0x1440/0x1444；HandleHScroll
-        // （0x7FF7CB45E060）case 2/3/5 回读的就是这两格。x86 原版把这块临时
-        // 结构放在 app+0x960 暂存区、靠地址重叠留住 nPage/nPos——该字节地址
-        // 在 x64 布局上不是状态字段（与附属物轨道指针重叠），所以这里改成
-        // 局部对象 + 关键字段别名回写状态域（427 竖条的惯用法，见 wm_paint.cpp）。
+        // x64 at 0x7FF7CB482963: SCROLLINFO is embedded at app+0x1430 (cbSize=1Ch,
+        // fMask=SIF_ALL); nPage/nPos reside at app+0x1440/0x1444. HandleHScroll
+        // (0x7FF7CB45E060) cases 2/3/5 read these two slots. The x86 original stores this temporary
+        // structure at app+0x960 and retains nPage/nPos through overlapping addresses. That byte address
+        // is not a state field in the x64 layout (it overlaps an accessory-track pointer), so use
+        // a local object and write key fields back through state aliases (as for vertical scrollbar 427 in wm_paint.cpp).
         SCROLLINFO scrollInfo{};
         scrollInfo.cbSize = sizeof(scrollInfo);
         scrollInfo.fMask = SIF_ALL;
@@ -325,8 +325,8 @@ void PanelPaint(MMDApp* app) {
         scrollInfo.nMax = static_cast<int>(nMax) - 1;
         scrollInfo.nPage = static_cast<DWORD>(rows);
         scrollInfo.nPos = static_cast<int>(pos);
-        // 别名回写：不回写则 page/thumb 滚动读到 0，SB_PAGEUP/DOWN 不动、
-        // SB_THUMBPOSITION 每次都跳到绝对滑块位置（x64 里这两格永驻 app 结构）。
+        // Alias writeback: without it, page/thumb scrolling reads 0, SB_PAGEUP/DOWN does nothing, and
+        // SB_THUMBPOSITION jumps by the absolute thumb position each time (x64 keeps both slots in the app structure).
         app->state.timelineScrollNPage = static_cast<std::int32_t>(scrollInfo.nPage);
         app->state.timelineScrollNPos = scrollInfo.nPos;
         SetScrollInfo(GetDlgItem(static_cast<HWND>(app->Hwnd()), panel::kTimelineHScroll), SB_CTL,

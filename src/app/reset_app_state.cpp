@@ -35,15 +35,15 @@ void ReloadModels(MMDApp* app); // VA 0x0042E640 (timeline_advance.cpp)
 namespace mikudancestudio {
 
 // JP wide literals (byte-verified against the original .rdata):
-// 0x52B784 カメラ / 0x52D390 照明 / 0x52D398 セルフ影 / 0x52D3A4 重力
+// 0x52B784 camera / 0x52D390 lighting / 0x52D398 self-shadow / 0x52D3A4 gravity
 static const wchar_t kJpCamera[] = L"\x30ab\x30e1\x30e9";
 static const wchar_t kJpLight[] = L"\x7167\x660e";
 static const wchar_t kJpSelfShadow[] = L"\x30bb\x30eb\x30d5\x5f71";
 static const wchar_t kJpGravity[] = L"\x91cd\x529b";
-// 0x52D370 ｶﾒﾗ／照明＋ｱｸｾｻﾘ
+// 0x52D370 camera/lighting + accessory
 static const wchar_t kJpCamLightAcc[] = L"\xff76\xff92\xff97\xff65\x7167\x660e"
                                         L"\xff65\xff71\xff78\xff7e\xff7b\xff98";
-// 0x52D368 地面 / 0x52D360 なし
+// 0x52D368 ground / 0x52D360 none
 static const wchar_t kJpGround[] = L"\x5730\x9762";
 static const wchar_t kJpNone[] = L"\x306a\x3057";
 // combo 433 channel names (0x52D3D4..0x52D3AC)

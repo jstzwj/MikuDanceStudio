@@ -237,7 +237,7 @@ void BindSelectedCompressor(DShowRecorder* rec) {
 // VA 0x00408F20 - FillCodecCombo: codec combo fill
 // (; original: sub_408F20, method of the recorder object)
 // =========================================================================//
-// Uncompressed-codec row label 「無圧縮」(UTF-16LE 2A 67 27 57 2E 7E at
+// Uncompressed-codec row label "Uncompressed" (JP; UTF-16LE 2A 67 27 57 2E 7E at
 // x64 0x7FF7CB54A620 / x86 0x529880; IDA's narrow-string view renders the
 // bytes as the mojibake "*g'W.~" - do not copy that back in).
 static const wchar_t kJpNoCompression[] = {0x672A, 0x5727, 0x7E2E, 0x0000};
@@ -245,7 +245,7 @@ static const wchar_t kJpNoCompression[] = {0x672A, 0x5727, 0x7E2E, 0x0000};
 // Clears the combo (CB_RESETCONTENT), walks the video-compressor category,
 // BindToStorage -> IPropertyBag -> Read(L"FriendlyName"), converts the BSTR
 // to Shift-JIS (WideCharToMultiByte CP 3) and CB_ADDSTRINGs it, then appends
-// the uncompressed row ("AVI Raw" EN / 「無圧縮」 JP via SendMessageW -
+// the uncompressed row ("AVI Raw" EN / "Uncompressed" JP via SendMessageW -
 // byte-exact from 0x529880) and CB_SETCURSELs it.  Returns the "AVI Raw"
 // row index (saved by the dialog to app+0xA0CD8).
 // =========================================================================//

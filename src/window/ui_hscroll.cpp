@@ -247,12 +247,12 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
             d3dx::D3DXMATRIXF proj;
             // near = fld1 (1.0f), far = flt_52BB28 (100000.0f)
             d3dx->perspectiveFovLH(&proj, fovRad, aspect, 1.0f, 100000.0f);
-            // 原版 sub_7FF7CB45E060 @ 0x7FF7CB45EE03: `call [rax+160h]` ——
-            // x64 vtable 偏移 +0x160（352 = 8×44，槽 44），即
+            // Original sub_7FF7CB45E060 at 0x7FF7CB45EE03: `call [rax+160h]` -
+            // x64 vtable offset +0x160 (352 = 8x44, slot 44), namely
             // IDirect3DDevice9::SetTransform(dev, 3 /*D3DTS_PROJECTION*/,
-            // &proj)；x86 原版偏移 +0xB0（176 = 4×44，同为槽 44）。裸字节
-            // 偏移在 x64 移植构建下会落到槽 22（CreateVolumeTexture），
-            // 故用类型化虚调用保证架构无关。
+            // &proj); the x86 original uses offset +0xB0 (176 = 4x44, also slot 44). A hardcoded byte
+            // offset lands on slot 22 (CreateVolumeTexture) in the x64 port,
+            // so use a typed virtual call for architecture independence.
             locale->device->SetTransform(D3DTS_PROJECTION,
                                          reinterpret_cast<const D3DMATRIX*>(&proj));
         }
@@ -297,8 +297,8 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
             app->state.timelineStartFrame += app->state.timelineScrollNPage;
             break;
         case SB_THUMBTRACK:
-            // x64 0x7FF7CB45EF76：读的是内嵌 SCROLLINFO 的 nPos（app+0x1444）
-            // 而非 nMin——按住滑块拖动时按增量 abs 新位置 - 上次位置移动。
+            // x64 0x7FF7CB45EF76: reads the embedded SCROLLINFO's nPos (app+0x1444),
+            // not nMin; dragging the thumb moves by the delta between the absolute new and previous positions.
             app->state.timelineStartFrame +=
                 static_cast<std::int32_t>(HIWORD(wParam)) -
                 app->state.timelineScrollNPos; // timeline SCROLLINFO nPos

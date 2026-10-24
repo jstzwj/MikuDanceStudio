@@ -215,8 +215,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
         if (sel > 0) {
             std::int32_t slot = 0;
             bool found = false;
-            // 槽扫描界 255：x64 0x7FF7CB472E70 处 mov r13d,0FFh 后按 8 字节
-            // 步进扫槽数组（x86 原版才是 0x64）
+            // Slot scan bound 255: x64 0x7FF7CB472E70 loads mov r13d,0FFh and scans the slot array in 8-byte
+            // steps (only the x86 original uses 0x64)
             for (; slot < kModelSlotCount; ++slot) {
                 unsigned char* model = app->ModelSlot(slot);
                 if (model != nullptr && mdl::Mdl(model)->comboSelIndex == static_cast<int>(sel)) {
@@ -309,7 +309,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
         if (sel > 0) {
             std::int32_t slot = 0;
             bool found = false;
-            // 槽扫描界 255：x64 0x7FF7CB4732F7 处 mov r13d,0FFh（同 0x1C1）
+            // Slot scan bound 255: x64 0x7FF7CB4732F7 loads mov r13d,0FFh (same as 0x1C1)
             for (; slot < kModelSlotCount; ++slot) {
                 unsigned char* model = app->ModelSlot(slot);
                 if (model != nullptr && mdl::Mdl(model)->comboSelIndex == static_cast<int>(sel)) {
@@ -419,12 +419,12 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         // Raise the dialog-in-flight flags (x64 app+0x58/+0xC0 =
         // letterKeyState[9]/enterKeyState), compose the banner into a 256-byte ANSI
         // buffer - the Japanese branch carries the Shift-JIS bytes of the
-        // author's name (樋口優, 0x7FF7CB54F980) - and pop it over the
+        // author's name (Yu Higuchi, 0x7FF7CB54F980) - and pop it over the
         // floating viewport window when one exists (x64 app+0xA1DE0).
-        // 中段括注按构建架构选择：x64 参考二进制 0x7FF7CB54F930（EN）/
-        // 0x7FF7CB54F980（JP）为 "(64bitOS Version)"，x86 原版为
-        // "(DirectX9 Version)"（机制同 kModelSlotCount 的按架构取值，但括注
-        // 嵌在字面量中间，只能用预处理拼接而非 sizeof(void*) 三元）。
+        // Select the middle parenthetical by build architecture: x64 reference binary 0x7FF7CB54F930 (EN)/
+        // 0x7FF7CB54F980 (JP) uses "(64bitOS Version)", while the x86 original uses
+        // "(DirectX9 Version)" (architecture selection works like kModelSlotCount, but the parenthetical
+        // sits inside a literal, requiring preprocessor concatenation rather than a sizeof(void*) ternary).
         s.LetterKeyState(LetterKey::I) = 1;
         s.state.enterKeyState = 1;
         char text[256];

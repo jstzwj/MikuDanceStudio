@@ -231,11 +231,11 @@ void NotifyBonePhysicsMode(unsigned char* model, int boneIdx, unsigned char mode
             body->setCollisionFlags(flags & ~btCollisionObject::CF_KINEMATIC_OBJECT);
             r->mode = r->kinematicFlag != 0 ? 2 : 1;
         }
-        // x64 定谳：0x7FF7CB4E3140 全函数（以及 Advance 内联段
-        // 0x7FF7CB4F15EA / 0x7FF7CB4F1780）只做两件事——写 btRigidBody
-        // +0xE0 的 CF_KINEMATIC 位（or/and 2）和模式字节，没有任何
-        // activation 调用。移植方原先保留的
-        // setActivationState(DISABLE_DEACTIVATION) 已按 x64 基准撤除。
+        // Verified against x64: the entire 0x7FF7CB4E3140 function (and the inline Advance sections at
+        // 0x7FF7CB4F15EA / 0x7FF7CB4F1780) only write the btRigidBody
+        // +0xE0 CF_KINEMATIC bit (or/and 2) and mode byte, with no
+        // activation call. The port's previous
+        // setActivationState(DISABLE_DEACTIVATION) was removed to match x64.
     }
 }
 

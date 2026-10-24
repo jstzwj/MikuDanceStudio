@@ -275,7 +275,7 @@ void PostModelReload2(MMDApp* app) { // 0x40D940
 
     auto* model = app->SelectedModel();
     // undoDirty/redoDirty（x64 model+0x3558/+0x3559，0x7FF7CB447074/86）：
-    // 撤消/重做按钮的开门标志。
+    // Flags enabling the undo/redo buttons.
     EnableWindow(MainControl(app, panel::kUndoButton), mdl::Mdl(model)->undoDirty != 0);
     EnableWindow(MainControl(app, panel::kRedoButton), mdl::Mdl(model)->redoDirty != 0);
     if (app->EnglishUI() != 0) {

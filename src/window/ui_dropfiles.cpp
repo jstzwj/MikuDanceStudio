@@ -81,28 +81,28 @@ namespace mikudancestudio {
 namespace {
 
 // JP-locale MessageBox byte strings - verbatim Shift-JIS from .rdata.
-// 0x52E568 "保存していない変更点があります\n\nこのままロードしてよろしいですか？"
+// 0x52E568 "There are unsaved changes.\n\nContinue loading?"
 const char kJpDirtyText[] =
     "\x95\xdb\x91\xb6\x82\xb5\x82\xc4\x82\xa2\x82\xc8\x82\xa2"
     "\x95\xcf\x8d\x58\x93\x5f\x82\xaa\x82\xa0\x82\xe8\x82\xdc\x82\xb7"
     "\x0a\x0a"
     "\x82\xb1\x82\xcc\x82\xdc\x82\xdc\x83\x8d\x81\x5b\x83\x68"
     "\x82\xb5\x82\xc4\x82\xe6\x82\xeb\x82\xb5\x82\xa2\x82\xc5\x82\xb7\x82\xa9\x81\x48";
-// 0x52E5AC "ファイルを開く"
+// 0x52E5AC "Open file"
 const char kJpDirtyCaption[] = "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xf0\x8a\x4a\x82\xad";
-// 0x52E49C "ボーンを選択してからでは読みません"
+// 0x52E49C "Cannot load before selecting bones"
 const char kJpPoseText[] = "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
                            "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
                            "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
-// 0x52E4CC "ポーズ読込"
+// 0x52E4CC "Load pose"
 const char kJpPoseCaption[] = "\x83\x7c\x81\x5b\x83\x59\x93\xc7\x8d\x9e";
-// 0x52E374 "ボーンを選択してからではvsqポーズでは読みません" (ASCII "vsq" embedded)
+// 0x52E374 "Cannot load a vsq pose before selecting bones" (ASCII "vsq" embedded)
 const char kJpVsqText[] = "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
                           "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
                           "vsq"
                           "\x83\x66\x81\x5b\x83\x5e\x82\xcd"
                           "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
-// 0x52E2F4 "ボーンを選択してからではoniポーズでは読みません" (ASCII "oni" embedded)
+// 0x52E2F4 "Cannot load an oni pose before selecting bones" (ASCII "oni" embedded)
 const char kJpOniText[] = "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
                           "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
                           "oni"

@@ -102,8 +102,8 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
     api.multiply(world, world, &part);
 
     const int modelSlot = mdl::Accessory(accessory)->parentModel;
-    // x64 0x7FF7CB4C19F3 只判 parentModel == -1（cmp dword[r10+240h],-1），
-    // 无上界检查；这里的上界取槽容量防止越界索引槽数组
+    // x64 0x7FF7CB4C19F3 only tests parentModel == -1 (cmp dword[r10+240h],-1),
+    // with no upper-bound check; use slot capacity here to prevent indexing outside the slot array
     if (modelSlot < 0 || modelSlot >= kModelSlotCount)
         return;
     auto* model = app->ModelSlot(modelSlot);
@@ -132,10 +132,10 @@ void ConfigureFixedTexture(void* accessory, D3DRenderer* sub, IDirect3DDevice9* 
     const wchar_t* first = paths != nullptr ? paths[material].primary : L"";
     const wchar_t* second = paths != nullptr ? paths[material].sphere : L"";
 
-    // x64 sub_7FF7CB4FD350 序言自 rdata 0x7FF7CB54A4F0 整体加载的常量矩阵：
-    // diag(0.5, -0.5, 0) 加平移 _41=0.5、_42=0.5（COUNT2 下 u'=0.5u+0.5、
-    // v'=-0.5v+0.5）；缺平移会差半单位并出现负坐标回绕。类型 4/5 写
-    // D3DTS_TEXTURE1 用的同一矩阵（0x...d9d0 / 0x...daa0）。
+    // Constant matrix loaded in full from rdata 0x7FF7CB54A4F0 in the x64 sub_7FF7CB4FD350 prologue:
+    // diag(0.5, -0.5, 0) plus translation _41=0.5, _42=0.5 (with COUNT2, u'=0.5u+0.5,
+    // v'=-0.5v+0.5); omitting translation shifts by half a unit and wraps negative coordinates. Types 4/5 use
+    // the same matrix for D3DTS_TEXTURE1 (0x...d9d0 / 0x...daa0).
     D3DMATRIX sphereTexel{};
     sphereTexel._11 = 0.5f;
     sphereTexel._22 = -0.5f;
@@ -377,15 +377,15 @@ bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material, const cha
 }
 
 // ---- "Cannot find xfile!!" (x64 sub_7FF7CB4FC560 not-found paths) -------
-// 0x7FF7CB551448: JP caption "アクセサリ読込"; 0x7FF7CB552858: JP text
-// "xファイルが見つかりません" (SJIS, byte-exact).
+// 0x7FF7CB551448: JP caption "Load accessory"; 0x7FF7CB552858: JP text
+// "x file not found" (SJIS, byte-exact).
 constexpr char kCaptionLoadAccessoryJp[] =
     "\x83\x41\x83\x4E\x83\x5A\x83\x54\x83\x8A\x93\xC7\x8D\x9E";
 constexpr char kMsgCannotFindXfileJp[] =
     "x\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x8C\xA9\x82\xC2\x82\xA9"
     "\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
 // 0x7FF7CB551458: JP twin of the caller's "This is not x_file." text
-// ("正しいｘファイルではありません").
+// (JP "This is not a valid x file").
 constexpr char kMsgNotXFileJp[] = "\x90\xB3\x82\xB5\x82\xA2\x82\x98\x83\x74\x83\x40\x83\x43\x83\x8B"
                                   "\x82\xC5\x82\xCD\x82\xA0\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
 
@@ -583,7 +583,7 @@ void LoadAccessoryFile(const wchar_t* path) { // 0x460B30
                                           "\x83\x5a\x83\x54\x83\x8a\x82\xcc\x8d\xc5\x91\xe5\x90\x94"
                                           "\x82\xcd%d\x8c\xc2\x82\xdc\x82\xc5\x82\xc5\x82\xb7";
         static const char kJpAccTitle[] =
-            "\x83\x41\x83\x4e\x83\x5a\x83\x54\x83\x8a\x93\xc7\x8d\x9e"; // アクセサリ読込
+            "\x83\x41\x83\x4e\x83\x5a\x83\x54\x83\x8a\x93\xc7\x8d\x9e"; // Load accessory
         const bool english = app->EnglishUI() != 0;
         char text[256];
         sprintf_s(text, english ? "You cannot add accessory over %d" : kJpAccLimit, 255);
@@ -776,11 +776,11 @@ void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp* app) {
     const D3DMATERIAL9 shadowMaterial = app->ProjectedShadowMaterial();
     device->SetMaterial(&shadowMaterial);
     device->SetTexture(0, app->ProjectedShadowRestoreTexture());
-    // x64 0x7FF7CB4C06FF：配件投射循环结束、SetMaterial/SetTexture 复位
-    // （0x7FF7CB4C06A5..0x7FF7CB4C06DD）之后、模型影走查（0x7FF7CB4C0710..）
-    // 之前，按"transparent ground shadow(&T)"开关（app+0x9FCA2）重写
-    // ALPHABLENDENABLE；pass 起始段不写 RS(27)。该字节即 PMM 存档里的
-    // projectedShadowBlendEnabled（保存点 0x7FF7CB498408）。
+    // x64 0x7FF7CB4C06FF: after the accessory projection loop and SetMaterial/SetTexture reset
+    // (0x7FF7CB4C06A5..0x7FF7CB4C06DD), before the model-shadow walk (0x7FF7CB4C0710..),
+    // rewrite ALPHABLENDENABLE according to "transparent ground shadow(&T)" (app+0x9FCA2).
+    // The pass preamble does not write RS(27). This byte is projectedShadowBlendEnabled in PMM files
+    // (save site 0x7FF7CB498408).
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, app->ProjectedShadowBlendEnabled());
 }
 

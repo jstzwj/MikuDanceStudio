@@ -36,7 +36,7 @@
 //     accumulated in quat +348 (prepended with +376 on iteration 0).
 //     PMX (model+14590==2) link limits via bone+568 flag and +572..592
 //     planes (X/Y/Z-primacy decompositions); PMD constrains the axis by
-//     projection on bone+180 rows, and 左ひざ/右ひざ knees get the hinge
+//     projection on bone+180 rows, and left/right knees get the hinge
 //     flip (negate m12/m21 and quat.x when m21 < 0).  After each link the
 //     chain's world matrices are recomputed bottom-up.
 //   E 0x496881  post-IK pass for +596 bones (type != 4): type 9/5 take
@@ -190,7 +190,7 @@ constexpr float kEps = 1.1920929e-7f;         // 0x493BF7 FLT_EPSILON
 constexpr float kHalfPi = 1.570796012878418f; // 0x495947 (float pi/2)
 constexpr float kKneeClamp = 1.535889f;       // 0x4959CC
 
-// 左ひざ / 右ひざ (SJIS), 6-byte compares at 0x4955F1/0x495620 and
+// Left knee / right knee (SJIS), 6-byte compares at 0x4955F1/0x495620 and
 // 0x496468/0x496483; string constants 0x530F60 / 0x530F58.
 const char kNameKneeLJp[7] = "\x8d\xb6\x82\xd0\x82\xb4";
 const char kNameKneeRJp[7] = "\x89\x45\x82\xd0\x82\xb4";

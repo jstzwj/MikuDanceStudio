@@ -174,9 +174,9 @@ void LocalizeUI(MMDApp* app) {
             SetWindowTextW(Dlg(app, t.id), JpControlText(t.id));
         SetWindowTextW(Dlg(app, panel::kModelEditToggle), JpControlText(panel::kModelEditToggle));
         // JP combo strings verified byte-exact against the push sequence
-        // 0x442909..0x442991 of the original: Ｘ移動(0x52D3D4) Ｙ移動(0x52D3CC)
-        // Ｚ移動(0x52D3C4) 回　転(0x52D470, full-width space) [距　離(0x52D3BC)
-        // 視野角(0x52D3B4) in camera mode] すべて(0x52D3AC).
+        // 0x442909..0x442991 of the original: X translation(0x52D3D4) Y translation(0x52D3CC)
+        // Z translation(0x52D3C4) rotation(0x52D470, full-width space) [distance(0x52D3BC)
+        // view angle(0x52D3B4) in camera mode] all(0x52D3AC).
         SendMessageW(interpolationChannelCombo, CB_ADDSTRING, 0,
                      (LPARAM)L"\xff38\x79fb\x52d5"); // 0x52D3D4
         SendMessageW(interpolationChannelCombo, CB_ADDSTRING, 0,
@@ -224,8 +224,8 @@ void LocalizeUI(MMDApp* app) {
             SendMessageA(combo434, CB_INSERTSTRING, 0, (LPARAM) "light");
             SendMessageA(combo434, CB_INSERTSTRING, 0, (LPARAM) "camera");
         } else {
-            // JP strings verified byte-exact: 重力(0x52D3A4) セルフ影(0x52D398)
-            // 照明(0x52D390) カメラ(0x52B784).
+            // JP strings verified byte-exact: gravity(0x52D3A4) self-shadow(0x52D398)
+            // lighting(0x52D390) camera(0x52B784).
             SendMessageW(combo434, CB_INSERTSTRING, 0,
                          (LPARAM)L"\x91cd\x529b"); // 0x52D3A4
             SendMessageW(combo434, CB_INSERTSTRING, 0,
@@ -254,7 +254,7 @@ void LocalizeUI(MMDApp* app) {
         SendMessageA(combo474, CB_ADDSTRING, 0, (LPARAM) "ground");                 // 0x52D2A4
         SendMessageA(combo449, CB_ADDSTRING, 0, (LPARAM) "non");                    // 0x52D38C
     } else {
-        // Verified byte-exact: 0x52D370 ｶﾒﾗ･照明･ｱｸｾｻﾘ / 0x52D368 地面 /
+        // Verified byte-exact: 0x52D370 camera/lighting/accessory / 0x52D368 ground /
         // 0x52D360 なし (push sequence 0x442CE0..0x442D31).
         SendMessageW(combo436, CB_ADDSTRING, 0,
                      (LPARAM)L"\xff76\xff92\xff97\xff65\x7167\x660e"

@@ -1,22 +1,22 @@
-// mme_bridge.cpp - 内置 MMEffect 宿主桥实现。
+// mme_bridge.cpp - embedded MMEffect host bridge implementation.
 //
-// 见 include/mikudancestudio/mme_bridge.hpp。效果引擎静态内置在宿主中，
-// 全部调用直达 MmeHost*，无需代理 DLL 或设备 hook。
+// See include/mikudancestudio/mme_bridge.hpp. The effect engine is statically embedded in the host;
+// all calls go directly to MmeHost*, without proxy DLLs or device hooks.
 //
-// [核验结论 2026-09] 原 MMHack 对宿主 EXE 的 user32!GetKeyState IAT hook
-// （[0x180004910]，DllMain 经 sub_18000ada0 无条件安装、不依赖 MME 初始
-// 化状态）：查询键 == 'E'(69) 且 GetKeyState('E'/VK_CONTROL/VK_SHIFT) 三者
-// 高位皆置位时返回 0。但 MMD v932（x64 与 x86 0x42D3A0 同源键表）对该 hook
-// 无可见行为——GetKeyState 在 exe 内的唯一调用点是帧级按键轮询分发器
-// （x64 sub_7FF7CB446AD0 -> sub_7FF7CB446F50），其固定键表（方向键/Shift/
-// Ctrl/Alt/Space/Delete/Esc/Tab/Enter/鼠标/小键盘/字母 XZCV DABS GHKPUJFRL/
-// VK 221,226）不含 'E'；且无加速键表（无 LoadAccelerators/Translate-
-// Accelerator 导入）、无 GetAsyncKeyState/GetKeyboardState/RegisterHotKey。
-// 故原版加载 MMHack 后 MMD 行为与不加载完全一致，该 hook 属行为学死代码
-// （MME 自身热键走 WH_KEYBOARD + GetAsyncKeyState，见 mme_ui.cpp 的
-// MmeKeyboardHookProc，不受此 IAT hook 影响）。内置版因此不需要、也不应
-// 添加任何 Ctrl+Shift+E 屏蔽——本工程按键轮询键表与原版一致（frame_modes.
-// cpp / model_query_helpers.cpp），亦无 'E' 查询点。
+// [Verification conclusion, 2026-09] Original MMHack's user32!GetKeyState IAT hook in the host EXE
+// ([0x180004910], installed unconditionally by DllMain through sub_18000ada0, regardless of MME initialization
+// state) returns 0 when the queried key is 'E'(69) and GetKeyState('E'/VK_CONTROL/VK_SHIFT) all
+// have their high bits set. However, this hook has no observable effect on MMD v932 (x64 and the matching x86 0x42D3A0 key table):
+// the EXE's only GetKeyState call site is the per-frame keyboard polling dispatcher
+// (x64 sub_7FF7CB446AD0 -> sub_7FF7CB446F50), whose fixed key table (arrows/Shift/
+// Ctrl/Alt/Space/Delete/Esc/Tab/Enter/mouse/numpad/letters XZCV DABS GHKPUJFRL/
+// VK 221,226) omits 'E'; there is no accelerator table (no LoadAccelerators/Translate-
+// Accelerator imports) or GetAsyncKeyState/GetKeyboardState/RegisterHotKey.
+// Loading MMHack therefore leaves MMD behavior unchanged; the hook is behaviorally dead code
+// (MME's own hotkeys use WH_KEYBOARD + GetAsyncKeyState; see MmeKeyboardHookProc in mme_ui.cpp,
+// which is unaffected by this IAT hook). The embedded version consequently needs no
+// Ctrl+Shift+E suppression and should not add any. This project's polling table matches the original (frame_modes.
+// cpp / model_query_helpers.cpp) and likewise never queries 'E'.
 #include "mikudancestudio/panel_controls.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 
@@ -29,9 +29,9 @@
 #include "mme_host_api.h"
 #include "mesh_subset.hpp"
 
-// src/exports/effect_api.cpp 的内部直取（extern "C"，非导出）：模型/附件
-// 原始宽字符路径。经 MmeHostSetPathProviders 注入 MMEffect.dll（等价于
-// 原版 MMHook 的 D3DXLoadMeshFromXW hook 宽路径登记，无 SJIS 往返）。
+// Internal direct access from src/exports/effect_api.cpp (extern "C", not exported): original model/accessory
+// wide-character paths. Injected into MMEffect.dll through MmeHostSetPathProviders (equivalent to
+// original MMHook's D3DXLoadMeshFromXW wide-path registration, without an SJIS round trip).
 extern "C" const wchar_t* MmdModelPathW(int index);
 extern "C" const wchar_t* MmdAcsPathW(int index);
 
@@ -39,26 +39,26 @@ namespace mikudancestudio {
 namespace mme {
 namespace {
 
-// 设备已登记到内置效果引擎。标准效果是否齐备由惰性 Initialize 判断。
+// Device is registered with the embedded effect engine. Lazy Initialize checks standard-effect availability.
 bool g_deviceRegistered = false;
-// 已注册给 MME 的主窗口（帧级刷新用；初始化期间 WM_CREATE 的句柄可能
-// 尚未写回 app->Hwnd()）。
+// Main window registered with MME (refreshed per frame; during WM_CREATE initialization the handle may
+// not yet have been stored in app->Hwnd()).
 HWND g_registeredWindow = nullptr;
 
-// ---- sub_18000EFF0（MMHack.dll，每帧 BeginScene 调用）的等价状态 --------
-// 0x18006E840（hWnd）：目标编辑框缓存。原版探测顺序：GetDlgItem(主窗口,
-// 317) 且类名为 "EDIT"（stricmp）→ 否则回落 GetDlgItem(主窗口, 417)（同
-// 样须为 EDIT）；两者皆非 EDIT 时保持空并逐帧重探。317 是旧版 MMD 的帧
-// 编辑框 ID（跨版本兼容回落）：MMD v932x64 无 317 号控件（exe 内立即数
-// 317 零引用），端口主窗口创建表 ui_controls.inc 也只覆盖 400..567，故
-// 固定回落到 417（panel::kCurrentFrameEdit，"EDIT" 类）。
+// ---- Equivalent state for sub_18000EFF0 (MMHack.dll, called by BeginScene each frame) --------
+// 0x18006E840 (hWnd): cached target edit control. Original probing order: GetDlgItem(main window,
+// 317) with class name "EDIT" (stricmp), otherwise fall back to GetDlgItem(main window, 417) (also
+// requiring EDIT). If neither is EDIT, remain null and retry each frame. 317 is the frame edit ID in older
+// MMD versions (cross-version fallback); MMD v932x64 has no control 317 (no immediate references to
+// 317 in the EXE), and the port's main-window creation table ui_controls.inc covers only 400..567, so
+// it always falls back to 417 (panel::kCurrentFrameEdit, class "EDIT").
 HWND g_editModeControl = nullptr;
-// 0x18006E7BD（byte_18006E7BD）：RecWindow（AVI 录制窗）粘滞标志。
+// 0x18006E7BD (byte_18006E7BD): sticky RecWindow (AVI recording window) flag.
 bool g_recWindowSticky = false;
 
-// 0x18000EF60（fn，EnumThreadWindows 回调）：候选顶层窗口类名 strcmp
-// 精确等于 "RecWindow" → 置 found 并终止枚举。判据仅类名——不是 #32770
-// 模态对话框，也不查 IsWindowEnabled/父子/所有者关系。
+// 0x18000EF60 (function, EnumThreadWindows callback): a candidate top-level window whose class name strcmp
+// exactly matches "RecWindow" sets found and stops enumeration. Only the class name matters; neither #32770
+// modal dialogs nor IsWindowEnabled/parent-child/owner relationships are checked.
 BOOL CALLBACK FindRecWindowProc(HWND candidate, LPARAM found) {
     char className[32];
     if (GetClassNameA(candidate, className, 32) != 0 && strcmp(className, "RecWindow") == 0) {
@@ -68,13 +68,13 @@ BOOL CALLBACK FindRecWindowProc(HWND candidate, LPARAM found) {
     return TRUE;
 }
 
-// VA sub_18000EFF0：返回 notEditMode（调用方写 0x18006E796，IsEditMode
-// 导出返回其取反；0x18006E79C 帧时间紧随其后由 mme_host.cpp 写入）。
-// 语义：目标编辑框被禁用（MMD 播放开始即禁用 415..468，含 417——
-// playback_state.cpp），或 RecWindow 存在且已粘滞。粘滞时序：RecWindow
-// 出现的当帧仍算编辑态并置粘滞，自次帧起非编辑；消失当帧清除粘滞，
-// 返回值只取决于控件启用状态。IsWindowEnabled(NULL)==FALSE：主窗口上
-// 找不到 EDIT 目标控件时恒为非编辑态（原版同）。
+// VA sub_18000EFF0: returns notEditMode (caller stores 0x18006E796; the IsEditMode
+// export returns its inverse; mme_host.cpp writes frame time 0x18006E79C immediately afterward).
+// Meaning: the target edit control is disabled (MMD disables 415..468, including 417, when playback starts;
+// playback_state.cpp), or RecWindow exists and has latched. Timing: the frame in which RecWindow
+// appears is still edit mode and sets the latch; non-edit mode starts next frame. Disappearance clears the latch that frame,
+// and the return value then depends only on the control's enabled state. IsWindowEnabled(NULL)==FALSE: if no target EDIT
+// control exists in the main window, the mode is always non-edit (as in the original).
 int ProbeNotEditMode(HWND mainWindow) {
     if (g_editModeControl == nullptr) {
         char className[32];
@@ -83,8 +83,8 @@ int ProbeNotEditMode(HWND mainWindow) {
             _stricmp(className, "EDIT") != 0)
             probe = nullptr;
         if (probe == nullptr) {
-            // 原版此处顺带写 dword_18006CCB8 = 14208（无消费者的死存储，
-            // 不移植）。
+            // The original also writes dword_18006CCB8 = 14208 here (dead store with no consumers,
+            // not ported).
             probe = GetDlgItem(mainWindow, panel::kCurrentFrameEdit);
             if (probe != nullptr &&
                 (GetClassNameA(probe, className, 32) == 0 || _stricmp(className, "EDIT") != 0))
@@ -110,33 +110,33 @@ int ProbeNotEditMode(HWND mainWindow) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// 设备生命周期
+// Device lifecycle
 // ---------------------------------------------------------------------------
-// [裁决定论 2026-09-14 二次核验，retract 第一轮审计的槽位错读] 原版
-// MMHack.dll MyDirect3DDevice9 包装 vtable @0x18005c058 关键槽位
-// （vtable 实读 + 反汇编转发目标双重确认）：
-//   槽 15(0x78) 0x180003ed0 = GetNumberOfSwapChains 纯直通 jmp [real+0x78]
-//                （早期审计误读为 "Reset 直通"）；
-//   槽 16(0x80) 0x180003d30 = Reset 拦截：MME OnLostDevice(0x180058970，
-//                打印 "Resetting MME...") → 真 Reset call [real+0x80] →
+// [Final verdict, 2026-09-14 recheck; retracting the first audit's misread slots] Key slots in original
+// MMHack.dll MyDirect3DDevice9 wrapper vtable at 0x18005c058
+// (confirmed both by reading the vtable and disassembling forwarding targets):
+//   slot 15(0x78) 0x180003ed0 = GetNumberOfSwapChains, pure forwarding jmp [real+0x78]
+//                (misidentified as "Reset passthrough" in the early audit);
+//   slot 16(0x80) 0x180003d30 = Reset interception: MME OnLostDevice(0x180058970,
+//                prints "Resetting MME...") -> real Reset call [real+0x80] ->
 //                MME OnResetDevice(0x180058A20) → qword_18006E7C8 =
-//                d3dpp.hDeviceWindow(+0x20)，空则 GetCreationParameters
-//                [real+0x48] 的 hFocusWindow(+0x08)；
-//   槽 17(0x88) 0x180003cf0 = Present 拦截：仅记录 qword_18006E7C0 =
-//                hDestWindowOverride 非空 ? override : qword_18006E7C8
-//                （数据源见 BeginScene 内注释），随后 call [real+0x88]，
-//                不调任何 MME 通知；
-//   槽 18(0x90) 0x180001ef0 = GetBackBuffer 直通 call [real+0x90]。
-// MMD 侧（x64）：主循环 sub_7FF7CB4474F0 每帧 call [dev+0x88] Present；
-// 仅当 Present 返回 D3DERR_DEVICELOST(0x88760868) 且 TestCooperativeLevel
-// ([dev+0x18]) 轮询到 D3DERR_DEVICENOTRESET(0x88760869) 才经
-// sub_7FF7CB4C6160 call [dev+0x80] Reset（其余 Reset 入口同走槽 16）。
-// 故 MME OnLostDevice/OnResetDevice 只由真实设备 Reset 触发；
-// "槽 16 = Present、每帧 Present 触发 Resetting MME" 的旧说法（16/17 相邻
-// 槽位混淆）不成立。OnLost/OnReset 的调用条件是两个导出指针均非空
-// （0x18006e828/0x18006e830）。本桥等价面：Present 路径零通知（见
-// frame_driver.cpp 第 9 节），Reset 前后各一次通知（device_reset.cpp，
-// OnResetDevice 紧贴 Reset、InitRenderStates 之前）。
+//                d3dpp.hDeviceWindow(+0x20), or if null, hFocusWindow(+0x08) from GetCreationParameters
+//                [real+0x48];
+//   slot 17(0x88) 0x180003cf0 = Present interception: only records qword_18006E7C0 =
+//                hDestWindowOverride non-null ? override : qword_18006E7C8
+//                (source documented inside BeginScene), then calls [real+0x88],
+//                without any MME notification;
+//   slot 18(0x90) 0x180001ef0 = GetBackBuffer passthrough call [real+0x90].
+// MMD side (x64): main loop sub_7FF7CB4474F0 calls [dev+0x88] Present every frame;
+// only when Present returns D3DERR_DEVICELOST(0x88760868) and TestCooperativeLevel
+// ([dev+0x18]) polling reaches D3DERR_DEVICENOTRESET(0x88760869) does it call
+// sub_7FF7CB4C6160 -> [dev+0x80] Reset (other Reset entry points also use slot 16).
+// Thus MME OnLostDevice/OnResetDevice are triggered only by actual device Reset;
+// the old claim "slot 16 = Present, every Present triggers Resetting MME" (confusing adjacent slots
+// 16/17) is false. OnLost/OnReset require both export pointers to be non-null
+// (0x18006e828/0x18006e830). Equivalent bridge behavior: no Present notifications (see
+// frame_driver.cpp section 9), one notification before and after Reset (device_reset.cpp,
+// OnResetDevice immediately after Reset, before InitRenderStates).
 void OnDeviceCreated(MMDApp* app, HWND hwnd) {
     g_deviceRegistered = false;
     g_registeredWindow = nullptr;
@@ -148,8 +148,8 @@ void OnDeviceCreated(MMDApp* app, HWND hwnd) {
     // MMHack 0x180002E35..0x180002E8F retries on each BeginScene, reports the
     // error, leaves initialization pending, and returns S_OK without starting
     // the real scene. There is deliberately no second failure latch here.
-    // InitD3D 于 WM_CREATE 期间运行，app->Hwnd() 此时还是空——以参数句柄
-    // 为准（回落到 app->Hwnd() 仅为防御）。
+    // InitD3D runs during WM_CREATE, while app->Hwnd() is still null; use the argument handle
+    // (falling back to app->Hwnd() is only defensive).
     HWND window = hwnd;
     if (window == nullptr)
         window = static_cast<HWND>(app->Hwnd());
@@ -186,7 +186,7 @@ void OnResetDevice(MMDApp* app) {
 }
 
 // ---------------------------------------------------------------------------
-// 帧级
+// Per frame
 // ---------------------------------------------------------------------------
 HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags, D3DCOLOR color,
                    float z, unsigned long stencil) {
@@ -198,18 +198,18 @@ HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags, D
 HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device) {
     if (!g_deviceRegistered)
         return device->BeginScene();
-    // 主窗口句柄刷新（初始化时序的兜底：若注册句柄与当前不符则更新，
-    // 需在 MME 惰性 Initialize 之前生效）。
+    // Refresh the main-window handle (initialization fallback: update a registered handle that differs from the current one;
+    // this must take effect before MME lazy Initialize).
     HWND window = static_cast<HWND>(app->Hwnd());
     if (window != nullptr && window != g_registeredWindow) {
         MmeHostSetMainWindow(window);
         g_registeredWindow = window;
     }
-    // 原版语义（sub_18000EFF0 / MmhProbeEditMode）：帧编辑框（317 回落
-    // 417）被禁用，或 RecWindow 类窗口（AVI 窗口化录制窗；全屏 3D Vision
-    // 录制时 RecordingWindow==主窗口、类名非 RecWindow，不参与判定）出现
-    // 满一帧粘滞 → 非编辑态。播放开始即禁用 415..468，故播放/暂停期间
-    // notEditMode=1；模态对话框不参与判定（回调仅匹配 RecWindow 类）。
+    // Original semantics (sub_18000EFF0 / MmhProbeEditMode): a disabled frame edit control (317 falling back to
+    // 417), or a RecWindow-class window (windowed AVI recording; fullscreen 3D Vision
+    // recording uses RecordingWindow==main window, whose class is not RecWindow and does not qualify) present
+    // for a full frame and latched -> non-edit mode. Playback disables 415..468, so during playback/pause
+    // notEditMode=1; modal dialogs do not qualify (the callback matches only class RecWindow).
     const int notEditMode = ProbeNotEditMode(g_registeredWindow);
     return MmeHostBeginScene(device, notEditMode);
 }
@@ -236,7 +236,7 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device, IDirect3DSurface
 }
 
 // ---------------------------------------------------------------------------
-// 绘制转发
+// Draw forwarding
 // ---------------------------------------------------------------------------
 HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, unsigned int start_vertex,
                       unsigned int primitive_count) {
@@ -260,7 +260,7 @@ bool EffectsActive() {
 }
 
 // ---------------------------------------------------------------------------
-// 附件网格绘制（ID3DXMesh::DrawSubset 的可见等价物）
+// Accessory mesh drawing (observable equivalent of ID3DXMesh::DrawSubset)
 // ---------------------------------------------------------------------------
 HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material) {
     IDirect3DDevice9* device = app->Renderer()->device;
@@ -304,7 +304,7 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
 }
 
 // ---------------------------------------------------------------------------
-// 文件通知
+// File notifications
 // ---------------------------------------------------------------------------
 void NotifyPmmLoaded(MMDApp* app) {
     if (!g_deviceRegistered)

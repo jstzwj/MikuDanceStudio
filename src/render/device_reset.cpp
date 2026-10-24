@@ -61,17 +61,17 @@ void PostDeviceReset(MMDApp* app) {
     ReleaseSubSlot(r->shadowDepthSurface);  // 0x440F12
 
     if (r->effect != nullptr) {
-        // ID3DXEffect::OnLostDevice（vtable 槽 69 / +0x228，对应原版
-        // PostDeviceReset x64 0x7FF7CB4C6308 的 call [vtbl+0x228]）。
+        // ID3DXEffect::OnLostDevice (vtable slot 69 / +0x228, corresponding to the original
+        // PostDeviceReset x64 call [vtbl+0x228] at 0x7FF7CB4C6308).
         fx::OnLostDevice(r->effect);
     }
 
-    // 内置 MMEffect：原版 MMHack.dll 设备包装 vtable 槽 16（0x80）的 Reset
-    // 拦截器 [0x180003d30] 前半。MMD 侧 Reset（x64 sub_7FF7CB4C6160 @
-    // 0x7FF7CB4C6323，call [dev+0x80]）进入拦截器后先调
-    // OnLostDevice(0x180058970，打印 "Resetting MME...")——前提是
-    // OnLostDevice 与 OnResetDevice 两个导出都在 MMHack DllMain 解析成功
-    //（0x18000b3f3/0x18000b418 赋值 0x18006e828/0x18006e830，缺一不通知）。
+    // Embedded MMEffect: first half of original MMHack.dll's device-wrapper vtable slot 16 (0x80) Reset
+    // interceptor [0x180003d30]. MMD's Reset (x64 sub_7FF7CB4C6160 at
+    // 0x7FF7CB4C6323, call [dev+0x80]) enters the interceptor and first calls
+    // OnLostDevice (0x180058970, printing "Resetting MME..."), provided
+    // MMHack DllMain resolved both OnLostDevice and OnResetDevice exports
+    // (0x18000b3f3/0x18000b418 assign 0x18006e828/0x18006e830; notify neither if either is missing).
     mme::OnLostDevice(app);
 
     IDirect3DDevice9* device = r->device;
@@ -79,14 +79,14 @@ void PostDeviceReset(MMDApp* app) {
         return;
     device->Reset(&r->presentParameters); // 0x440F57
 
-    // 内置 MMEffect：拦截器 [0x180003d30] 后半——OnResetDevice(0x180058A20)
-    // 紧贴真 Reset 返回、InitRenderStates 之前调用。原版合成顺序：
+    // Embedded MMEffect: second half of interceptor [0x180003d30]; OnResetDevice (0x180058A20)
+    // is called immediately after real Reset returns, before InitRenderStates. Original combined order:
     // D3DX OnLost → MME OnLost → Reset → MME OnReset → InitRenderStates →
-    // SetRenderState(0xA1) → D3DX OnReset（2026-09 二次核验修正：此前误置于
-    // D3DX OnResetDevice 之后，与原版不符）。拦截器尾部另把 qword_18006E7C8
-    // 更新为 d3dpp.hDeviceWindow(+0x20)（空则 GetCreationParameters
-    // [real+0x48] 的 hFocusWindow）；该缓存语义已由 mme_bridge 帧级
-    // SetDrawnWindow 预置覆盖，无需在此重复。
+    // SetRenderState(0xA1) -> D3DX OnReset (2026-09 recheck correction: previously misplaced after
+    // D3DX OnResetDevice, contrary to the original). The interceptor tail also updates qword_18006E7C8
+    // to d3dpp.hDeviceWindow(+0x20), or, if null, hFocusWindow from GetCreationParameters
+    // [real+0x48]. The mme_bridge per-frame SetDrawnWindow setup already covers this cached state,
+    // so it need not be duplicated here.
     mme::OnResetDevice(app);
 
     InitRenderStates(app); // 0x406E90
@@ -97,8 +97,8 @@ void PostDeviceReset(MMDApp* app) {
         static_cast<D3DRENDERSTATETYPE>(0xA1), (menuState & 8) != 0 ? 1 : 0);
 
     if (r->effect != nullptr) {
-        // ID3DXEffect::OnResetDevice（vtable 槽 70 / +0x230，对应原版
-        // PostDeviceReset x64 0x7FF7CB4C6398 的 call [vtbl+0x230]）。
+        // ID3DXEffect::OnResetDevice (vtable slot 70 / +0x230, corresponding to the original
+        // PostDeviceReset x64 call [vtbl+0x230] at 0x7FF7CB4C6398).
         fx::OnResetDevice(r->effect);
     }
 

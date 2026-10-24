@@ -80,7 +80,7 @@
 //   (empty -> 'a' box).
 //   3-byte compare finds the SJIS faces "あ"/"い"/"う"/"お"; any miss ->
 //   EN 0x52CFF4/52CF6C/52CEE4/52CE5C or JP 0x52CFB0/52CF28/52CEA0/52CE18
-//   box (captions "lipsync" 0x52D034 / "vsq解析" 0x52D134) and return.
+//   box (captions "lipsync" 0x52D034 / "vsq analysis" 0x52D134) and return.
 //   ('え' is synthesized from the あ+い faces, no search.)
 //   Clear allocated marks in the bone, morph and display key arrays.
 //   Per event (weight is MorphRecord::value, frames are
@@ -135,20 +135,20 @@ namespace mikudancestudio {
 namespace {
 
 // ---- JP-locale texts, verbatim Shift-JIS bytes from .rdata ---------------
-// 0x52CDD4 "ファイルが読み込めません:%d"
+// 0x52CDD4 "Cannot load file:%d"
 const char kJpOpenFailFmt[] = "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xaa\x93\xc7\x82\xdd\x8d\x9e"
                               "\x82\xdf\x82\xdc\x82\xb9\x82\xf1\x3a\x25\x64";
-// 0x52D108 "SysExイベントがあります。お手上げ＼(^o^)／"
+// 0x52D108 "A SysEx event is present. I give up!"
 const char kJpSysEx[] = "\x53\x79\x73\x45\x78\x83\x43\x83\x78\x83\x93\x83\x67\x82\xaa\x82"
                         "\xa0\x82\xe8\x82\xdc\x82\xb7\x81\x42\x82\xa8\x8e\xe8\x8f\xe3\x82"
                         "\xb0\x81\x5f\x28\x5e\x6f\x5e\x29\x81\x5f";
-// 0x52D134 "vsq解析"
+// 0x52D134 "vsq analysis"
 const char kJpVsqCaption[] = "\x76\x73\x71\x89\xf0\x90\xcd";
-// 0x52D0C8 "vsq解析エラー発生！！"
+// 0x52D0C8 "vsq analysis error!!"
 const char kJpAnalysisErr[] = "\x76\x73\x71\x89\xf0\x90\xcd\x83\x47\x83\x89\x81\x5b\x94\xad\x90"
                               "\xb6\x81\x49\x81\x49";
 // 0x52CFB0 / 0x52CF28 / 0x52CEA0 / 0x52CE18
-// "このモデルの表情に”あ”の形がない為\n自動リップシンクはできません" (a/i/u/o)
+// "This model has no 'a' mouth morph, so\nautomatic lip sync is unavailable" (a/i/u/o)
 const char kJpNoA[] = "\x82\xb1\x82\xcc\x83\x82\x83\x66\x83\x8b\x82\xcc\x95\x5c\x8f\xee"
                       "\x82\xc9\x81\x68\x82\xa0\x81\x68\x82\xcc\x8c\x60\x82\xaa\x82\xc8"
                       "\x82\xa2\x88\xd7\x0a\x8e\xa9\x93\xae\x83\x8a\x83\x62\x83\x76\x83"
@@ -169,16 +169,16 @@ const char kJpNoO[] = "\x82\xb1\x82\xcc\x83\x82\x83\x66\x83\x8b\x82\xcc\x95\x5c\
                       "\x82\xa2\x88\xd7\x0a\x8e\xa9\x93\xae\x83\x8a\x83\x62\x83\x76\x83"
                       "\x56\x83\x93\x83\x4e\x82\xcd\x82\xc5\x82\xab\x82\xdc\x82\xb9\x82"
                       "\xf1";
-// 0x52D178 "拍子=%d/%d メトロノーム間隔=%d 四分音符あたりの三十二分音符の数=%d"
+// 0x52D178 "Time signature=%d/%d Metronome interval=%d Number of thirty-second notes per quarter note=%d"
 const char kJpTimeSig[] = "\x94\x8f\x8e\x71\x3d\x25\x64\x2f\x25\x64\x20\x83\x81\x83\x67\x83"
                           "\x8d\x83\x6e\x81\x5b\x83\x80\x8a\xd4\x8a\x75\x3d\x25\x64\x20\x8e"
                           "\x6c\x95\xaa\x89\xb9\x95\x84\x82\xa0\x82\xbd\x82\xe8\x82\xcc\x8e"
                           "\x4f\x8f\x5c\x93\xf1\x95\xaa\x89\xb9\x95\x84\x82\xcc\x90\x94\x3d"
                           "\x25\x64";
-// 0x52D158 "キー(調) ＃(♭)の数:%d 長調" (major)
+// 0x52D158 "Key: number of sharps (flats):%d major" (major)
 const char kJpKeyMajor[] = "\x83\x4c\x81\x5b\x28\x92\xb2\x29\x20\x81\x94\x28\x81\xf3\x29\x82"
                            "\xcc\x90\x94\x3a\x25\x64\x20\x92\xb7\x92\xb2";
-// 0x52D13C "キー(調) ＃(♭)の数:%d 短調" (minor)
+// 0x52D13C "Key: number of sharps (flats):%d minor" (minor)
 const char kJpKeyMinor[] = "\x83\x4c\x81\x5b\x28\x92\xb2\x29\x20\x81\x94\x28\x81\xf3\x29\x82"
                            "\xcc\x90\x94\x3a\x25\x64\x20\x92\x5a\x92\xb2";
 
@@ -490,10 +490,10 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     }
 
     // ---- 0x436940: phoneme extraction (still on rd2) ----------------
-    // 注：x64 里空格指针是 strstr 每轮现算的临时值（rsi），没有跨迭代状态；
-    // port 曾残留一个 loop-carried 的 carried 指针，'\' 分支里 ++carried
-    // 先于判空自增（nullptr 时得 (char*)1，carried[1] 读地址 2 直接崩溃），
-    // 且取到的是刚断言过为 ' ' 的字节，元音恒为空格。已按 x64 删除。
+    // Note: on x64 the space pointer is a temporary strstr result (rsi) recomputed each iteration, with no carried state.
+    // The port previously retained a loop-carried pointer, incremented by ++carried in the '\' branch
+    // before checking for null (nullptr became (char*)1, and carried[1] read address 2 and crashed).
+    // It also read the byte just confirmed to be ' ', making every vowel a space. Removed to match x64.
     for (int j = 0; j < count; ++j) {
         VsqEvent& ev = events[j];
         if (strstr(line, ev.handle) == nullptr) {
@@ -517,15 +517,15 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
             ev.consonant[0] = 0;
             ev.vowel = m[3];
         } else if (m1[3] == '\\') { // 0x7FF7CB48F664: X-SAMPA "p\ a"
-            // ふ行等带 '\' 的音素：直接检查 m[5] 是否空格（0x7FF7CB48F668），
-            // 命中则先抹掉该空格（0x7FF7CB48F67D，m+3 截短后兼作格式串），
-            // 元音取空格后的 m[6]（0x7FF7CB48F692）
+            // Phonemes containing '\', such as the fu row: check m[5] directly for a space (0x7FF7CB48F668);
+            // if found, clear that space first (0x7FF7CB48F67D; truncated m+3 also serves as the format string),
+            // and take the vowel from m[6] after the space (0x7FF7CB48F692)
             if (m[5] == ' ') {
                 m[5] = 0;
                 sprintf_s(ev.consonant, 6, m + 3);
                 ev.vowel = m[6];
             } else {
-                ev.consonant[0] = 0; // 0x7FF7CB48F6B4（公共落空路径）
+                ev.consonant[0] = 0; // 0x7FF7CB48F6B4 (shared no-match path)
                 ev.vowel = 'N';
             }
         } else {
@@ -818,9 +818,9 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
         VsqEvent& ev = events[i];
         const double start = ev.start;
         const double end = ev.end;
-        // 0x438150 (x64 0x7FF7CB4908C8): vowel=='h' 时取 ev+0x00 的首字节
-        // 写回 vowel——r12=&ev.start(+0x10)，[r12-0Ah]=vowel(+0x06)，
-        // [r12-10h]=ev+0x00，即 consonant[0]（分类轮重写后的口型 token）。
+        // 0x438150 (x64 0x7FF7CB4908C8): when vowel=='h', copy the first byte of ev+0x00
+        // back to vowel: r12=&ev.start(+0x10), [r12-0Ah]=vowel(+0x06),
+        // [r12-10h]=ev+0x00, i.e. consonant[0] (the mouth-shape token rewritten during classification).
         if (ev.vowel == 'h')
             ev.vowel = ev.consonant[0];
         const int f1 = -2 - static_cast<int>(start * -30.0); // 0x52CE10

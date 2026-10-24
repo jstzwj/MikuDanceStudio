@@ -1,9 +1,9 @@
-// mmhack_state.h - 内置 MMEffect 的渲染状态跟踪块（原 MMHack.dll .data 段）。
+// mmhack_state.h - Built-in MMEffect render-state tracking block (the original MMHack.dll .data section).
 //
-// 每个字段注释保留了原版 .data 槽位地址（证据）。22 个状态查询函数读取本
-// 状态块；写入方在原版是 MyDirect3D9/MyDirect3DDevice9/MyD3DXMesh 包装器与
-// PMM 文件监视 hook，在本工程是 src/mme_host.cpp 的 MmeHost* 集成层（由
-// 宿主渲染管线在对应位置直接调用）。
+// Each field comment preserves its original .data slot address as evidence. The 22 state-query functions read this
+// block. In the original, writers are the MyDirect3D9/MyDirect3DDevice9/MyD3DXMesh wrappers and
+// PMM file-monitoring hooks; here, they are the MmeHost* integration layer in src/mme_host.cpp (called
+// directly at the corresponding points in the host rendering pipeline).
 #pragma once
 
 #include <windows.h>
@@ -15,136 +15,136 @@
 #include <unordered_map>
 #include <list>
 
-// --- 12 MME 技术描述符，原版 .rdata 静态表 [0x18005bdf0] -------------------
-// flags 字节: [0]=使用基础纹理, [1]=sphere(Sphia), [2]=cd2(子纹理), [3]=Diffuse。
-// 由 MmeHostSetStandardEffect 注册进技术缓存（原 Hooked_D3DXCreateEffect-
-// FromResourceA [0x180004440] 的登记路径）。
+// --- 12 MME technique descriptors, original .rdata static table [0x18005bdf0] -------------------
+// Flag bytes: [0]=base texture used, [1]=sphere(Sphia), [2]=cd2(subtexture), [3]=Diffuse.
+// Registered in the technique cache by MmeHostSetStandardEffect (the registration path of the original Hooked_D3DXCreateEffect-
+// FromResourceA [0x180004440]).
 struct MmhTecDesc { const char* name; DWORD flags; };
 extern const MmhTecDesc g_tecTable[12];
 const int MMH_TEC_COUNT = 12;
 
-// 每对象数据记录（原版: std::map<unsigned long long, ObjData>，键为宿主对象
-// id，DAT_18006e958；访问器 FUN_18000f2b0）。
-// MmhMaterialEntry 为原版 0x78 字节表项，由 MmhMaterialTableLoadFromFile
-// [FUN_18000e020] 直接解析模型文件填充：
-//   +0x00 texName - toon 纹理引用（目录限定路径，内置 toon01..toon10.bmp 除外）
-//   +0x28 name0   - kind 0 名称（PMX 日文名 / PMD "<model>.txt" 第 i 行）
-//   +0x50 name1   - kind 1 名称（PMX 英文名 / PMD 同行重复）
+// Per-object data record (original: std::map<unsigned long long, ObjData>, keyed by host object
+// id, DAT_18006e958; accessor FUN_18000f2b0).
+// MmhMaterialEntry is the original 0x78-byte entry, populated by MmhMaterialTableLoadFromFile
+// [FUN_18000e020] by parsing model files directly:
+//   +0x00 texName - toon texture reference (directory-qualified path, except built-in toon01..toon10.bmp)
+//   +0x28 name0   - kind 0 name (PMX Japanese name / line i of PMD "<model>.txt")
+//   +0x50 name1   - kind 1 name (PMX English name / repeated PMD line)
 struct MmhMaterialEntry {
-    std::wstring texName;    // entry +0x00: toon 纹理路径
-    std::wstring name0;      // entry +0x28: kind 0 名称（日文）
-    std::wstring name1;      // entry +0x50: kind 1 名称（英文）
+    std::wstring texName;    // entry +0x00: toon texture path
+    std::wstring name0;      // entry +0x28: kind 0 name (Japanese)
+    std::wstring name1;      // entry +0x50: kind 1 name (English)
 };
 struct MmhObjData {
     unsigned long long id = 0;
     bool isPmd = false;
     std::wstring modelName;              // FUN_18000f340: value+0x30 wstring
-    std::vector<MmhMaterialEntry> mats;  // 原版 0x78 字节表项
-    // 附属信息字段（原版 ObjData +0x240/+0x244）。原版全库无任何写入者——
-    // GetAcsAttachedPmd [0x1800012d0] 的真实数据源是 sub_18000F2B0 未命中时
-    // [0x18000f331] 的借位返回：把 id 当宿主附件对象指针，实时读其
-    // +0x240 attachPmdIndex（-1 = 未附属）/+0x244 attachBoneIndex。本工程由
-    // mmhack_getters.cpp 直接从宿主 AccessoryRecord 同偏移抽取（x64 下
-    // 576/580 与原版一致），这两个成员仅作布局锚点保留、无人读取。
-    int attachPmdIndex = -1;             // +0x240 (-1 = 未附属)
+    std::vector<MmhMaterialEntry> mats;  // Original 0x78-byte entry
+    // Attachment fields (original ObjData +0x240/+0x244). The original library has no writers at all;
+    // the real data source for GetAcsAttachedPmd [0x1800012d0] is sub_18000F2B0's fallback return on a miss
+    // at [0x18000f331]: treat the id as a host accessory pointer and read its current
+    // +0x240 attachPmdIndex (-1 = unattached)/+0x244 attachBoneIndex. This project
+    // reads the same offsets directly from the host's AccessoryRecord in mmhack_getters.cpp (on x64,
+    // 576/580 match the original). These two members remain solely as layout anchors and have no readers.
+    int attachPmdIndex = -1;             // +0x240 (-1 = unattached)
     int attachBoneIndex = 0;             // +0x244
 };
 
-// BeginScene 缓存对象（原版: 包装器 +0x58 的 0x50 字节节点表，id 图 +0x30，
-// order 图 +0x60；由 [0x180002de0] 构建）。
+// BeginScene cached object (original: 0x50-byte node table at wrapper +0x58, id map +0x30,
+// order map +0x60; built by [0x180002de0]).
 struct MmhCachedObject {
     unsigned long long id = 0;   // node[2]
-    int isPmd = 0;               // node[3]: 1 = PMD 模型, 0 = 附件
-    std::string fileName;        // node[1]: ANSI 文件名 (ExpGetPmdFilename)
-    void* texRef = nullptr;      // node[4]: 创建时捕获的 AddRef 对象
-    MmhObjData* data = nullptr;  // node[5]: MmhGetObjectData(id) 结果
+    int isPmd = 0;               // node[3]: 1 = PMD model, 0 = accessory
+    std::string fileName;        // node[1]: ANSI filename (ExpGetPmdFilename)
+    void* texRef = nullptr;      // node[4]: AddRef'd object captured at creation
+    MmhObjData* data = nullptr;  // node[5]: MmhGetObjectData(id) result
 };
 
-// 宿主导出（原 MikuMikuDance.exe / 本工程 MikuMikuDanceE.exe 的 37 个 Exp*
-// 的子集）。声明见 MMDExport.h。
+// Host exports (a subset of the 37 Exp* functions in the original MikuMikuDance.exe / this project's MikuMikuDanceE.exe).
+// See MMDExport.h for declarations.
 #include "MMDExport.h"
 
-// --- 全局状态（单实例）------------------------------------------------------
+// --- Global state (single instance) ------------------------------------------------------
 struct MmhState {
-    // --- 每帧/每绘制状态（BeginScene + 绘制转发写入）-----------------------
+    // --- Per-frame/per-draw state (written by BeginScene + draw forwarding) -----------------------
     unsigned long long currentModelID = 0;   // DAT_18006e868 (GetCurrentModelID)
     int    currentDrawType = 0;              // DAT_18006e798 (GetCurrentDrawType = ExpGetCurrentTechnic)
-    int    currentObjectKind = 0;            // DAT_18006e870 (1 = PMD 模型, 0 = 附件)
-    int    currentObjectIndex = 0;           // 包装器 +0x28（当前对象）
-    int    currentSubsetIndex = -1;          // DAT_18006ccc0 (GetCurrentSubsetIndex, -1 = 无)
+    int    currentObjectKind = 0;            // DAT_18006e870 (1 = PMD model, 0 = accessory)
+    int    currentObjectIndex = 0;           // Wrapper +0x28 (current object)
+    int    currentSubsetIndex = -1;          // DAT_18006ccc0 (GetCurrentSubsetIndex, -1 = none)
     int    blendMode = 0;                    // DAT_18006e7b8 (GetBlendMode; D3DRS_DESTBLEND == D3DBLEND_ONE)
-    bool   zbufferUsed = false;              // DAT_18006e7b8 孪生 (GetRenderState(D3DRS_DESTBLEND)==2 -> 1)
+    bool   zbufferUsed = false;              // DAT_18006e7b8 twin (GetRenderState(D3DRS_DESTBLEND)==2 -> 1)
     void*  currentEffect = nullptr;          // DAT_18006e7a0 (GetCurrentEffect, ID3DXEffect*)
-    bool   effectFileUsed = false;           // DAT_18006e795 (IsEffectFileUsed; 着色器路径激活)
-    bool   toonAvailable = false;            // DAT_18006e795 伴随（固定功能路径）
+    bool   effectFileUsed = false;           // DAT_18006e795 (IsEffectFileUsed; shader path active)
+    bool   toonAvailable = false;            // DAT_18006e795 companion (fixed-function path)
 
-    // --- 纹理捕获（借用指针，每绘制刷新）------------------------------------
+    // --- Texture capture (borrowed pointers, refreshed per draw) ------------------------------------
     IDirect3DBaseTexture9* baseTexture = nullptr;    // DAT_18006e7a8 (GetTexture)
     IDirect3DBaseTexture9* sphereTexture = nullptr;  // DAT_18006e7b0 (GetSphereMapTexture)
-    unsigned char sphereUsed = 0;            // byte @0x18006e789 (flags 字节 1)
-    unsigned char subTexUsed = 0;            // byte @0x18006e78a (flags 字节 2 = cd2)
-    unsigned char diffuseFlag = 0;           // byte @0x18006e78b (flags 字节 3)
-    unsigned char texUsed = 0;               // byte @0x18006e788 (flags 字节 0)
-    unsigned char sphereAdd = 0;             // DAT_18006e797 ("spadd" / 加法球贴图)
-    bool   toonUsed = false;                 // 派生: IsToonUsed
+    unsigned char sphereUsed = 0;            // byte @0x18006e789 (flag byte 1)
+    unsigned char subTexUsed = 0;            // byte @0x18006e78a (flag byte 2 = cd2)
+    unsigned char diffuseFlag = 0;           // byte @0x18006e78b (flag byte 3)
+    unsigned char texUsed = 0;               // byte @0x18006e788 (flag byte 0)
+    unsigned char sphereAdd = 0;             // DAT_18006e797 ("spadd" / additive sphere map)
+    bool   toonUsed = false;                 // Derived: IsToonUsed
 
-    // --- 窗口 --------------------------------------------------------------
-    HWND mainWindow = nullptr;               // DAT_18006e7e0 (GetMMDMainWindow; 根属主)
-    HWND deviceWindow = nullptr;             // DAT_18006e7c8 (hDeviceWindow 跟踪)
+    // --- Windows --------------------------------------------------------------
+    HWND mainWindow = nullptr;               // DAT_18006e7e0 (GetMMDMainWindow; root owner)
+    HWND deviceWindow = nullptr;             // DAT_18006e7c8 (hDeviceWindow tracking)
     HWND presentWindow = nullptr;            // DAT_18006e7c0 (GetDrawnWindow)
 
-    // --- 杂项 ---------------------------------------------------------------
+    // --- Miscellaneous ---------------------------------------------------------------
     float frameTime = 0.0f;                  // DAT_18006e79c (GetCurrentFrameTime = ExpGetFrameTime)
-    int   notEditMode = 0;                   // DAT_18006e796 (IsEditMode 返回 !this)
-    int   modalFlag = 0;                     // DAT_18006e7bd (粘滞模态对话框标志)
-    bool  debugMode = false;                 // DAT_18006e7bc (IsDebugMode; MMEffect.debug 存在)
-    bool  effectsDisabled = false;           // DAT_18006e794 (MME 初始化失败/禁用)
-    D3DCOLOR clearColor = 0;                 // DAT_18006ccc4 (GetClearColor; Clear 时捕获)
+    int   notEditMode = 0;                   // DAT_18006e796 (IsEditMode returns !this)
+    int   modalFlag = 0;                     // DAT_18006e7bd (sticky modal dialog flag)
+    bool  debugMode = false;                 // DAT_18006e7bc (IsDebugMode; MMEffect.debug exists)
+    bool  effectsDisabled = false;           // DAT_18006e794 (MME initialization failed/disabled)
+    D3DCOLOR clearColor = 0;                 // DAT_18006ccc4 (GetClearColor; captured during Clear)
 
-    // --- PMM 文件路径 (LoadedPMMFile / SavedPMMFile) ------------------------
-    std::wstring loadedPMMFile;              // DAT_18006cd28 (+ 标志 DAT_18006cd38)
+    // --- PMM file paths (LoadedPMMFile / SavedPMMFile) ------------------------
+    std::wstring loadedPMMFile;              // DAT_18006cd28 (+ flag DAT_18006cd38)
     bool loadedPmmFlag = false;
-    std::list<std::wstring> savedPmmList;    // DAT_18006e848/850 (SavedPMMFile 弹出队首)
-    std::wstring currentOpenFile;            // DAT_18006cda0 (CreateFileW GENERIC_READ 上下文)
+    std::list<std::wstring> savedPmmList;    // DAT_18006e848/850 (SavedPMMFile pops the queue front)
+    std::wstring currentOpenFile;            // DAT_18006cda0 (CreateFileW GENERIC_READ context)
 
-    // --- 全局对象数据图 (DAT_18006e958, 访问器 FUN_18000f2b0) ---------------
+    // --- Global object data map (DAT_18006e958, accessor FUN_18000f2b0) ---------------
     std::map<unsigned long long, MmhObjData> objData;
-    MmhObjData objDataDefault;               // 头节点值（空表项）
+    MmhObjData objDataDefault;               // Header-node value (empty entry)
 
-    // --- 纹理缓存: 文件名 -> 表项 (hash 图 DAT_18006ccd0 族) ----------------
+    // --- Texture cache: filename -> entry (hash-map family DAT_18006ccd0) ----------------
     struct TexCacheEntry {
-        IDirect3DBaseTexture9* tex = nullptr;     // 该文件名的首个纹理
-        IDirect3DBaseTexture9* toonTex = nullptr; // 惰性 = tex (节点 +0x50)
+        IDirect3DBaseTexture9* tex = nullptr;     // First texture for this filename
+        IDirect3DBaseTexture9* toonTex = nullptr; // Lazy = tex (node +0x50)
     };
     std::unordered_map<std::wstring, TexCacheEntry> texCache;
 
-    // --- 技术缓存: D3DXHANDLE -> 表索引 (FUN_1800061a0 图) ------------------
-    std::map<const char*, int> tecCache;     // 原版 DAT_18006ccd0 图
+    // --- Technique cache: D3DXHANDLE -> table index (FUN_1800061a0 map) ------------------
+    std::map<const char*, int> tecCache;     // Original DAT_18006ccd0 map
 
-    // --- 光照矩阵 (GetLightViewProjMatrix 每次调用重算) ---------------------
+    // --- Light matrices (GetLightViewProjMatrix recomputes on every call) ---------------------
     D3DMATRIX worldMatrix;                   // DAT_18006e8b0 (GetTransform(D3DTS_WORLDMATRIX(0)))
-    D3DMATRIX worldInverse;                  // DAT_18006e8f0 (world 的 D3DXMatrixInverse)
+    D3DMATRIX worldInverse;                  // DAT_18006e8f0 (D3DXMatrixInverse of world)
 };
 extern MmhState g_mmh;
 
-// --- 由 mmhack_registry.cpp 实现 ---------------------------------------------
+// --- Implemented in mmhack_registry.cpp ---------------------------------------------
 MmhObjData* MmhGetObjectData(unsigned long long id);          // [FUN_18000f2b0]
-bool  MmhIsKnownObjectId(unsigned long long id);              // [FUN_18000fb60 近似]
+bool  MmhIsKnownObjectId(unsigned long long id);              // [FUN_18000fb60 approximation]
 IDirect3DBaseTexture9* MmhGetCurrentToonTexture(unsigned long long modelDataId); // [FUN_18000f810]
 void  MmhRecordTextureFile(const std::wstring& name, IDirect3DBaseTexture9* tex); // [FUN_18000f3d0]
-void  MmhRecordTecHandle(D3DXHANDLE h, int index);            // 技术缓存插入
-int   MmhTecCacheIndex(const char* tecName);                  // [FUN_1800061a0 近似]
+void  MmhRecordTecHandle(D3DXHANDLE h, int index);            // Technique cache insertion
+int   MmhTecCacheIndex(const char* tecName);                  // [FUN_1800061a0 approximation]
 
-// --- 由 mmhack_material.cpp 实现 ---------------------------------------------
+// --- Implemented in mmhack_material.cpp ---------------------------------------------
 const wchar_t* MmhGetMaterialName(unsigned long long object_id,
                                   unsigned long material_index, int name_kind);
 
-// --- 由 mmhack_material_table.cpp 实现 ---------------------------------------
-// 直接解析模型文件（PMD/PMX）填充每材质表项：+0x00 toon 纹理、+0x28 日文名、
-// +0x50 英文名；文件缺失保持表原样，损坏数据部分填充。
+// --- Implemented in mmhack_material_table.cpp ---------------------------------------
+// Parse model files (PMD/PMX) directly to fill per-material entries: +0x00 toon texture, +0x28 Japanese name,
+// +0x50 English name; missing files leave the table unchanged, corrupt data may fill it partially.
 void MmhMaterialTableLoadFromFile(const wchar_t* modelPath,
                                   std::vector<MmhMaterialEntry>* out);
 
-// --- 由 mmhack_lightmatrix.cpp 实现 ------------------------------------------
+// --- Implemented in mmhack_lightmatrix.cpp ------------------------------------------
 void MmhComputeLightViewProjMatrix(D3DMATRIX* outView, D3DMATRIX* outProj,
                                    D3DMATRIX* outViewProj);

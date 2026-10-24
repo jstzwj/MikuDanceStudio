@@ -352,9 +352,9 @@ void BeginRangeScaleBoneUndo(unsigned char* model, int frame, int transformedKey
 // the original passes the key record by value on the stack - the port
 // takes (app, rec) with the same record layouts, a stub-era deviation
 // absorbed by those ports).
-// overflowAdvertised: 满表报错框里印的 point 数。粘贴路径（本函数 x64 原型
-// 0x410AA0）打 10000；相机实况注册器（0x410560/x64 0x7FF7CB47B18D）打
-// 600000 —— 原版两处不一致，故做成参数。
+// overflowAdvertised: point count printed in the table-full error. The paste path (this function's x64 prototype
+// at 0x410AA0) prints 10000; the live camera registrar (0x410560/x64 0x7FF7CB47B18D) prints
+// 600000. The original values differ between the two sites, hence the parameter.
 int RegisterCameraKey(MMDApp* app, const void* rec,
                       int overflowAdvertised = 10000);   // VA 0x00410AA0
 int RegisterLightKey(MMDApp* app, const void* rec);      // VA 0x00411900
@@ -444,13 +444,13 @@ void DeleteFacialLightFrameLine(MMDApp* app); // VA 0x0043BB30
 // ---- DxOpenNI / Kinect loader (src/app/oni_kinect.cpp) ------------------
 void OpenNiInit(MMDApp* app, const char* sjisPath); // VA 0x00429CB0
 void DisableKinect(MMDApp* app);                    // VA 0x0042A020
-// ---- Kinect 骨架驱动泵块（src/app/oni_skeleton_pump.cpp）----------------
-// x64 泵 0x7FF7CB44C12E..0x7FF7CB44C656（settle 门内、gate B 前），
-// 由 frame_driver.cpp 在 PhysicsFrame 之前调用（见该处注释）。
+// ---- Kinect skeleton driver pump block (src/app/oni_skeleton_pump.cpp) ----------------
+// x64 pump 0x7FF7CB44C12E..0x7FF7CB44C656 (inside the settle gate, before gate B),
+// called by frame_driver.cpp before PhysicsFrame (see the comment there).
 void PumpKinectSkeleton(MMDApp* app, unsigned char selActive);
-// 泵序言的 Kinect 探测后处理（x86 0x46DCCF..0x46DD61 / x64 0x7FF7CB44A34C..
-// 0x7FF7CB44A3EC）：深度图绘制请求 + 菜单 0x124 使能/灰化维护，由
-// frame_driver.cpp 的 selActive 探测块尾部调用。
+// Post-processing after Kinect detection in the pump prologue (x86 0x46DCCF..0x46DD61 / x64 0x7FF7CB44A34C..
+// 0x7FF7CB44A3EC): depth-map drawing request + menu 0x124 enabled/disabled state, called at the end of
+// the selActive detection block in frame_driver.cpp.
 void ManageKinectRecordGate(MMDApp* app, unsigned char selActive);
 bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame); // sub_7FF7CB4F2EB0
 bool RegisterTraceBoneKey(unsigned char* model, unsigned boneIdx,     // sub_7FF7CB4F23E0

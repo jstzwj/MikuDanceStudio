@@ -43,7 +43,7 @@ extern "C" {
 	_EXPORT	char*			ExpGetPmdMorphName(int,int);	// morph name of PMD model				args: model, morph
 	_EXPORT	float			ExpGetPmdMorphValue(int,int);	// morph value of PMD model				args: model, morph
 	_EXPORT	bool			ExpGetPmdDisp(int);				// visibility of PMD model (true: shown)arg: 0..GetPmdNum-1
-	_EXPORT	void*			ExpGetPmdID(int);				// PMD model ID (object pointer; x64 宿主以完整指针返回，官方头的 int 截断高位)	arg: 0..GetPmdNum-1
+	_EXPORT	void*			ExpGetPmdID(int);				// PMD model ID (object pointer; x64 host returns the full pointer; the official header's int truncates the high bits) arg: 0..GetPmdNum-1
 
 	_EXPORT	int				ExpGetAcsNum();					// number of accessories
 	_EXPORT	int				ExpGetPreAcsNum();				// accessories drawn before models
@@ -59,7 +59,7 @@ extern "C" {
 	_EXPORT	float			ExpGetAcsSi(int);				// accessory scale (panel Si)			arg: 0..GetAcsNum-1
 	_EXPORT	float			ExpGetAcsTr(int);				// accessory transparency (panel Tr)	arg: 0..GetAcsNum-1
 	_EXPORT	bool			ExpGetAcsDisp(int);				// visibility of accessory (true: shown)arg: 0..GetAcsNum-1
-	_EXPORT	void*			ExpGetAcsID(int);				// accessory ID (object pointer; 同上)					arg: 0..GetAcsNum-1
+	_EXPORT	void*			ExpGetAcsID(int);				// accessory ID (object pointer; as above) arg: 0..GetAcsNum-1
 	_EXPORT	int				ExpGetAcsMatNum(int);			// material count of accessory			arg: 0..GetAcsNum-1
 	_EXPORT	D3DMATERIAL9	ExpGetAcsMaterial(int,int);		// material of accessory				args: accessory, material
 

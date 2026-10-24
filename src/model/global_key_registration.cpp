@@ -203,9 +203,9 @@ void RegisterCameraState(MMDApp* app, int frame) {
         interpolation = existing->interpolation;
     }
     std::memcpy(source.interpolation, interpolation, sizeof(source.interpolation));
-    // 满表文案 x64 一比一照抄 600000（0x7FF7CB47B18D sprintf_s 的实参；
-    // 表容实为 10000 条，孪生粘贴注册器 0x410AA0/x64 0x7FF7CB47B769 才打
-    // 10000 —— 原版自身不一致，按行为基准保留）
+    // Preserve the x64 table-full text's 600000 exactly (argument to sprintf_s at 0x7FF7CB47B18D;
+    // actual capacity is 10000 records; the counterpart paste registrar at 0x410AA0/x64 0x7FF7CB47B769 prints
+    // 10000. Preserve the original's inconsistency as the behavioral reference.)
     RegisterCameraKey(app, &source, 600000);
 }
 
@@ -245,7 +245,7 @@ void RegisterGravityKeyCurrent(MMDApp* app, std::int32_t frame) { // VA 0x00412B
         "\x81\x75\xcc\xda\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75\x95"
         "\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c\x81\x76\x82\xf0\x8e\xc0"
         "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
-    static const char kJpFrameRegTitle[] = // "フレーム登録"
+    static const char kJpFrameRegTitle[] = // "Register frame"
         "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
 
     mdl::GravityKey* keys = app->GravityKeys();

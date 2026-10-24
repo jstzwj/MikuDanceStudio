@@ -196,39 +196,39 @@ void WriteBoneKeyRecord(mdl::BoneKey& rec, const float* p, int mode) {
 // Standard-bone SJIS name probes of 0x4A5690 (byte-exact, memcmp lengths).
 const unsigned char kNameCenter[] = // 0x531184 "センター" (9)
     {0x83, 0x5A, 0x83, 0x93, 0x83, 0x5E, 0x81, 0x5B, 0x00};
-const unsigned char kNameUpper[] = // 0x53117C "上半身" (7)
+const unsigned char kNameUpper[] = // 0x53117C "upper body" (7)
     {0x8F, 0xE3, 0x94, 0xBC, 0x90, 0x67, 0x00};
-const unsigned char kNameNeck[] = // 0x531178 "首" (3)
+const unsigned char kNameNeck[] = // 0x531178 "neck" (3)
     {0x8E, 0xF1, 0x00};
-const unsigned char kNameLArm[] = // 0x52B81C "左腕" (5)
+const unsigned char kNameLArm[] = // 0x52B81C "left arm" (5)
     {0x8D, 0xB6, 0x98, 0x72, 0x00};
-const unsigned char kNameLElbow[] = // 0x52B814 "左ひじ" (7)
+const unsigned char kNameLElbow[] = // 0x52B814 "left elbow" (7)
     {0x8D, 0xB6, 0x82, 0xD0, 0x82, 0xB6, 0x00};
-const unsigned char kNameRArm[] = // 0x52B804 "右腕" (5)
+const unsigned char kNameRArm[] = // 0x52B804 "right arm" (5)
     {0x89, 0x45, 0x98, 0x72, 0x00};
-const unsigned char kNameRElbow[] = // 0x52B7FC "右ひじ" (7)
+const unsigned char kNameRElbow[] = // 0x52B7FC "right elbow" (7)
     {0x89, 0x45, 0x82, 0xD0, 0x82, 0xB6, 0x00};
-const unsigned char kNameLower[] = // 0x531170 "下半身" (7)
+const unsigned char kNameLower[] = // 0x531170 "lower body" (7)
     {0x89, 0xBA, 0x94, 0xBC, 0x90, 0x67, 0x00};
-const unsigned char kNameLLeg[] = // 0x531168 "左足" (5)
+const unsigned char kNameLLeg[] = // 0x531168 "left leg" (5)
     {0x8D, 0xB6, 0x91, 0xAB, 0x00};
-const unsigned char kNameRLeg[] = // 0x531160 "右足" (5)
+const unsigned char kNameRLeg[] = // 0x531160 "right leg" (5)
     {0x89, 0x45, 0x91, 0xAB, 0x00};
-const unsigned char kNameLLegIk[] = // 0x531154 "左足ＩＫ" (9)
+const unsigned char kNameLLegIk[] = // 0x531154 "left leg IK" (9)
     {0x8D, 0xB6, 0x91, 0xAB, 0x82, 0x68, 0x82, 0x6A, 0x00};
-const unsigned char kNameRLegIk[] = // 0x531148 "右足ＩＫ" (9)
+const unsigned char kNameRLegIk[] = // 0x531148 "right leg IK" (9)
     {0x89, 0x45, 0x91, 0xAB, 0x82, 0x68, 0x82, 0x6A, 0x00};
-const unsigned char kNameLKnee[] = // 0x530F60 "左ひざ" (7)
+const unsigned char kNameLKnee[] = // 0x530F60 "left knee" (7)
     {0x8D, 0xB6, 0x82, 0xD0, 0x82, 0xB4, 0x00};
-const unsigned char kNameRKnee[] = // 0x530F58 "右ひざ" (7)
+const unsigned char kNameRKnee[] = // 0x530F58 "right knee" (7)
     {0x89, 0x45, 0x82, 0xD0, 0x82, 0xB4, 0x00};
-const unsigned char kNameLWrist[] = // 0x52B80C "左手首" (7)
+const unsigned char kNameLWrist[] = // 0x52B80C "left wrist" (7)
     {0x8D, 0xB6, 0x8E, 0xE8, 0x8E, 0xF1, 0x00};
-const unsigned char kNameRWrist[] = // 0x52B7F4 "右手首" (7)
+const unsigned char kNameRWrist[] = // 0x52B7F4 "right wrist" (7)
     {0x89, 0x45, 0x8E, 0xE8, 0x8E, 0xF1, 0x00};
-const unsigned char kNameLShoulder[] = // 0x531140 "左肩" (5)
+const unsigned char kNameLShoulder[] = // 0x531140 "left shoulder" (5)
     {0x8D, 0xB6, 0x8C, 0xA8, 0x00};
-const unsigned char kNameRShoulder[] = // 0x531138 "右肩" (5)
+const unsigned char kNameRShoulder[] = // 0x531138 "right shoulder" (5)
     {0x89, 0x45, 0x8C, 0xA8, 0x00};
 
 int FindBoneByName(unsigned char* m, const void* name, std::size_t cb) {

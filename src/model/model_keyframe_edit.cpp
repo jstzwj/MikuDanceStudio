@@ -300,9 +300,9 @@ int RegisterBonePoseAtFrame(unsigned char* model, int boneIndex, // VA 0x004B38A
         AppendBoneKeyToUndo(model, current);
         fill(current);
     } else {
-        // x64 sub_7FF7CB4E9DB0 @0x7FF7CB4EA46F：空闲槽扫描从持久游标
-        // searchCursor（model+0x22B8）起步，命中占用槽时游标随扫描推进、
-        // 只增不减——写法与 RegisterBoneKey（key_registrars.cpp）一致。
+        // x64 sub_7FF7CB4E9DB0 at 0x7FF7CB4EA46F: scan free slots from persistent cursor
+        // searchCursor (model+0x22B8); advance it on occupied slots,
+        // monotonically, just as in RegisterBoneKey (key_registrars.cpp).
         int freeIndex = static_cast<int>(mdl::Mdl(model)->searchCursor);
         if (keys[freeIndex].frame != 0) {
             for (;;) {

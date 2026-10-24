@@ -53,20 +53,18 @@ namespace {
 // of HandlePaletteChanged2 (0x42C140).  Bytes match the original exactly
 // (byte_52C6DC / byte_52C728 / byte_52C7E0 / byte_52C7EC / byte_52C808 /
 // byte_52C8A4 / byte_52C8B0 / byte_52C8C0).
-constexpr char kJpPlaying[] = "\x8d\xc4\x90\xb6\x92\x86"; // 再生中 (playing)
-constexpr char kJpAngle[] = "\x8a\x70\x93\x78";           // 角度 (angle)
-constexpr char kJpBonePosition[] =
-    "\x83\x7b\x81\x5b\x83\x93\x88\xca\x92\x75"; // ボーン位置 (bone place)
+constexpr char kJpPlaying[] = "\x8d\xc4\x90\xb6\x92\x86";                      // playing
+constexpr char kJpAngle[] = "\x8a\x70\x93\x78";                                // angle
+constexpr char kJpBonePosition[] = "\x83\x7b\x81\x5b\x83\x93\x88\xca\x92\x75"; // bone position
 constexpr char kJpCameraFollowMode[] =
-    "\x83\x4a\x83\x81\x83\x89\x83\x7b\x81\x5b\x83\x93\x92\xc7\x8f\x5d\x83\x82\x81\x5b\x83\x68\x92\x86"; // カメラボーン追従モード中
+    "\x83\x4a\x83\x81\x83\x89\x83\x7b\x81\x5b\x83\x93\x92\xc7\x8f\x5d\x83\x82\x81\x5b\x83\x68\x92\x86"; // camera bone-follow mode active
 constexpr char kJpCameraFollowModeHint[] =
-    "\x83\x4a\x83\x81\x83\x89\x83\x7b\x81\x5b\x83\x93\x92\xc7\x8f\x5d\x83\x82\x81\x5b\x83\x68\x92\x86\x20\x28\x92\xc7\x8f\x5d\x83\x7b\x83\x5e\x83\x93\x82\xf0\x89\xf0\x8f\x9c\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2\x29"; // カメラボーン追従モード中 (追従ボタンを解除して下さい)
-constexpr char kJpCameraCenter[] =
-    "\x83\x4a\x83\x81\x83\x89\x92\x86\x90\x53"; // カメラ中心 (camera centre)
+    "\x83\x4a\x83\x81\x83\x89\x83\x7b\x81\x5b\x83\x93\x92\xc7\x8f\x5d\x83\x82\x81\x5b\x83\x68\x92\x86\x20\x28\x92\xc7\x8f\x5d\x83\x7b\x83\x5e\x83\x93\x82\xf0\x89\xf0\x8f\x9c\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2\x29"; // camera bone-follow mode active (release the follow button)
+constexpr char kJpCameraCenter[] = "\x83\x4a\x83\x81\x83\x89\x92\x86\x90\x53"; // camera center
 constexpr char kJpCamLightAccessoryPanel[] =
-    "\xb6\xd2\xd7\xa5\x8f\xc6\x96\xbe\xa5\xb1\xb8\xbe\xbb\xd8"; // ｶﾒﾗ･照明･ｱｸｾｻﾘ
+    "\xb6\xd2\xd7\xa5\x8f\xc6\x96\xbe\xa5\xb1\xb8\xbe\xbb\xd8"; // camera/lighting/accessory
 constexpr char kJpCamLightAccessoryPanelFmt[] =
-    "\xb6\xd2\xd7\xa5\x8f\xc6\x96\xbe\xa5\xb1\xb8\xbe\xbb\xd8\x20\x2f\x20\x25\x73"; // ｶﾒﾗ･照明･ｱｸｾｻﾘ / %s
+    "\xb6\xd2\xd7\xa5\x8f\xc6\x96\xbe\xa5\xb1\xb8\xbe\xbb\xd8\x20\x2f\x20\x25\x73"; // camera/lighting/accessory / %s
 
 } // namespace
 
@@ -226,8 +224,8 @@ void HandlePaletteChanged(HDC hdc) {
 //   camera/light vs bone mode) x EnglishUI (0xA0B4C):
 //     - camera/light: slot array this+0x9DD70 [byte this+0x9E170] accessory
 //       records; name at record+0x238, or the fixed "camera light accessary"
-//       / "ｶﾒﾗ･照明･ｱｸｾｻﾘ" literal; formatted via "camera light accessary
-//       / %s" / "ｶﾒﾗ･照明･ｱｸｾｻﾘ / %s" into the 256-byte Buffer.
+//       / JP "camera/lighting/accessory" literal; formatted via "camera light accessary
+//       / %s" / JP "camera/lighting/accessory / %s" into the 256-byte Buffer.
 //     - bone: model slots this+0x780 [byte this+0x910]; name at model+0x227A
 //       (EN) / model+0x2248 (JP); bone index model+0x2D90; bone record =
 //       (model+0x26BC) + sizeof(mikudancestudio::mdl::BoneRecord) *index, name at +0x14 (EN, "%s : %s").  The JP
@@ -236,10 +234,10 @@ void HandlePaletteChanged(HDC hdc) {
 //     - trace-mode line pair when
 //       byte 0x9ED98 & (slotidx == this+0xA0430) & (this+0xA0430 >= 0);
 //       second line (r=0xFF, g=b=0x32) at x+1/y-1 repeats the text.
-//   "Playing" is drawn as "Playing"/"再生中" when (this+0x9ED90 == 0) &
+//   "Playing" is drawn as "Playing"/JP "playing" when (this+0x9ED90 == 0) &
 //   (this+0x330 != 0) - the play flag test - else the name/accessory text.
 //   Each mode ends with two 14px label lines; EN paths return early, JP
-//   paths fall through to the shared "角度" (kJpAngle) tail call.
+//   paths fall through to the shared "angle" (kJpAngle) tail call.
 //
 // The "palette" name is historical (from the message-0x318 stub list); the
 // function performs no palette API calls - it is the status overlay painter.
@@ -404,7 +402,7 @@ void HandlePaletteChanged2(HDC hdc) {
                   1); // 0x42C7BD
     }
 
-    // Shared tail of the JP paths: "角度" at xBase+0x171 (369).
+    // Shared tail of the JP paths: "angle" at xBase+0x171 (369).
     DrawGlyph(app, kJpAngle, hdc, 14, xBase + 369, hideBottom + 11, 0, 0, 0, 1); // 0x42C7E3
 }
 
