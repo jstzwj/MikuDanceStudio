@@ -1215,18 +1215,18 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     if (MessageBoxA(hwnd, text, kCaptionDelModelJp, flags) != IDOK) {
         return; // was: break (switch exit)
     }
-    if (app->state.frameCopyDialog != 0) {
+    if (app->FrameCopyOrPhysicsDialog() != 0) {
         SeekSelectedModelToCurrentFrame(app);
-        if (app->state.rigidScratchArray != nullptr) {
-            free(app->state.rigidScratchArray);
-            app->state.rigidScratchArray = nullptr;
+        if (app->RigidScratchArray() != nullptr) {
+            free(app->RigidScratchArray());
+            app->RigidScratchArray() = nullptr;
         }
-        if (app->state.jointScratchArray != nullptr) {
-            free(app->state.jointScratchArray);
-            app->state.jointScratchArray = nullptr;
+        if (app->JointScratchArray() != nullptr) {
+            free(app->JointScratchArray());
+            app->JointScratchArray() = nullptr;
         }
-        DestroyWindow(reinterpret_cast<HWND>(app->state.frameCopyDialog));
-        app->state.frameCopyDialog = nullptr;
+        DestroyWindow(reinterpret_cast<HWND>(app->FrameCopyOrPhysicsDialog()));
+        app->FrameCopyOrPhysicsDialog() = nullptr;
         EnableWindow(GetDlgItem(hwnd, panel::kMainComboModel), TRUE);
         EnableWindow(GetDlgItem(hwnd, panel::kPlayButton), TRUE);
     }
@@ -1359,12 +1359,12 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
         app->DialogOrders().modelIndices.reset();
     }
     if (app->AccessoryEditArray() != nullptr) {
-        free(app->AccessoryEditArray());
+        ::operator delete(app->AccessoryEditArray());
         app->AccessoryEditArray() = nullptr;
     }
-    if (app->state.selectNavRecords != nullptr) {
-        delete[] app->state.selectNavRecords;
-        app->state.selectNavRecords = nullptr;
+    if (app->SelectNavRecords() != nullptr) {
+        delete[] app->SelectNavRecords();
+        app->SelectNavRecords() = nullptr;
     }
     if (app->AccessoryApplyGate() == 0) {
         return; // was: break (switch exit)

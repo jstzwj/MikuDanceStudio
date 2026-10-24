@@ -185,7 +185,7 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     }
 
     // 0x429ed4..0x429f2d: version gate (1.30 / 1.40 / 1.50 bit-exact).
-    auto getVersion = reinterpret_cast<void(__stdcall*)(float*)>(s.state.oniExportSlot6);
+    auto getVersion = reinterpret_cast<void(__stdcall*)(float*)>(s.OniExportSlot(6));
     float version = 0.0f;
     getVersion(&version);
     std::uint8_t versionCode;
@@ -207,7 +207,7 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     s.state.openniVersion = versionCode;
 
     // 0x429f2f..0x429f5b: OpenNIInit(hwnd, english, device, exedir, path).
-    auto init = reinterpret_cast<OpenNiInitFn>(s.state.oniExportSlot0);
+    auto init = reinterpret_cast<OpenNiInitFn>(s.OniExportSlot(0));
     const unsigned char ok =
         init(hwnd, s.EnglishUI(), OniRenderDevice(app), s.state.exeDir, sjisPath);
     if (ok == 0) {
@@ -244,7 +244,7 @@ void DisableKinect(MMDApp* app) {
 
     // Unconditional call through the stored OpenNIClean pointer, exactly
     // like the original (reachable only after a successful OpenNiInit).
-    auto clean = reinterpret_cast<void(__stdcall*)()>(s.state.oniExportSlot1);
+    auto clean = reinterpret_cast<void(__stdcall*)()>(s.OniExportSlot(1));
     clean(); // 0x42a074
 
     s.state.depthDeviceEnabled = 0; // 0x42a084

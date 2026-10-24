@@ -403,25 +403,8 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t 
     // %3d / %+3.1f echoes into 461-466, TBM_SETPOS 455-460, Refresh(-2).
     // ------------------------------------------------------------------
     case panel::kResetLightButton: {
+        app->ResetSceneLight();
         float* const direction = app->LightDirection();
-        direction[0] = -0.5f;
-        direction[1] = -1.0f;
-        direction[2] = 0.5f;
-        D3DLIGHT9& light = app->SceneLight();
-        light = {};
-        light.Type = D3DLIGHT_DIRECTIONAL;
-        light.Direction = {direction[0], direction[1], direction[2]};
-        light.Diffuse = {};
-        // 0.602f is bit-exact with the x64 immediate 0x3F1A1CAC
-        // (0x7FF7CB46A492..0x7FF7CB46A4BC, written to all three light
-        // channels and copied into Specular); same constant as the
-        // light-key default in command_frame_edit.cpp ResetLightRecord.
-        const float col = 0.602f; // flt_52C9A4
-        app->LightColor()[0] = col;
-        app->LightColor()[1] = col;
-        app->LightColor()[2] = col;
-        light.Ambient = {col, col, col, 0.0f};
-        light.Specular = {col, col, col, 0.0f};
         ApplySceneLight(app);
         EnableSceneLight(app);
 

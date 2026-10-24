@@ -607,17 +607,17 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                                                     boneKeys[0].allocated = flag;
                                             });
                 // hover rect (0x446A13..0x446A25)
-                app->TimelineRangeFirstOffset() = rowStart;
-                app->TimelineRangeLastOffset() = rowEnd;
-                app->TimelineRangeFirstBase() = colStartB;
-                app->TimelineRangeLastBase() = colEndB;
+                app->TimelineRangeFirstColumn() = rowStart;
+                app->TimelineRangeLastColumn() = rowEnd;
+                app->TimelineRangeFirstRow() = colStartB;
+                app->TimelineRangeLastRow() = colEndB;
             }
             PanelPaint(app); // 0x446A2D
             // rect reset (0x446A32..0x446A46)
-            app->TimelineRangeFirstOffset() = 0;
-            app->TimelineRangeLastOffset() = 0;
-            app->TimelineRangeFirstBase() = 0;
-            app->TimelineRangeLastBase() = 0;
+            app->TimelineRangeFirstColumn() = 0;
+            app->TimelineRangeLastColumn() = 0;
+            app->TimelineRangeFirstRow() = 0;
+            app->TimelineRangeLastRow() = 0;
         }
     }
 

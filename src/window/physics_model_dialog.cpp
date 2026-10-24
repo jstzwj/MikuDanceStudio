@@ -233,11 +233,11 @@ using Joint = mdl::JointRecord;
 
 Rigid* EditBodies() {
     MMDApp* app = g_Block;
-    return static_cast<Rigid*>(app->state.rigidScratchArray);
+    return static_cast<Rigid*>(app->RigidScratchArray());
 }
 Joint* EditJoints() {
     MMDApp* app = g_Block;
-    return static_cast<Joint*>(app->state.jointScratchArray);
+    return static_cast<Joint*>(app->JointScratchArray());
 }
 
 // The scratch copies reuse RigidRecord::keyData as the body-list combo index
@@ -365,7 +365,7 @@ LRESULT CALLBACK PhysicsEditSubclassProc(HWND hWnd, UINT msg, WPARAM wParam,
     // dirty write: invalidates the cached time like every WM_COMMAND of
     // the dialog (original app+663064 = state.timeNowHigh)
     app->state.timeNowHigh = 1;
-    HWND hDlg = app->state.frameCopyDialog;
+    HWND hDlg = app->FrameCopyOrPhysicsDialog();
     Rigid* bodies = EditBodies();
     Joint* joints = EditJoints();
     Rigid& rb = bodies[app->state.selectedRigidIndex];
@@ -577,13 +577,13 @@ void InitPhysicsModelDialog(HWND hDlg) { // VA 0x0045F670
 
     EnableWindow(GetDlgItem(app->state.hwnd, panel::kPlayButton), FALSE);
 
-    app->state.rigidScratchArray = std::calloc(kMaxEditRecords, sizeof(Rigid));
+    app->RigidScratchArray() = std::calloc(kMaxEditRecords, sizeof(Rigid));
     Rigid* bodies = EditBodies();
     for (int i = 0; i < kMaxEditRecords; ++i) {
         SetBodyComboIndex(bodies[i], -1);
         bodies[i].body = nullptr;
     }
-    app->state.jointScratchArray = std::calloc(kMaxEditRecords, sizeof(Joint));
+    app->JointScratchArray() = std::calloc(kMaxEditRecords, sizeof(Joint));
     Joint* joints = EditJoints();
     for (int i = 0; i < kMaxEditRecords; ++i) {
         joints[i].rigidA = 0;
@@ -694,7 +694,7 @@ void CollectBodyEdits(MMDApp* app) { // VA 0x0041FF30
     if (app->state.selectedRigidIndex == -1)
         return;
     Rigid& rb = EditBodies()[app->state.selectedRigidIndex];
-    HWND hDlg = app->state.frameCopyDialog;
+    HWND hDlg = app->FrameCopyOrPhysicsDialog();
     char text[256];
 
     GetWindowTextA(GetDlgItem(hDlg, kBodyNameEdit), text, 100);
@@ -783,7 +783,7 @@ void CollectJointEdits(MMDApp* app) { // VA 0x004204F0
     if (app->state.selectedJointIndex == -1)
         return;
     Joint& jt = EditJoints()[app->state.selectedJointIndex];
-    HWND hDlg = app->state.frameCopyDialog;
+    HWND hDlg = app->FrameCopyOrPhysicsDialog();
     char text[256];
 
     GetWindowTextA(GetDlgItem(hDlg, kJointNameEdit), text, 100);
@@ -1518,16 +1518,16 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             CollectBodyEdits(app);
             CollectJointEdits(app);
             CommitPhysicsEdits(hDlg);
-            if (app->state.rigidScratchArray != nullptr) {
-                std::free(app->state.rigidScratchArray);
-                app->state.rigidScratchArray = nullptr;
+            if (app->RigidScratchArray() != nullptr) {
+                std::free(app->RigidScratchArray());
+                app->RigidScratchArray() = nullptr;
             }
-            if (app->state.jointScratchArray != nullptr) {
-                std::free(app->state.jointScratchArray);
-                app->state.jointScratchArray = nullptr;
+            if (app->JointScratchArray() != nullptr) {
+                std::free(app->JointScratchArray());
+                app->JointScratchArray() = nullptr;
             }
             DestroyWindow(hDlg);
-            app->state.frameCopyDialog = nullptr;
+            app->FrameCopyOrPhysicsDialog() = nullptr;
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kMainComboModel), TRUE);
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kPlayButton), TRUE);
             if (app->state.englishUI != 0) {
@@ -1544,16 +1544,16 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         if (LOWORD(wParam) == 2) {
             // Cancel: seek, close (the editor arrays are simply dropped)
             SeekSelectedModelToCurrentFrame(app); // 0x4220C0 = x64 sub_7FF7CB4B3D00
-            if (app->state.rigidScratchArray != nullptr) {
-                std::free(app->state.rigidScratchArray);
-                app->state.rigidScratchArray = nullptr;
+            if (app->RigidScratchArray() != nullptr) {
+                std::free(app->RigidScratchArray());
+                app->RigidScratchArray() = nullptr;
             }
-            if (app->state.jointScratchArray != nullptr) {
-                std::free(app->state.jointScratchArray);
-                app->state.jointScratchArray = nullptr;
+            if (app->JointScratchArray() != nullptr) {
+                std::free(app->JointScratchArray());
+                app->JointScratchArray() = nullptr;
             }
             DestroyWindow(hDlg);
-            app->state.frameCopyDialog = nullptr;
+            app->FrameCopyOrPhysicsDialog() = nullptr;
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kMainComboModel), TRUE);
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kPlayButton), TRUE);
             return 0;

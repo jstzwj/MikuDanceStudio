@@ -46,21 +46,6 @@
 #include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
-namespace {
-
-// Free-if-non-null then null the slot - mirrors the exact asm block
-// (mov eax,[esi+off]; cmp eax,0; jz next; push eax; call free;
-//  mov [esi+off],0), including the order of the 7 calls at the call site.
-void FreeTimelineSelectionRecords(MMDApp* app, TimelineSelectionBand band) {
-    TimelineSelectionRecord*& p = app->TimelineSelectionRecords(band);
-    if (p != nullptr) {
-        std::free(p);
-        p = nullptr;
-    }
-}
-
-} // namespace
-
 // Not yet declared in ported_funcs.hpp - external-linkage forward
 // declarations so the calls below resolve to the real definitions
 // (ui_panel_paint.cpp / coordinator-provided stub); the coordinator
@@ -151,13 +136,7 @@ void HandleLButtonUp(MMDApp* app) {
     app->WindowLayoutReady() = 1;
 
     if (dragActive) {
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::Accessory);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::ModelIk);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::Camera);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::Light);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::ModelBone);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::SelfShadow);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::ModelMorph);
+        app->ReleaseTimelineSelectionRecords();
 
         app->SelectionBoxDragging() = 0;
         app->TimelineSelectionChanged() = 0;

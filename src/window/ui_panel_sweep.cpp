@@ -139,7 +139,7 @@ void RebuildTimelineTrackPanel(MMDApp* app) {
     BitBlt(panel, 0, 0, kListLeft, listH, dc, 0, 0, SRCCOPY);
     DeleteDC(dc);
 
-    std::memset(s.PanelRowFlags(), 0, 0xC8); // 200 flags
+    s.ClearPanelRowFlags();
 
     if (s.CameraMode() == 0) {
         // === bone-edit mode: current model display tree (0x42F744) ========

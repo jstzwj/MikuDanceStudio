@@ -36,9 +36,10 @@ void NotifyBonePhysicsMode(unsigned char*, int, unsigned char) {
 }
 
 namespace {
-// Input records follow the original clipboard ABI, independently of the helper.
-struct CopiedPose { char name[20]; float position[3]; float rotation[4]; };
+// Fixed ABI assertions keep the typed input tied to the original record format.
+using CopiedPose = mdl::BonePoseClipboardRecord;
 static_assert(sizeof(CopiedPose) == 0x30);
+static_assert(offsetof(CopiedPose, position) == 20 && offsetof(CopiedPose, rotation) == 32);
 
 struct Fixture {
     std::unique_ptr<mds::MMDApp> app = std::make_unique<mds::MMDApp>();
@@ -54,7 +55,7 @@ struct Fixture {
         model->bonePhysicsState = physics.data();
         model->UndoCursor() = model->LatestUndoCursor() = 29;
         model->redoDirty = 1;
-        app->BoneCopyRecords() = copies.data();
+        app->BonePoseClipboard() = copies.data();
         for (int i = 0; i < static_cast<int>(bones.size()); ++i) {
             std::snprintf(bones[i].name, sizeof bones[i].name, "bone%d", i);
             bones[i].trans[0] = 10.0f + i;
@@ -88,7 +89,7 @@ struct Fixture {
         pose.rotation[3] = 1.0f;
     }
     void Paste(int count) {
-        app->state.copiedBoneCount = count;
+        app->BonePoseClipboardCount() = count;
         mds::PasteMirroredBonePose(app.get(), nullptr);
     }
 };
@@ -135,7 +136,7 @@ void TestOrdinaryPaste() {
     Fixture f;
     const auto before = f.bones[4];
     f.Copy(0, "bone4");
-    f.app->state.copiedBoneCount = 1;
+    f.app->BonePoseClipboardCount() = 1;
     mds::PasteCopiedBonePose(f.app.get(), nullptr);
     Check(f.bones[4].trans[0] == 2 && f.bones[4].rotQuat[1] == 0.5f &&
           f.selected[4] == 1 && f.selected[3] == 0 && f.physics[4] == 1 &&
@@ -156,21 +157,21 @@ void TestCopy() {
     f.selected.fill(0);
     f.selected[2] = f.selected[5] = 1;
     // Copy owns the clipboard; the fixture's normal input array is borrowed.
-    f.app->BoneCopyRecords() = nullptr;
+    f.app->BonePoseClipboard() = nullptr;
     mds::CopySelectedBonePose(f.app.get(), nullptr);
-    const auto* poses = static_cast<const mdl::BonePoseClipboardRecord*>(f.app->BoneCopyRecords());
-    Check(f.app->state.copiedBoneCount == 2 && poses &&
+    const auto* poses = static_cast<const mdl::BonePoseClipboardRecord*>(f.app->BonePoseClipboard());
+    Check(f.app->BonePoseClipboardCount() == 2 && poses &&
           std::strcmp(poses[0].name, "bone2") == 0 && std::strcmp(poses[1].name, "bone5") == 0 &&
           std::memcmp(poses[1].position, f.bones[5].trans, sizeof poses[1].position) == 0 &&
           std::memcmp(poses[1].rotation, f.bones[5].rotQuat, sizeof poses[1].rotation) == 0,
           "Copy snapshots selected current poses in bone-table order");
     f.selected.fill(0);
-    const void* previous = f.app->BoneCopyRecords();
+    const void* previous = f.app->BonePoseClipboard();
     mds::CopySelectedBonePose(f.app.get(), nullptr);
-    Check(f.app->BoneCopyRecords() == previous && f.app->state.copiedBoneCount == 2,
+    Check(f.app->BonePoseClipboard() == previous && f.app->BonePoseClipboardCount() == 2,
           "Copy with no selection preserves the previous clipboard");
-    ::operator delete(f.app->BoneCopyRecords());
-    f.app->BoneCopyRecords() = nullptr;
+    ::operator delete(f.app->BonePoseClipboard());
+    f.app->BonePoseClipboard() = nullptr;
 }
 
 void TestPoseReset() {

@@ -403,11 +403,11 @@ void RenderFrameScene(MMDApp* app) {
     }
 
     // 0x46E214..0x46E554: accessory-dialog or Bullet collision debug pass.
-    if (app->state.rigidBodyDisplayEnabled == 1 || app->state.frameCopyDialog != 0) {
+    if (app->state.rigidBodyDisplayEnabled == 1 || app->FrameCopyOrPhysicsDialog() != 0) {
         device->SetRenderState(D3DRS_LIGHTING, FALSE);
         device->SetTexture(0, nullptr);
         device->SetRenderState(D3DRS_ZENABLE, FALSE);
-        if (app->state.frameCopyDialog != 0)
+        if (app->FrameCopyOrPhysicsDialog() != 0)
             DrawAccessoryDebug(app);
         else
             DrawPhysicsCollisionDebug(app->Physics());
@@ -416,7 +416,8 @@ void RenderFrameScene(MMDApp* app) {
     }
 
     // 0x46E556..0x46E592: selected-bone local/global operation axis.
-    if (app->CameraMode() == 0 && app->PlaybackActive() == 0 && app->state.frameCopyDialog == 0) {
+    if (app->CameraMode() == 0 && app->PlaybackActive() == 0 &&
+        app->FrameCopyOrPhysicsDialog() == 0) {
         DrawBoneOperationAxis(app, reinterpret_cast<const float*>(&frameWorld));
     }
 

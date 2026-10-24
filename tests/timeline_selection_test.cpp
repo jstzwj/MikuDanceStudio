@@ -1,4 +1,5 @@
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model.hpp"
 #include "../src/window/timeline_selection.hpp"
 
 #include <algorithm>
@@ -129,7 +130,50 @@ struct Fixture {
 };
 }
 
+void TestModelRangeCell() {
+    auto app = std::make_unique<MMDApp>();
+    auto model = std::make_unique<mdl::ModelRecord>();
+    std::vector<mdl::BoneKey> bones(mdl::kBoneKeyCapacity);
+    std::vector<mdl::MorphKey> morphs(mdl::kMorphKeyCapacity);
+    std::vector<mdl::DisplayKey> displays(mdl::kDisplayKeyCapacity);
+    model->boneKeys = bones.data();
+    model->morphKeys = morphs.data();
+    model->displayKeys = displays.data();
+    app->ModelSlot(0) = reinterpret_cast<unsigned char*>(model.get());
+    // Original x64 RVA 0x3BBF0..0x3BC60: the hit-map value selects the
+    // operation, while column/row select the rectangle, independently of key size.
+    for (int hit : {-1, -2}) {
+        for (bool shift : {false, true}) {
+            app->ClearTimelineRange();
+            app->SetTimelineRangeCell(3, 4);
+            app->TimelineSelectionChanged() = 0;
+            bones.front().allocated = bones.back().allocated = 0x80;
+            morphs.front().allocated = morphs.back().allocated = 0x80;
+            displays.front().allocated = displays.back().allocated = 0x80;
+            bones.back().frame = morphs.back().frame = displays.back().frame = 1234;
+            StageModelTimelineRangeCell(*app, hit, 7, 11, shift);
+            const bool move = hit == -1 && !shift;
+            Expect(app->TimelineRangeFirstColumn() == (move ? 3 : 7) &&
+                   app->TimelineRangeFirstRow() == (move ? 4 : 11) &&
+                   app->TimelineRangeLastColumn() == (move ? 4 : 8) &&
+                   app->TimelineRangeLastRow() == (move ? 5 : 12),
+                   "Range hit uses grid coordinates, independently of the key buffer address");
+            Expect(app->TimelineSelectionChanged() == static_cast<std::uint8_t>(move) &&
+                   app->TimelineRangeApplyEnabled() == static_cast<std::uint8_t>(hit == -1 && shift),
+                   "Range sentinels retain the original Shift/move/apply transitions");
+            const unsigned char selected = hit == -2 && !shift ? 0 : 0x80;
+            Expect(bones.front().allocated == selected && bones.back().allocated == selected &&
+                   morphs.front().allocated == selected && morphs.back().allocated == selected &&
+                   displays.front().allocated == selected && displays.back().allocated == selected,
+                   "Replacement range clears all model tracks only when Shift is not held");
+            Expect(bones.back().frame == 1234 && morphs.back().frame == 1234 &&
+                   displays.back().frame == 1234, "Range staging preserves key data");
+        }
+    }
+}
+
 int main() {
+    TestModelRangeCell();
     Fixture f;
     f.Check("empty selections with nonzero neighbouring flags");
     for (std::size_t index : {0, 4, 5, 9998, 9999}) {

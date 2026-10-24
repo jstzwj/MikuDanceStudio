@@ -58,6 +58,7 @@ add_library(mikudancestudio_core STATIC
     src/app/mmd_app.cpp
     src/app/globals.cpp
     src/app/app_ctor.cpp
+    src/app/runtime_state.cpp
     src/app/app_defaults.cpp
     src/main/charset_conv.cpp
     src/math/color_lerp.cpp
@@ -482,6 +483,9 @@ if(BUILD_TESTING)
     add_dependencies(edge_thickness_dialog_test MikuDanceStudio)
     add_test(NAME edge_thickness_dialog
         COMMAND edge_thickness_dialog_test $<TARGET_FILE:MikuDanceStudio>)
+    add_executable(app_runtime_state_test tests/app_runtime_state_test.cpp)
+    target_link_libraries(app_runtime_state_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME app_runtime_state COMMAND app_runtime_state_test)
     add_executable(mme_anime_timeline_test tests/mme_anime_timeline_test.cpp)
     target_include_directories(mme_anime_timeline_test PRIVATE
         third_party/mmeffect/include third_party/mmeffect/src/mmhack)

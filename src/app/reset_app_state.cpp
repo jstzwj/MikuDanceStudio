@@ -97,24 +97,24 @@ void ResetAppState(MMDApp* app) {
     app->state.cameraAttachmentBasis[10] = 1.0f;
     app->state.cameraAttachmentBasis[5] = 1.0f;
     app->state.cameraAttachmentBasis[0] = 1.0f;
-    std::memset(app->state.buf656632, 0, 0xC8);
+    app->ClearPanelRowFlags();
 
     // ---- sub-window teardown ----------------------------------------------
     if (app->GravitySettingDialog() != nullptr)
         DestroyWindow(app->GravitySettingDialog()); // 0x44E719
-    HWND w292 = app->state.frameCopyDialog;
+    HWND w292 = app->FrameCopyOrPhysicsDialog();
     app->GravitySettingDialog() = nullptr;
     if (w292 != nullptr)
         DestroyWindow(w292);
-    app->state.frameCopyDialog = nullptr;
+    app->FrameCopyOrPhysicsDialog() = nullptr;
     HWND w256 = app->EnglishNameDialog();
     if (w256 != nullptr)
         DestroyWindow(w256);
     app->EnglishNameDialog() = nullptr;
-    HWND w244 = app->state.edgeThicknessDialog;
+    HWND w244 = app->EdgeThicknessDialog();
     if (w244 != nullptr)
         DestroyWindow(w244);
-    app->state.edgeThicknessDialog = nullptr;
+    app->EdgeThicknessDialog() = nullptr;
     app->EnhancedModelDirty() = 0;
     app->state.mainModelComboSelection = 0;
     HWND parent = app->FloatingWindow();
@@ -171,11 +171,10 @@ void ResetAppState(MMDApp* app) {
     app->CameraRotation()[0] = 0.0f;
     app->BoneBoxSelectionActive() = 0;
     app->CameraRotation()[1] = 0.0f;
-    app->state.copiedBoneCount = 0;
+    app->ReleaseClipboardBuffers();
     app->CameraRotation()[2] = 0.0f;
     app->state.timelineStartFrame = 0;
     app->LastRegisteredFrame() = 0;
-    app->state.clipboardCounts = mdl::ClipboardSelectionCounts{};
     app->CaptureMode() = ScreenCaptureMode::Disabled;
     app->state.projectedShadowBlendEnabled = 1;
 
@@ -372,24 +371,8 @@ void ResetAppState(MMDApp* app) {
 
     // ---- D3DLIGHT9 default (cluster at 0x9E180) ---------------------------
     app->CameraFov() = 30.0f;
-    app->LightDirection()[0] = -0.5f;
-    app->LightDirection()[1] = -1.0f;
-    app->LightDirection()[2] = 0.5f;
+    app->ResetSceneLight();
     D3DLIGHT9& light = app->SceneLight();
-    light = {};
-    light.Direction.x = app->LightDirection()[0];
-    light.Direction.y = app->LightDirection()[1];
-    light.Direction.z = app->LightDirection()[2];
-    app->LightColor()[0] = 0.602f;
-    app->LightColor()[1] = 0.602f;
-    app->LightColor()[2] = 0.602f;
-    light.Specular.r = 0.602f;
-    light.Specular.g = 0.602f;
-    // The v932 state block starts as a directional key light (D3DLIGHT9
-    // type 3).  A point light at the origin happens to leave simple scenes
-    // visible, but makes staged PMM scenes dramatically underlit.
-    light.Type = D3DLIGHT_DIRECTIONAL;
-    light.Specular.b = 0.602f;
     {
         D3DRenderer* r = app->Renderer();
         IDirect3DDevice9* device = r->device; // +120032

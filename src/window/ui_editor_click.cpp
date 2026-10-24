@@ -125,44 +125,6 @@ static bool MatchText(const char* a, const char* b) {
     return *b == '\0';
 }
 
-// Clear the active model's bone and morph key selections, plus the remaining
-// display-key selections.  (sub_446A70 @ 0x447AF0 / 0x447BA0 / 0x447C30 etc.)
-static void ClearActiveModelFlags(MMDApp* app) {
-    // The original reaches this helper only while the model-edit context is
-    // active.  During a partially completed mode switch MikuDanceStudio can briefly
-    // expose the same row with no active slot, so preserve that entrance
-    // invariant here instead of dereferencing slot 0/null.
-    if (ActiveModel(app) == nullptr)
-        return;
-    unsigned char* model = ActiveModel(app);
-    mikudancestudio::mdl::BoneKey* boneKeys = mikudancestudio::mdl::BoneKeys(model);
-    for (std::size_t i = 0; i < mikudancestudio::mdl::kBoneKeyCapacity; ++i)
-        boneKeys[i].allocated = 0;
-
-    mikudancestudio::mdl::MorphKey* morphKeys = mikudancestudio::mdl::MorphKeys(model);
-    for (std::size_t i = 0; i < mikudancestudio::mdl::kMorphKeyCapacity; ++i)
-        morphKeys[i].allocated = 0;
-    mikudancestudio::mdl::DisplayKey* displayKeys = mikudancestudio::mdl::DisplayKeys(model);
-    for (std::size_t i = 0; i < mikudancestudio::mdl::kDisplayKeyCapacity; ++i)
-        displayKeys[i].allocated = 0;
-}
-
-// The selection bounds use the original timeline address coordinate: key
-// links are stored as signed offsets in the same coordinate space.  Keep the
-// narrowing at this ABI boundary instead of scattering pointer casts through
-// the editor logic.
-static std::int32_t TimelineAddress(const void* address) {
-    return static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(address));
-}
-
-static void SetTimelineSelectionRange(MMDApp* app, std::int32_t firstOffset, const void* firstBase,
-                                      std::int32_t lastOffset, const void* lastBase) {
-    app->TimelineRangeFirstOffset() = firstOffset;
-    app->TimelineRangeFirstBase() = TimelineAddress(firstBase);
-    app->TimelineRangeLastOffset() = lastOffset;
-    app->TimelineRangeLastBase() = TimelineAddress(lastBase);
-}
-
 // Shared selection-change point (loc_448EEB-0x44A437): dirty flag + click
 // anchor + selection-count re-evaluation (0xA03EC region, per-array flag
 // counting + record fills + qsort), panel repaint (0x414610) and the
@@ -173,8 +135,8 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
     app->SelectionBoxAnchorX() = x - 6;
     app->SelectionBoxAnchorY() = y - 0x91;
     if (app->TimelineSelectionChanged() != 0) {
-        memset(app->TimelineSelectionRegion(), 0, 0x40); // 656364 (0xA03EC)
-        if (app->CameraMode() != 0) {                    // 760 (0x2F8)
+        app->ReleaseTimelineSelectionRecords();
+        if (app->CameraMode() != 0) { // 760 (0x2F8)
             CollectGlobalTimelineSelection(*app);
             // 0x4495BD jle
         } else {
@@ -408,26 +370,8 @@ static void ToggleModelKeyAllocated(MMDApp* app, KeyT& key, bool shiftActive) {
     } else if (shiftActive) {
         key.allocated = 1;
     } else {
-        ClearActiveModelFlags(app);
+        ClearModelTimelineKeySelection(*app);
         key.allocated = 1;
-    }
-}
-
-template <typename KeyT>
-static void StageRangeRow(MMDApp* app, std::int32_t type, KeyT* keys, bool shiftActive) {
-    if (type == -1) { // loc_4483B8 / loc_448AB8
-        if (shiftActive) {
-            SetTimelineSelectionRange(app, type * sizeof(*keys), keys, type * sizeof(*keys) + 1,
-                                      reinterpret_cast<unsigned char*>(keys) + 1);
-            app->TimelineRangeApplyEnabled() = 1;
-        } else {
-            app->TimelineSelectionChanged() = 1;
-        }
-    } else { // type == -2, loc_4483F1/0x448AF1
-        SetTimelineSelectionRange(app, type * sizeof(*keys), keys, type * sizeof(*keys) + 1,
-                                  reinterpret_cast<unsigned char*>(keys) + 1);
-        if (!shiftActive)
-            ClearActiveModelFlags(app);
     }
 }
 
@@ -741,7 +685,9 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
         if (ActiveModel(app) == nullptr)
             return;
         const bool shiftActive = app->ShiftModifierActive();
-        const std::int32_t row2d = Div13(x - 0x64) * 0xC8 + Div14(y - 0xA0);
+        const std::int32_t column = Div13(x - 0x64);
+        const std::int32_t row = Div14(y - 0xA0);
+        const std::int32_t row2d = column * 0xC8 + row;
         // stage 1 (loc_447A4D): IK-type flags, model+0x26E8 0x1C-stride
         // records with flag at +0x14
         const std::int32_t ikType = app->state.rowHitIk[row2d];
@@ -762,11 +708,9 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
             ToggleModelKeyAllocated(app, mikudancestudio::mdl::MorphKeys(ActiveModel(app))[0],
                                     shiftActive);
         } else if (morphType == -1) { // loc_4483B8
-            StageRangeRow(app, morphType, mikudancestudio::mdl::MorphKeys(ActiveModel(app)),
-                          shiftActive);
+            StageModelTimelineRangeCell(*app, morphType, column, row, shiftActive);
         } else if (morphType == -2) { // loc_4483F1
-            StageRangeRow(app, morphType, mikudancestudio::mdl::MorphKeys(ActiveModel(app)),
-                          shiftActive);
+            StageModelTimelineRangeCell(*app, morphType, column, row, shiftActive);
         }
         // stage 3 (loc_4485FB): bone-type flags, model+0x26E0 0x3C flag
         // stride with flag at +0x38
@@ -778,16 +722,14 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
             ToggleModelKeyAllocated(app, mikudancestudio::mdl::BoneKeys(ActiveModel(app))[0],
                                     shiftActive);
         } else if (boneType == -1) { // loc_448AB8
-            StageRangeRow(app, boneType, mikudancestudio::mdl::BoneKeys(ActiveModel(app)),
-                          shiftActive);
+            StageModelTimelineRangeCell(*app, boneType, column, row, shiftActive);
         } else if (boneType == -2) { // loc_448AF1
-            StageRangeRow(app, boneType, mikudancestudio::mdl::BoneKeys(ActiveModel(app)),
-                          shiftActive);
+            StageModelTimelineRangeCell(*app, boneType, column, row, shiftActive);
         }
         // loc_448CFB: none of the three stages hit -> wholesale
         // active-model flag clear (unless mode == 3)
         if (ikType == 0 && morphType == 0 && boneType == 0 && !shiftActive)
-            ClearActiveModelFlags(app);
+            ClearModelTimelineKeySelection(*app);
         SelectionStats(app, x, y, hwnd); // loc_448EEB
         return;
     }

@@ -937,7 +937,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // normal setGravity (handled by the !windRan gate above).  The world
     // pass itself runs identically with or without wind - do NOT add
     // !windRan here, that freezes physics while the noise mode is active.
-    if (runWorldPass && !idleNoStep && s.state.frameCopyDialog == 0) {
+    if (runWorldPass && !idleNoStep && s.FrameCopyOrPhysicsDialog() == 0) {
         // x64 twin: 255 count-down walk (mov edi, 0FFh at 0x7FF7CB44C74B).
         for (int j = 0; j < kModelSlotCount; ++j)
             if (models[j] != nullptr)

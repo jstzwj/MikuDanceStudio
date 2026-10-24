@@ -1,14 +1,50 @@
 #include "timeline_selection.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model.hpp"
 
 #include <cstdlib>
 #include <iterator>
 
 namespace mikudancestudio {
 
-// Transient selection records use a side table on both architectures; an
-// eight-byte pointer cannot fit in the original x86 count/pointer grid.
-TimelineSelectionRecord* g_timelineSelectionRecords[8] = {};
+// Clear the active model's bone and morph key selections, plus the remaining
+// display-key selections.  (sub_446A70 @ 0x447AF0 / 0x447BA0 / 0x447C30 etc.)
+void ClearModelTimelineKeySelection(MMDApp& app) {
+    // The original reaches this helper only while the model-edit context is
+    // active.  During a partially completed mode switch MikuDanceStudio can briefly
+    // expose the same row with no active slot, so preserve that entrance
+    // invariant here instead of dereferencing slot 0/null.
+    if (app.SelectedModel() == nullptr)
+        return;
+    unsigned char* model = app.SelectedModel();
+    mikudancestudio::mdl::BoneKey* boneKeys = mikudancestudio::mdl::BoneKeys(model);
+    for (std::size_t i = 0; i < mikudancestudio::mdl::kBoneKeyCapacity; ++i)
+        boneKeys[i].allocated = 0;
+
+    mikudancestudio::mdl::MorphKey* morphKeys = mikudancestudio::mdl::MorphKeys(model);
+    for (std::size_t i = 0; i < mikudancestudio::mdl::kMorphKeyCapacity; ++i)
+        morphKeys[i].allocated = 0;
+    mikudancestudio::mdl::DisplayKey* displayKeys = mikudancestudio::mdl::DisplayKeys(model);
+    for (std::size_t i = 0; i < mikudancestudio::mdl::kDisplayKeyCapacity; ++i)
+        displayKeys[i].allocated = 0;
+}
+
+// Original x64 RVA 0x3BBF0..0x3BC60 (morph), 0x3C3B0..0x3C420 (bone).
+void StageModelTimelineRangeCell(MMDApp& app, std::int32_t type, std::int32_t column,
+                                 std::int32_t row, bool shiftActive) {
+    if (type == -1) { // loc_4483B8 / loc_448AB8
+        if (shiftActive) {
+            app.SetTimelineRangeCell(column, row);
+            app.TimelineRangeApplyEnabled() = 1;
+        } else {
+            app.TimelineSelectionChanged() = 1;
+        }
+    } else { // type == -2, loc_4483F1/0x448AF1
+        app.SetTimelineRangeCell(column, row);
+        if (!shiftActive)
+            ClearModelTimelineKeySelection(app);
+    }
+}
 
 // Original 0x40EC70 compares the fourth word as a signed frame number.
 int CompareFunction(const void* a, const void* b) {

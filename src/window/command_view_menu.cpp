@@ -727,7 +727,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // sub_44C7F0) as a modeless window stored at app+0xA0B44.
     // ------------------------------------------------------------------
     case MDS_CMD_EDGE_THICKNESS: {
-        if (app->state.edgeThicknessDialog != nullptr) {
+        if (app->EdgeThicknessDialog() != nullptr) {
             break; // jnz def_47E903 (no-op)
         }
         if (app->CameraMode() != 0) {
@@ -737,7 +737,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             hInst,
             MAKEINTRESOURCEA(english ? MDS_DLG_EDGE_THICKNESS_EN : MDS_DLG_EDGE_THICKNESS_JP), hwnd,
             EdgeThicknessDlgProc, 0);
-        app->state.edgeThicknessDialog = dlg;
+        app->EdgeThicknessDialog() = dlg;
         ShowWindow(dlg, SW_SHOW);
         UpdateWindow(dlg);
         break;
@@ -858,7 +858,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // sub_465020) at app+0xA0B74.
     // ------------------------------------------------------------------
     case MDS_CMD_PHYSICS_MODEL: {
-        if (app->state.frameCopyDialog != nullptr) {
+        if (app->FrameCopyOrPhysicsDialog() != nullptr) {
             break;
         }
         if (app->CameraMode() != 0) {
@@ -869,7 +869,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         HWND dlg = CreateDialogParamA(
             hInst, MAKEINTRESOURCEA(english ? MDS_DLG_PHYSICS_MODEL_EN : MDS_DLG_PHYSICS_MODEL_JP),
             hwnd, PhysicsModelDlgProc, 0);
-        app->state.frameCopyDialog = dlg;
+        app->FrameCopyOrPhysicsDialog() = dlg;
         ShowWindow(dlg, SW_SHOW);
         UpdateWindow(dlg);
         return;

@@ -461,18 +461,9 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 
     // ---- 0x46787E..0x467967: light cluster + device light 0 ---------------
     s.CameraFov() = 30.0f;
+    s.ResetSceneLight();
     float* direction = s.LightDirection();
-    direction[0] = -0.5f;
-    direction[1] = -1.0f;
-    direction[2] = 0.5f;
     D3DLIGHT9& light = s.SceneLight();
-    std::memset(&light, 0, sizeof(light));
-    light.Type = D3DLIGHT_DIRECTIONAL;
-    for (int j = 0; j < 3; ++j) {
-        reinterpret_cast<float*>(&light.Specular)[j] = 0.602f;
-        reinterpret_cast<float*>(&light.Ambient)[j] = 0.602f;
-    }
-    std::memcpy(&light.Direction, direction, sizeof(light.Direction));
     D3DRenderer* w = app->Renderer();
     IDirect3DDevice9* dev = w->device; // +0x1D4E0
     dev->SetLight(0, &light);

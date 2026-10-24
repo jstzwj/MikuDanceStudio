@@ -5,17 +5,16 @@
 // names as field semantics are recovered; keep each member's size/arch
 // split intact while doing so - the offset pins below are the safety net:
 //
-//   * x86: every member's offset is pinned by static_assert against the
-//     original binary layout (the ground truth this port mirrors).
-//   * x64: anchor members are pinned (instruction-level ground truth from
-//     the x64 binary); from lastRegisteredFrame (0x9F038) to the struct
-//     end the tail is anchored field-by-field, so fpsLimit lands on the
-//     original 0xA1904 and the size on the original 0xA55E0.
+//   * x86: recovered members retain the offsets recorded in layout_pins.hpp.
+//   * x64: anchors include lastRegisteredFrame (0x9F038), fpsLimit
+//     (0xA1904) and the struct size (0xA55E0). Pins protect this port's
+//     compatibility layout; they do not prove the semantics of every field.
 //
-// The historical offset-keyed access layer and its xlate table are
-// gone; fields that the x64 blob could not host live in MMDApp mirrors
-// with arch-split accessors.  Buffer widths are arch-invariant.  Unknown
-// regions are byte arrays - never guessed.
+// Process-local handles, callbacks, scratch, clipboard, selection and render
+// workspaces live in AppRuntimeState on both architectures. Members prefixed
+// reserved retain historical layout anchors only; production code must use
+// MMDApp accessors. This record is not a PMM disk image. Unknown regions
+// remain byte arrays rather than guessed application fields.
 // ===========================================================================
 #pragma once
 
@@ -45,10 +44,9 @@ constexpr int kModelSlotCount = sizeof(void*) == 8 ? 255 : 100;
 
 struct MMDAppState {
 #if defined(_M_X64)
-    RawPad<4> pad0inst; // x86 keeps the instance handle at +0; on x64 it
-                        // lives in the MMDApp mirror m_hInstance instead
+    RawPad<4> pad0inst; // Historical x86 instance slot; live handle is in PlatformRuntimeState.
 #else
-    void* hInstance;
+    void* reservedHInstance;
 #endif
     std::int32_t mouseX;             // +0x04
     std::int32_t mouseY;             // +0x08
@@ -137,28 +135,25 @@ struct MMDAppState {
     std::uint32_t viewportToolHovered;   // +0x344
     std::uint32_t viewToolDragOperation; // +0x348
     std::uint32_t interactionDragMode;   // +0x34C
-    // Clipboard pointer family.  x86 carries all eight slots in the blob
-    // (4-byte pointers); the x64 blob only reserved displayClipboard, so
-    // x64 keeps the seven siblings in MMDApp mirrors (raw accessors used
-    // to hit unmapped identity offsets there - x64 latent corruption).
-    void* boneCopyRecords; // +0x350 (was v350Clipboard)
+    // Retired clipboard slots. ClipboardRuntimeState owns the live counts
+    // and typed pointers on both builds; these slots preserve binary offsets.
+    void* reservedBoneCopyRecords; // +0x350 (was v350Clipboard)
 #if defined(_M_X64)
-    // Preserve the existing boundary of the remaining clipboard region;
-    // its sibling pointers are still represented by the MMDApp mirrors.
+    // Preserve the historical boundary; live pointers are in ClipboardRuntimeState.
     RawPad<24> pad46;
 #else
-    void* boneClipboard;  // +0x354
-    void* morphClipboard; // +0x358
+    void* reservedBoneClipboard;  // +0x354
+    void* reservedMorphClipboard; // +0x358
 #endif
-    void* displayClipboard; // x64 pin 936
+    void* reservedDisplayClipboard; // x64 pin 936
 #if defined(_M_X64)
     RawPad<32> pad47;
 #else
-    void* cameraClipboard;    // +0x360
-    void* lightClipboard;     // +0x364
-    void* shadowClipboard;    // +0x368
-    void* gravityClipboard;   // +0x36C
-    void* accessoryClipboard; // +0x370
+    void* reservedCameraClipboard;    // +0x360
+    void* reservedLightClipboard;     // +0x364
+    void* reservedShadowClipboard;    // +0x368
+    void* reservedGravityClipboard;   // +0x36C
+    void* reservedAccessoryClipboard; // +0x370
 #endif
     void* cameraKeyTrack;     // x64 pin 976
     void* lightKeyTrack;      // x64 pin 984
@@ -231,8 +226,8 @@ struct MMDAppState {
     // 0x9DA24: bone-copy count shared by copy/paste (496 gates and updates
     // it per emitted record; 497/498 gate on it), then the clipboard
     // selection counts overlay at +0x9DA28 (was one v9da24[9] array).
-    std::int32_t copiedBoneCount;                  // +0x9DA24
-    mdl::ClipboardSelectionCounts clipboardCounts; // +0x9DA28
+    std::int32_t reservedCopiedBoneCount;                  // +0x9DA24
+    mdl::ClipboardSelectionCounts reservedClipboardCounts; // +0x9DA28
     std::int32_t displayObjectListScrollPosition;
     std::int32_t displayObjectListMatchCount;
     std::int32_t jointLineMap[200]; // x64 pin 648480
@@ -244,19 +239,15 @@ struct MMDAppState {
     // selLightAccSlotOrUint32)
     unsigned char selectedObjectSlot;
     RawPad<3> pad115;
-    // PMM light direction triple (+0x9E174, was lightDirection + v9e178 +
-    // v9e17c); LightDirection() hands out the array as float*.
-    float lightDirection[3];
-    // x86: the device D3DLIGHT9 overlay starts one float past this triple
-    // (+0x9E180) and spans 104 bytes up to cameraFov - Type/Diffuse/
-    // Specular live in this pad, Ambient covers lightColor below, and
-    // Position/Direction/Falloff/Attenuation/Theta/Phi fill pad121 (see
-    // MMDApp::SceneLight).  The x64 blob reserves the same 36/28 spacing
-    // (x64 lightColor pin 651376 / sceneLightRange pin 651416).
+    // Retired PMM light direction (+0x9E174); live values are in RenderRuntimeState.
+    float reservedLightDirection[3];
+    // Retired device-light region. In the original it begins after the PMM
+    // direction and spans 104 bytes, with Ambient.rgb at lightColor below.
+    // RenderRuntimeState now stores the complete D3DLIGHT9 on both builds.
     RawPad<36> pad118;
-    // PMM light colour RGB (+0x9E1A4, was lightColor + v9e1a8 + v9e1ac);
-    // doubles as the D3DLIGHT9 Ambient.rgb on x86.
-    float lightColor[3];
+    // Retired Ambient.rgb / PMM RGB slot (+0x9E1A4; x64 +0x9F070).
+    // LightColor() returns the live SceneLight().Ambient.rgb on both builds.
+    float reservedLightColor[3];
     RawPad<28> pad121;
     std::uint32_t sceneLightRange; // D3DLIGHT9::Range overlay word (+0x9E1CC)
     RawPad<24> pad122;
@@ -271,11 +262,11 @@ struct MMDAppState {
     void* aviBackgroundTexture;
     void* aviBackgroundSurface;
 #if !defined(_M_X64)
-    std::uint32_t aviOverlayVertices;
+    std::uint32_t reservedAviOverlayVertices;
 #endif
-    // x64 blob has no aviOverlayVertices slot at all - aviBackgroundSurface
-    // (0x9F2D0) is followed directly by aviFile (0x9F2D8); the vertex
-    // buffer lives in the MMDApp mirror m_overlayVertexBuffers.avi.
+    // No AVI vertex-buffer slot in this x64 compatibility layout:
+    // aviBackgroundSurface (0x9F2D0) is followed by aviFile (0x9F2D8).
+    // Live overlay buffers belong to RenderRuntimeState on both builds.
     void* aviFile;
     void* aviStream; // PAVISTREAM (was v9e400OrUint32)
     void* aviFrameReader;
@@ -296,12 +287,11 @@ struct MMDAppState {
 #endif
     void* pictureBackgroundTexture;
 #if defined(_M_X64)
-    // the x64 blob keeps a full vertex-buffer pointer slot here (0x9F320,
-    // CreateDIB-style quad buffer); the port's copy lives in the MMDApp
-    // mirror m_overlayVertexBuffers.picture
+    // Historical vertex-buffer pointer slot (0x9F320); live storage is
+    // RenderRuntimeState::pictureOverlayVertices on both builds.
     RawPad<8> pad129;
 #else
-    std::uint32_t pictureOverlayVertices;
+    std::uint32_t reservedPictureOverlayVertices;
 #endif
     std::int32_t pictureOffsetX;
     std::int32_t pictureOffsetY;
@@ -331,9 +321,9 @@ struct MMDAppState {
     std::uint32_t gravityTrackCursor; // +0x9E674
     std::uint8_t gravityTrackActive;  // +0x9E678
     RawPad<3> pad153d;
-    std::uint32_t accessoryTrackCursor[55]; // +0x9E67C..0x9E938 / x64 652656
-    RawPad<800> pad153e;                    // 0x9E938..0x9EA78 / x64 ..0x9F96C
-    std::uint8_t accessoryTrackActive[55];  // +0x9EA78 / x64 pin 653676
+    std::uint32_t accessoryTrackCursor[55];        // +0x9E67C..0x9E938 / x64 652656
+    RawPad<800> pad153e;                           // 0x9E938..0x9EA78 / x64 ..0x9F96C
+    std::uint8_t reservedAccessoryTrackActive[55]; // +0x9EA78 / x64 pin 653676
 #if defined(_M_X64)
     RawPad<199> pad153; // ..up to the 0x9FA6A snapshot
 #else
@@ -357,10 +347,10 @@ struct MMDAppState {
 #if defined(_M_X64)
     // x64 blob reserves the full 512-byte path buffer (0x9FA98, the AVI
     // record dialog leas it); the port's copy lives outside the compat
-    // blob (see MMDApp::m_aviOutputPath)
+    // blob (see CaptureRuntimeState::aviOutputPath)
     RawPad<512> pad159;
 #else
-    wchar_t aviOutputPath[256];
+    wchar_t reservedAviOutputPath[256];
 #endif
     unsigned char frameStepPlayback; // x64 pin 654488 (0x9FC98)
     RawPad<3> pad160;
@@ -427,25 +417,25 @@ struct MMDAppState {
     void* projectedShadowRestoreTexture;
 #if defined(_M_X64)
     // x64: the render-save path buffer lives outside the blob
-    // (MMDApp::m_captureSavePath); the blob still reserves the full
+    // (CaptureRuntimeState::savePath); the blob still reserves the full
     // 512-byte slot (0xA0098..0xA0297)
     RawPad<512> pad197;
 #else
     // render/screenshot save path chosen by the render dialog (menu 276)
     // and consumed by the capture save ladder
-    wchar_t captureSavePath[256];
+    wchar_t reservedCaptureSavePath[256];
 #endif
     void* captureReadbackPixels;
 #if defined(_M_X64)
     // x64: the path-resolution workspace lives outside the blob
-    // (MMDApp::m_pathWorkspace); the blob reserves the same 3536 bytes
+    // (AppRuntimeState::paths); the blob reserves the same 3536 bytes
     // as x86 (captureReadbackPixels 0xA0298 .. leftViewportVertices
     // 0xA1070).
     RawPad<3536> pad199; // was fontSubOrPtr + pad199
 #else
     // +0x9F338: inline path-resolution scratch (project/exec dirs +
     // resolved path), overlaid as one blob region in the original.
-    PathResolutionWorkspace pathWorkspace;
+    PathResolutionWorkspace reservedPathWorkspace;
 #endif
     void* leftViewportVertices;
     void* rightViewportVertices;
@@ -455,11 +445,11 @@ struct MMDAppState {
     RawPad<2> pad204;
 #if defined(_M_X64)
     // the x64 blob keeps the two selection-box anchors (0xA10FC/0xA1100);
-    // the port works on MMDApp mirrors and reserves the slots here
+    // the port works on AppRuntimeState on both builds and reserves the slots here
     RawPad<8> pad205;
 #else
-    std::int32_t selectionBoxAnchorX; // +0xA018C
-    std::int32_t selectionBoxAnchorY; // +0xA0190
+    std::int32_t reservedSelectionBoxAnchorX; // +0xA018C
+    std::int32_t reservedSelectionBoxAnchorY; // +0xA0190
 #endif
     unsigned char blackBackgroundEnabled; // x64 pin 659716 (0xA1104)
     unsigned char modelNonDisplayMode;
@@ -480,15 +470,15 @@ struct MMDAppState {
 #if defined(_M_X64)
     // the x64 blob carries BOTH projection matrices in full
     // (lightViewProjection 0xA1158, worldViewProjection 0xA1198); the
-    // port works on MMDApp mirrors and reserves the 128 bytes here
+    // port works on AppRuntimeState on both builds and reserves the 128 bytes here
     RawPad<131> pad213;
 #else
     RawPad<3> pad213a;
     // 0xA01E8/0xA0228: the fixed-function light and world view-projection
-    // matrices (column-major, 16 floats each).  Kept as float[16] so this
-    // header stays free of d3d9 includes; MMDApp reinterprets to D3DMATRIX.
-    float lightViewProjectionMatrix[16]; // +0xA01E8
-    float worldViewProjectionMatrix[16]; // +0xA0228
+    // matrix slots (16 floats each). Live D3DMATRIX values now belong to
+    // RenderRuntimeState; these float arrays retain only the old widths.
+    float reservedLightViewProjectionMatrix[16]; // +0xA01E8
+    float reservedWorldViewProjectionMatrix[16]; // +0xA0228
 #endif
     void* activeRenderObject;      // x64 pin 659928 (0xA11D8)
     std::int32_t activeRenderPass; // x64 pin 659936
@@ -503,15 +493,14 @@ struct MMDAppState {
     RawPad<3> pad217;
     HMENU savedMenu; // x64 pin 659944 (0xA11E8)
 #if defined(_M_X64)
-    std::int32_t renderPassCount; // parked on the blob's saved-placement
-                                  // slot (0xA11F0, .length dword); the
-                                  // placement itself lives in the MMDApp
-                                  // mirror m_savedPlacement
+    std::int32_t renderPassCount; // Uses the compatibility placement slot
+                                  // (0xA11F0). Live placement belongs to
+                                  // PlatformRuntimeState::savedPlacement.
     RawPad<40> pad219;
 #else
     // 0xA027C: the window placement saved across fullscreen recording
     // (GetWindowPlacement/SetWindowPlacement; .length is init 44)
-    WINDOWPLACEMENT savedPlacement;
+    WINDOWPLACEMENT reservedSavedPlacement;
 #endif
     unsigned char fullscreenFlagsSaved; // x64 pin 659996 (0xA121C)
     RawPad<3> pad220;
@@ -525,24 +514,24 @@ struct MMDAppState {
     unsigned char depthDeviceEnabled;
     RawPad<3> pad228;
     HMODULE oniModule;
-    void* oniExportSlot0;
-    void* oniExportSlot1;
-    std::uint32_t oniExportSlot2;
+    void* reservedOniExportSlot0;
+    void* reservedOniExportSlot1;
+    std::uint32_t reservedOniExportSlot2;
 #if defined(_M_X64)
     RawPad<4> pad232;
 #endif
-    void* depthTextureCallback;
-    std::uint32_t oniExportSlot4;
+    void* reservedDepthTextureCallback;
+    std::uint32_t reservedOniExportSlot4;
 #if defined(_M_X64)
     // the blob keeps the 8-byte OpenNI tracking-callback slot (0xA1360)
-    // plus its alignment fill; the port reads MMDApp::m_openniTrackingCallback
+    // plus its alignment fill; the port reads PlatformRuntimeState::oniExports[5]
     RawPad<12> pad231;
 #else
-    void* openniTrackingCallback; // ?OpenNIIsTracking@@YGXPA_N@Z (registered
-                                  // by the OpenNI plugin; read by the frame
-                                  // driver's selection-callback branch)
+    void* reservedOpenniTrackingCallback; // ?OpenNIIsTracking@@YGXPA_N@Z (registered
+                                          // by the OpenNI plugin; read by the frame
+                                          // driver's selection-callback branch)
 #endif
-    void* oniExportSlot6;
+    void* reservedOniExportSlot6;
     unsigned char kinectMirrorEnabled;
     unsigned char kinectInitLostBone;
     unsigned char depthTextureCompositionEnabled;
@@ -562,12 +551,10 @@ struct MMDAppState {
     unsigned char automaticFrameAdvanceEnabled;
     unsigned char openniVersion;
     unsigned char timelineSelectionChanged;
-    // 0xA03EC..0xA042B: eight stride-8 slots as int32[16] (no alignment
-    // padding); the count sits at element 2*band, the +4 halves held the
-    // record pointers and are mirrored by g_timelineSelectionRecords.
-    // The canary watches all 64 bytes.  The x64 twin runs the slots at
-    // stride 16 (count dword + record pointer, 128 bytes total).
-    std::int32_t timelineSelectionSlots[16]; // x64 pin 660352 (0xA1380)
+    // Retired eight timeline count/pointer pairs: x86 stride 8 (64 bytes),
+    // original x64 stride 16 (128 bytes). SelectionRuntimeState owns the
+    // live native pairs; no global side table or compact-slot overlay remains.
+    std::int32_t reservedTimelineSelectionSlots[16]; // x64 pin 660352 (0xA1380)
 #if defined(_M_X64)
     RawPad<64> pad248; // the x64 record-pointer halves of the slots above
 #endif
@@ -593,27 +580,25 @@ struct MMDAppState {
     // the port stores the low-dword handles above and reserves the rest
     RawPad<48> pad276;
 #endif
-    // Panel-row highlight flags (0xA04F8): camera/light/shadow/gravity
-    // header flags at [0..3], tree-row flags over [0..199], joint-row
-    // flags at [4..203] (the last four overlap the timeline-range anchors
-    // below, as in the original).  x64 reserves only 175 bytes here before
-    // timelineRangeApplyEnabled, so x64 keeps 64 + pad and routes PanelRowFlags() to a
-    // mirror; x86 carries the full region as one array.
-    unsigned char buf656632[200]; // x86 +0xA04F8 / x64 pin 660736 - the
-                                  // panel-row flag grid, memset-0xC8 twin
-                                  // at 0xA1500 in the x64 init
+    // Historical 200-byte panel flag grid (+0xA04F8; x64 +0xA1500).
+    // InitDefaults/ResetAppState clear 0xC8 bytes in the original. Live flags
+    // are in SelectionRuntimeState, with room for joint rows [4..203].
+    // They no longer overlap the separately named timeline range anchors.
+    unsigned char reservedBuf656632[200]; // x86 +0xA04F8 / x64 pin 660736 - the
+                                          // panel-row flag grid, memset-0xC8 twin
+                                          // at 0xA1500 in the x64 init
 #if defined(_M_X64)
-    RawPad<16> pad277; // timeline range lives in MMDApp mirrors here
+    RawPad<16> pad277; // timeline range lives in AppRuntimeState on both builds here
                        // (blob slots 0xA15C8..0xA15D7)
 #else
     // 0xA05C0..0xA05D0: the frame-range selection anchors (menu 262's
     // first/last offset+base pairs)
-    std::int32_t timelineRangeFirstOffset; // +0xA05C0
-    std::int32_t timelineRangeFirstBase;   // +0xA05C4
-    std::int32_t timelineRangeLastOffset;  // +0xA05C8
-    std::int32_t timelineRangeLastBase;    // +0xA05CC
+    std::int32_t reservedTimelineRangeFirstOffset; // +0xA05C0
+    std::int32_t reservedTimelineRangeFirstBase;   // +0xA05C4
+    std::int32_t reservedTimelineRangeLastOffset;  // +0xA05C8
+    std::int32_t reservedTimelineRangeLastBase;    // +0xA05CC
 #endif
-    unsigned char timelineRangeApplyEnabled;
+    unsigned char reservedTimelineRangeApplyEnabled;
     // +0xA05D1: view-dirty flag - panel repaint picks the busy palette
     // while set (original 0x42C574); armed by the camera-follow refresh.
     unsigned char viewDirty;
@@ -632,28 +617,28 @@ struct MMDAppState {
     std::uint32_t themeColors[35];
 #if defined(_M_X64)
     RawPad<1> pad319; // accessory-apply gate byte lives in the MMDApp
-                      // mirror m_accessoryApplyGate (blob slot 0xA166C)
+                      // DialogRuntimeState::accessoryApplyGate (blob slot 0xA166C)
 #else
     // accessory-edit dialog close gate: the post-close refresh runs
     // only while nonzero
-    unsigned char accessoryApplyGate;
+    unsigned char reservedAccessoryApplyGate;
 #endif
     unsigned char accessoryEditDialogOpen; // was a0665 (menu 442) - x64 pin
                                            // 661101 (0xA166D)
     RawPad<2> pad320;
-    mdl::BoneOrderEntry* selectNavRecords; // owned dialog 442 working copy
-                                           // (was a0668OrUint32)
+    mdl::BoneOrderEntry* reservedSelectNavRecords; // Retired dialog 442 pointer slot.
+                                                   // (was a0668OrUint32)
     unsigned char physicsBodiesMoved;
     unsigned char playbackAlwaysOnOffMode;
     RawPad<2> pad323;
     std::int32_t savedPlaybackPhysicsMode;
 #if defined(_M_X64)
     // the x64 blob carries the full 64-byte view-rotation matrix
-    // (0xA1680..0xA16BF); the port works on the MMDApp mirror
+    // (0xA1680..0xA16BF); the port works on the AppRuntimeState on both builds
     RawPad<64> pad324;
 #else
     // +0xA0674 view-rotation matrix (D3DMATRIX)
-    float viewRotationTransform[16];
+    float reservedViewRotationTransform[16];
 #endif
     // +0xA06B4..0xA06B6: separate-window hide-margin mouse latches -
     // armed while the pointer sits outside the auto-hide margins (and by
@@ -682,7 +667,7 @@ struct MMDAppState {
     RawPad<1> pad333;
     wchar_t exeDir[256];
     RawPad<2> pad334;
-    void* origEditProc;
+    void* reservedOrigEditProc;
     std::int32_t renderW;
     std::int32_t renderH;
     float cameraDistance; // x64 pin 661760 (0xA1900, init -50.0f)
@@ -694,13 +679,13 @@ struct MMDAppState {
     float modelOffsetY;
     float modelOffsetZ;
 #if !defined(_M_X64)
-    std::int32_t frameRangeStartFrame; // +0xA08F0 frame-range dialog start
-    std::int32_t morphFrameShift;      // menu 225 morph-frame cleanup shift
-    std::int32_t blinkStartFrame;      // menu 227 blink register range start
-    std::int32_t blinkEndFrame;        // menu 227 blink register range end
+    std::int32_t reservedFrameRangeStartFrame; // +0xA08F0 frame-range dialog start
+    std::int32_t reservedMorphFrameShift;      // menu 225 morph-frame cleanup shift
+    std::int32_t reservedBlinkStartFrame;      // menu 227 blink register range start
+    std::int32_t reservedBlinkEndFrame;        // menu 227 blink register range end
 #else
     RawPad<16> pad289; // the four frame-range/morph/blink ints live in
-                       // MMDApp mirrors (blob slots 0xA1914..0xA1920)
+                       // AppRuntimeState on both builds (blob slots 0xA1914..0xA1920)
 #endif
     wchar_t envFileName[256];
     std::int32_t aviRecordStartFrame;
@@ -716,90 +701,90 @@ struct MMDAppState {
 #if defined(_M_X64)
     // blob slots for the ground-shadow-color dialog (0xA1B38), its saved
     // edit proc (0xA1B40) and the reorder array (0xA1B48); the port keeps
-    // dialog handles in MMDApp mirrors and typed scratch ownership in DialogOrders
+    // dialog handles in AppRuntimeState on both builds and typed scratch ownership in DialogOrders
     RawPad<24> pad349;
 #else
-    HWND groundShadowColorDialog;      // menu 248, modeless
-    WNDPROC groundShadowColorEditProc; // saved wndproc of its value edit
-    RawPad<4> accessoryOrderArray;     // retired scratch slot; typed owners in MMDApp
+    HWND reservedGroundShadowColorDialog;      // menu 248, modeless
+    WNDPROC reservedGroundShadowColorEditProc; // saved wndproc of its value edit
+    RawPad<4> accessoryOrderArray;             // retired scratch slot; typed owners in MMDApp
 #endif
     std::int32_t accessoryRenderSplitOrder; // x64 pin 662352 (0xA1B50,
                                             // init 1)
 #if defined(_M_X64)
     // blob slots for the accessory-edit array (0xA1B58) and the rotation
-    // dialog temps (0xA1B60..0xA1B7B); MMDApp mirrors own the data
+    // dialog temps (0xA1B60..0xA1B7B); AppRuntimeState on both builds own the data
     RawPad<40> pad357;
 #else
     // accessory-edit dialog scratch buffer 2 (menu 442; freed on close)
-    void* accessoryEditArray;
+    void* reservedAccessoryEditArray;
     // rotation-dialog working values, shared by the dialog procs
     // sub_40FBC0 / sub_40F860 (cases 300/302)
-    float rotationDialogTemp[7];
+    float reservedRotationDialogTemp[7];
 #endif
-    HWND edgeThicknessDialog; // menu 253 edge-thickness dlg, modal
-                              // (was modelInfoDialog) - x64 pin 662400
+    HWND reservedEdgeThicknessDialog; // menu 253 edge-thickness dlg, modal
+                                      // (was modelInfoDialog) - x64 pin 662400
 #if defined(_M_X64)
-    RawPad<8> pad354; // saved edit wndproc lives in a mirror (0xA1B88)
+    RawPad<8> pad354; // saved edit wndproc lives in DialogRuntimeState (0xA1B88)
 #else
-    WNDPROC edgeThicknessEditProc; // saved wndproc of its edit 646
-                                   // (was modelInfoEditProc)
+    WNDPROC reservedEdgeThicknessEditProc; // saved wndproc of its edit 646
+                                           // (was modelInfoEditProc)
 #endif
     unsigned char englishUI; // x64 pin 662416 (0xA1B98; the x64E build
                              // inits it to 1)
 #if defined(_M_X64)
-    RawPad<7> pad353; // englishNameDialog needs the full 8-alignment here
+    RawPad<7> pad353; // reservedEnglishNameDialog needs the full 8-alignment here
 #else
     RawPad<3> pad353;
 #endif
 #if defined(_M_X64)
     // blob slots: English-name dialog HWND (0xA1BA0), English-name edit
     // proc (0xA1BA8) and the three combo cursors (0xA1BB0..0xA1BBB);
-    // the port works on MMDApp mirrors
+    // the port works on AppRuntimeState on both builds
     RawPad<8> pad356;
     RawPad<20> pad358;
 #else
-    HWND englishNameDialog;
-    WNDPROC englishNameEditProc;            // saved wndproc of edit 667
-    std::int32_t englishNameComboCursor[3]; // combos 669/673/677 edit pos
+    HWND reservedEnglishNameDialog;
+    WNDPROC reservedEnglishNameEditProc;            // saved wndproc of edit 667
+    std::int32_t reservedEnglishNameComboCursor[3]; // combos 669/673/677 edit pos
 #endif
     unsigned char enhancedModelDirty; // x64 pin 662452 (0xA1BB4)
     RawPad<3> pad355;
     std::uint32_t timeNowLow;
     std::uint32_t timeNowHigh;
     float milliToSec;
-    HWND frameCopyDialog; // menu 262, modal - x64 pin 662472 (0xA1BC8)
+    HWND reservedFrameCopyDialog; // menu 262, modal - x64 pin 662472 (0xA1BC8)
 #if defined(_M_X64)
-    RawPad<8> pad361; // saved edit wndproc lives in a mirror (0xA1BD0)
+    RawPad<8> pad361; // saved edit wndproc lives in DialogRuntimeState (0xA1BD0)
 #else
-    WNDPROC frameCopyEditProc; // saved wndproc of edit 705
+    WNDPROC reservedFrameCopyEditProc; // saved wndproc of edit 705
 #endif
     // physics editor (dialog 684) rigid-body scratch, RigidRecord x
     // 100000 (was cameraRecordArray); index selectedRigidIndex (was selAcc)
-    void* rigidScratchArray;
+    void* reservedRigidScratchArray;
 #if defined(_M_X64)
     // the x64 blob reserves the physics-editor staging block
     // (0xA1BE0..0xA1C9F, 192 bytes); the port's copy lives in
-    // MMDApp::m_cameraFrameScratch
+    // DialogRuntimeState::cameraFrameScratch
     RawPad<192> pad360;
 #else
     // dialog 262 stages a 172-byte camera record here for editing; the
     // ground-shadow-color RGBA overlays bytes +112..+127 (menus 248/262
     // are never open together, mirroring the original blob reuse)
-    unsigned char cameraFrameScratch[172];
+    unsigned char reservedCameraFrameScratch[172];
 #endif
     std::int32_t selectedRigidIndex; // was selAcc - x64 pin 662688 (0xA1CA0)
     // physics editor joint scratch, JointRecord x 100000 (was
     // boneRecordArray); index selectedJointIndex (was sel8c)
-    void* jointScratchArray; // x64 pin 662696 (0xA1CA8)
+    void* reservedJointScratchArray; // x64 pin 662696 (0xA1CA8)
 #if defined(_M_X64)
     // the x64 blob reserves the bone/joint staging block
     // (0xA1CB0..0xA1D47, 152 bytes); the port's copy lives in
-    // MMDApp::m_boneFrameScratch
+    // DialogRuntimeState::boneFrameScratch
     RawPad<152> pad364;
 #else
     // dialog 262 stages a 140-byte bone record here for editing; the
     // accessory-frame dialog reuses byte +28 as its saved wndproc
-    unsigned char boneFrameScratch[140];
+    unsigned char reservedBoneFrameScratch[140];
 #endif
     std::int32_t selectedJointIndex;       // was sel8c - x64 pin 662856 (0xA1D48)
     std::int32_t playbackPhysicsMode;      // x64 pin 662860 (0xA1D4C, init 2)
@@ -807,25 +792,25 @@ struct MMDAppState {
 #if defined(_M_X64)
     // x64 blob slots: the alignment fill plus the gravity-setting dialog
     // (0xA1D58) and the gravity-setting edit proc (0xA1D60); the port
-    // keeps both in MMDApp mirrors
+    // keeps both in AppRuntimeState on both builds
     RawPad<23> pad367;
 #else
     RawPad<3> pad367;
-    HWND gravitySettingDialog;      // 0xA0CCC, gravity-setting dlg 266
-                                    // (was accessoryFrameDialog)
-    WNDPROC gravitySettingEditProc; // saved wndproc of edit 709
+    HWND reservedGravitySettingDialog;      // 0xA0CCC, gravity-setting dlg 266
+                                            // (was accessoryFrameDialog)
+    WNDPROC reservedGravitySettingEditProc; // saved wndproc of edit 709
 #endif
     unsigned char gravityNoiseEnabled;
 #if defined(_M_X64)
     // x64: the avi codec option lives outside the compat blob
-    // (MMDApp::m_aviCodecSelection); the blob keeps its dword slot
-    // (0xA1D6C) plus the fill up to origTrackProc (0xA1D70)
+    // (CaptureRuntimeState::aviCodecSelection); the blob keeps its dword slot
+    // (0xA1D6C) plus the fill up to reservedOrigTrackProc (0xA1D70)
     RawPad<7> pad368;
 #else
     RawPad<3> pad368;
-    std::int32_t aviCodecSelection;
+    std::int32_t reservedAviCodecSelection;
 #endif
-    void* origTrackProc;
+    void* reservedOrigTrackProc;
     unsigned char aviSettings;
 #if defined(_M_X64)
     RawPad<3> pad370;

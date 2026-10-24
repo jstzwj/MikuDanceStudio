@@ -4,6 +4,7 @@
 
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/app_layout.hpp"
+#include "mikudancestudio/app_runtime_state.hpp"
 
 namespace mikudancestudio { void InitBoneSortOrder(unsigned char*); }
 
@@ -11,7 +12,7 @@ int main() {
     using namespace mikudancestudio;
     static_assert(std::is_same_v<decltype(mdl::ModelRecord::boneOrderTable),
                                  mdl::BoneOrderEntry*>);
-    static_assert(std::is_same_v<decltype(MMDAppState::selectNavRecords),
+    static_assert(std::is_same_v<decltype(DialogRuntimeState::selectNavRecords),
                                  mdl::BoneOrderEntry*>);
     int failures = 0;
     const auto check = [&](bool ok, const char* name) {

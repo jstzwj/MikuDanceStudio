@@ -98,7 +98,7 @@ mdl::BoneOrderEntry* ModelSelectRecords(unsigned char* model) {
 }
 
 mdl::BoneOrderEntry* SelRecord(MMDApp* app, int item) {
-    return app->state.selectNavRecords + item;
+    return app->SelectNavRecords() + item;
 }
 
 LPARAM StrParam(const void* s) {
@@ -112,9 +112,9 @@ LPARAM StrParam(const void* s) {
 // ===========================================================================
 void InitSelectNavDialog(MMDApp* app, HWND hDlg) { // VA 0x00466630
     app->AccessoryApplyGate() = 0;                 // 0x46665D
-    if (app->state.selectNavRecords != nullptr) {  // 0x466664
-        delete[] app->state.selectNavRecords;
-        app->state.selectNavRecords = nullptr;
+    if (app->SelectNavRecords() != nullptr) {      // 0x466664
+        delete[] app->SelectNavRecords();
+        app->SelectNavRecords() = nullptr;
     }
 
     unsigned char* model = ActiveModel(app);
@@ -122,7 +122,7 @@ void InitSelectNavDialog(MMDApp* app, HWND hDlg) { // VA 0x00466630
         static_cast<int>(mdl::Mdl(model)->boneOrderCount); // x86 0x4CCE8 / x64 0x96478
     auto* const records =
         mdl::CopyBoneBindings(ModelSelectRecords(model), static_cast<std::size_t>(count));
-    app->state.selectNavRecords = records;
+    app->SelectNavRecords() = records;
 
     const HWND combo669 = GetDlgItem(hDlg, panel::kBoneNameCombo);  // 0x46671F
     const HWND combo673 = GetDlgItem(hDlg, panel::kMorphNameCombo); // 0x466733
@@ -272,7 +272,7 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) { // VA 0x
     }
 
     if (app->AccessoryEditArray() != nullptr) { // 0x43D40A
-        free(app->AccessoryEditArray());
+        ::operator delete(app->AccessoryEditArray());
         app->AccessoryEditArray() = nullptr;
     }
     int* const boneIds =
@@ -360,7 +360,7 @@ void ResetModelSelection(MMDApp* app) { // VA 0x004256C0
     // restore the saved 20-byte select records into the model
     const int count = static_cast<int>(mdl::Mdl(model)->boneOrderCount); // 0x4258B2 / x64 0x96478
     if (count > 0) {
-        std::copy_n(app->state.selectNavRecords, count, ModelSelectRecords(model));
+        std::copy_n(app->SelectNavRecords(), count, ModelSelectRecords(model));
     }
 
     RegisterDisplayKeyCurrent(model, app->state.currentFrame); // 0x42592E

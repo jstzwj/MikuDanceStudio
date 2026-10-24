@@ -247,7 +247,8 @@ void PostModelReload2(MMDApp* app) { // 0x40D940
     // 0x40DC3A..0x40DC6D: until the bone-copy buffer contains records,
     // paste and reverse-paste remain disabled.  A successful copy command
     // enables both controls and stores the record count at 0x9DA24.
-    if (!cameraMode && app->PanelExpanded(UiPanel::Morph) != 0 && app->state.copiedBoneCount == 0) {
+    if (!cameraMode && app->PanelExpanded(UiPanel::Morph) != 0 &&
+        app->BonePoseClipboardCount() == 0) {
         EnableWindow(MainControl(app, panel::kBonePasteButton), FALSE);
         EnableWindow(MainControl(app, panel::kBoneReversePasteButton), FALSE);
     }
@@ -466,10 +467,10 @@ void ApplyModelComboSelection(MMDApp* app) { // 0x44D940
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
         SendMessageA(GetDlgItem(hwnd, panel::kShadowCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kAddBlendCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
-        HWND optionWindow = app->state.edgeThicknessDialog;
+        HWND optionWindow = app->EdgeThicknessDialog();
         if (optionWindow != nullptr) {
             DestroyWindow(optionWindow);
-            app->state.edgeThicknessDialog = nullptr;
+            app->EdgeThicknessDialog() = nullptr;
         }
         SetPhysicsMenuState(hwnd, MFS_DISABLED);
     } else {
@@ -540,7 +541,7 @@ void ApplyModelComboSelection(MMDApp* app) { // 0x44D940
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), hasMainSelection ? TRUE : FALSE);
 
         unsigned char* model = app->SelectedModel();
-        HWND optionWindow = app->state.edgeThicknessDialog;
+        HWND optionWindow = app->EdgeThicknessDialog();
         if (optionWindow != nullptr && model != nullptr) {
             char text[256]{};
             sprintf_s(text, "%3.2f", mikudancestudio::mdl::Mdl(model)->edgeScale);

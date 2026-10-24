@@ -67,9 +67,9 @@ void MMDApp::InitDefaults() {
         state.lightD[i] = 127;
     }
 
-    state.boneCopyRecords = nullptr;
-    state.copiedBoneCount = 0;
-    state.clipboardCounts = mdl::ClipboardSelectionCounts{};
+    BonePoseClipboard() = nullptr;
+    BonePoseClipboardCount() = 0;
+    ClipboardCounts() = mdl::ClipboardSelectionCounts{};
     s.CameraKeys() = nullptr;
     s.LightKeys() = nullptr;
     s.ShadowKeys() = nullptr;
@@ -106,14 +106,14 @@ void MMDApp::InitDefaults() {
     s.PlaybackStartsAtCurrentFrame() = 0;
     state.a0B10 = 0;
     s.GroundShadowColorDialog() = nullptr;
-    state.edgeThicknessDialog = nullptr;
+    EdgeThicknessDialog() = nullptr;
     state.projectedShadowBlendEnabled = 1;
     state.coordinateSystem = 0;
     state.englishUI = 1;
     EnglishNameDialog() = nullptr;
     s.EnhancedModelDirty() = 0;
-    state.frameCopyDialog = nullptr;
-    state.rigidScratchArray = nullptr;
+    FrameCopyOrPhysicsDialog() = nullptr;
+    RigidScratchArray() = nullptr;
     // Frame-config trio 0xA0B00/0xA0B04/0xA0B08 (start frame / end frame /
     // fps).  Original InitDefaults leaves these alone - the ONLY writer in
     // the whole binary is the frame-range dialog OK handler (0x40F3C4:
@@ -190,11 +190,11 @@ void MMDApp::InitDefaults() {
     s.AviStereoWidthMultiplier() = 2;
     state.depthDeviceEnabled = 0;
     state.oniModule = nullptr;
-    state.oniExportSlot0 = nullptr;
-    state.oniExportSlot1 = nullptr;
-    state.oniExportSlot2 = 0;
-    state.depthTextureCallback = nullptr;
-    state.oniExportSlot4 = 0;
+    OniExportSlot(0) = nullptr;
+    OniExportSlot(1) = nullptr;
+    OniExportSlot(2) = nullptr;
+    DepthTextureCallback() = nullptr;
+    OniExportSlot(4) = nullptr;
     s.OpenniTrackingCallback() = nullptr;
     state.kinectMirrorEnabled = 1;
     state.kinectInitLostBone = 0;
@@ -211,7 +211,7 @@ void MMDApp::InitDefaults() {
     s.MainModelComboSelection() = 0;
     s.CameraParentModel() = -1;
     s.CameraParentBone() = 0;
-    state.displayClipboard = nullptr;
+    DisplayClipboard() = nullptr;
     s.FrameVolumeControlEnabled() = 0;
     s.FrameNormalization() = 100;
     state.axisMeshObject = nullptr;
@@ -228,12 +228,12 @@ void MMDApp::InitDefaults() {
     s.CameraAttachmentTransformSuppressed() = 0;
     state.modelReloadPending = 0;
     s.WindowLayoutReady() = 1;
-    std::memset(state.buf656632, 0, 0xC8);
-    state.timelineRangeApplyEnabled = 0;
+    ClearPanelRowFlags();
+    TimelineRangeApplyEnabled() = 0;
     state.viewDirty = 0;
     state.b6568482 = 0;
     state.mouseJumped = 0;
-    state.selectNavRecords = 0;
+    SelectNavRecords() = 0;
     state.accessoryEditDialogOpen = 0;
     state.physicsBodiesMoved = 0;
     state.playbackAlwaysOnOffMode = 0;

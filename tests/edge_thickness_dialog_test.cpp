@@ -62,7 +62,7 @@ void TestDialog(HMODULE resources, int templateId) {
         mds::g_Block = nullptr;
         return;
     }
-    app->state.edgeThicknessDialog = dialog;
+    app->EdgeThicknessDialog() = dialog;
     HWND edit = GetDlgItem(dialog, panel::kEdgeThicknessEdit);
     HWND slider = GetDlgItem(dialog, panel::kEdgeThicknessSlider);
     // Without ES_AUTOHSCROLL the original narrow edit truncates EM_REPLACESEL
@@ -131,7 +131,7 @@ void TestDialog(HMODULE resources, int templateId) {
     SendMessageA(dialog, WM_COMMAND, IDOK, 0);
     Check(IsWindow(dialog) && second->edgeScale == 0.9f, "IDOK does not commit or close");
     SendMessageA(dialog, WM_COMMAND, IDCANCEL, 0);
-    Check(!IsWindow(dialog) && app->state.edgeThicknessDialog == nullptr,
+    Check(!IsWindow(dialog) && app->EdgeThicknessDialog() == nullptr,
           "Cancel destroys the dialog and clears its handle");
     Check(second->edgeScale == 0.9f && app->SceneModified() == 0,
           "Closing does not implicitly commit the edit");
@@ -140,7 +140,7 @@ void TestDialog(HMODULE resources, int templateId) {
                                 mds::EdgeThicknessDlgProc, 0);
     Check(dialog != nullptr, "The dialog can reopen after destruction");
     if (dialog) {
-        app->state.edgeThicknessDialog = dialog;
+        app->EdgeThicknessDialog() = dialog;
         CheckVisibleText(GetDlgItem(dialog, panel::kEdgeThicknessEdit), "0.90");
         SendMessageA(dialog, WM_CLOSE, 0, 0);
         MSG message{};
@@ -148,7 +148,7 @@ void TestDialog(HMODULE resources, int templateId) {
             TranslateMessage(&message);
             DispatchMessageA(&message);
         }
-        Check(!IsWindow(dialog) && app->state.edgeThicknessDialog == nullptr,
+        Check(!IsWindow(dialog) && app->EdgeThicknessDialog() == nullptr,
               "Title-bar close follows the same non-committing cancel path");
     }
     mds::g_Block = nullptr;

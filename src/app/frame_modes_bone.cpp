@@ -156,7 +156,7 @@ void EchoRecord(HWND dialog, int id, const char* format, float value) {
 }
 
 bool EditModeRecord(MMDApp* app, int mode) {
-    HWND dialog = app->state.frameCopyDialog;
+    HWND dialog = app->FrameCopyOrPhysicsDialog();
     if (dialog == nullptr)
         return false;
     const int dy = app->MouseY() - app->PreviousMouseY();
@@ -167,7 +167,7 @@ bool EditModeRecord(MMDApp* app, int mode) {
             // Physics-editor joint page: drag edits the joint rotation
             // (dialog edits 754..756).
             auto* joints =
-                static_cast<mikudancestudio::mdl::JointRecord*>(app->state.jointScratchArray);
+                static_cast<mikudancestudio::mdl::JointRecord*>(app->JointScratchArray());
             const int index = app->state.selectedJointIndex;
             if (joints != nullptr && index >= 0) {
                 float& value = joints[index].rotation[axis];
@@ -178,7 +178,7 @@ bool EditModeRecord(MMDApp* app, int mode) {
         } else {
             // Rigid-body page: drag edits the body rotation (715..717).
             auto* bodies =
-                static_cast<mikudancestudio::mdl::RigidRecord*>(app->state.rigidScratchArray);
+                static_cast<mikudancestudio::mdl::RigidRecord*>(app->RigidScratchArray());
             const int index = app->state.selectedRigidIndex;
             if (bodies != nullptr && index >= 0) {
                 float& value = bodies[index].rotation[axis];
@@ -196,7 +196,7 @@ bool EditModeRecord(MMDApp* app, int mode) {
         if (app->state.physicsEditorJointPage != 0) {
             // Joint position drag (744..746).
             auto* joints =
-                static_cast<mikudancestudio::mdl::JointRecord*>(app->state.jointScratchArray);
+                static_cast<mikudancestudio::mdl::JointRecord*>(app->JointScratchArray());
             const int index = app->state.selectedJointIndex;
             if (joints != nullptr && index >= 0) {
                 float& value = joints[index].position[axis];
@@ -207,7 +207,7 @@ bool EditModeRecord(MMDApp* app, int mode) {
             // Rigid body: shift-drag scales the shape size (709..711),
             // plain drag moves the body (712..714).
             auto* bodies =
-                static_cast<mikudancestudio::mdl::RigidRecord*>(app->state.rigidScratchArray);
+                static_cast<mikudancestudio::mdl::RigidRecord*>(app->RigidScratchArray());
             const int index = app->state.selectedRigidIndex;
             if (bodies != nullptr && index >= 0) {
                 const bool scale = app->ShiftModifierActive();
@@ -375,7 +375,7 @@ void BoneEditModes(MMDApp* app) {
     if (mode <= 0 || mode > 12)
         return;
 
-    if ((mode <= 6 || mode >= 10) && app->state.frameCopyDialog != nullptr) {
+    if ((mode <= 6 || mode >= 10) && app->FrameCopyOrPhysicsDialog() != nullptr) {
         EditModeRecord(app, mode);
         return;
     }

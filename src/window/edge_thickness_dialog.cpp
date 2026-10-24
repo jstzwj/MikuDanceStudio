@@ -33,7 +33,7 @@ LRESULT CALLBACK EdgeThicknessEditSubclassProc( // VA 0x0042E270
     HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MMDApp* app = g_Block;
     if (msg == WM_KEYDOWN && wParam == VK_RETURN) { // 0x100 / 0x0D
-        const HWND dlg = app->state.edgeThicknessDialog;
+        const HWND dlg = app->EdgeThicknessDialog();
         if (hwnd == GetDlgItem(dlg, panel::kEdgeThicknessEdit /*646*/)) {
             char buf[8];
             GetWindowTextA(hwnd, buf, 8);
@@ -94,7 +94,7 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     case WM_COMMAND:
         if (LOWORD(wParam) == IDCANCEL) {
             DestroyWindow(hDlg);
-            app->state.edgeThicknessDialog = nullptr;
+            app->EdgeThicknessDialog() = nullptr;
             return 1;
         }
         break;

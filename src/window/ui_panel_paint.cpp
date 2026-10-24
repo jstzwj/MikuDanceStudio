@@ -469,10 +469,10 @@ void PanelPaint(MMDApp* app) {
                             if (app->SelectionBoxDragging() != 0 &&
                                 app->TimelineSelectionChanged() == 0 && link < 0) {
                                 const int neg = -link;
-                                if (app->TimelineRangeFirstOffset() <= row &&
-                                    row < app->TimelineRangeLastOffset() &&
-                                    neg < app->TimelineRangeLastBase() &&
-                                    app->TimelineRangeFirstBase() <= neg) {
+                                if (app->TimelineRangeFirstColumn() <= row &&
+                                    row < app->TimelineRangeLastColumn() &&
+                                    neg < app->TimelineRangeLastRow() &&
+                                    app->TimelineRangeFirstRow() <= neg) {
                                     key.allocated =
                                         static_cast<std::uint8_t>(!app->CtrlModifierActive());
                                 } else if (!app->ShiftModifierActive()) {
@@ -544,10 +544,10 @@ void PanelPaint(MMDApp* app) {
                             if (app->SelectionBoxDragging() != 0 &&
                                 app->TimelineSelectionChanged() == 0 && link < 0) {
                                 const int neg = -link;
-                                if (neg < app->TimelineRangeLastBase() &&
-                                    row < app->TimelineRangeLastOffset() &&
-                                    app->TimelineRangeFirstBase() <= neg &&
-                                    app->TimelineRangeFirstOffset() <= row) {
+                                if (neg < app->TimelineRangeLastRow() &&
+                                    row < app->TimelineRangeLastColumn() &&
+                                    app->TimelineRangeFirstRow() <= neg &&
+                                    app->TimelineRangeFirstColumn() <= row) {
                                     key.allocated =
                                         app->TimelineRangeApplyEnabled() != 0
                                             ? 0

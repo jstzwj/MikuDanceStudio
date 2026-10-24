@@ -314,8 +314,8 @@ void DrawAccessoryDebug(MMDApp* app) {
     // rigidScratchArray = rigid bodies (mdl::RigidRecord), jointScratchArray =
     // joints (mdl::JointRecord).  While the dialog is open the records'
     // keyData / constraint slots hold the combo index (-1 = deleted slot).
-    auto* bodies = static_cast<mikudancestudio::mdl::RigidRecord*>(app->state.rigidScratchArray);
-    auto* joints = static_cast<mikudancestudio::mdl::JointRecord*>(app->state.jointScratchArray);
+    auto* bodies = static_cast<mikudancestudio::mdl::RigidRecord*>(app->RigidScratchArray());
+    auto* joints = static_cast<mikudancestudio::mdl::JointRecord*>(app->JointScratchArray());
     const bool dialogSelection = app->state.physicsEditorJointPage != 0;
     for (int index = 0; index < kDebugRecordCapacity; ++index) {
         mikudancestudio::mdl::RigidRecord* record = &bodies[index];

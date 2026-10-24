@@ -79,14 +79,6 @@ void DisposeAccessory(void* accessory);
 
 namespace {
 
-inline void FreeTimelineSelectionRecords(MMDApp& app, TimelineSelectionBand band) {
-    TimelineSelectionRecord*& records = app.TimelineSelectionRecords(band);
-    if (records != nullptr) {
-        std::free(records);
-        records = nullptr;
-    }
-}
-
 // Same release for a typed wrapper (D3DRenderer) slot.  reinterpret_cast to
 // IUnknown* keeps the forward-declared ID3DXEffect* member usable without
 // including d3dx9.h - Release stays vtable slot 2 (byte +8), exactly like
@@ -311,12 +303,12 @@ void ShutdownCleanup(MMDApp* app) {
 
     // A modal-dialog abort can bypass its command's normal cleanup.
     // The application owns the remaining external-parent working copy.
-    delete[] s.state.selectNavRecords;
-    s.state.selectNavRecords = nullptr;
+    delete[] s.SelectNavRecords();
+    s.SelectNavRecords() = nullptr;
 
     // ---- 1/2: flag-gated callback + module unload ------------------------
-    if (s.state.depthDeviceEnabled != 0) {                      // 0x462C6F
-        reinterpret_cast<void (*)()>(s.state.oniExportSlot1)(); // 0x462C81
+    if (s.state.depthDeviceEnabled != 0) {                  // 0x462C6F
+        reinterpret_cast<void (*)()>(s.OniExportSlot(1))(); // 0x462C81
         s.state.depthDeviceEnabled = 0;
     }
     if (HMODULE mod = s.state.oniModule) { // 0x462C89
@@ -356,10 +348,14 @@ void ShutdownCleanup(MMDApp* app) {
     // ---- 7: accessory-record base + misc frees ----------------------------
     delete s.RecordingCompletionFlag(); // 0x462DAB
     s.RecordingCompletionFlag() = nullptr;
-    if (s.state.rigidScratchArray != nullptr) { // 0x462DC4
-        std::free(s.state.rigidScratchArray);
-        s.state.rigidScratchArray = nullptr;
+    if (s.RigidScratchArray() != nullptr) { // 0x462DC4
+        std::free(s.RigidScratchArray());
+        s.RigidScratchArray() = nullptr;
     }
+    std::free(s.JointScratchArray());
+    s.JointScratchArray() = nullptr;
+    ::operator delete(s.AccessoryEditArray());
+    s.AccessoryEditArray() = nullptr;
 
     // ---- 8: render-side and AVI-config Release() run ----------------------
     ReleaseSlot(s.GroundGridIndices());        // 0x462DE2
@@ -416,45 +412,10 @@ void ShutdownCleanup(MMDApp* app) {
     }
 
     // ---- 12: clipboard arrays and singles ----------------------------------
-    mdl::DisplayClipboardRecord*& displayRecords = s.DisplayClipboard();
-    if (displayRecords != nullptr) {
-        std::int32_t nRec = static_cast<std::int32_t>(s.ClipboardCounts().displays);
-        if (nRec > 0) {                                // 0x46300E
-            for (std::int32_t k = 0; k < nRec; ++k) {  // 0x46306E
-                std::free(displayRecords[k].ikStates); // 0x46302F
-                displayRecords[k].ikStates = nullptr;
-                std::free(displayRecords[k].selectorStates); // 0x463050
-                displayRecords[k].selectorStates = nullptr;
-            }
-        }
-    }
-    std::free(displayRecords); // 0x46307B
-    displayRecords = nullptr;
-    std::free(s.LightClipboard()); // 0x463094
-    s.LightClipboard() = nullptr;
-    std::free(s.CameraClipboard()); // 0x4630AD
-    s.CameraClipboard() = nullptr;
-    std::free(s.MorphClipboard()); // 0x4630C6
-    s.MorphClipboard() = nullptr;
-    std::free(s.ShadowClipboard()); // 0x4630DF
-    s.ShadowClipboard() = nullptr;
-    std::free(s.GravityClipboard()); // 0x4630F8
-    s.GravityClipboard() = nullptr;
-    std::free(s.AccessoryClipboard()); // 0x463111
-    s.AccessoryClipboard() = nullptr;
-    std::free(s.BoneClipboard()); // 0x46312A
-    s.BoneClipboard() = nullptr;
-    std::free(s.BoneCopyRecords()); // 0x463143
-    s.BoneCopyRecords() = nullptr;
+    s.ReleaseClipboardBuffers();
 
     // ---- 13: selection-record buffers -------------------------------------
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::Accessory);  // 0x46315C
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::ModelIk);    // 0x463175
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::Camera);     // 0x46318E
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::Light);      // 0x4631A7
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::ModelBone);  // 0x4631C0
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::SelfShadow); // 0x4631D9
-    FreeTimelineSelectionRecords(s, TimelineSelectionBand::ModelMorph); // 0x4631F2
+    s.ReleaseTimelineSelectionRecords();
 
     // ---- 14: GDI DCs (no null guards in the original) -----------------------
     DeleteDC(s.TimelineDC()); // 0x46320D
