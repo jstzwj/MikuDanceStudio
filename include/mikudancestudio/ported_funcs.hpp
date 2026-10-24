@@ -133,7 +133,8 @@ void InstallControlSubclass(MMDApp* app, HWND control, int id);
 INT_PTR CALLBACK FrameRangeDlgProc(HWND, UINT, WPARAM, LPARAM); // VA 0x0044C5D0
 INT_PTR CALLBACK SelectNavDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0047A3F0
 // English-name editor; window procedure and helpers: english_name_dialog.cpp.
-INT_PTR CALLBACK EnglishNameDlgProc(HWND, UINT, WPARAM, LPARAM); // VA 0x00464BD0
+INT_PTR CALLBACK EnglishNameDlgProc(HWND, UINT, WPARAM, LPARAM);   // VA 0x00464BD0
+INT_PTR CALLBACK EdgeThicknessDlgProc(HWND, UINT, WPARAM, LPARAM); // VA 0x0044C7F0
 INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK GravitySettingDlgProc(HWND, UINT, WPARAM, LPARAM);

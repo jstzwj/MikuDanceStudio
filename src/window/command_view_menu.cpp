@@ -394,51 +394,6 @@ static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x30
 
 // ---- dialog helpers retained in this translation unit ----------------------
 
-// Forward declarations (bodies below / later in this TU).
-void SetEdgeThickness(MMDApp* app, float thickness); // VA 0x0041E980
-// VA 0x0042E270 - edit-646 (0x286) subclass of the edge-thickness dialog
-// (253): on WM_KEYDOWN+VK_RETURN it reads the edit text, applies it through
-// the thickness setter (0x41E980) and parks the percent value on trackbar
-// 647 (TBM_SETPOS, dbl 0x52B8E0 = 100.0); anything else goes to the saved
-// original procedure (app+0xA0B48, captured when case 253 subclasses).
-LRESULT CALLBACK EdgeThicknessEditSubclassProc( // VA 0x0042E270
-    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    MMDApp* app = g_Block;
-    if (msg == WM_KEYDOWN && wParam == VK_RETURN) { // 0x100 / 0x0D
-        const HWND dlg = app->state.edgeThicknessDialog;
-        if (hwnd == GetDlgItem(dlg, panel::kEdgeThicknessEdit /*646*/)) {
-            char buf[8];
-            GetWindowTextA(hwnd, buf, 8);
-            const float v = static_cast<float>(atof(buf));
-            SetEdgeThickness(app, v); // 0x41E980
-            SendMessageA(GetDlgItem(dlg, panel::kEdgeThicknessSlider /*647*/), TBM_SETPOS, 1,
-                         static_cast<int>(v * 100.0)); // dbl 0x52B8E0
-            return 0;
-        }
-    }
-    return CallWindowProcA(app->EdgeThicknessEditProc(), hwnd, msg, wParam, lParam);
-}
-// VA 0x0041E950 - edge-thickness getter: camera mode (byte 0x2F8) reports a
-// constant 1.0, model mode the active model's thickness float (+0x31C0).
-// (Template caption "thickness of edge line" / エッジ太さ設定, scale 0..2 -
-// model+0x31C0 is the per-model edge thickness, not a FPS.)
-float GetEdgeThickness(MMDApp* app) { // VA 0x0041E950
-    if (app->CameraMode() != 0)
-        return 1.0f;
-    unsigned char* model = app->SelectedModel();
-    return mdl::Mdl(model)->edgeScale;
-}
-// VA 0x0041E980 - edge-thickness setter (model mode only): marks the
-// in-dialog and dirty flags, then stores into the active model's thickness
-// float (+0x31C0).
-void SetEdgeThickness(MMDApp* app, float thickness) { // VA 0x0041E980
-    if (app->CameraMode() != 0)
-        return;
-    app->state.messageSeen = 1;
-    app->SceneModified() = 1;
-    unsigned char* model = app->SelectedModel();
-    mdl::Mdl(model)->edgeScale = thickness;
-}
 // VA 0x0041E9C0 - enhance-model dialog init: mirrors the ten 100-byte SJIS
 // toon texture file-name slots of the active model (+0x33D8) into edits 709..718.
 void FillToonTextureEdits(MMDApp* app, HWND hDlg) { // VA 0x0041E9C0
@@ -532,64 +487,6 @@ INT_PTR CALLBACK FacialMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             EndDialog(hDlg, IDCANCEL);
             return 0;
         }
-    }
-    return 0;
-}
-
-// ===========================================================================
-// 0x44C7F0 - case 253 edge-thickness dialog (template caption "thickness of
-// edge line" / エッジ太さ設定, scale 0..2; 0x296 EN / 0x285 JP), modeless.
-// WM_INITDIALOG: top-most gate; subclass the thickness edit 646 with
-// sub_42E270 (old proc saved at app+0xA0B48); fill 646 with "%3.2f" of
-// sub_41E950 (current thickness) and set trackbar 647 (range 0..200, tick
-// 0x64, pos thickness*100).
-// WM_COMMAND id 2: DestroyWindow + clear app+0xA0B44, return 1.
-// WM_HSCROLL: TBM_GETPOS/100 -> sub_41E980, refresh 646, return 1.
-// Reference: MikuMikuDance.exe sub_44C7F0.
-// ===========================================================================
-INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                      LPARAM lParam) { // VA 0x0044C7F0
-    (void)lParam;
-    MMDApp* app = g_Block;
-    switch (msg) {
-    case WM_INITDIALOG: {
-        MakeDialogTopmostIfRequested(app, hDlg);
-        app->EdgeThicknessEditProc() = reinterpret_cast<WNDPROC>(
-            GetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC));
-        SetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC,
-                          (LONG)(LONG_PTR)EdgeThicknessEditSubclassProc);
-        const float thickness = GetEdgeThickness(app); // 0x41E950
-        char buf[0x100];
-        sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(thickness));
-        PrefillEdit(hDlg, panel::kEdgeThicknessEdit, buf);
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETRANGEMIN, 0, 0);
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETRANGEMAX, 0, 200);
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETTICFREQ, 0x64, 0);
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETPOS, 1,
-                     (int)(thickness * 100.0));
-        break;
-    }
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDCANCEL) {
-            DestroyWindow(hDlg);
-            app->state.edgeThicknessDialog = nullptr;
-            return 1;
-        }
-        break;
-    case WM_HSCROLL: {
-        const double v = static_cast<double>(SendMessageA(
-                             GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_GETPOS, 0, 0)) /
-                         100.0;
-        SetEdgeThickness(app, static_cast<float>(v)); // 0x41E980
-        char buf[0x100];
-        sprintf_s(buf, 0x100, "%3.2f", v);
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), EM_SETSEL, 0,
-                     GetWindowTextLengthA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit)));
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), EM_REPLACESEL, 0, (LPARAM)buf);
-        return 1;
-    }
-    default:
-        break;
     }
     return 0;
 }

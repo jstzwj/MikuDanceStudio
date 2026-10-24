@@ -175,6 +175,7 @@ add_library(mikudancestudio_core STATIC
     src/window/model_order_dialog.cpp
     src/window/gravity_setting_dialog.cpp
     src/window/english_name_dialog.cpp
+    src/window/edge_thickness_dialog.cpp
     src/window/enhance_model_io.cpp
     src/window/misc_dialogs.cpp
     src/window/command_frame_edit.cpp
@@ -476,6 +477,11 @@ if(BUILD_TESTING)
     target_link_options(option_dialog_test PRIVATE /OPT:REF)
     target_link_libraries(option_dialog_test PRIVATE user32 comctl32 BULLET275::BULLET275 D3DXRuntime)
     add_test(NAME option_dialog COMMAND option_dialog_test)
+    add_executable(edge_thickness_dialog_test tests/edge_thickness_dialog_test.cpp)
+    target_link_libraries(edge_thickness_dialog_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_dependencies(edge_thickness_dialog_test MikuDanceStudio)
+    add_test(NAME edge_thickness_dialog
+        COMMAND edge_thickness_dialog_test $<TARGET_FILE:MikuDanceStudio>)
     add_executable(mme_anime_timeline_test tests/mme_anime_timeline_test.cpp)
     target_include_directories(mme_anime_timeline_test PRIVATE
         third_party/mmeffect/include third_party/mmeffect/src/mmhack)
