@@ -18,6 +18,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (MSVC)
     add_compile_options(/W3 /permissive-)
+    # Make source and literal encoding independent of the system code page.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
     # The original binary tolerates implicit narrowing everywhere; keep the
     # port close to VC9 behaviour rather than modern strictness.
