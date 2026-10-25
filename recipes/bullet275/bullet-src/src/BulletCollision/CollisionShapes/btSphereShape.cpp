@@ -67,10 +67,16 @@ void btSphereShape::getAabb(const btTransform& t,btVector3& aabbMin,btVector3& a
 
 void	btSphereShape::calculateLocalInertia(btScalar mass,btVector3& inertia) const
 {
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xECA40: ((mass * 0.4f) * radius) * radius.
+	const btScalar radius = getMargin();
+	const btScalar elem = ((mass * btScalar(0.4f)) * radius) * radius;
+#else
 	// MMD 0x4D0A70: r*r*mass*0.4f evaluated on the x87 stack with a
 	// single float rounding (double math below is exact per step).
 	const double mmdR = getMargin();
 	btScalar elem = btScalar(mmdR * mmdR * double(mass) * double(btScalar(0.4f)));
+#endif
 	inertia.setValue(elem,elem,elem);
 
 }

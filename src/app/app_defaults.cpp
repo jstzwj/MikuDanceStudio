@@ -11,10 +11,12 @@
 
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/math_runtime.hpp"
 
 namespace mikudancestudio {
 
 void MMDApp::InitDefaults() {
+    InitializeMathRuntime();
     auto& s = *this;
 
     s.ViewOffsetX() = 0.0f;

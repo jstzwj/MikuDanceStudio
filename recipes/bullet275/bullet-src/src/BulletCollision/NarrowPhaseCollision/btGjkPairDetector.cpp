@@ -81,7 +81,7 @@ static __declspec(noinline) btScalar mmdGjkNegLengthZXY(const btVector3& a,
 	return btMmdMath::negativeDistance(a, b);
 #else
 	const btVector3 d = a - b;
-	return -btSqrt((d.z()*d.z() + d.y()*d.y()) + d.x()*d.x());
+	return -btSqrt(d.length2()); // x64 RVA 0xFB2F0: (x*x+y*y)+z*z.
 #endif
 }
 
@@ -94,7 +94,7 @@ static __declspec(noinline) btScalar mmdGjkLengthMinusMarginZXY(
 	return btMmdMath::distanceMinusMargin(a, b, margin);
 #else
 	const btVector3 d = a - b;
-	return btSqrt((d.z()*d.z() + d.y()*d.y()) + d.x()*d.x()) - margin;
+	return btSqrt(d.length2()) - margin;
 #endif
 }
 
@@ -208,6 +208,11 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 				const btScalar negZ = -axisZ;
 				const btMatrix3x3& basisA = input.m_transformA.getBasis();
 				const btMatrix3x3& basisB = input.m_transformB.getBasis();
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				// MMD x64 RVA 0xFB2F0 uses (x+y)+z throughout the support loop.
+				btVector3 seperatingAxisInA = -m_cachedSeparatingAxis * basisA;
+				btVector3 seperatingAxisInB = m_cachedSeparatingAxis * basisB;
+#else
 				btVector3 seperatingAxisInA(
 					(basisA[0].x()*negX + basisA[2].x()*negZ) + basisA[1].x()*negY,
 					(basisA[0].y()*negX + basisA[1].y()*negY) + basisA[2].y()*negZ,
@@ -216,10 +221,15 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 					(basisB[2].x()*axisZ + basisB[0].x()*axisX) + basisB[1].x()*axisY,
 					(basisB[1].y()*axisY + basisB[2].y()*axisZ) + basisB[0].y()*axisX,
 					(basisB[1].z()*axisY + basisB[2].z()*axisZ) + basisB[0].z()*axisX);
+#endif
 
 				btVector3 pInA = m_minkowskiA->localGetSupportVertexWithoutMarginNonVirtual(seperatingAxisInA);
 				btVector3 qInB = m_minkowskiB->localGetSupportVertexWithoutMarginNonVirtual(seperatingAxisInB);
 
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				btVector3 pWorld = localTransA(pInA);
+				btVector3 qWorld = localTransB(qInB);
+#else
 				btVector3  pWorld = btVector3(
 					((basisA[0].y()*pInA.y() + basisA[0].z()*pInA.z()) + basisA[0].x()*pInA.x()) + localTransA.getOrigin().x(),
 					((basisA[1].y()*pInA.y() + basisA[1].z()*pInA.z()) + basisA[1].x()*pInA.x()) + localTransA.getOrigin().y(),
@@ -228,9 +238,14 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 					((basisB[0].y()*qInB.y() + basisB[0].z()*qInB.z()) + basisB[0].x()*qInB.x()) + localTransB.getOrigin().x(),
 					((basisB[1].y()*qInB.y() + basisB[1].z()*qInB.z()) + basisB[1].x()*qInB.x()) + localTransB.getOrigin().y(),
 					((basisB[2].y()*qInB.y() + basisB[2].z()*qInB.z()) + basisB[2].x()*qInB.x()) + localTransB.getOrigin().z());
+#endif
 
 				btVector3 w	= pWorld - qWorld;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				const btScalar delta = m_cachedSeparatingAxis.dot(w);
+#else
 				const btScalar delta = (axisZ*w.z() + axisY*w.y()) + axisX*w.x();
+#endif
 
 				// potential exit, they don't overlap
 				if ((delta > btScalar(0.0)) && (delta * delta > squaredDistance * input.m_maximumDistanceSquared))
@@ -256,10 +271,12 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 					if (f0 <= btScalar(0.))
 					{
 						m_degenerateSimplex = 2;
-					} else
-					{
+					}
+#if !defined(_M_X64)
+					else {
 						m_degenerateSimplex = 11;
 					}
+#endif
 					checkSimplex = true;
 					break;
 				}
@@ -305,7 +322,9 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 				{
 					m_simplexSolver->backup_closest(m_cachedSeparatingAxis);
 					checkSimplex = true;
+#if !defined(_M_X64)
 					m_degenerateSimplex = 12;
+#endif
 					break;
 				}
 
@@ -381,10 +400,14 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 				if (isValid2)
 				{
 					btVector3 tmpNormalInB = tmpPointOnB-tmpPointOnA;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+					btScalar lenSqr = tmpNormalInB.length2();
+#else
 					// MMD 0x4E4AF3: ((z*z + y*y) + x*x).
 					btScalar lenSqr = (tmpNormalInB.z()*tmpNormalInB.z()
 						+ tmpNormalInB.y()*tmpNormalInB.y())
 						+ tmpNormalInB.x()*tmpNormalInB.x();
+#endif
 					if (lenSqr <= (SIMD_EPSILON*SIMD_EPSILON))
 					{
 						tmpNormalInB = m_cachedSeparatingAxis;

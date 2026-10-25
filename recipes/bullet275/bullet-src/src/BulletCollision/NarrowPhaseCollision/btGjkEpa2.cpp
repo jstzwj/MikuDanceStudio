@@ -90,8 +90,15 @@ static __declspec(noinline) void mmdRank3Weights(const btVector3& c1,
 	btMmdMath::triangleWeights(c1, c2, l, w);
 #else
 	const btScalar s = btSqrt(l);
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0x100680 multiplies both weights by one rounded reciprocal.
+	const btScalar inv = btScalar(1.) / s;
+	w[0] = c1.length() * inv;
+	w[1] = c2.length() * inv;
+#else
 	w[0] = c1.length() / s;
 	w[1] = c2.length() / s;
+#endif
 	w[2] = 1 - (w[0] + w[1]);
 #endif
 }
@@ -111,7 +118,11 @@ static __declspec(noinline) void mmdRank4Weights(btScalar detCBD,
 	w[0] = detCBD * inv;
 	w[1] = detACD * inv;
 	w[2] = detBAD * inv;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	w[3] = 1 - ((w[0] + w[1]) + w[2]);
+#else
 	w[3] = 1 - (w[2] + w[1] + w[0]);
+#endif
 #endif
 }
 
@@ -218,6 +229,11 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 		}
 		inline btVector3		Support1(const btVector3& d) const
 		{
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+			// MMD x64 RVA 0x100180 uses (X+Y)+Z for both transforms.
+			const btVector3 local = m_toshape1 * d;
+			return m_toshape0 * (((m_shapes[1])->*(Ls))(local));
+#else
 			// VC9 (MMD 0x4E9390) evaluates every basis dot product as
 			// (m[y]*y + m[z]*z) + m[x]*x with one float rounding per step,
 			// and adds the origin last.  Modern MSVC folds the terms in a
@@ -236,6 +252,7 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 				((b0[0].y()*sy + b0[0].z()*sz) + b0[0].x()*sx) + o0.x(),
 				((b0[1].y()*sy + b0[1].z()*sz) + b0[1].x()*sx) + o0.y(),
 				((b0[2].y()*sy + b0[2].z()*sz) + b0[2].x()*sx) + o0.z());
+#endif
 		}
 #endif //__SPU__
 
@@ -348,8 +365,16 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 						const btScalar	dzx=w.z()-lastw[i].z();
 						const btScalar	dzy=w.y()-lastw[i].y();
 						const btScalar	dzx2=w.x()-lastw[i].x();
-						if(((dzx*dzx+dzy*dzy)+dzx2*dzx2)<GJK_DUPLICATED_EPS)
-						{ found=true;break; }
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						// MMD x64 RVA 0x101190: sum X/Y before Z.
+						if (((dzx2 * dzx2 + dzy * dzy) + dzx * dzx) < GJK_DUPLICATED_EPS)
+#else
+						if (((dzx * dzx + dzy * dzy) + dzx2 * dzx2) < GJK_DUPLICATED_EPS)
+#endif
+						{
+							found = true;
+							break;
+						}
 					}
 					if(found)
 					{/* Return old simplex				*/ 
@@ -362,8 +387,12 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 					}
 					/* Check for termination				*/
 					// VC9 order (MMD 0x4EA8BD): (rz*wz + ry*wy) + rx*wx.
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+					const btScalar omega = m_ray.dot(w) / rl;
+#else
 					const btScalar	omega=((m_ray.z()*w.z()+m_ray.y()*w.y())
 						+m_ray.x()*w.x())/rl;
+#endif
 					alpha=btMax(omega,alpha);
 					if(((rl-alpha)-(GJK_ACCURARY*rl))<=0)
 					{/* Return old simplex				*/ 
@@ -523,21 +552,44 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 				const btScalar	dx=b.x()-a.x();
 				const btScalar	dy=b.y()-a.y();
 				const btScalar	dz=b.z()-a.z();
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				// MMD x64 RVA 0x1004D0 uses single precision standard dots.
+				const btScalar l = (dx * dx + dy * dy) + dz * dz;
+#else
 				const btScalar	l=(dx*dx+dz*dz)+dy*dy;
+#endif
 				if(l>GJK_SIMPLEX2_EPS)
 				{
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+					const btScalar t = -(((a.x() * dx + a.y() * dy) + a.z() * dz) / l);
+#else
 					const btScalar	t(l>0?-((a.z()*dz+a.x()*dx)+a.y()*dy)/l:0);
+#endif
 					if(t>=1)		{ w[0]=0;w[1]=1;m=2;
-						return((b.z()*b.z()+b.y()*b.y())+b.x()*b.x()); }
-					else if(t<=0)	{ w[0]=1;w[1]=0;m=1;
-						return((a.z()*a.z()+a.y()*a.y())+a.x()*a.x()); }
-					else
-					{
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						return b.length2();
+#else
+						return ((b.z() * b.z() + b.y() * b.y()) + b.x() * b.x());
+#endif
+					} else if (t <= 0) {
+						w[0] = 1;
+						w[1] = 0;
+						m = 1;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						return a.length2();
+#else
+						return ((a.z() * a.z() + a.y() * a.y()) + a.x() * a.x());
+#endif
+					} else {
 						const btScalar	pz=a.z()+dz*t;
 						const btScalar	px=a.x()+dx*t;
 						const btScalar	py=dy*t+a.y();
 						w[0]=1-(w[1]=t);m=3;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						return ((px * px + py * py) + pz * pz);
+#else
 						return((pz*pz+px*px)+py*py);
+#endif
 					}
 				}
 				return(-1);
@@ -553,7 +605,12 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 				const btVector3		n=btCross(dl[0],dl[1]);
 				// VC9 orders (MMD 0x4E9950): length2 as (nz*nz+ny*ny)+nx*nx,
 				// the edge dot as (z+y)+x, and the final dot as (x+y)+z.
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				// MMD x64 RVA 0x100680 uses standard dot products.
+				const btScalar l = n.length2();
+#else
 				const btScalar		l=(n.z()*n.z()+n.y()*n.y())+n.x()*n.x();
+#endif
 				if(l>GJK_SIMPLEX3_EPS)
 				{
 					btScalar	mindist=-1;
@@ -562,7 +619,11 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 					for(U i=0;i<3;++i)
 					{
 						const btVector3	cn=btCross(dl[i],n);
-						if((vt[i]->z()*cn.z()+vt[i]->y()*cn.y())+vt[i]->x()*cn.x()>0)
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						if (vt[i]->dot(cn) > 0)
+#else
+						if ((vt[i]->z() * cn.z() + vt[i]->y() * cn.y()) + vt[i]->x() * cn.x() > 0)
+#endif
 						{
 							const U			j=imd3[i];
 							const btScalar	subd(projectorigin(*vt[i],*vt[j],subw,subm));
@@ -583,7 +644,11 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 						const btScalar	py=n.y()*(d/l);
 						const btScalar	pz=n.z()*(d/l);
 						const btVector3	p(px,py,pz);
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						mindist = (px * px + py * py) + pz * pz;
+#else
 						mindist	=	(pz*pz+py*py)+px*px;
+#endif
 						m		=	7;
 						mmdRank3Weights(btCross(dl[1],b-p),
 							btCross(dl[2],c-p),l,w);
@@ -603,7 +668,12 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 				const btVector3		dl[]={a-d,b-d,c-d};
 				const btScalar		vl=mmdX87Det(dl[0],dl[1],dl[2]);
 				const btVector3		ngc=btCross(b-c,a-b);
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				// MMD x64 RVA 0x100BA0 sums X/Y before Z.
+				const bool ng = (vl * a.dot(ngc)) <= 0;
+#else
 				const bool			ng=(vl*((a.z()*ngc.z()+a.y()*ngc.y())+a.x()*ngc.x()))<=0;
+#endif
 				if(ng&&(btFabs(vl)>GJK_SIMPLEX4_EPS))
 				{
 					btScalar	mindist=-1;
@@ -784,9 +854,14 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 								bool			valid=true;					
 								best->pass	=	(U1)(++pass);
 								gjk.getsupport(best->n,*w);
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+								// MMD x64 RVA 0x103560.
+								const btScalar wdist = w->w.dot(best->n) - best->d;
+#else
 								const btScalar	wdist=((w->w.z()*best->n.z()
 								+w->w.y()*best->n.y())+w->w.x()*best->n.x())
 								-best->d;
+#endif
 								if(wdist>EPA_ACCURACY)
 								{
 									for(U j=0;(j<3)&&valid;++j)
@@ -825,9 +900,14 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 						m_result.p[2]	=	mmdX87LengthXZY(btCross(
 							outer.c[0]->w-projection,
 							outer.c[1]->w-projection));
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						const btScalar sum = (m_result.p[0] + m_result.p[1]) + m_result.p[2];
+						const btScalar inv = btScalar(1.) / sum;
+#else
 						const btScalar	sum=(m_result.p[2]+m_result.p[1])
 							+m_result.p[0];
 						const btScalar	inv=(float)(1.0/(double)sum);
+#endif
 						m_result.p[0]	=	inv*m_result.p[0];
 						m_result.p[1]	=	inv*m_result.p[1];
 						m_result.p[2]	=	inv*m_result.p[2];
@@ -872,9 +952,15 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 					{
 						// MMD 0x4EB420: dot ordered (y+z)+x, scaled by the
 						// once-rounded float reciprocal 1/l (double division).
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+						// MMD x64 RVA 0x1024B0 rounds the reciprocal to float.
+						const btScalar inv = btScalar(1.) / l;
+						face->d = a->w.dot(face->n) * inv;
+#else
 						const btScalar	inv=(float)(1.0/(double)l);
 						face->d		=((a->w.y()*face->n.y()+a->w.z()*face->n.z())
 							+face->n.x()*a->w.x())*inv;
+#endif
 						face->n		=	btVector3(face->n.x()*inv,
 							face->n.y()*inv,face->n.z()*inv);
 						if(forced||(face->d>=-EPA_PLANE_EPS))
@@ -959,6 +1045,7 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 		shape.m_shapes[1]		=	shape1;
 		shape.m_toshape1		=	wtrs1.getBasis().transposeTimes(wtrs0.getBasis());
 		shape.m_toshape0		=	wtrs0.inverseTimes(wtrs1);
+#if !defined(_M_X64)
 		// VC9 (MMD 0x4EB9E0): the origin is computed as rot0^T * (t1 - t0)
 		// with every product rounded to float separately and summed as
 		// ((col_y*dy + col_z*dz) + col_x*dx); btTransform::inverseTimes folds
@@ -973,6 +1060,7 @@ static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 				(ib[1].y()*idy + ib[2].y()*idz) + ib[0].y()*idx,
 				(ib[1].z()*idy + ib[2].z()*idz) + ib[0].z()*idx));
 		}
+#endif
 		shape.EnableMargin(withmargins);
 	}
 
@@ -1062,6 +1150,11 @@ bool	btGjkEpaSolver2::Penetration(	const btConvexShape*	shape0,
 				results.status			=	sResults::Penetrating;
 				// The per-component VC9 groupings differ between the two
 				// witnesses (MMD 0x4ED0A1/0x4ED180).
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				// MMD x64 RVA 0x103DE0: standard world transforms.
+				results.witnesses[0] = wtrs0 * w0;
+				results.witnesses[1] = wtrs0 * w1;
+#else
 				results.witnesses[0]	= btVector3(
 					((wb[0].z()*w0.z() + wb[0].x()*w0.x()) + wb[0].y()*w0.y()) + wo.x(),
 					((wb[1].y()*w0.y() + wb[1].z()*w0.z()) + wb[1].x()*w0.x()) + wo.y(),
@@ -1070,6 +1163,7 @@ bool	btGjkEpaSolver2::Penetration(	const btConvexShape*	shape0,
 					((wb[0].z()*w1.z() + wb[0].y()*w1.y()) + wb[0].x()*w1.x()) + wo.x(),
 					((wb[1].z()*w1.z() + wb[1].y()*w1.y()) + wb[1].x()*w1.x()) + wo.y(),
 					((wb[2].z()*w1.z() + wb[2].y()*w1.y()) + wb[2].x()*w1.x()) + wo.z());
+#endif
 				results.normal			=	-epa.m_normal;
 				results.distance		=	-epa.m_depth;
 				return(true);

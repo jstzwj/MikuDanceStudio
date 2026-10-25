@@ -327,6 +327,163 @@ PMD 原有两份写入实现：菜单调用 `enhance_model_io.cpp` 中的 `SaveE
 
 下一阶段以同一输入和逐字段结果建立端到端对照：编辑 → 撤销／重做 → 保存 PMM v1/v2、VMD／VPD → 重新加载，随后覆盖固定帧渲染、长期物理轨迹和设备丢失／reset。现有 GPU、物理与设备回归继续保留；单元测试通过不能替代这些原版对照。
 
+## 2026-10-25：行为对照第一批：编辑／撤销重做／保存／重载
+
+新增 [scene_roundtrip_test](../tests/scene_roundtrip_test.cpp)，独立生成带两根骨骼、一个表情的 PMD、三角形 X 附件和 PMM v1 磁盘夹具，通过真实 Win32 控件、D3D9、D3DX 和 Bullet 调用生产流程，没有替换加载、保存、seek 或面板绘制实现。模型占用槽位 0／7，附件占用槽位 3，两种模型顺序分别设置，验证槽位与界面序号不混用。
+
+| 闭环 | 已验证内容 |
+|---|---|
+| PMM v2 | 骨骼位移／旋转注册、撤销移除／重做恢复、非默认骨骼及相机插值、表情权重、相机／附件父模型与骨骼、两种模型顺序、描边、物理模式、重力／噪声／地板和模型尾部状态；保存→真实释放并重载→再次保存并重载 |
+| 固定帧 | 第 0、6、12、24、48 帧逐项比较重载前后的骨骼位置／四元数／物理禁用位、表情、相机参数与父引用、附件变换／透明度／父引用／显示和阴影标记；两代 PMM 都检查 |
+| PMM v1→v2 | 独立 v1 文件经实际分派加载，验证旧模型释放、关键帧池下标与链、骨骼及表情，另存 v2 后重新加载求值；夹具使用原版允许的早期文件结尾 |
+| VMD／VPD | 模型 VMD 导入另一模型、相机 VMD 清空后回读，检查姿态／权重／插值并再次导出比较记录；VPD 回读后撤销／重做并再次导出，文本一致 |
+
+测试直接加载模型时必须调用正常 UI 流程中的 `RebuildTimelineTrackPanel`。开发夹具曾漏掉该步骤，使新分配的时间轴行映射未初始化，导致 VMD 导入刷新间歇性崩溃；补全夹具调用顺序后通过，未将夹具问题作为应用缺陷修复。VMD 比较只忽略头部及模型名固定宽度字符串在 NUL 后的未定义尾部，磁盘长度不取自运行时 `sizeof`。
+
+通过 IDA MCP 复核下列原版函数，并使用 [compare_scene_save.py](../scripts/compare_scene_save.py) 在 Unicorn 中执行 x64 原版机器码，向原版与端口提供同一份运行时记录、指针图及帧输入。脚本固定检查本页基准 SHA-256；不包含、下载或分发原版可执行文件。
+
+| 原版入口（RVA，image base `0x7FF7CB420000`） | 动态对照结果 |
+|---|---|
+| PMM 写入 `0x750A0` | 633 次 `_write`、3471 字节；所有有效字段一致，包括两个模型、全局轨道、附件、物理设置及模型尾部 |
+| 骨骼／表情 seek `0xCBD90` | 五个固定帧的位移、四元数及表情权重逐位一致 |
+| 相机求值 `0x59C30` | 五帧的位置、旋转、距离、FOV、父模型／骨骼和透视标记逐位一致 |
+| 附件求值 `0x5E150` | 五帧的变换、透明度、父模型／骨骼、显示／阴影标记逐位一致 |
+| 骨骼撤销／重做 `0xCEF90`／`0xCFB80` | 比较全部使用过的关键帧槽、当前姿态、环游标及返回帧，一致 |
+
+原版字段遍历、链表、插值和撤销主体在模拟器内执行；Win32 控件／文件系统调用由确定性桥接提供，`sinf`／`acosf` 和 D3DX 投影矩阵使用本机运行时，D3D `SetTransform` 为无副作用接收端。只在已核对的字符串写入调用点忽略 NUL 后的填充，不把任意含零的数据块当字符串。原版 v1 读取当前骨骼姿态时额外消费一个 float、重复写入四元数 X 的兼容细节，在 x64 `0xA426D` 和 x86 VA `0x45A4C9` 确认后保留。
+
+复现新闭环（从仓库根目录，使用已配置的构建树）：
+
+```powershell
+cmake --build build-x64/build --config Release --target scene_roundtrip_test
+ctest --test-dir build-x64/build -C Release -R '^scene_roundtrip$' --output-on-failure
+cmake --build build-x86/build --config Release --target scene_roundtrip_test
+ctest --test-dir build-x86/build -C Release -R '^scene_roundtrip$' --output-on-failure
+```
+
+原版动态对照额外需要 Python 的 `pefile`／`unicorn` 及本机 D3DX9_43。将路径替换为本机原版位置：
+
+```powershell
+python -m pip install pefile unicorn
+& ./build-x64/build/Release/scene_roundtrip_test.exe --reference ./out/scene-reference64
+python scripts/compare_scene_save.py 'C:/path/to/MikuMikuDanceE_v932x64/MikuMikuDance.exe' ./out/scene-reference64
+```
+
+只有闭环返回 0 才能继续对照；77 表示可用的 D3D9 设备均创建失败，没有生成有效新基线。输出目录包含端口保存的 `port.pmm`、原版机器码生成的 `original.pmm` 及 `comparison.json`。当前 `--reference` 模式将模型／附件和工程保留在输出目录的 `assets` 中，供原版解析；普通 CTest 仍使用临时目录并在结束后释放、移除。内存转储只供这套生成夹具使用。
+
+分别修改 PMM 渲染宽度、固定帧骨骼／相机／附件预期和重做后的最后一个关键帧，5 次均返回差异；恢复输入后通过。具体构建、全量 CTest、GPU 跳过及补跑结果见 [移植状态](PORTING_STATUS.md#最近验证)。本轮没有发现夹具覆盖范围内的生产差异，因此只增加回归、原版对照工具和记录。
+
+第一批当时未涵盖原版完整 GUI 的相同鼠标／键盘事件、原版 PMM／VMD／VPD 加载器的动态执行、x86 原版机器码对照、复杂 PMX／IK／外部父选择器、资源缺失／名称重映射、长期刚体轨迹和渲染像素／设备重置。第二批扩展范围见下节。物理覆盖是设置及骨骼禁用位，不是该 PMD 夹具没有包含的模型刚体运动。撤销对照覆盖骨骼关键帧和端口 VPD 姿态，不能解释为相机／附件／模型顺序都有撤销历史；也不能由这些输入推出全程序一比一等价。
+
+## 2026-10-26：行为对照第二批：PMM 交叉加载与复杂 PMX／IK
+
+扩展 [scene_roundtrip_test](../tests/scene_roundtrip_test.cpp) 和 [compare_scene_save.py](../scripts/compare_scene_save.py)，新增 [scene_cross_load.py](../scripts/scene_cross_load.py)。先由端口生成 PMM，再执行原版 PMM v2 加载器及实际模型解析器；端口随后加载原版直接保存和加载后重存的两代文件，求值并再次保存。原版加载后使用新分配的模型／骨骼／关键帧，固定帧比较会重新读取这些指针，避免沿用输入转储中的旧对象。
+
+| 路径 | 实际结果 |
+|---|---|
+| 两模型 PMD 工程 | 原版完整读取 3471 字节，重新打开两个 PMD；原版重存的 633 次写入及端口两次交叉重存的有效字段均一致 |
+| PMX 与 PMD 混合工程 | 原版完整读取 4217 字节，实际解析生成的 PMX 与第二个 PMD；943 次写入及两次端口交叉重存的有效字段一致 |
+| 固定帧求值 | x64 原版／端口在两场景第 0、6、12、24、48 帧的骨骼／表情、相机、附件参数与父引用逐位一致；复杂场景的七根骨骼各两套 4×4 矩阵也逐位一致 |
+| 编辑命令 | 两场景各执行注册、新值覆盖、删除、三次撤销和三次重做；比较使用过的关键帧池、当前帧、两撤销游标、骨骼选择、按钮状态和物理刷新请求，18 步一致；原版均依次调用 `PanelPaint`、`SelectionReeval` |
+| 工程字段 | 同时核对稀疏槽位 0／7 与附件槽位 3、两种模型顺序、关键帧前后链、非默认插值、骨骼物理标记、重力／噪声／地板、相机和附件的模型／父骨骼引用 |
+
+复杂夹具独立写入 PMX 2.0 磁盘格式，包含两节腿部 IK、膝关节角度限制、固定轴与局部轴、跨变形层的追加旋转／平移、顶点／骨骼及组合表情。相机与附件绑定到追加变换骨骼；五帧求值关闭物理。端口在实际释放／加载后重新执行 Morph 和两阶段骨骼变换，并与保存前快照比较。按钮注册保留已经编辑的四元数，这与 VMD／VPD 导入进行轴约束的入口不同；用带非轴向分量的姿态执行原版按钮命令，确认这一细节相同。
+
+端口命令测试使用真实隐藏 Win32 按钮的 `BM_CLICK`，让通知经 `WM_COMMAND` 进入生产 `CommandDispatch`，执行完整注册、删除、撤销、面板绘制及曲线刷新，再保存重载。没有用测试替身替换端口的编辑或加载实现。
+
+IDA MCP 核对的原版 x64 入口仍以 image base `0x7FF7CB420000` 计 RVA：
+
+| 入口 | RVA |
+|---|---|
+| PMM v2 加载／保存 | `0x78E30`／`0x750A0` |
+| PMD／PMX 解析 | `0xB2670`／`0xA9AC0` |
+| 关键帧 seek、Morph、姿态来源与分层变换 | `0xCBD90`、`0xBD780`、`0xB9F70`；后者调用 `0xBA210` |
+| 完整命令分发、面板及曲线刷新 | `0x3F550`、`0x60EA0`、`0x62BB0` |
+
+原版机器码在 Unicorn 中执行；文件描述符读取真实生成资产，模型／PMM 解析、关键帧重建、插值、Morph、IK 和撤销主体均执行原指令。CRT 数学和 D3DX 使用本机运行时。Win32 控件以确定性消息桥接提供，D3D 缓冲以可锁定内存提供，旧资源释放、布局／绘图和部分面板显示入口是接收端；X 附件资源创建单独桥接，其 PMM 变换、父引用与轨道仍由原版读取。没有将原版解析器替换成端口解析器。字符串比较仍只忽略已确认固定宽度字段在首个 NUL 后的尾部。
+
+完整复现（先构建上述测试目标，提供本机原版路径）：
+
+```powershell
+python scripts/compare_scene_save.py 'C:/path/to/MikuMikuDanceE_v932x64/MikuMikuDance.exe' ./out/scene-cross64 --port-test ./build-x64/build/Release/scene_roundtrip_test.exe --port-test-x86 ./build-x86/build/Release/scene_roundtrip_test.exe
+```
+
+命令先生成两套夹具及原版文件，再运行 x64 端口 `--cross-check`，最后重新比较四个端口重存文件。可选的 `--port-test-x86` 随后运行 x86 端口对相同原版文件的交叉加载并比较另外四个重存文件；两架构的这八个重存结果均通过。任一原生测试返回非零（包括设备不可用的 77）都会停止，不沿用旧基线作为通过。简单场景报告位于输出目录的 `comparison.json`，复杂场景位于 `complex/comparison.json`；x86 端口重存报告为对应目录下的 `comparison-x86-port.json`。报告包含加载服务、固定帧矩阵、命令序列、刷新顺序及两代重存结果；x86 报告中的矩阵与命令机器码对照仍是 x64 输入，额外比较的是 x86 端口保存字段。
+
+独立修改固定帧矩阵平移、连续撤销游标和端口第二代重存字段，三次均被工具检出；另修改固定宽度头部字符串在 NUL 后的填充作为对照，仍通过；恢复文件后完整对照通过。这一轮未发现上述夹具范围内需要修改的生产行为。
+
+原版 GUI 进程尚未实际打开这些工程：本轮 computer-use 的原生连接不可用，因此上述结果是原版加载器／命令分发机器码的动态对照，不能写成原版完整 GUI 已验证。图像、布局／曲线呈现和设备状态恢复没有动态对照；相机与附件的父引用及骨骼矩阵通过，不代表其绑定后渲染图像已比较。也尚未覆盖实际复杂模型资产、跨模型外部父选择器、资源缺失／名称重映射、原版 VMD／VPD 加载、x86 原版机器码、模型刚体长期轨迹和设备重置。构建与两架构回归结果见 [移植状态](PORTING_STATUS.md#最近验证)。
+
+## 2026-10-26：行为对照第三批，PMX 长期物理与重置
+
+新增 [physics_trajectory_test](../tests/physics_trajectory_test.cpp)，复用 [场景夹具](../tests/scene_fixture.hpp)。自动回归独立写入带两节腿部 IK、球／胶囊／盒刚体、碰撞组、动态／运动学／混合模式和弹簧 6DoF 关节的 PMX。另使用本机 Sour Miku 的 `miku.pmx`：331 根骨骼、164 个刚体、216 个关节，SHA-256 `4542728612d1055186dc500bfc897cf458ce5530a87bb2c84de1dfeffeb6e5fa`。不分发原版 EXE 或该模型。
+
+根骨骼与两节腿部 IK 控制骨骼包含 0／60／120 帧移动轨道。先关闭物理核对姿态，再以相同初态、归一化重力、固定 `1/60` 时间步运行 600 帧，覆盖物理关闭、始终模拟、追踪模式、跳帧重置及追踪拖动的额外一步。采样包含刚体世界／插值变换、四组速度、力／力矩及惯性张量，骨骼世界／局部矩阵及物理备份，关节相对变换、线性／角度限位违反量及原版过伸长指标。从新加载的模型重复整段轨迹，要求端口结果逐值相等。
+
+[原生对照模块](../tests/original_physics_module.hpp) 校验基准 EXE 的 SHA-256，激活 VC90 manifest，映射代码并解析 IAT，不运行 EXE 入口。原版 PMX 解析器、场景构造／释放、姿态求值、Bullet 碰撞和求解器均执行实际机器码，分配和释放使用自身 CRT。缺少 VCOMP90 时以 VCOMP140 提供其导入的 OpenMP 入口，并设置单线程。VC90 6DoF 对象的帧、马达和 UID 布局仅在对照夹具中使用经过核验的视图，生产代码继续使用具名成员。
+
+| 核验内容 | 原版 x64 RVA | 修正／验证范围 |
+|---|---|---|
+| 场景及模型生命周期 | `0x27B0`／`0x2580`、`0xA9610`／`0xA8D50`、`0xB2670` | 实际加载、分配、释放及模型计数 |
+| 姿态与物理主泵 | `0xCBD90`、`0xBD780`、`0xB9F70`、`0xC2EE0`、`0xC31D0`、`0xC45D0`、`0xC3470`；主泵 `0x2C6E5..0x2C85F` | 物理前后姿态、一步模拟、追踪额外一步、三轮重置模拟及读回顺序 |
+| 盒／球惯性 | `0xE81D0`／`0xECA40` | x64 质量系数与乘法顺序 |
+| 6DoF 几何与欧拉角 | `0x116F00`、`0x118430`、`0x1193D0`、`0x1197F0` | x64 单精度三角函数、行列式／矩阵累加、归一化；保留既有 x86 路径 |
+| 支持点、GJK／EPA、Voronoi | `0xE9EA0`、`0xEA500`、`0xFB2F0`、`0x1004D0..0x103DE0`、`0x105270..0x1066E0` | x64 点积、倒数舍入、退化分支及见证点变换 |
+| 接触生成与局部点 | `0xF6180`、`0xFE150`、`0xFAB90` | 胶囊快路径、盒 SAT 的单精度中间值、接触点变换 |
+| 接触约束 RHS | `0x113450` | x64 穿透修正为 `float(-1.0 / dt) * float(penetration * erp)`；原先的除法顺序在首次求解就产生差异 |
+
+`bullet_kernel_parity` 固化 1,000 组 GJK／EPA、111 组盒接触及 200 组惯性输入的原版核验摘要 `F9489A9C38A111A4`，原版和端口浮点字节摘要相同；没有原版 EXE 时仍检查冻结摘要。生成 PMX 的前 20 帧另经未修改 VC90 原版核验，冻结轨迹摘要 `AEC1372BE331E093`，用于检测求解及重置顺序回退。
+
+继续定位发现现代 UCRT 默认启用 FMA3 三角函数路径，VC90 使用 SSE2。禁用 FMA3 前，真实 PMX 第 21 帧出现约 `3.73e-9` 的旋转矩阵差异，第 59 帧首次超过固定绝对容差 `2e-5`；后续位置最大偏差约 `0.378`、旋转矩阵元素约 `0.571`、速度约 `17.735`。不能将这种长期误差当成始终只有几个 ULP。
+
+[InitializeMathRuntime](../src/math/math_runtime.cpp) 在应用默认初始化时通过 CRT 的 `_set_FMA3_enable(0)` 选择 SSE2 数学路径，仅作用于 x64。它控制 CRT 内部分派，编译器的 `/fp` 选项不能替代。新增 4,096 组三角函数输入，覆盖 `sinf/cosf/asinf/atan2f` 及敏感的小角度余弦，原版 VC90 派生的浮点摘要为 `ED441BA962F290DC`；测试先启用现代路径，再调用正式初始化并核对冻结摘要。
+
+**修正后，未修改原版数学入口和 VC90 运行时的真实 PMX 对照通过。** 600 帧逐阶段相等，包含接触点、关节行、求解器缓存、预测、求解、积分、重置及读回；首次非零差异和首次越界均为空。数值比较将正负零视为相等，碰撞／惯性及三角函数摘要另比较浮点字节。未增加产品对 VC90 的依赖；用于隔离数学库来源的临时函数替换诊断已移除。
+
+生成模型和真实模型分别加载两个稀疏槽位，检查停止后的延迟重置、跳帧、模式切换、下拉框模型切换、两次 PMM 保存重载及最终释放。重置清零四组速度，同时保留原版不改写的插值变换、外力和关节；重载重建零速度刚体，关节／碰撞体计数不增长，释放后仅留地面。重载后的关节按单调 UID 查找，不能把 UID 当作世界数组下标。
+
+物理夹具允许 CPU 顶点／索引缓冲回退，纹理创建在该模式中明确失败，仍实际执行生产加载器、物理及 PMM 流程。工作期间曾用它绕过 RDP 图形设备异常；设备恢复后的两架构全量测试也已通过，无跳过。这不代表原版纹理／GPU 图像、完整 GUI、D3D9 丢失／Reset、其他模型资产或 x86 原版机器码已做对照。x86 检查端口重复轨迹和生命周期，原版物理差分基准仍为 x64。
+
+复现（先构建本仓库 Bullet 配方及两个 Release 目标）：
+
+```powershell
+ctest --test-dir build-x64/build -C Release -R 'physics_trajectory|bullet_kernel_parity' --output-on-failure
+ctest --test-dir build-x86/build -C Release -R physics_trajectory --output-on-failure
+$original = 'C:/path/to/MikuMikuDanceE_v932x64/MikuMikuDance.exe'
+$model = 'C:/path/to/miku.pmx'
+./build-x64/build/Release/physics_trajectory_test.exe --model $model --original $original --frames 600 --report out/physics-real-vc90.json
+./build-x64/build/Release/physics_trajectory_test.exe --model $model --original $original --frames 600 --stages 1 --report out/physics-real-sse2.json
+```
+
+普通模式写完全部帧报告后，超过容差即返回非零；阶段模式在首次不同处立即失败。报告记录首次差异、首次越界、分类最大绝对误差及 ULP 距离。上述一致性只覆盖当前资产、输入及运行时；后续 UCRT 或 CPU 分派变化仍须通过冻结摘要和原版差分检查。图像及设备丢失／Reset 是后续独立验证项。
+
+## 2026-10-26：渲染图像与真实设备 Reset 验证
+
+图形会话恢复后，实际使用 NVIDIA TITAN Xp 的 D3D9 HAL 设备，重新运行两架构的 13 项既有渲染相关回归，全部通过，无跳过。覆盖主体／描边像素、PMD／PMX 的五种附加 UV 步长、骨骼标记与操作轴投影、物理辅助网格 Reset，以及 MME 的 shader message、缓冲通道、分配图、快照缓存和 ray 场景。
+
+新增 [scene_render_gpu_test](../tests/scene_render_gpu_test.cpp)，通过生产加载、姿态及蒙皮入口绘制图像，再从真实 GPU 渲染目标读回像素。默认生成 PMD；本机扩展输入仍为前述 Sour Miku PMX，139,692 个顶点、25 个材质、331 根骨骼。测试拒绝 NULLREF／CPU 缓冲回退，不将空渲染判为通过。共享 Toon 使用仓库已有 PNG，模型纹理由各自加载器解析和缓存。
+
+IDA 核验后的原版入口为：蒙皮 `RVA 0xC13C0`（参数由调用点 `0x2A1D0..0x2A254` 核对：模型、WORLD、相机位置、FOV、自阴影标志），固定功能材质绘制 `0xB6D70`（模型、渲染器、灯光方向、11 个 Toon 纹理），描边绘制 `0xB82A0`（模型、渲染器、投影阴影标志）。原版模型独立分配、加载和求值，使用自身纹理缓存及 CRT；绘制执行实际机器码，共用同一台设备和相同的变换、灯光与固定功能状态前置设置。
+
+真实 PMX 在关闭物理、自阴影和后处理时，比较正面／斜向两个相机视角，以及描边倍率 0／1／2，共六组 512×512 图像。x64 的主体与描边顶点缓冲逐字节相等；六组原版／端口图像包含 BGRA 在内的全部像素相等，最大通道误差为 0。正面非背景像素随描边倍率依次为 29,392／29,902／30,515，斜向为 26,575／27,064／27,586，确认调节描边确实改变轮廓。每组还释放默认池渲染目标、在模型和纹理仍存活时实际调用设备 Reset、重建颜色／深度表面并重新绘制，端口前后像素相等。
+
+x86 真实模型的相同六组绘制及 Reset 也通过。独立解码保存的 PNG，将每组 x86／x64 的端口及 Reset 后图像与原版 x64 图像比较，共 24 次全部 BGRA 像素相等。两架构新增 `scene_render_gpu` 的 CTest 均通过（4.71／5.21 秒），与前述既有回归合计各 14 项实际通过，无跳过。本轮没有重跑全量非渲染测试；上轮全量结果保留在移植状态页。
+
+本轮未发现上述绘制范围需要修改的生产行为，仅新增测试与验证记录。这里的 Reset 由夹具主动调用；尚未模拟驱动触发的 `D3DERR_DEVICELOST`、完整应用恢复回调、HDR／自阴影／MME 的原版逐像素对照，也不代表完整窗口 UI、动态物理画面或所有模型均与原版相等。既有 MME GPU 回归通过与原版图像一致是不同的验证结论。
+
+复现：
+
+```powershell
+ctest --test-dir build-x64/build -C Release -R 'render|gpu|axis_mesh|model_viewport|background' --output-on-failure
+ctest --test-dir build-x86/build -C Release -R 'render|gpu|axis_mesh|model_viewport|background' --output-on-failure
+$original = 'C:/path/to/MikuMikuDanceE_v932x64/MikuMikuDance.exe'
+$model = 'C:/path/to/miku.pmx'
+./build-x64/build/Release/scene_render_gpu_test.exe --model $model --original $original --output out/render-real-x64
+./build-x86/build/Release/scene_render_gpu_test.exe --model $model --output out/render-real-x86
+```
+
+输出目录保存每个视角／描边倍率的端口、原版（仅 x64 显式指定 EXE 时）及 Reset 后 PNG，以及非背景像素数、差异像素数和最大通道误差的 `report.json`。顶点缓冲或像素不一致、设备 Reset／图像读回失败均返回非零；D3D9 不可用返回 77，由 CTest 明确记为跳过。原版 EXE 与本机模型不随仓库分发。
+
 ## 构建与验证记录
 
 构建以 `profiles/x64` 为基准，先创建仓库中的 Bullet 配方，再安装应用依赖。完整命令统一维护在 [发布说明](RELEASES.md#reproduce-the-release-build)，避免使用旧的工作站锁文件或上游 Bullet 替代本地修改版。输出路径以实际生成结果为准。

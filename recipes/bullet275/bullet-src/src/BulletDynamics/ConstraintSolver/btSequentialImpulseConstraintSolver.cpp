@@ -1050,9 +1050,14 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 					// a different (and for some penetrations 1-ULP-different)
 					// tree than (-pen)*erp/dt.
 					positionalError = mmdSolverMul(mmdSolverMul((btScalar)((-1.0) / (double)infoGlobal.m_timeStep), infoGlobal.m_erp), penetration);
-				#else
+#elif defined(_M_X64)
+					// MMD x64 RVA 0x113450: round penetration*erp before
+					// multiplying by the rounded negative reciprocal timestep.
+					positionalError =
+						btScalar(-1.0 / infoGlobal.m_timeStep) * (penetration * infoGlobal.m_erp);
+#else
 					positionalError = -penetration * infoGlobal.m_erp/infoGlobal.m_timeStep;
-				#endif
+#endif
 					btScalar	velocityError = restitution - rel_vel;// * damping;
 					btScalar  penetrationImpulse = positionalError*solverConstraint.m_jacDiagABInv;
 					btScalar velocityImpulse = velocityError *solverConstraint.m_jacDiagABInv;

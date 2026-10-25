@@ -64,6 +64,7 @@ add_library(mikudancestudio_core STATIC
     src/app/app_defaults.cpp
     src/main/charset_conv.cpp
     src/math/color_lerp.cpp
+    src/math/math_runtime.cpp
     src/window/path_utils.cpp
     src/window/window_init.cpp
     src/window/ui_init.cpp
@@ -455,10 +456,27 @@ if(BUILD_TESTING)
     target_link_libraries(model_render_gpu_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_render_gpu COMMAND model_render_gpu_test)
     set_tests_properties(model_render_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(scene_render_gpu_test tests/scene_render_gpu_test.cpp)
+    target_link_libraries(scene_render_gpu_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(scene_render_gpu_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME scene_render_gpu COMMAND scene_render_gpu_test)
+    set_tests_properties(scene_render_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     add_executable(model_file_io_test tests/model_file_io_test.cpp)
     target_include_directories(model_file_io_test PRIVATE src/io)
     target_link_libraries(model_file_io_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_file_io COMMAND model_file_io_test)
+    add_executable(scene_roundtrip_test tests/scene_roundtrip_test.cpp)
+    target_link_libraries(scene_roundtrip_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME scene_roundtrip COMMAND scene_roundtrip_test)
+    set_tests_properties(scene_roundtrip PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(physics_trajectory_test tests/physics_trajectory_test.cpp)
+    target_link_libraries(physics_trajectory_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    add_test(NAME physics_trajectory COMMAND physics_trajectory_test)
+    set_tests_properties(physics_trajectory PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_test(NAME bullet_kernel_parity COMMAND physics_trajectory_test --kernels 1)
+        set_tests_properties(bullet_kernel_parity PROPERTIES TIMEOUT 30)
+    endif()
     add_executable(pmd_save_test tests/pmd_save_test.cpp)
     target_link_libraries(pmd_save_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME pmd_save COMMAND pmd_save_test)

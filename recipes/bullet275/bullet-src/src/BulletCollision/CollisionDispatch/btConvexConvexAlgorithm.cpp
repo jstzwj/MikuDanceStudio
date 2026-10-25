@@ -111,6 +111,12 @@ static SIMD_FORCE_INLINE void segmentsClosestPoints(
 {
 	// compute the parameters of the closest points on each line segment
 
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xF6180: all three dot products use (x+y)+z.
+	const btScalar dirA_dot_dirB = dirA.dot(dirB);
+	const btScalar dirA_dot_trans = dirA.dot(translation);
+	const btScalar dirB_dot_trans = dirB.dot(translation);
+#else
 	// VC9 (MMD 0x4E18B0): dirA_dot_dirB and dirA_dot_trans are grouped
 	// (z + x) + y, dirB_dot_trans is grouped (z + y) + x.
 	btScalar dirA_dot_dirB = (dirB.z()*dirA.z() + dirB.x()*dirA.x())
@@ -119,6 +125,7 @@ static SIMD_FORCE_INLINE void segmentsClosestPoints(
 		+ translation.x()*dirA.x()) + translation.y()*dirA.y();
 	btScalar dirB_dot_trans = (translation.z()*dirB.z()
 		+ translation.y()*dirB.y()) + translation.x()*dirB.x();
+#endif
 
 	btScalar denom = 1.0f - dirA_dot_dirB * dirA_dot_dirB;
 
@@ -193,10 +200,14 @@ static SIMD_FORCE_INLINE btScalar capsuleCapsuleDistance(
 	segmentsClosestPoints( ptsVector, offsetA, offsetB, tA, tB, translation,
 						   directionA, capsuleLengthA, directionB, capsuleLengthB );
 
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	const btScalar lenSqr = ptsVector.length2();
+#else
 	// VC9 (MMD 0x4E18B0): lenSqr is ((z*z + y*y) + x*x); the distance keeps
 	// the sqrt and both radius subtractions extended.
 	const btScalar lenSqr = (ptsVector.z()*ptsVector.z()
 		+ ptsVector.y()*ptsVector.y()) + ptsVector.x()*ptsVector.x();
+#endif
 	btScalar distance = mmdCapsuleDistance(lenSqr, capsuleRadiusA,
 		capsuleRadiusB);
 

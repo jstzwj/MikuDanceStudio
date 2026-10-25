@@ -264,8 +264,13 @@ btVector3 btConvexShape::localGetSupportVertexWithoutMarginNonVirtual (const btV
 		btScalar maxDot(btScalar(-BT_LARGE_FLOAT));
 
 		btVector3 vec = vec0;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+		// MMD x64 RVA 0xE9EA0 sums X/Y before Z for capsule support.
+		btScalar lenSqr = vec.length2();
+#else
 		btScalar lenSqr = (vec.getZ()*vec.getZ() + vec.getY()*vec.getY())
 			+ vec.getX()*vec.getX();
+#endif
 		if (lenSqr < btScalar(0.0001))
 		{
 			vec.setValue(1,0,0);
@@ -336,9 +341,14 @@ btVector3 btConvexShape::localGetSupportVertexWithoutMarginNonVirtual (const btV
 btVector3 btConvexShape::localGetSupportVertexNonVirtual (const btVector3& localDir) const
 {
 	btVector3 localDirNorm = localDir;
-	if ((localDirNorm.getY()*localDirNorm.getY()
-		+ localDirNorm.getZ()*localDirNorm.getZ())
-		+ localDirNorm.getX()*localDirNorm.getX() < (SIMD_EPSILON*SIMD_EPSILON))
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xEA500 uses the same dot for the zero-direction check.
+	if (localDirNorm.length2() < (SIMD_EPSILON * SIMD_EPSILON))
+#else
+	if ((localDirNorm.getY() * localDirNorm.getY() + localDirNorm.getZ() * localDirNorm.getZ()) +
+			localDirNorm.getX() * localDirNorm.getX() <
+		(SIMD_EPSILON * SIMD_EPSILON))
+#endif
 	{
 		localDirNorm.setValue(btScalar(-1.),btScalar(-1.),btScalar(-1.));
 	}
