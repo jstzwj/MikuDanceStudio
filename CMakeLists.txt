@@ -463,6 +463,21 @@ if(BUILD_TESTING)
     target_link_options(accessory_selection_test PRIVATE /OPT:REF)
     target_link_libraries(accessory_selection_test PRIVATE user32)
     add_test(NAME accessory_selection COMMAND accessory_selection_test)
+    add_executable(edit_target_layout_test tests/edit_target_layout_test.cpp
+        src/window/ui_init.cpp src/model/model_query_helpers.cpp)
+    target_include_directories(edit_target_layout_test PRIVATE include)
+    target_compile_options(edit_target_layout_test PRIVATE /Gy)
+    target_link_options(edit_target_layout_test PRIVATE /OPT:REF)
+    target_link_libraries(edit_target_layout_test PRIVATE user32 dsound D3DXRuntime)
+    add_test(NAME edit_target_layout COMMAND edit_target_layout_test)
+    add_executable(physics_floor_test tests/physics_floor_test.cpp)
+    target_link_libraries(physics_floor_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME physics_floor COMMAND physics_floor_test)
+    add_executable(frame_state_dump_test tests/frame_state_dump_test.cpp)
+    target_include_directories(frame_state_dump_test PRIVATE include)
+    target_compile_definitions(frame_state_dump_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
+    target_link_libraries(frame_state_dump_test PRIVATE user32)
+    add_test(NAME frame_state_dump COMMAND frame_state_dump_test)
     add_executable(bone_mirror_paste_test tests/bone_mirror_paste_test.cpp
         src/window/bone_pose_clipboard.cpp src/window/accessory_paste.cpp
         src/window/bone_pose_edit.cpp src/model/bone_edit_undo.cpp

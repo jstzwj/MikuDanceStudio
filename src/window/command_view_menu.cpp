@@ -242,6 +242,8 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 
+#include "btBulletDynamicsCommon.h"
+
 #include "dialog_scaffold.hpp"
 #include "enhanced_model_messages.hpp"
 
@@ -1293,7 +1295,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // ------------------------------------------------------------------
     // 282..285 (0x0048B624/0x48B682/0x48B6E0/0x48B73E): option toggles -
     // bytes app+0xA0194..0xA0197 mirrored by menu items 0x11A..0x11D.
-    // Case 285 additionally stores 1 / -1 into scene->groundBody -> +0xD4.
+    // Case 285 additionally replaces the ground body's collision flags with 1 / -1.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_BLACK_BACKGROUND: {
         app->LetterKeyState(LetterKey::D) = 1;
@@ -1333,21 +1335,18 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
 
     case MDS_CMD_TOGGLE_PHYSICS_FLOOR: {
         app->LetterKeyState(LetterKey::F) = 1;
-        unsigned char* target =
-            reinterpret_cast<unsigned char*>(app->Physics()->groundBody); // scene slot 0x44
-        // x64 0x7FF7CB4700BC / 0x7FF7CB4700FB: mov dword ptr [rcx+0E0h], 1 /
-        // r14d(-1) on the btRigidBody* at scene+0x88.  +0xE0 is the x64
-        // twin of the x86 +0xD4 store (three pointer members earlier in
-        // btCollisionObject widen by 4 each); the raw x86 literal would
-        // land 12 bytes short in the x64 Bullet layout.
+        btRigidBody* groundBody = app->Physics()->groundBody;
+        // x64 0x7FF7CB4700BC/0x7FF7CB4700FB (+0xE0), x86
+        // 0x48B779/0x48B7A9 (+0xD4): replace m_collisionFlags exactly.
+        // Bullet's setter is a plain assignment in both native layouts.
         if (app->state.floorVisible != 0) {
             app->state.floorVisible = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_FLOOR, MF_UNCHECKED);
-            *reinterpret_cast<std::int32_t*>(target + 0xE0) = -1;
+            groundBody->setCollisionFlags(-1);
         } else {
             app->state.floorVisible = 1;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_FLOOR, MF_CHECKED);
-            *reinterpret_cast<std::int32_t*>(target + 0xE0) = 1;
+            groundBody->setCollisionFlags(1);
         }
         return;
     }

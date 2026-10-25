@@ -697,13 +697,11 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 }
 
 // ---------------------------------------------------------------------------
-// VA 0x00410040 - .  RefillBoneRegisterCombo(app, slot):
-// bone-register combo (control 450) refill.  CB_RESETCONTENT, then for the
-// model in slot app+0x780[slot] every bone whose type byte (+484) is < 7
-// or == 8 is appended (CB_ADDSTRING) with the English (+20) or Japanese
-// (+0) name selected by the UI flag; finishes with RebuildTimelineTrackPanel
-// (0x40D070).  Negative slot only clears.  (Return value is the sweep's
-// BOOL; callers ignore it.)
+// x86 0x00410040 / x64 0x7FF7CB479B00 - RefillBoneRegisterCombo.
+// Clear the combo, append registerable bones in model order using the
+// selected UI language, then invalidate selection readouts. Negative or
+// empty slots leave the combo empty. ModelRecord/BoneRecord provide the
+// native layout (boneCount: x86 +11652 / x64 +12560).
 // ---------------------------------------------------------------------------
 void RefillBoneRegisterCombo(MMDApp* app, int slot) {
     HWND combo = GetDlgItem(static_cast<HWND>(app->Hwnd()), panel::kBoneRegisterCombo);
@@ -711,15 +709,16 @@ void RefillBoneRegisterCombo(MMDApp* app, int slot) {
     if (slot >= 0) {
         unsigned char* model = app->ModelSlot(slot);
         if (model != nullptr) {
-            const std::int32_t boneCount = *reinterpret_cast<std::int32_t*>(model + 11652);
-            mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
+            const auto* record = mdl::Mdl(model);
+            const auto boneCount = static_cast<std::int32_t>(record->boneCount);
+            const mdl::BoneRecord* bones = record->boneTable;
             for (std::int32_t i = 0; i < boneCount; ++i) { // 0x4100B1
-                mikudancestudio::mdl::BoneRecord* bone = &bones[i];
-                const mdl::BoneType type = bone->type;
-                if (type < mdl::BoneType::InertTip || type == mdl::BoneType::FixedAxis) {
-                    const char* name = app->EnglishUI() != 0
-                                           ? reinterpret_cast<const char*>(bone->nameEn)
-                                           : reinterpret_cast<const char*>(bone);
+                const auto& bone = bones[i];
+                // The original compares the type byte as signed (x64 setl).
+                const auto type = static_cast<std::int8_t>(bone.type);
+                if (type < static_cast<std::int8_t>(mdl::BoneType::InertTip) ||
+                    type == static_cast<std::int8_t>(mdl::BoneType::FixedAxis)) {
+                    const char* name = app->EnglishUI() != 0 ? bone.nameEn : bone.name;
                     SendMessageA(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name));
                 }
             }

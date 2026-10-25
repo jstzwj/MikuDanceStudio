@@ -95,12 +95,13 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
     comma();
     std::fprintf(stream, "    \"0A06B8.hwnd\": \"%08X\"",
                  static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(app->Hwnd())));
-    const auto* modelDisplayClipboard =
-        reinterpret_cast<const unsigned char*>(app->DisplayClipboard());
+    // Keep the JSON keys, but read native records (24/40 bytes on x86/x64)
+    // and print complete pointers so x64 snapshots remain usable.
+    const auto* modelDisplayClipboard = app->DisplayClipboard();
     const int modelDisplayClipboardCount = static_cast<int>(app->ClipboardCounts().displays);
     comma();
-    std::fprintf(stream, "    \"clipboard.model_display.ptr\": \"%08X\"",
-                 static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(modelDisplayClipboard)));
+    std::fprintf(stream, "    \"clipboard.model_display.ptr\": \"%p\"",
+                 static_cast<void*>(app->DisplayClipboard()));
     comma();
     std::fputs("    \"clipboard.model_display.records\": [", stream);
     if (modelDisplayClipboard != nullptr && modelDisplayClipboardCount > 0 &&
@@ -108,18 +109,14 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
         for (int recordIndex = 0; recordIndex < modelDisplayClipboardCount; ++recordIndex) {
             if (recordIndex != 0)
                 std::fputs(", ", stream);
-            const auto* record = modelDisplayClipboard + 0x18 * recordIndex;
+            const auto& record = modelDisplayClipboard[recordIndex];
             std::fprintf(stream,
                          "{\"frame\":%u,\"view\":%u,\"ik_count\":%d,"
-                         "\"ik_ptr\":\"%08X\",\"relation_count\":%d,"
-                         "\"relation_ptr\":\"%08X\"}",
-                         *reinterpret_cast<const std::uint32_t*>(record), unsigned(record[4]),
-                         *reinterpret_cast<const std::int32_t*>(record + 8),
-                         static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(
-                             *reinterpret_cast<unsigned char* const*>(record + 12))),
-                         *reinterpret_cast<const std::int32_t*>(record + 16),
-                         static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(
-                             *reinterpret_cast<unsigned char* const*>(record + 20))));
+                         "\"ik_ptr\":\"%p\",\"relation_count\":%d,"
+                         "\"relation_ptr\":\"%p\"}",
+                         record.frame, unsigned(record.visible), record.ikCount,
+                         static_cast<void*>(record.ikStates), record.selectorCount,
+                         static_cast<void*>(record.selectorStates));
         }
     }
     std::fputc(']', stream);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace mikudancestudio::mdl {
@@ -68,8 +69,18 @@ struct DisplayClipboardRecord {
 };
 #if defined(_M_X64)
 static_assert(sizeof(DisplayClipboardRecord) == 40, "display clipboard x64 ABI");
+static_assert(offsetof(DisplayClipboardRecord, ikStates) == 16, "display clipboard x64 IK pointer");
+static_assert(offsetof(DisplayClipboardRecord, selectorCount) == 24,
+              "display clipboard x64 selector count");
+static_assert(offsetof(DisplayClipboardRecord, selectorStates) == 32,
+              "display clipboard x64 selector pointer");
 #else
 static_assert(sizeof(DisplayClipboardRecord) == 24, "display clipboard x86 ABI");
+static_assert(offsetof(DisplayClipboardRecord, ikStates) == 12, "display clipboard x86 IK pointer");
+static_assert(offsetof(DisplayClipboardRecord, selectorCount) == 16,
+              "display clipboard x86 selector count");
+static_assert(offsetof(DisplayClipboardRecord, selectorStates) == 20,
+              "display clipboard x86 selector pointer");
 #endif
 
 struct CameraClipboardRecord {

@@ -6,7 +6,7 @@
 // object as `this` (verified at the call sites inside sub_46B090, e.g. the
 // `mov ecx, ebx` immediately before the 0x42D3A0 call at 0x46FF02).
 //
-// Shared field map used here (decimal offsets as in the decompiles):
+// Historical x86 field map (runtime code uses native typed members):
 //   app+2320    kActiveSlotIndex  - active model-slot order index
 //   app+1920    ModelSlots()  - slot -> model pointer array
 //   app+646512  kDisplayObjectArray   - the 255-entry display-object array (0x9DD70)
@@ -21,8 +21,6 @@
 //   model+9944  display-group records (46 B: +40 table idx, +42 WORD bone)
 //   model+11664 selected bone index           model+11668 bone selection flags
 //   model+11692 facial separator row count    model+11696 group record count
-//   model+1181  display-frame index (edit branch)
-//   model+1196  show flag
 //   model+12716 list scroll position (display-list auto-scroll reference)
 //   model+14592 base (root) bone index
 // =========================================================================//
@@ -44,37 +42,11 @@
 namespace mikudancestudio {
 namespace {
 
-// ---- tiny raw accessors (offsets are model/app byte offsets) ---------------
-inline std::int32_t RdI32(unsigned char* p, std::size_t off) {
-    return *reinterpret_cast<std::int32_t*>(p + off);
-}
-inline std::uint16_t RdU16(unsigned char* p, std::size_t off) {
-    return *reinterpret_cast<std::uint16_t*>(p + off);
-}
-inline unsigned char*& RdPtr(unsigned char* p, std::size_t off) {
-    return *reinterpret_cast<unsigned char**>(p + off);
-}
-inline std::int32_t& WrI32(unsigned char* p, std::size_t off) {
-    return *reinterpret_cast<std::int32_t*>(p + off);
-}
-
 inline unsigned char* SlotModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-constexpr int kDisplayObjectCount = 255;
-constexpr std::size_t kDisplayOrder = 1181;
-constexpr std::size_t kDisplayActive = 1196;
-
-inline unsigned char* DisplayObjectAt(MMDApp* app, int slot) {
-    return static_cast<unsigned char*>(app->ObjectSlot(slot));
-}
-inline std::uint8_t& DisplayOrder(unsigned char* object) {
-    return object[kDisplayOrder];
-}
-inline std::uint8_t& DisplayObjectActive(unsigned char* object) {
-    return object[kDisplayActive];
-}
+constexpr int kAccessorySlotCount = 255;
 
 inline HWND AppHwnd(MMDApp* app) {
     return app->state.hwnd;
@@ -459,20 +431,20 @@ void SelectNextDisplayBone(MMDApp* app) {
 }
 
 // ===========================================================================
-// VA 0x0041A460 - ScrollModelListIntoView  (__thiscall, this = MMDApp,
-//                 a2 = slot index into the app+646512 model array)
+// x86 0x0041A460 / x64 0x7FF7CB491E40 - ScrollAccessoryTimelineRowIntoView
 // ===========================================================================
-// WM_VSCROLLs the bone/model listbox (item 427) so the model's display row
-// (model+1181) is visible, measured against the edit-branch list position
-// at app+645704 and the (clientHeight-452)/14 row budget.  (Original
-// returned a junk LRESULT; unused by all callers.)
+// Scroll the accessory's timeline row into view, using its display order,
+// the accessory list position and the (clientHeight-452)/14 row budget.
+// The original returned an unused LRESULT.
 // =========================================================================//
-void ScrollModelListIntoView(MMDApp* app, unsigned char slotIdx) {
-    unsigned char* m = DisplayObjectAt(app, slotIdx); // 0x41A46B
-    if (m == nullptr)
+namespace {
+
+void ScrollAccessoryTimelineRowIntoView(MMDApp* app, unsigned char slotIdx) {
+    const auto* accessory = app->AccessorySlot(slotIdx); // 0x41A46B
+    if (accessory == nullptr)
         return;
     const int listPos = app->DisplayObjectListScrollPosition();
-    const int delta = DisplayOrder(m) - listPos; // 0x41A484
+    const int delta = accessory->order - listPos; // 0x41A484
     HWND hwnd = AppHwnd(app);
     if (delta >= 0) {
         RECT rc;
@@ -485,35 +457,32 @@ void ScrollModelListIntoView(MMDApp* app, unsigned char slotIdx) {
                              reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)));
         }
     } else {
-        int cnt = listPos - DisplayOrder(m);
+        int cnt = listPos - accessory->order;
         for (; cnt != 0; --cnt) // 0x41A4C6
             SendMessageA(hwnd, WM_VSCROLL, 0,
                          reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)));
     }
 }
 
-namespace {
-
-inline void ClearAllDisplayObjectFlags(MMDApp* app) {
-    for (int slot = 0; slot < kDisplayObjectCount; ++slot) {
-        unsigned char* object = DisplayObjectAt(app, slot);
-        if (object != nullptr)
-            DisplayObjectActive(object) = 0; // 0x4391EF
+inline void ClearAccessoryTimelineRows(MMDApp* app) {
+    for (int slot = 0; slot < kAccessorySlotCount; ++slot) {
+        auto* accessory = app->AccessorySlot(slot);
+        if (accessory != nullptr)
+            accessory->rowSelected = 0; // 0x4391EF
     }
 }
 
-// Shared tail of 0x4391D0 / 0x439520: activate the display object, make it
-// the selected slot, push its display row into the combo (item 471,
-// CB_SETCURSEL) and refresh (0x4134E0 + 0x41A460 + sweep pair).
-inline void SelectDisplayObject(MMDApp* app, int idx) { // 0x43974F
-    unsigned char* object = DisplayObjectAt(app, idx);
-    DisplayObjectActive(object) = 1;
+// Select the accessory row and slot, update its combo/edit controls, scroll
+// the row into view, then refresh the timeline and selection readouts.
+inline void SelectAccessoryEditTarget(MMDApp* app, int idx) { // 0x43974F
+    auto* accessory = app->AccessorySlot(idx);
+    accessory->rowSelected = 1;
     HWND hwnd = AppHwnd(app);
     app->SelectedObjectSlot() = static_cast<unsigned char>(idx); // 0x43975D
-    const WPARAM wp = DisplayOrder(object);                      // 0x439771
+    const WPARAM wp = accessory->order;                          // 0x439771
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, wp, 0);
-    SyncAccessoryEditPanel(app); //               // 0x43978C
-    ScrollModelListIntoView(app, app->SelectedObjectSlot());
+    SyncAccessoryEditPanel(app); // 0x43978C
+    ScrollAccessoryTimelineRowIntoView(app, app->SelectedObjectSlot());
     RebuildTimelineTrackPanel(app); // 0x4397A2
     InvalidateSelectionReadouts(app);
 }
@@ -521,52 +490,49 @@ inline void SelectDisplayObject(MMDApp* app, int idx) { // 0x43974F
 } // namespace
 
 // ===========================================================================
-// VA 0x4391D0 - SelectPrevEditTarget  (__thiscall, this = MMDApp)
+// x86 0x4391D0 / x64 0x7FF7CB4919D0 - SelectPrevEditTarget
 // ===========================================================================
-// "Previous target" through the edit-branch mode flags app+656356..656359
-// (0xA03E4..0xA03E7): bone -> (off) -> facial -> accessory -> previous
-// model display frame.  Every branch first clears the show flag (model+1196)
-// of all 255 model-array entries; the model-select branch (all flags 0)
-// walks the array for the previous display-frame index (model+1181)-1,
-// selects it via the combo at item 471 and 0x41A460; frame 0 wraps to the
-// accessory mode (656359=1); a missing current model resets to the bone
-// mode (656356=1).
+// Previous target: accessories in display order, gravity, self-shadow,
+// light, camera (stays at camera). Each branch clears accessory row selection.
+// Missing current accessory resets to camera/slot zero; a missing adjacent
+// order leaves rows clear. AccessoryRecord pins order/rowSelected at
+// x86 +1181/+1196 and x64 +1197/+1212; these are not visibility/shadow flags.
 // =========================================================================//
 void SelectPrevEditTarget(MMDApp* app) {
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
         RebuildTimelineTrackPanel(app); // 0x439244
         InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
         RebuildTimelineTrackPanel(app);
         InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
         RebuildTimelineTrackPanel(app);
         InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
         RebuildTimelineTrackPanel(app);
         InvalidateSelectionReadouts(app);
         return;
     }
 
-    // all mode flags clear: previous model display frame
-    ClearAllDisplayObjectFlags(app);
+    // No global track selected: previous accessory by display order.
+    ClearAccessoryTimelineRows(app);
     const unsigned char curSlot = app->SelectedObjectSlot(); // 0x4393FB
     app->ClearGlobalTimelineTrackSelection();
-    unsigned char* current = DisplayObjectAt(app, curSlot);
+    const auto* current = app->AccessorySlot(curSlot);
     if (current == nullptr) { // 0x439425
         app->SelectedObjectSlot() = 0;
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
@@ -574,55 +540,52 @@ void SelectPrevEditTarget(MMDApp* app) {
         InvalidateSelectionReadouts(app);
         return;
     }
-    const unsigned char frame = DisplayOrder(current); // 0x43942D
-    if (frame != 0) {
-        const unsigned char target = frame - 1; // v29
+    const unsigned char order = current->order; // 0x43942D
+    if (order != 0) {
+        const int target = order - 1;
         int i = 0;
-        while (DisplayObjectAt(app, i) == nullptr ||
-               DisplayOrder(DisplayObjectAt(app, i)) != target) { // 0x43945F
+        while (app->AccessorySlot(i) == nullptr ||
+               app->AccessorySlot(i)->order != target) { // 0x43945F
             ++i;
-            if (i >= 255) {
+            if (i >= kAccessorySlotCount) {
                 RebuildTimelineTrackPanel(app); // 0x439486
                 InvalidateSelectionReadouts(app);
                 return;
             }
         }
-        SelectDisplayObject(app, i); // 0x43949C..
+        SelectAccessoryEditTarget(app, i); // 0x43949C..
         return;
     }
     app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
-    ScrollModelListIntoView(app, curSlot); // 0x439441
-    RebuildTimelineTrackPanel(app);        // 0x439448
+    ScrollAccessoryTimelineRowIntoView(app, curSlot); // 0x439441
+    RebuildTimelineTrackPanel(app);                   // 0x439448
     InvalidateSelectionReadouts(app);
 }
 
 // ===========================================================================
-// VA 0x439520 - SelectNextEditTarget  (__thiscall, this = MMDApp)
+// x86 0x439520 / x64 0x7FF7CB491BF0 - SelectNextEditTarget
 // ===========================================================================
-// "Next target" - the forward twin of 0x4391D0.  Flag walk:
-//   656356 -> 656357 -> 656358 -> 656359; with 656359 set (or reached
-//   without finding a model) it hunts the first model whose display frame
-//   (model+1181) is 0 and selects it; from the no-flag state it takes
-//   frame (model+1181)+1, re-showing the CURRENT model when that frame
-//   does not exist (0x43985A).
+// Next target: camera, light, self-shadow, gravity, then accessories in
+// display order. From gravity, find order zero across all slots. With no
+// adjacent order, restore the current row without updating the combo.
 // =========================================================================//
 void SelectNextEditTarget(MMDApp* app) {
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
         RebuildTimelineTrackPanel(app); // 0x4395A3
         InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
         RebuildTimelineTrackPanel(app); // 0x439623
         InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
         RebuildTimelineTrackPanel(app); // 0x4396A3
         InvalidateSelectionReadouts(app);
@@ -630,50 +593,49 @@ void SelectNextEditTarget(MMDApp* app) {
     }
 
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) != 0) {
-        ClearAllDisplayObjectFlags(app);
+        ClearAccessoryTimelineRows(app);
         app->ClearGlobalTimelineTrackSelection();
-        // first model with display frame 0
+        // First accessory in display order; its physical slot may be nonzero.
         int i = 0;
-        while (DisplayObjectAt(app, i) == nullptr ||
-               DisplayOrder(DisplayObjectAt(app, i)) != 0) { // 0x439734
+        while (app->AccessorySlot(i) == nullptr || app->AccessorySlot(i)->order != 0) { // 0x439734
             ++i;
-            if (i >= 255) {
+            if (i >= kAccessorySlotCount) {
                 app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
                 RebuildTimelineTrackPanel(app); // 0x4396A3
                 InvalidateSelectionReadouts(app);
                 return;
             }
         }
-        SelectDisplayObject(app, i); // 0x43974F..
+        SelectAccessoryEditTarget(app, i); // 0x43974F..
         return;
     }
 
-    // no mode flag set: next model display frame from the current slot
-    ClearAllDisplayObjectFlags(app);
+    // No global track selected: next accessory by display order.
+    ClearAccessoryTimelineRows(app);
     const unsigned char curSlot = app->SelectedObjectSlot(); // 0x4397F8 tail
-    unsigned char* cur = DisplayObjectAt(app, curSlot);      // v30 @0x439824
+    auto* current = app->AccessorySlot(curSlot);             // v30 @0x439824
     app->ClearGlobalTimelineTrackSelection();
-    if (cur == nullptr) { // 0x439822
+    if (current == nullptr) { // 0x439822
         app->SelectedObjectSlot() = 0;
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
         RebuildTimelineTrackPanel(app); // 0x439891
         InvalidateSelectionReadouts(app);
         return;
     }
-    const unsigned char target = DisplayOrder(cur) + 1; // 0x43982D
+    // The original promotes to int before adding: order 255 must not wrap.
+    const int target = current->order + 1; // 0x43982D
     int i = 0;
-    while (DisplayObjectAt(app, i) == nullptr ||
-           DisplayOrder(DisplayObjectAt(app, i)) != target) { // 0x439832
+    while (app->AccessorySlot(i) == nullptr || app->AccessorySlot(i)->order != target) { // 0x439832
         ++i;
-        if (i >= 255) {
-            DisplayObjectActive(cur) = 1; // 0x43985A
-            ScrollModelListIntoView(app, curSlot);
+        if (i >= kAccessorySlotCount) {
+            current->rowSelected = 1; // 0x43985A
+            ScrollAccessoryTimelineRowIntoView(app, curSlot);
             RebuildTimelineTrackPanel(app); // 0x439872
             InvalidateSelectionReadouts(app);
             return;
         }
     }
-    SelectDisplayObject(app, i);
+    SelectAccessoryEditTarget(app, i);
 }
 
 } // namespace mikudancestudio
