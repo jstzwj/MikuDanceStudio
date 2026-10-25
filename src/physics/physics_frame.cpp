@@ -182,9 +182,9 @@ float* D3dxQuatMul(float out[4], const float a[4], const float b[4]) {
 //   [ * T(bone+308..316) * boneMatrix(+52) when the bone link is valid ].
 // boneOverride >= 0 forces the bone index (0x4B3460 uses the center bone
 // for unlinkable records).
-void BuildFollowMatrix(float out[16], unsigned char* m, const mdl::RigidRecord& rigid,
+void BuildFollowMatrix(float out[16], const mdl::ModelRecord* m, const mdl::RigidRecord& rigid,
                        int boneOverride) {
-    mdl::BoneRecord* bones = mdl::Bones(m);
+    mdl::BoneRecord* bones = m->boneTable;
     D3DXMATRIXF t;
     auto* o = reinterpret_cast<D3DXMATRIXF*>(out);
     D3dxRotZ(o, rigid.rotation[2]);
@@ -201,10 +201,6 @@ void BuildFollowMatrix(float out[16], unsigned char* m, const mdl::RigidRecord& 
         D3dxMul(o, o, &t);
         D3dxMul(o, o, reinterpret_cast<const D3DXMATRIXF*>(bn.matInit));
     }
-}
-
-inline btRigidBody* BodyOf(const mdl::RigidRecord& rigid) {
-    return static_cast<btRigidBody*>(rigid.body);
 }
 
 // VA 0x004B3460 / x64 sub_7FF7CB4E45D0 - the settle reseat.  The x64 write
@@ -284,8 +280,8 @@ void DumpRigidBodyState(MMDApp* app, const char* fileName) {
         auto* model = app->ModelSlot(slot);
         if (model == nullptr)
             continue;
-        auto* rigids = mdl::Rigids(model);
-        const int count = static_cast<int>(mdl::Mdl(model)->rigidCount);
+        auto* rigids = model->rigidTable;
+        const int count = static_cast<int>(model->rigidCount);
         if (!firstModel)
             std::fputc(',', stream);
         firstModel = false;
@@ -298,7 +294,7 @@ void DumpRigidBodyState(MMDApp* app, const char* fileName) {
                 if (i != 0)
                     std::fputc(',', stream);
                 const mdl::RigidRecord& rec = rigids[i];
-                btRigidBody* body = BodyOf(rec);
+                btRigidBody* body = rec.body;
                 std::fprintf(stream,
                              "{\"index\":%d,\"bone\":%d,\"mode\":%d,"
                              "\"world_bits\":[",
@@ -383,16 +379,16 @@ void DumpWorldSolverInfo(btDiscreteDynamicsWorld* world) {
 // For every mode==0 record the bone-follow transform is written into the
 // body's motion state; btRigidBody::saveKinematicState (called from
 // stepSimulation) pulls it into m_worldTransform and derives velocities.
-void ModelKinematicSync(unsigned char* m) {
-    const int count = mdl::Mdl(m)->rigidCount;
+void ModelKinematicSync(mdl::ModelRecord* m) {
+    const int count = m->rigidCount;
     if (count <= 0)
         return;
-    mdl::RigidRecord* rigids = mdl::Rigids(m);
+    mdl::RigidRecord* rigids = m->rigidTable;
     for (int i = 0; i < count; ++i) {
         const mdl::RigidRecord& rec = rigids[i];
         if (rec.mode != 0)
             continue;
-        btRigidBody* body = BodyOf(rec);
+        btRigidBody* body = rec.body;
         if (body == nullptr)
             continue; // port guard
         float mat[16];
@@ -409,12 +405,12 @@ void ModelKinematicSync(unsigned char* m) {
 // their bone-follow pose.  Teleports every mode>0 body to the follow
 // transform and stops it (current transform + the four velocity slots only;
 // see ReseatRigidBody for the exact x64 write set).
-void ModelDynamicReseat(unsigned char* m) {
-    const int count = mdl::Mdl(m)->rigidCount;
+void ModelDynamicReseat(mdl::ModelRecord* m) {
+    const int count = m->rigidCount;
     if (count <= 0)
         return;
-    mdl::RigidRecord* rigids = mdl::Rigids(m);
-    const int centerBone = mdl::Mdl(m)->centerBone; // 0x4B3460
+    mdl::RigidRecord* rigids = m->rigidTable;
+    const int centerBone = m->centerBone; // 0x4B3460
 #ifdef MIKUDANCESTUDIO_DIAG
     static int reseatCalls = 0;
     const bool traceReseat = getenv("MIKUDANCESTUDIO_TRACE_RESEAT") != nullptr;
@@ -432,7 +428,7 @@ void ModelDynamicReseat(unsigned char* m) {
         const mdl::RigidRecord& rec = rigids[i];
         if (static_cast<signed char>(rec.mode) <= 0)
             continue;
-        btRigidBody* body = BodyOf(rec);
+        btRigidBody* body = rec.body;
         if (body == nullptr)
             continue; // port guard
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -465,12 +461,12 @@ void ModelDynamicReseat(unsigned char* m) {
 //  part 3: local matrix (+116) = world * inverse(parent world); physics
 //          pose pos +0x188 / quat +0x194 derived from it, plus the
 //          type-5 and limit-flag corrections and the mode==2 collapse.
-void ModelPhysicsReadback(unsigned char* m) {
-    mdl::BoneRecord* bones = mdl::Bones(m);
-    mdl::RigidRecord* rigids = mdl::Rigids(m);
-    const int rcount = mdl::Mdl(m)->rigidCount;
-    mdl::JointRecord* joints = mdl::Joints(m);
-    const int jcount = mdl::Mdl(m)->jointCount;
+void ModelPhysicsReadback(mdl::ModelRecord* m) {
+    mdl::BoneRecord* bones = m->boneTable;
+    mdl::RigidRecord* rigids = m->rigidTable;
+    const int rcount = m->rigidCount;
+    mdl::JointRecord* joints = m->jointTable;
+    const int jcount = m->jointCount;
 
     // ---- part 1: joint overstretch clamp ------------------------------
     for (int j = 0; j < jcount; ++j) {
@@ -479,8 +475,8 @@ void ModelPhysicsReadback(unsigned char* m) {
         const int rb = joint.rigidB;
         if (ra < 0 || ra >= rcount || rb < 0 || rb >= rcount)
             continue; // port guard
-        btRigidBody* bodyA = BodyOf(rigids[ra]);
-        btRigidBody* bodyB = BodyOf(rigids[rb]);
+        btRigidBody* bodyA = rigids[ra].body;
+        btRigidBody* bodyB = rigids[rb].body;
         if (bodyA == nullptr || bodyB == nullptr)
             continue; // port guard
         float ma[16], mb[16];
@@ -515,7 +511,7 @@ void ModelPhysicsReadback(unsigned char* m) {
         const int bone = rec.boneIndex;
         if (bone < 0)
             continue;
-        btRigidBody* body = BodyOf(rec);
+        btRigidBody* body = rec.body;
         if (body == nullptr)
             continue; // port guard
         float w[16];
@@ -523,7 +519,7 @@ void ModelPhysicsReadback(unsigned char* m) {
         // Original 0x4B29CE routes this through the real D3DXMatrixMultiply
         // (x87, one rounding per element); an SSE float chain drifts 1-2 ULP
         // into every physics bone.
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(mdl::Bones(m)[bone].matInit),
+        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(m->boneTable[bone].matInit),
                 reinterpret_cast<const D3DXMATRIXF*>(rec.invTransform),
                 reinterpret_cast<const D3DXMATRIXF*>(w));
     }
@@ -536,7 +532,7 @@ void ModelPhysicsReadback(unsigned char* m) {
         const int bi = rigid.boneIndex;
         if (bi < 0)
             continue;
-        mdl::BoneRecord& bone = mdl::Bones(m)[bi];
+        mdl::BoneRecord& bone = m->boneTable[bi];
         float* world = bone.matInit;
         float* local = bone.matLocal;
         const int parent = bone.parent;
@@ -547,7 +543,7 @@ void ModelPhysicsReadback(unsigned char* m) {
             haveLocal = true;
         } else if (D3dxInverse(
                        reinterpret_cast<D3DXMATRIXF*>(inv),
-                       reinterpret_cast<const D3DXMATRIXF*>(mdl::Bones(m)[parent].matInit))) {
+                       reinterpret_cast<const D3DXMATRIXF*>(m->boneTable[parent].matInit))) {
             D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local),
                     reinterpret_cast<const D3DXMATRIXF*>(world),
                     reinterpret_cast<const D3DXMATRIXF*>(inv));
@@ -580,7 +576,7 @@ void ModelPhysicsReadback(unsigned char* m) {
         std::memcpy(bone.ikBackup, pos + 12, 3 * sizeof(float));
 
         const int target = bone.tailIdx;
-        mdl::BoneRecord& tb = target >= 0 ? mdl::Bones(m)[target] : bone;
+        mdl::BoneRecord& tb = target >= 0 ? m->boneTable[target] : bone;
 
         if (bone.type == mdl::BoneType::RotateGrant) { // tail type
             float conj[4] = {-tb.physicsQuat[0], -tb.physicsQuat[1], -tb.physicsQuat[2],
@@ -645,7 +641,7 @@ void ModelPhysicsReadback(unsigned char* m) {
             if (parent >= 0)
                 D3dxMul(reinterpret_cast<D3DXMATRIXF*>(world),
                         reinterpret_cast<const D3DXMATRIXF*>(local),
-                        reinterpret_cast<const D3DXMATRIXF*>(mdl::Bones(m)[parent].matInit));
+                        reinterpret_cast<const D3DXMATRIXF*>(m->boneTable[parent].matInit));
         }
         std::memcpy(bone.matExtra, bone.matInit, sizeof(bone.matExtra));
     }
@@ -787,7 +783,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // source instead of restoring the kinematic one (proven by the
     // AllStar physics-off A/B: orig F-pose = identity, port F-pose =
     // the physics-source quaternion).
-    unsigned char** models = s.ModelSlots();
+    mdl::ModelRecord** models = s.ModelSlots();
 #ifdef MIKUDANCESTUDIO_DIAG
     char stageCaptureValue[2]{};
     static LONG stagesCaptured = 0;
@@ -900,10 +896,10 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // pass 2: 0x7FF7CB44C89A/0x7FF7CB44C8CE; comboSelIndex2 = model+0x3109).
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int j = 0; j < kModelSlotCount; ++j) {
-            unsigned char* mdl = models[j];
-            if (mdl != nullptr && mdl::Mdl(mdl)->comboSelIndex2 == order) {
-                ModelApplyMorphs(mdl); // 0x46FCB1
-                SetPhysicsMode(mdl, 0, models, posePassMode);
+            mdl::ModelRecord* model = models[j];
+            if (model != nullptr && model->comboSelIndex2 == order) {
+                ModelApplyMorphs(model); // 0x46FCB1
+                SetPhysicsMode(model, 0, models, posePassMode);
             }
         }
     }
@@ -1043,10 +1039,10 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // it is skipped while the accessory-edit dialog holds physics.
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int j = 0; j < kModelSlotCount; ++j) {
-            unsigned char* mdl = models[j];
-            if (mdl != nullptr && mdl::Mdl(mdl)->comboSelIndex2 == order) {
-                ModelApplyMorphs(mdl); // 0x46FE93
-                SetPhysicsMode(mdl, 1, models, count);
+            mdl::ModelRecord* model = models[j];
+            if (model != nullptr && model->comboSelIndex2 == order) {
+                ModelApplyMorphs(model); // 0x46FE93
+                SetPhysicsMode(model, 1, models, count);
             }
         }
     }

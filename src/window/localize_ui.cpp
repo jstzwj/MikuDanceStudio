@@ -202,7 +202,7 @@ void LocalizeUI(MMDApp* app) {
     // (= physicsFlags, x64 store at 0x7FF7CB43A4F5; x86 twin 12740 - the
     // same typed field on both ABIs, never a raw offset).
     for (int i = 0; i < kModelSlotCount; ++i) {
-        unsigned char* slot = s.ModelSlot(i);
+        unsigned char* slot = mdl::ModelBytes(s.ModelSlot(i));
         if (slot != nullptr)
             mdl::Mdl(slot)->physicsFlags = static_cast<unsigned char>(english);
     }
@@ -272,7 +272,7 @@ void LocalizeUI(MMDApp* app) {
     for (int order = 1; order < kModelSlotCount; ++order) {
         int slotIdx = -1;
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* slot = s.ModelSlot(i);
+            unsigned char* slot = mdl::ModelBytes(s.ModelSlot(i));
             if (slot != nullptr && mikudancestudio::mdl::Mdl(slot)->comboSelIndex == order) {
                 slotIdx = i;
                 break;
@@ -280,7 +280,7 @@ void LocalizeUI(MMDApp* app) {
         }
         if (slotIdx < 0)
             continue;
-        unsigned char* slot = s.ModelSlot(slotIdx);
+        unsigned char* slot = mdl::ModelBytes(s.ModelSlot(slotIdx));
         mdl::ModelRecord* model = mdl::Mdl(slot);
         // nameEn/name: x86 8826/8776, x64 8946/8896 (x64 English fills
         // use model+8946 at 0x7FF7CB43A9AE, Japanese model+8896 at

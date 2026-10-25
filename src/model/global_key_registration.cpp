@@ -141,25 +141,21 @@ static void FillGravityFrame(mdl::GravityKey& key, const GravityClipboardRecord&
     key.selected = 1;
 }
 
-int RegisterCameraKey(MMDApp* app, const void* rec,
+int RegisterCameraKey(MMDApp* app, const mdl::CameraClipboardRecord& source,
                       int overflowAdvertised) { // VA 0x00410AA0
-    const auto& source = *static_cast<const CameraClipboardRecord*>(rec);
     return InsertGlobalFrame(app, app->CameraKeys(), source.frame, source, FillCameraFrame,
                              overflowAdvertised);
 }
 
-int RegisterLightKey(MMDApp* app, const void* rec) { // VA 0x00411900
-    const auto& source = *static_cast<const LightClipboardRecord*>(rec);
+int RegisterLightKey(MMDApp* app, const mdl::LightClipboardRecord& source) { // VA 0x00411900
     return InsertGlobalFrame(app, app->LightKeys(), source.frame, source, FillLightFrame);
 }
 
-int RegisterSelfShadowKey(MMDApp* app, const void* rec) { // VA 0x004120B0
-    const auto& source = *static_cast<const ShadowClipboardRecord*>(rec);
+int RegisterSelfShadowKey(MMDApp* app, const mdl::ShadowClipboardRecord& source) { // VA 0x004120B0
     return InsertGlobalFrame(app, app->ShadowKeys(), source.frame, source, FillShadowFrame);
 }
 
-int RegisterGravityKey(MMDApp* app, const void* rec) { // VA 0x00412DF0
-    const auto& source = *static_cast<const GravityClipboardRecord*>(rec);
+int RegisterGravityKey(MMDApp* app, const mdl::GravityClipboardRecord& source) { // VA 0x00412DF0
     return InsertGlobalFrame(app, app->GravityKeys(), source.frame, source, FillGravityFrame);
 }
 
@@ -207,7 +203,7 @@ void RegisterCameraState(MMDApp* app, int frame) {
     // Preserve the x64 table-full text's 600000 exactly (argument to sprintf_s at 0x7FF7CB47B18D;
     // actual capacity is 10000 records; the counterpart paste registrar at 0x410AA0/x64 0x7FF7CB47B769 prints
     // 10000. Preserve the original's inconsistency as the behavioral reference.)
-    RegisterCameraKey(app, &source, 600000);
+    RegisterCameraKey(app, source, 600000);
 }
 
 // VA 0x00411630: Light manipulation "register" button backend
@@ -218,7 +214,7 @@ void RegisterLightState(MMDApp* app, int frame) {
         static_cast<std::uint32_t>(frame) - static_cast<std::uint32_t>(app->CurrentFrame());
     std::memcpy(source.direction, app->LightDirection(), sizeof(source.direction));
     std::memcpy(source.color, app->LightColor(), sizeof(source.color));
-    RegisterLightKey(app, &source);
+    RegisterLightKey(app, source);
 }
 
 // and stays at mikudancestudio scope.

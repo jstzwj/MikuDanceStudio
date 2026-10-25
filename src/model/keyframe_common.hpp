@@ -41,10 +41,10 @@ inline void WrF32(unsigned char* p, float v) {
 }
 // Per-IK display flags copy (0x4A329F / 0x4A3487 / 0x4A3709 /
 // 0x4B42D9 / 0x4B46E5 / 0x4B43D2): one byte per IK chain.
-inline void CopyIkDisplayFlags(unsigned char* m, const mdl::DisplayKey& rec) {
+inline void CopyIkDisplayFlags(mdl::ModelRecord* m, const mdl::DisplayKey& rec) {
     const auto* flags = mdl::IkStates(rec);
-    mdl::IkChain* const chains = mdl::IkChains(m);
-    const std::uint32_t count = mdl::Mdl(m)->ikChainCount;
+    mdl::IkChain* const chains = m->ikChains;
+    const std::uint32_t count = m->ikChainCount;
     for (std::uint32_t k = 0; k < count; ++k)
         chains[k].enabled = flags[k];
 }
@@ -61,10 +61,10 @@ inline void CopyIkDisplayFlags(unsigned char* m, const mdl::DisplayKey& rec) {
 // pair (tautology in the exact-hit variant - same record - a real
 // prev-vs-cursor test in the between-keys variant); otherwise sel+8 takes
 // fwdStart's frame.  The terminal variant passes withForward=false.
-inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys, int pairIdx, int backStart,
-                               bool withForward, int fwdStart, int fwdPairIdx) {
-    mdl::BoneOrderEntry* const selectors = mdl::BoneOrder(m);
-    const int cnt = static_cast<int>(mdl::Mdl(m)->boneOrderCount);
+inline void RefreshIkSelectors(mdl::ModelRecord* m, mdl::DisplayKey* keys, int pairIdx,
+                               int backStart, bool withForward, int fwdStart, int fwdPairIdx) {
+    mdl::BoneOrderEntry* const selectors = m->boneOrderTable;
+    const int cnt = static_cast<int>(m->boneOrderCount);
     for (int i = 0; i < cnt; ++i) {
         mdl::BoneOrderEntry& selector = selectors[i];
         const mdl::BoneReference& pair = mdl::SelectorStates(keys[pairIdx])[i];

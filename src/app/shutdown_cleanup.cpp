@@ -307,13 +307,14 @@ void ShutdownCleanup(MMDApp* app) {
     s.SelectNavRecords() = nullptr;
 
     // ---- 1/2: flag-gated callback + module unload ------------------------
-    if (s.state.depthDeviceEnabled != 0) {                                 // 0x462C6F
-        reinterpret_cast<void (*)()>(s.OniExportSlot(OniExport::Clean))(); // 0x462C81
+    if (s.state.depthDeviceEnabled != 0) { // 0x462C6F
+        s.OpenNi().clean();                // 0x462C81
         s.state.depthDeviceEnabled = 0;
     }
     if (HMODULE mod = s.state.oniModule) { // 0x462C89
         FreeLibrary(mod);                  // 0x462C94
         s.state.oniModule = nullptr;
+        s.OpenNi() = {};
     }
 
     // ---- 3/4: capture graph + separate ("Mic") window --------------------
@@ -403,7 +404,7 @@ void ShutdownCleanup(MMDApp* app) {
 
     // ---- 11: model slots (x64 walks 255; x86 twin 0x462FD5 walks 100) ----
     for (int i = 0; i < kModelSlotCount; ++i) { // 0x462FD5
-        unsigned char*& model = s.ModelSlot(i);
+        mdl::ModelRecord*& model = s.ModelSlot(i);
         if (model != nullptr) {       // 0x462FE0
             ModelDispose(model);      // 0x462FE9
             ::operator delete(model); // 0x462FEF

@@ -1,29 +1,6 @@
-// ===========================================================================
-// model_query_helpers.cpp - model queries / facial-panel / edit-target glue
-// ===========================================================================
-// Ports the remaining small model-side helpers of the 0x410000..0x440000
-// band that had no body yet.  All __thiscall members below take the MMDApp
-// object as `this` (verified at the call sites inside sub_46B090, e.g. the
-// `mov ecx, ebx` immediately before the 0x42D3A0 call at 0x46FF02).
-//
-// Historical x86 field map (runtime code uses native typed members):
-//   app+2320    kActiveSlotIndex  - active model-slot order index
-//   app+1920    ModelSlots()  - slot -> model pointer array
-//   app+646512  kDisplayObjectArray   - the 255-entry display-object array (0x9DD70)
-//   app+645704  DisplayObjectListScrollPosition() - object-list scroll position
-//   app+647536  kSelectedDisplaySlot    - selected display-object slot
-//   app+656356..656359 (0xA03E4..0xA03E7) - edit-branch mode flags
-//   app+658796  kMessageSeenLatch - "message seen" latch (key edge detector)
-//   app+657080  kMainWindowHandle      - main window HWND
-//   model+9916  bone records (604 B)          model+11652 bone count
-//   model+9936  morph name table (101 B/rec, flag at +100)
-//   model+9940  morph table entry count (byte)
-//   model+9944  display-group records (46 B: +40 table idx, +42 WORD bone)
-//   model+11664 selected bone index           model+11668 bone selection flags
-//   model+11692 facial separator row count    model+11696 group record count
-//   model+12716 list scroll position (display-list auto-scroll reference)
-//   model+14592 base (root) bone index
-// =========================================================================//
+// Model queries, display-bone navigation, accessory navigation and key polling.
+// Model display groups and their bone/morph entries are runtime objects;
+// their indices and collapsed state are distinct from physics rigid bodies.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -41,14 +18,6 @@
 
 namespace mikudancestudio {
 namespace {
-
-inline unsigned char* SlotModel(MMDApp* app) {
-    return app->SelectedModel();
-}
-
-inline HWND AppHwnd(MMDApp* app) {
-    return app->state.hwnd;
-}
 
 // VA 0x0040E3D0 - single-key edge detector, inlined into PollKeyboardStates below
 // (its only caller).  State cells hold 0=up, 1=just pressed, 3=held,
@@ -190,54 +159,42 @@ void PollKeyboardStates(MMDApp* app) {
                     reinterpret_cast<std::uint32_t*>(&app->state.numpadKeyState[i]));
 }
 
-// ===========================================================================
-// VA 0x0041A280 - ScrollDisplayBoneIntoView  (__thiscall, this = MMDApp)
-// ===========================================================================
-// Called by SelectDisplayBone after a display-bone selection: walks the display list
-// rows (morph table entries at model+9936, 101 B each with visibility flag
-// at +100; group records at model+9944, 46 B with table idx at +40 and the
-// bone index WORD at +42) until the record carrying `boneIdx` is found,
-// then WM_VSCROLLs the listbox (item 427 of the main window) line by line
-// so the row becomes visible.  The row count includes the +11692 separator
-// rows inserted after table entry 2.  Early-out when boneIdx is the root
-// bone or negative.  (The original's return value is the
-// low byte of a pointer - junk every caller ignores.)
-// =========================================================================//
+// Scroll a displayed bone into view (x86 0x41A280, x64 RVA 0x717E0).
+// Count expanded morph rows and display bone entries, then send individual
+// WM_VSCROLL line messages. Collapsed groups and the pinned root do not scroll.
 void ScrollDisplayBoneIntoView(MMDApp* app, int boneIdx) {
-    unsigned char* m = SlotModel(app); // 0x41A28E
-    const auto* record = mdl::Mdl(m);
-    if (record->displayRootBone == static_cast<std::uint32_t>(boneIdx) || boneIdx < 0) // 0x41A2BB
+    mdl::ModelRecord* model = app->SelectedModel();                                   // 0x41A28E
+    if (model->displayRootBone == static_cast<std::uint32_t>(boneIdx) || boneIdx < 0) // 0x41A2BB
         return;
 
-    int rows = -1; // v5
-    const unsigned tblCnt =
-        static_cast<unsigned char>(mikudancestudio::mdl::Mdl(m)->groupCount); // 0x41A2D4
-    if (tblCnt <= 1u)
+    int rows = -1;                                                             // v5
+    const unsigned groupCount = static_cast<unsigned char>(model->groupCount); // 0x41A2D4
+    if (groupCount <= 1u)
         return;
-    const mdl::DisplayGroup* const tbl = mdl::DisplayGroups(m);
+    const mdl::DisplayGroup* const groups = model->displayGroups;
 
-    for (unsigned k = 1; k < tblCnt; ++k) { // v17 / v4
-        ++rows;                             // 0x41A2FC
-        if (tbl[k].flags == 0)              // 0x41A2FF
+    for (unsigned k = 1; k < groupCount; ++k) { // v17 / v4
+        ++rows;                                 // 0x41A2FC
+        if (groups[k].flags == 0)               // 0x41A2FF
             continue;
-        const unsigned char sep = mikudancestudio::mdl::Mdl(m)->facialFrameCount; // v7
-        if (sep != 0 && k == 2) {                                                 // 0x41A31A
-            rows += sep;                                                          // 0x41A32D
+        const unsigned char sep = model->facialFrameCount; // v7
+        if (sep != 0 && k == 2) {                          // 0x41A31A
+            rows += sep;                                   // 0x41A32D
             continue;
         }
-        const int n = static_cast<int>(mdl::Mdl(m)->rigidBodyCount);
+        const int n = static_cast<int>(model->displayBoneCount);
         if (n == 0)
             continue;
-        const mdl::FrameGroup* const grps = mdl::RigidGroups(m);
+        const mdl::FrameGroup* const displayBones = model->displayBones;
         for (int j = 0; j < n; ++j) { // 0x41A34C
-            if (grps[j].groupIndex != k)
+            if (displayBones[j].groupIndex != k)
                 continue;
-            ++rows;                                                         // 0x41A351
-            if (grps[j].targetIndex != static_cast<std::uint16_t>(boneIdx)) // 0x41A358
+            ++rows;                                     // 0x41A351
+            if (displayBones[j].targetIndex != boneIdx) // 0x41A358
                 continue;
-            // hit: scroll the facial list so `rows` is in view
-            const int delta = rows - record->boneListPos; // 0x41A390
-            HWND hwnd = AppHwnd(app);
+            // hit: scroll the bone list so `rows` is in view
+            const int delta = rows - model->boneListPos; // 0x41A390
+            HWND hwnd = app->MainWindow();
             if (delta >= 0) {
                 RECT rc;
                 GetClientRect(hwnd, &rc);                             // 0x41A3EA
@@ -246,14 +203,14 @@ void ScrollDisplayBoneIntoView(MMDApp* app, int boneIdx) {
                     int cnt2 = 2 - ((rc.bottom - 408) / 14 - delta);
                     for (; cnt2 != 0; --cnt2) // 0x41A452
                         SendMessageA(
-                            hwnd, WM_VSCROLL, 1,
+                            hwnd, WM_VSCROLL, SB_LINEDOWN,
                             reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)));
                 }
             } else {
                 int cnt2 = -delta;
                 for (; cnt2 != 0; --cnt2) // 0x41A3D2
                     SendMessageA(
-                        hwnd, WM_VSCROLL, 0,
+                        hwnd, WM_VSCROLL, SB_LINEUP,
                         reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)));
             }
             return; // 0x41A381
@@ -261,20 +218,13 @@ void ScrollDisplayBoneIntoView(MMDApp* app, int boneIdx) {
     }
 }
 
-// ===========================================================================
-// VA 0x00438CD0 - SelectDisplayBone  (__thiscall, this = MMDApp, a2 = bone)
-// ===========================================================================
-// Stores the selected bone index, clears the bone selection bitmap (bounded
-// by the model bone count) and re-marks only the selected entry, then runs
-// the display-list auto-scroll (0x41A280) and the label/view refresh pair
-// (0x42F1E0 / 0x40D070).  (Original returned the trailing BOOL; unused.)
-// =========================================================================//
+// Select one display bone, auto-scroll, rebuild labels and invalidate readouts.
+// This changes the selection bitmap, not pose edit flags or undo history.
 void SelectDisplayBone(MMDApp* app, int boneIdx) {
-    unsigned char* m = SlotModel(app);
-    auto* record = mdl::Mdl(m);
-    record->selectedBone = boneIdx; // 0x438CE5
-    const int cap = static_cast<int>(record->boneCount);
-    unsigned char* flags = record->boneSelection;
+    mdl::ModelRecord* model = app->SelectedModel();
+    model->selectedBone = boneIdx; // 0x438CE5
+    const int cap = static_cast<int>(model->boneCount);
+    unsigned char* flags = model->boneSelection;
     for (int i = 0; i < cap; ++i) // 0x438D01
         flags[i] = 0;
     flags[boneIdx] = 1;                      // 0x438D3A
@@ -283,107 +233,83 @@ void SelectDisplayBone(MMDApp* app, int boneIdx) {
     InvalidateSelectionReadouts(app);        // 0x438D54
 }
 
-// ===========================================================================
-// VA 0x00438D60 - SelectPreviousDisplayBone  (__thiscall, this = MMDApp)
-// ===========================================================================
-// "Previous" button: finds the display-group record carrying the currently
-// selected bone:
-//   * current < 0            -> select the root bone
-//   * current == base        -> no-op
-//   * its table group g visible and an earlier record of the same group
-//     exists -> select that record (0x438F36)
-//   * otherwise find the highest visible table entry below g (>=3; entries
-//     0..2 fall back to the base morph, 0x438F28) and select the LAST
-//     group record belonging to it (0x438EED)
-//   * no match anywhere -> keep scanning later records for the current
-//     morph (outer loop at LABEL_34)
-// =========================================================================//
+// Previous display bone (x86 0x438D60, x64 RVA 0x712E0).
+// Within an expanded group, choose the preceding entry. Otherwise choose the
+// last entry in the preceding expanded group; groups 0..2 lead to the root.
+// An empty expanded group keeps the current selection, as in the original.
 void SelectPreviousDisplayBone(MMDApp* app) {
-    unsigned char* m = SlotModel(app);
-    const auto* record = mdl::Mdl(m);
-    const int cur = record->selectedBone; // 0x438D71
+    mdl::ModelRecord* model = app->SelectedModel();
+    const int cur = model->selectedBone; // 0x438D71
     if (cur < 0) {
-        SelectDisplayBone(app, record->displayRootBone); // 0x438D92
+        SelectDisplayBone(app, model->displayRootBone); // 0x438D92
         return;
     }
-    const int rootBone = record->displayRootBone;
+    const int rootBone = model->displayRootBone;
     if (rootBone == cur)
         return; // 0x438D8F
-    const int n = static_cast<int>(mdl::Mdl(m)->rigidBodyCount);
+    const int n = static_cast<int>(model->displayBoneCount);
     if (n == 0)
         return;
-    const mdl::FrameGroup* const grps = mdl::RigidGroups(m);
-    const mdl::DisplayGroup* const tbl = mdl::DisplayGroups(m);
+    const mdl::FrameGroup* const displayBones = model->displayBones;
+    const mdl::DisplayGroup* const groups = model->displayGroups;
 
     for (int i = 0; i < n; ++i) { // 0x438DEB
-        if (grps[i].targetIndex != static_cast<std::uint16_t>(cur))
-            continue;               // 0x438DF0
-        int g = grps[i].groupIndex; // 0x438E12
+        if (displayBones[i].targetIndex != cur)
+            continue;                       // 0x438DF0
+        int g = displayBones[i].groupIndex; // 0x438E12
 
-        if (tbl[g].flags != 0 && i >= 1) { // 0x438E1C
-            // previous record of the same visible group (scan downwards)
+        if (groups[g].flags != 0 && i >= 1) { // 0x438E1C
+            // Previous entry in the same expanded group (scan downwards)
             for (int j = i - 1; j >= 0; --j) { // 0x438E84
-                if (grps[j].groupIndex == g) {
-                    SelectDisplayBone(app, grps[j].targetIndex); // 0x438F36
+                if (displayBones[j].groupIndex == g) {
+                    SelectDisplayBone(app, displayBones[j].targetIndex); // 0x438F36
                     return;
                 }
             }
         }
 
-        // LABEL_24: highest visible table entry strictly below g
+        // LABEL_24: highest expanded display group strictly below g
         if (g > 0) {
-            for (--g; g > 0 && tbl[g].flags == 0; --g) { // 0x438ECD
+            for (--g; g > 0 && groups[g].flags == 0; --g) { // 0x438ECD
             }
         }
         if (g <= 2) {
             SelectDisplayBone(app, rootBone); // 0x438F28
             return;
         }
-        // LAST record of that group (scan downwards from n-1)
+        // Last entry in that group (scan downwards from n-1)
         for (int j = n - 1; j >= 0; --j) { // 0x438EE4
-            if (grps[j].groupIndex == g) {
-                SelectDisplayBone(app, grps[j].targetIndex); // 0x438EED
+            if (displayBones[j].groupIndex == g) {
+                SelectDisplayBone(app, displayBones[j].targetIndex); // 0x438EED
                 return;
             }
         }
-        // not found -> next outer record (LABEL_34)
+        // not found -> next matching display entry (LABEL_34)
     }
 }
 
-// ===========================================================================
-// VA 0x00438F50 - SelectNextDisplayBone  (__thiscall, this = MMDApp)
-// ===========================================================================
-// "Next" button, the mirror of 0x438D60:
-//   * current < 0     -> select the root bone
-//   * current == base -> first visible table entry (>=1) that owns a group
-//     record, selecting its FIRST record (0x43904E); falls through into
-//     the record walk when nothing matches
-//   * record found with its group visible -> next record of the same group
-//     (0x439105), else / group hidden -> next visible table entry above g
-//     and its FIRST record (0x4390D5 / 0x43914D); g is clamped by the
-//     entry count at model+9940 (loop exits at LABEL_41 when exhausted)
-// =========================================================================//
+// Next display bone (x86 0x438F50, x64 RVA 0x71540).
+// From the root, choose the first entry of an expanded group. Otherwise choose
+// the next entry of this group, then later expanded groups, skipping empty ones.
 void SelectNextDisplayBone(MMDApp* app) {
-    unsigned char* m = SlotModel(app);
-    const auto* record = mdl::Mdl(m);
-    const int cur = record->selectedBone; // 0x438F64
+    mdl::ModelRecord* model = app->SelectedModel();
+    const int cur = model->selectedBone; // 0x438F64
     if (cur < 0) {
-        SelectDisplayBone(app, record->displayRootBone); // 0x438F8C
+        SelectDisplayBone(app, model->displayRootBone); // 0x438F8C
         return;
     }
-    const mdl::FrameGroup* const grps = mdl::RigidGroups(m);
-    const mdl::DisplayGroup* const tbl = mdl::DisplayGroups(m);
-    const int n = static_cast<int>(mdl::Mdl(m)->rigidBodyCount);
-    const int tblLast =
-        static_cast<unsigned char>(mikudancestudio::mdl::Mdl(m)->groupCount) - 1; // v17
+    const mdl::FrameGroup* const displayBones = model->displayBones;
+    const mdl::DisplayGroup* const groups = model->displayGroups;
+    const int n = static_cast<int>(model->displayBoneCount);
+    const int lastGroup = static_cast<unsigned char>(model->groupCount) - 1; // v17
 
-    if (cur == record->displayRootBone) {    // 0x438F96
-        for (int g = 1; g <= tblLast; ++g) { // 0x438FE8
-            if (tbl[g].flags == 0)
+    if (cur == model->displayRootBone) {       // 0x438F96
+        for (int g = 1; g <= lastGroup; ++g) { // 0x438FE8
+            if (groups[g].flags == 0)
                 continue;
             for (int j = 0; j < n; ++j) {
-                if (grps[j].groupIndex == g) {
-                    SelectDisplayBone(app, grps[j].targetIndex); // 0x43904E
+                if (displayBones[j].groupIndex == g) {
+                    SelectDisplayBone(app, displayBones[j].targetIndex); // 0x43904E
                     return;
                 }
             }
@@ -393,35 +319,35 @@ void SelectNextDisplayBone(MMDApp* app) {
         return;
 
     for (int i = 0; i < n; ++i) { // 0x439058
-        if (grps[i].targetIndex != static_cast<std::uint16_t>(cur))
-            continue;                     // 0x43905F
-        const int g = grps[i].groupIndex; // 0x439081
+        if (displayBones[i].targetIndex != cur)
+            continue;                             // 0x43905F
+        const int g = displayBones[i].groupIndex; // 0x439081
 
-        if (tbl[g].flags != 0 && i + 1 < n) {
-            // next record of the same visible group (scan upwards)
+        if (groups[g].flags != 0 && i + 1 < n) {
+            // Next entry in the same expanded group (scan upwards)
             for (int j = i + 1; j < n; ++j) { // 0x439105
-                if (grps[j].groupIndex == g) {
-                    SelectDisplayBone(app, grps[j].targetIndex);
+                if (displayBones[j].groupIndex == g) {
+                    SelectDisplayBone(app, displayBones[j].targetIndex);
                     return;
                 }
             }
         }
 
-        // next visible table entry above g, then its FIRST record; exits to
-        // the next outer record once g reaches the last entry (LABEL_41)
-        if (g < tblLast) {
+        // next expanded display group above g, then its first entry; exits to
+        // the next matching display entry once g reaches the last entry (LABEL_41)
+        if (g < lastGroup) {
             int g2 = g;
             for (;;) { // 0x4390B0
                 ++g2;
-                if (tbl[g2].flags != 0) {
+                if (groups[g2].flags != 0) {
                     for (int j = 0; j < n; ++j) {
-                        if (grps[j].groupIndex == g2) {
-                            SelectDisplayBone(app, grps[j].targetIndex);
+                        if (displayBones[j].groupIndex == g2) {
+                            SelectDisplayBone(app, displayBones[j].targetIndex);
                             return;
                         }
                     }
                 }
-                if (g2 >= tblLast) // LABEL_27/40
+                if (g2 >= lastGroup) // LABEL_27/40
                     break;
             }
         }
@@ -443,7 +369,7 @@ void ScrollAccessoryTimelineRowIntoView(MMDApp* app, unsigned char slotIdx) {
         return;
     const int listPos = app->DisplayObjectListScrollPosition();
     const int delta = accessory->order - listPos; // 0x41A484
-    HWND hwnd = AppHwnd(app);
+    HWND hwnd = app->MainWindow();
     if (delta >= 0) {
         RECT rc;
         GetClientRect(hwnd, &rc);                             // 0x41A4DE
@@ -451,13 +377,13 @@ void ScrollAccessoryTimelineRowIntoView(MMDApp* app, unsigned char slotIdx) {
         if (slack < 0) {
             int cnt = 2 - ((rc.bottom - 452) / 14 - delta);
             for (; cnt != 0; --cnt) // 0x41A542
-                SendMessageA(hwnd, WM_VSCROLL, 1,
+                SendMessageA(hwnd, WM_VSCROLL, SB_LINEDOWN,
                              reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)));
         }
     } else {
         int cnt = listPos - accessory->order;
         for (; cnt != 0; --cnt) // 0x41A4C6
-            SendMessageA(hwnd, WM_VSCROLL, 0,
+            SendMessageA(hwnd, WM_VSCROLL, SB_LINEUP,
                          reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)));
     }
 }
@@ -475,7 +401,7 @@ inline void ClearAccessoryTimelineRows(MMDApp* app) {
 inline void SelectAccessoryEditTarget(MMDApp* app, int idx) { // 0x43974F
     auto* accessory = app->AccessorySlot(idx);
     accessory->rowSelected = 1;
-    HWND hwnd = AppHwnd(app);
+    HWND hwnd = app->MainWindow();
     app->SelectedObjectSlot() = static_cast<unsigned char>(idx); // 0x43975D
     const WPARAM wp = accessory->order;                          // 0x439771
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, wp, 0);

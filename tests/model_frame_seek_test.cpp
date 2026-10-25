@@ -15,27 +15,26 @@ void Capture(const void* data, std::size_t size) {
         hash *= 1099511628211ULL;
     }
 }
-template <typename T>
-void Capture(const T& value) {
+template <typename T> void Capture(const T& value) {
     Capture(&value, sizeof(value));
 }
-}  // namespace
+} // namespace
 
 // Isolate seeking from Bullet and curve evaluation. Record notification order
 // and the pose at each notification, including calls before working-pose copies.
 namespace mikudancestudio {
-void NotifyBonePhysicsMode(unsigned char* bytes, int index, unsigned char mode) {
+void NotifyBonePhysicsMode(mdl::ModelRecord* model, int index, unsigned char mode) {
     Capture(index);
     Capture(mode);
-    Capture(mdl::Bones(bytes)[index]);
+    Capture(model->boneTable[index]);
 }
-float BoneEase(unsigned char*, int channel, int key, float fraction) {
+float BoneEase(const mdl::ModelRecord*, int channel, int key, float fraction) {
     Capture(channel);
     Capture(key);
     Capture(fraction);
     return fraction * (channel == 3 ? 0.875f : 0.75f);
 }
-}  // namespace mikudancestudio
+} // namespace mikudancestudio
 
 static bool CheckPositionRounding() {
     using namespace mikudancestudio;
@@ -46,10 +45,8 @@ static bool CheckPositionRounding() {
     // Expected stages follow x64 RVA 0xCD5E8/0xCD5EC (mulss then addss).
     // x86 keeps the existing double multiply/add, with one final float store.
     const Case cases[] = {
-        {0.1f, 0.2f, 0x3E051EB8, 0x3E051EB9},
-        {-0.1f, 0.2f, 0xBC23D708, 0xBC23D704},
-        {1.1f, -2.3f, 0x3DA3D700, 0x3DA3D704},
-        {100000.0f, -100000.0f, 0x471C3FFF, 0x471C3FFF},
+        {0.1f, 0.2f, 0x3E051EB8, 0x3E051EB9},  {-0.1f, 0.2f, 0xBC23D708, 0xBC23D704},
+        {1.1f, -2.3f, 0x3DA3D700, 0x3DA3D704}, {100000.0f, -100000.0f, 0x471C3FFF, 0x471C3FFF},
         {-0.0f, 0.0f, 0x80000000, 0x80000000},
     };
     auto model = std::make_unique<mdl::ModelRecord>();
@@ -125,16 +122,18 @@ int main() {
                     display[k].visible = k != 1;
                     display[k].ikStates = flags[k];
                     display[k].selectorStates = pairs[k];
-                    if (variant & 1) pairs[k][0] = pairs[0][0];
+                    if (variant & 1)
+                        pairs[k][0] = pairs[0][0];
                 }
                 for (int b = 0; b < 3; ++b) {
-                    bones[b].type = static_cast<mdl::BoneType>(
-                        b == 2 ? (variant & 1 ? 7 : 255) : (variant & 2 ? 8 : 0));
+                    bones[b].type = static_cast<mdl::BoneType>(b == 2 ? (variant & 1 ? 7 : 255)
+                                                                      : (variant & 2 ? 8 : 0));
                     bones[b].slotIndex = variant & 4 ? -1 : b % 2;
                     bones[b].hasRigidBody = variant & 8 ? 0 : 1;
                     bones[b].physicsDisabled = variant % 2;
                     bones[b].rigidIdx = variant % 3 == 0 ? 40 : 3;
-                    for (int c = 0; c < 7; ++c) bones[b].ikBackup[c] = (c + 1) * 0.125f;
+                    for (int c = 0; c < 7; ++c)
+                        bones[b].ikBackup[c] = (c + 1) * 0.125f;
                     for (int k = 0; k < 3; ++k) {
                         auto& key = boneKeys[b + k * 3];
                         key.frame = k == 2 ? 30 : k * 10;
@@ -145,8 +144,10 @@ int main() {
                             key.position[c] = (c - 1.125f) * (k + 0.625f);
                         key.rotation[1] = k == 1 ? 0.6f : 0.0f;
                         key.rotation[3] = k == 1 ? 0.8f : 1.0f;
-                        if (variant & 2) key.rotation[3] *= -1.0f;
-                        if (variant == 14) key.rotation[3] = 1.00001f;
+                        if (variant & 2)
+                            key.rotation[3] *= -1.0f;
+                        if (variant == 14)
+                            key.rotation[3] = 1.00001f;
                     }
                 }
                 for (int m = 0; m < 2; ++m)
@@ -157,8 +158,7 @@ int main() {
                         key.next = k < 2 ? m + (k + 1) * 2 : 0;
                         key.value = (k - 0.3125f) * (m + 0.1f);
                     }
-                auto* bytes = reinterpret_cast<unsigned char*>(model.get());
-                const int result = SeekModelFrame(*mdl::Mdl(bytes), frame, mode);
+                const int result = SeekModelFrame(*model, frame, mode);
                 Capture(result);
                 Capture(model->loadComplete);
                 Capture(bones);
@@ -168,8 +168,7 @@ int main() {
                 Capture(chains[1].enabled);
                 ++checks;
             }
-    std::printf("%d seek cases: %016llX\n", checks,
-                static_cast<unsigned long long>(hash));
+    std::printf("%d seek cases: %016llX\n", checks, static_cast<unsigned long long>(hash));
     // x86: unmodified 24d8844. x64: the same unsplit implementation, with
     // only position interpolation corrected to the original mulss/addss stages.
     // Includes float bits and signed zero; do not regenerate from production.

@@ -23,7 +23,6 @@
 
 namespace mikudancestudio {
 
-void SyncModelEditControls(unsigned char* model); // VA 0x004A02C0
 void ApplyAccessoryTrack(MMDApp* app, int index); // VA 0x00413120
 void ApplyGravityTrack(MMDApp* app);              // VA 0x00412330
 
@@ -122,10 +121,9 @@ void RestorePlaybackMenus(MMDApp* app) {
         SetMenuRange(menu, MDS_CMD_SELECT_PHYSICS_BONES, MDS_CMD_TOGGLE_FRAME_PHYSICS, MF_ENABLED);
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), TRUE);
 
-        unsigned char* model = app->SelectedModel();
-        const UINT state = model != nullptr && mikudancestudio::mdl::Mdl(model)->physicsMode == 2
-                               ? MFS_DISABLED | MFS_GRAYED
-                               : MFS_ENABLED;
+        mdl::ModelRecord* model = app->SelectedModel();
+        const UINT state =
+            model != nullptr && model->physicsMode == 2 ? MFS_DISABLED | MFS_GRAYED : MFS_ENABLED;
         SetPhysicsMenuState(hwnd, state);
     }
     DrawMenuBar(hwnd);
@@ -264,8 +262,8 @@ void InitAccessoryTracks(MMDApp* app, float frame) {
     }
 }
 
-void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
-    mdl::ModelRecord& state = *mdl::Mdl(model);
+void SavePlaybackUndoSnapshot(MMDApp* app, mdl::ModelRecord* model) {
+    mdl::ModelRecord& state = *model;
     const int boneCount = static_cast<int>(state.boneCount);
     unsigned char* selected = state.bonePhysicsState;
     bool anySelected = false;
@@ -292,14 +290,14 @@ void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
         ::operator new(sizeof(*buffer) * boneCount));
     std::memset(buffer, 0, static_cast<std::size_t>(36) * boneCount);
     auto* records = buffer;
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
     for (int i = 0; i < boneCount; ++i) {
         auto& dst = records[i];
         mikudancestudio::mdl::BoneRecord* bone = &bones[i];
         dst.boneIndex = i;
         std::memcpy(dst.position, bone->trans, sizeof(dst.position));
         std::memcpy(dst.rotation, bone->rotQuat, sizeof(dst.rotation));
-        dst.physicsDisabled = selected[i];
+        dst.poseEdited = selected[i];
         selected[i] = 0;
     }
 }
@@ -313,7 +311,7 @@ void UpdateBoneFrames(MMDApp* app) {
         app->PlaybackPhysicsMode() = 2;
 
     for (int i = 0; i < kModelSlotCount; ++i) {
-        unsigned char* model = app->ModelSlot(i);
+        mdl::ModelRecord* model = app->ModelSlot(i);
         if (model != nullptr)
             InitModelTrackCursors(model, cursor, app->PlaybackPhysicsMode());
     }
@@ -383,7 +381,7 @@ void StopPlayback(MMDApp* app) {
 
     app->PlaybackPhysicsMode() = app->SavedPlaybackPhysicsMode();
 
-    unsigned char* activeModel = app->SelectedModel();
+    mdl::ModelRecord* activeModel = app->SelectedModel();
     if (app->state.playbackReturnsToStartFrame != 0) {
         if (activeModel != nullptr)
             SavePlaybackUndoSnapshot(app, activeModel);
@@ -406,9 +404,9 @@ void StopPlayback(MMDApp* app) {
 
     const int frame = app->state.currentFrame;
     for (int i = 0; i < kModelSlotCount; ++i) {
-        unsigned char* model = app->ModelSlot(i);
+        mdl::ModelRecord* model = app->ModelSlot(i);
         if (model != nullptr)
-            SeekModelFrame(*mdl::Mdl(model), frame, app->PlaybackPhysicsMode());
+            SeekModelFrame(*model, frame, app->PlaybackPhysicsMode());
     }
     if (app->CameraMode() == 0 && activeModel != nullptr)
         SyncModelEditControls(activeModel);

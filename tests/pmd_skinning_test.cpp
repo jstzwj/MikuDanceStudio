@@ -44,18 +44,17 @@ int main() {
     }
     const auto originalSource = source;
     const auto initialEdge = serialEdge;
-    auto* bytes = reinterpret_cast<unsigned char*>(model.get());
+    auto* record = model.get();
     omp_set_dynamic(0);
     omp_set_num_threads(1);
-    SkinPmd(bytes, distance, serialEdge.data(), serial.data());
+    SkinPmd(record, distance, serialEdge.data(), serial.data());
     for (int i = 0; i < count; ++i) {
         const float w = source[i].weightPercent * 0.009999999776482582f;
         const float other = 1.0f - w;
         for (int c = 0; c < 3; ++c) {
             const float p = source[i].position[c];
             const float n = source[i].normal[c];
-            const float position = (p * 2.0f - 8.0f * (c + 1)) * other +
-                                   (p + 4.0f * (c + 1)) * w;
+            const float position = (p * 2.0f - 8.0f * (c + 1)) * other + (p + 4.0f * (c + 1)) * w;
             const float normal = (n * 2.0f) * other + n * w;
             const float amount = source[i].edgeDisabled ? -0.005f : distance;
             const float edge = position + normal * amount;
@@ -66,7 +65,8 @@ int main() {
             }
         }
         if (std::memcmp(serial[i].uv, source[i].uv, sizeof(source[i].uv)) != 0 ||
-            serialEdge[i].diffuse != initialEdge[i].diffuse) return 2;
+            serialEdge[i].diffuse != initialEdge[i].diffuse)
+            return 2;
     }
     omp_set_num_threads(4);
     int teamSize = 0;
@@ -82,12 +82,16 @@ int main() {
     for (int repeat = 0; repeat < 8; ++repeat) {
         std::memset(parallel.data(), 0xCD, parallel.size() * sizeof(parallel[0]));
         parallelEdge = initialEdge;
-        SkinPmd(bytes, distance, parallelEdge.data(), parallel.data());
+        SkinPmd(record, distance, parallelEdge.data(), parallel.data());
         if (std::memcmp(serial.data(), parallel.data(), serial.size() * sizeof(serial[0])) ||
-            std::memcmp(serialEdge.data(), parallelEdge.data(), serialEdge.size() * sizeof(serialEdge[0])))
+            std::memcmp(serialEdge.data(), parallelEdge.data(),
+                        serialEdge.size() * sizeof(serialEdge[0])))
             return 4;
     }
-    if (std::memcmp(source.data(), originalSource.data(), source.size() * sizeof(source[0]))) return 5;
-    std::printf("PMD: %d vertices, 1/4 threads, 8 repeated byte-identical runs; UV/diffuse retained\n", count);
+    if (std::memcmp(source.data(), originalSource.data(), source.size() * sizeof(source[0])))
+        return 5;
+    std::printf(
+        "PMD: %d vertices, 1/4 threads, 8 repeated byte-identical runs; UV/diffuse retained\n",
+        count);
     return 0;
 }

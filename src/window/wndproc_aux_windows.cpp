@@ -24,10 +24,19 @@
 
 namespace mikudancestudio {
 
-// Full-port callees defined in other TUs (local declarations).
-void RefreshAfterFrameApply(MMDApp* app); // VA 0x432FA0 (ui_frame_step.cpp),
-
-void PushBoneEditUndo(MMDApp* app); // VA 0x42D6E0 (bone_edit_undo.cpp)
+namespace {
+// The original deliberately uses a different coefficient for the surviving X
+// rotation. x64 rounds after mulss and divss; x86 stores the x87 result once.
+float ResetRotationRadians(float degrees, bool xAxis) {
+#if defined(_M_X64)
+    const float coefficient = xAxis ? 3.141594886779785f : -3.141592025756836f;
+    return degrees * coefficient / 180.0f;
+#else
+    const double coefficient = xAxis ? 3.141594886779785 : -3.141592025756836;
+    return static_cast<float>(degrees * coefficient / 180.0);
+#endif
+}
+} // namespace
 
 // 0x52EB80: "May recording be interrupted?" / 0x52EB9C: "Confirm recording interruption"
 static const char kJpRecStopText[] =
@@ -128,14 +137,12 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) { // VA 0x004
             SelectTimelineTrack(GlobalTimelineTrack::Camera); // 0x440AC0
             PostViewRefresh(app);                             // 0x40D130
         } else {
-            unsigned char* model = s.SelectedModel();
-            const std::int32_t bone = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            mdl::ModelRecord* model = s.SelectedModel();
+            const std::int32_t bone = model->selectedBone;
             if (bone >= 0) {
                 PushBoneEditUndo(app); // 0x42D6E0
-                mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
-                bones[bone].trans[axis] = 0.0f;
-                unsigned char* flags = mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
-                flags[bone] = 1;
+                model->boneTable[bone].trans[axis] = 0.0f;
+                model->bonePhysicsState[bone] = 1;
                 PostViewRefresh(app);
             } else {
                 PostViewRefresh(app); // 0x46252E
@@ -146,42 +153,39 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) { // VA 0x004
     case panel::kResetRotationXButton: // 0x462314
     case panel::kResetRotationYButton:
     case panel::kResetRotationZButton: {
-        const int axis = id - panel::kResetRotationXButton; // which degree cache stays non-zero
+        const int axis = id - panel::kResetRotationXButton;
         if (s.CameraMode() == 0) {
-            unsigned char* model = s.SelectedModel();
-            const std::int32_t bone = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            mdl::ModelRecord* model = s.SelectedModel();
+            const std::int32_t bone = model->selectedBone;
             if (bone >= 0) {
                 PushBoneEditUndo(app);
-                constexpr float kPiLow = 3.141592025756836f;  // 0x52B968?
-                constexpr float kPiHigh = 3.141594886779785f; // 0x21D x
-                float& degX = s.BoneRotationEditDegreesX();
-                float& degY = s.BoneRotationEditDegreesY();
-                float& degZ = s.BoneRotationEditDegreesZ();
+                // These caches hold radians temporarily, until PostViewRefresh
+                // extracts degrees from the new quaternion below.
+                float& radiansX = s.BoneRotationEditDegreesX();
+                float& radiansY = s.BoneRotationEditDegreesY();
+                float& radiansZ = s.BoneRotationEditDegreesZ();
                 if (axis == 0) { // 0x462356
-                    degX = 0.0f;
-                    degY = -degY * kPiLow / 180.0f;
-                    degZ = -degZ * kPiLow / 180.0f;
+                    radiansX = 0.0f;
+                    radiansY = ResetRotationRadians(radiansY, false);
+                    radiansZ = ResetRotationRadians(radiansZ, false);
                 } else if (axis == 1) { // 0x462463
-                    degX = degX * kPiHigh / 180.0f;
-                    degY = 0.0f;
-                    degZ = -degZ * kPiLow / 180.0f;
+                    radiansX = ResetRotationRadians(radiansX, true);
+                    radiansY = 0.0f;
+                    radiansZ = ResetRotationRadians(radiansZ, false);
                 } else { // 0x46259C
-                    degX = degX * kPiHigh / 180.0f;
-                    degY = -degY * kPiLow / 180.0f;
-                    degZ = 0.0f;
+                    radiansX = ResetRotationRadians(radiansX, true);
+                    radiansY = ResetRotationRadians(radiansY, false);
+                    radiansZ = 0.0f;
                 }
                 auto& api = d3dx::Get();
                 d3dx::D3DXMATRIXF rz{}, rx{}, ry{}, rot{};
-                api.rotZ(&rz, axis == 0 ? degZ : axis == 1 ? degZ : 0.0f);
-                api.rotX(&rx, degX);
+                api.rotZ(&rz, radiansZ);
+                api.rotX(&rx, radiansX);
                 api.multiply(&rot, &rz, &rx);
-                api.rotY(&ry, degY);
+                api.rotY(&ry, radiansY);
                 api.multiply(&rot, &rot, &ry);
-                mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
-                api.quatFromMatrix(reinterpret_cast<float*>(&bones[bone].rotQuat[0]),
-                                   &rot); // 0x462623
-                unsigned char* flags = mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
-                flags[bone] = 1;
+                api.quatFromMatrix(model->boneTable[bone].rotQuat, &rot); // 0x462623
+                model->bonePhysicsState[bone] = 1;
             }
             PostViewRefresh(app); // 0x46252E
         } else {

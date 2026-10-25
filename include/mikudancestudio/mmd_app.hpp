@@ -88,15 +88,15 @@ enum class TimelineSelectionBand : std::uint8_t {
     SelfShadow = 2,
     Gravity = 3,
     Accessory = 4,
-    ModelIk = 5,
+    ModelBone = 5,
     ModelMorph = 6,
-    ModelBone = 7,
+    ModelDisplay = 7,
 };
 
-enum class TimelineSelectionRow : std::uint8_t {
+enum class InterpolationControlPoint : std::uint8_t {
     None = 0,
-    Bone = 1,
-    Morph = 2,
+    First = 1,
+    Second = 2,
 };
 
 struct TimelineSelectionRecord {
@@ -110,17 +110,17 @@ enum class ScreenCaptureMode : std::int32_t {
     BackgroundRefresh = 3,
 };
 
-using DepthTextureProvider = void(__stdcall*)(IDirect3DBaseTexture9**);
+using DepthTextureProvider = OpenNiApi::DepthTexture;
 
 enum class ViewportDragMode : std::int32_t {
     None = 0,
     ViewAxisRotateX = 1,
     ViewAxisRotateY = 2,
     ViewAxisRotateZ = 3,
-    LocalAxisTranslateX = 4,
-    LocalAxisTranslateY = 5,
-    LocalAxisTranslateZ = 6,
-    BoneScale = 7,
+    AxisRotateX = 4,
+    AxisRotateY = 5,
+    AxisRotateZ = 6,
+    BoneMoveHorizontal = 7,
     BoneMoveVertical = 8,
     BoneMoveScreenPlane = 9,
     PhysicsAxisX = 10,
@@ -141,7 +141,7 @@ enum class ViewportToolAction : std::int32_t {
     BoneRotateHorizontal = 3,
     BoneRotateVertical = 4,
     BoneRotateRing = 5,
-    BoneScaleHandle = 6,
+    BoneMoveHorizontalHandle = 6,
     BoneMoveVerticalHandle = 7,
     BoneMovePlaneHandle = 8,
     TransformAxisX = 9,
@@ -264,12 +264,10 @@ public:
     const void* ObjectSlot(int index) const {
         return reinterpret_cast<void* const&>(AccessorySlots()[index]);
     }
-    unsigned char*& ModelSlot(int index) { return ModelSlots()[index]; }
-    unsigned char* ModelSlot(int index) const { return ModelSlots()[index]; }
-    unsigned char** ModelSlots() { return reinterpret_cast<unsigned char**>(state.modelSlots); }
-    unsigned char* const* ModelSlots() const {
-        return reinterpret_cast<unsigned char* const*>(state.modelSlots);
-    }
+    mdl::ModelRecord*& ModelSlot(int index) { return ModelSlots()[index]; }
+    mdl::ModelRecord* ModelSlot(int index) const { return ModelSlots()[index]; }
+    mdl::ModelRecord** ModelSlots() { return state.modelSlots; }
+    mdl::ModelRecord* const* ModelSlots() const { return state.modelSlots; }
     void ClearModelSlots() {
         for (int index = 0; index < kModelSlotCount; ++index)
             ModelSlot(index) = nullptr;
@@ -277,8 +275,8 @@ public:
     std::uint8_t& SelectedModelSlot() { return state.slotIdx; }
     std::uint8_t SelectedModelSlot() const { return state.slotIdx; }
     void SetSelectedModelSlot(std::uint8_t slot) { SelectedModelSlot() = slot; }
-    unsigned char*& SelectedModel() { return ModelSlot(SelectedModelSlot()); }
-    unsigned char* SelectedModel() const { return ModelSlot(SelectedModelSlot()); }
+    mdl::ModelRecord*& SelectedModel() { return ModelSlot(SelectedModelSlot()); }
+    mdl::ModelRecord* SelectedModel() const { return ModelSlot(SelectedModelSlot()); }
     // Process-local clipboard pointers and counts share one owner on both builds.
     mdl::BonePoseClipboardRecord*& BonePoseClipboard() { return m_runtime.clipboard.bonePoses; }
     std::int32_t& BonePoseClipboardCount() { return m_runtime.clipboard.bonePoseCount; }
@@ -325,11 +323,11 @@ public:
     std::uint8_t TimelineSelectionChanged() const { return state.timelineSelectionChanged; }
     std::uint8_t& SceneModified() { return state.sceneModified; }
     std::uint8_t SceneModified() const { return state.sceneModified; }
-    TimelineSelectionRow& PendingTimelineSelectionRow() {
-        return reinterpret_cast<TimelineSelectionRow&>(state.pendingTimelineSelectionRow);
+    InterpolationControlPoint& DraggedInterpolationPoint() {
+        return reinterpret_cast<InterpolationControlPoint&>(state.draggedInterpolationPoint);
     }
-    TimelineSelectionRow PendingTimelineSelectionRow() const {
-        return static_cast<TimelineSelectionRow>(state.pendingTimelineSelectionRow);
+    InterpolationControlPoint DraggedInterpolationPoint() const {
+        return static_cast<InterpolationControlPoint>(state.draggedInterpolationPoint);
     }
     std::uint8_t& SelectionBoxDragging() { return state.selectionBoxDragging; }
     std::int32_t& MouseX() { return state.mouseX; }
@@ -582,9 +580,7 @@ public:
     std::int32_t& SelfShadowMode() { return state.selfShadowMode; }
     std::uint8_t& DepthTextureCompositionEnabled() { return state.depthTextureCompositionEnabled; }
     std::uint8_t& DepthDeviceEnabled() { return state.depthDeviceEnabled; }
-    DepthTextureProvider& DepthTextureCallback() {
-        return reinterpret_cast<DepthTextureProvider&>(OniExportSlot(OniExport::DepthTexture));
-    }
+    DepthTextureProvider& DepthTextureCallback() { return OpenNi().depthTexture; }
     HDC& PanelDC() { return state.hdcMainPanel; }
     HDC& TimelineDC() { return state.hdcTimeline; }
     HDC& CurveDC() { return state.hdcInterpCurve; }
@@ -780,7 +776,6 @@ public:
     // Main window (0x0047A5B0)
     void*& Hwnd() { return reinterpret_cast<void*&>(state.hwnd); } // 657080
     void*& HInstance() { return m_runtime.platform.instance; }
-    void*& OpenniTrackingCallback() { return OniExportSlot(OniExport::IsTracking); }
     // Kinect capture-stage byte (x64 0xA1E14 / x86 0xA0D68; verified to be
     // state.autoRepeat itself: menu 0x124/WM_COMMAND 292 sets it to 1; WM_TIMER 0x65
     // increments it every 1.5s until 4, then stops; pump block 0x7FF7CB44C560 tests ==4 for recording;
@@ -790,9 +785,7 @@ public:
     std::uint8_t KinectCaptureStage() const { return state.autoRepeat; }
     // Seven native pointer slots for DxOpenNI.dll exports on both builds.
     // Slots 3 and 5 are shared by the named depth/tracking callback accessors.
-    void*& OniExportSlot(OniExport entry) {
-        return m_runtime.platform.oniExports[static_cast<std::size_t>(entry)];
-    }
+    OpenNiApi& OpenNi() { return m_runtime.platform.openNi; }
     std::int32_t& FrameRangeStartFrame() { return m_runtime.dialogs.frameRangeStartFrame; }
     WINDOWPLACEMENT& SavedPlacement() { return m_runtime.platform.savedPlacement; }
     // Render/locale subsystem ("0x1D574 object"), allocated in

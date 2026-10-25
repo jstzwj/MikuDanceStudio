@@ -83,7 +83,7 @@ void __cdecl WaveFeedThread(void* ctx) {
     if (lock(0, &p1, &l1, &p2, &l2) >= 0) { // 0x4C2D0D
         // x64 0x7FF7CB4FADFA..0x7FF7CB4FAE1A: failure of either read increments failureCount only
         // once per iteration (counted by the caller, not by feed).
-        if (!WaveStreamFeed(ctx, p1, static_cast<int>(l1), p2,
+        if (!WaveStreamFeed(audio, p1, static_cast<int>(l1), p2,
                             static_cast<int>(l2))) // 0x4C2D69
             ++audio->failureCount;                 // 0x7FF7CB4FAE1A
         buffer->Unlock(p1, l1, p2, l2);            // 0x4C2D8B
@@ -99,7 +99,7 @@ void __cdecl WaveFeedThread(void* ctx) {
                     buffer->Unlock(p1, 0, p2, 0); // 0x4C2F24
                     break;
                 }
-                if (!WaveStreamFeed(ctx, p1, static_cast<int>(l1), p2,
+                if (!WaveStreamFeed(audio, p1, static_cast<int>(l1), p2,
                                     static_cast<int>(l2))) // 0x4C2E3C
                     ++audio->failureCount;                 // 0x7FF7CB4FAF35
                 buffer->Unlock(p1, l1, p2, l2);            // 0x4C2E5E
@@ -159,8 +159,7 @@ void __cdecl WaveFeedThread(void* ctx) {
 // memset the whole 0x25C block to zero, so these writes are value-neutral -
 // ported verbatim anyway.)
 // ---------------------------------------------------------------------------
-void InitAudioContext(void* sub) {
-    auto* audio = static_cast<WaveAudioContext*>(sub);
+void InitAudioContext(WaveAudioContext* audio) {
     audio->path[0] = L'\0';       // 0x4C2452
     audio->englishUI = 0;         // 0x4C2456
     audio->waveformMax = nullptr; // 0x4C245C
@@ -211,8 +210,7 @@ void PhysicsSceneInit(PhysicsScene* scene) {
 // The original returns char (0 no-buffer / 1 spawned); the shared header
 // declares the return void and no caller checks it - kept void.
 // ---------------------------------------------------------------------------
-void WaveSeekAndFeed(void* obj, double seconds) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+void WaveSeekAndFeed(WaveAudioContext* audio, double seconds) {
     if (audio->streamingBuffer == nullptr)                       // 0x4C34A4
         return;                                                  // 0x4C34AA
     const std::int32_t avgBytes = audio->format.nAvgBytesPerSec; // 0x4C34B1
@@ -229,7 +227,7 @@ void WaveSeekAndFeed(void* obj, double seconds) {
     const std::int32_t dataOff = audio->dataOffset;          // 0x4C34F4
     HANDLE file = audio->fileHandle;                         // 0x4C3502
     SetFilePointer(file, dataOff - rem + whole, nullptr, FILE_BEGIN);
-    audio->feedThread = _beginthread(WaveFeedThread, 0, obj); // 0x4C3518
+    audio->feedThread = _beginthread(WaveFeedThread, 0, audio); // 0x4C3518
 }
 
 // ---------------------------------------------------------------------------
@@ -245,19 +243,18 @@ void WaveSeekAndFeed(void* obj, double seconds) {
 // WAV volume never took effect; replicated verbatim below, then
 // WaveSeekAndFeed(this, seconds), SetTimer(hwnd, 0x64, 0x21, 0).
 // ---------------------------------------------------------------------------
-void WaveRestartAt(void* obj, double seconds) { // VA 0x004C3530
-    auto* audio = static_cast<WaveAudioContext*>(obj);
-    HWND hwnd = audio->mainWindow; // 0x4C3533
-    KillTimer(hwnd, 0x64);         // 0x4C3539
-    CloseDataFile(obj);            // 0x4C3541
-    WaveStartPlayback(obj);        // 0x4C3548
+void WaveRestartAt(WaveAudioContext* audio, double seconds) { // VA 0x004C3530
+    HWND hwnd = audio->mainWindow;                            // 0x4C3533
+    KillTimer(hwnd, 0x64);                                    // 0x4C3539
+    CloseDataFile(audio);                                     // 0x4C3541
+    WaveStartPlayback(audio);                                 // 0x4C3548
     IDirectSoundBuffer* buffer = audio->streamingBuffer;
     // x64 0x7FF7CB4FAC5E (call [rax+0x78], edx = [rbx+0x288]): the original
     // re-applies the volume dword through vtable slot 15 = SetFrequency, not
     // SetVolume (slot 17) - an invalid no-op call, so the original's WAV
     // volume never took effect.  DWORD cast = mov edx bit-pattern semantics.
     buffer->SetFrequency(static_cast<DWORD>(audio->volume)); // 0x4C355D
-    WaveSeekAndFeed(obj, seconds);                           // 0x4C356B
+    WaveSeekAndFeed(audio, seconds);                         // 0x4C356B
     SetTimer(hwnd, 0x64, 0x21, nullptr);                     // 0x4C3580
 }
 

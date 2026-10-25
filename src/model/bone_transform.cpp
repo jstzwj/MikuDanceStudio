@@ -97,8 +97,8 @@ void WriteFloatBits(std::FILE* stream, const float* values, int count) {
     std::fputc(']', stream);
 }
 
-void WriteIkProbe(unsigned char* model, int chainIndex, int iteration, int linkIndex, int loopCount,
-                  int targetIndex, int rootIndex, int boneIndex, const float d1[3],
+void WriteIkProbe(const mdl::ModelRecord* model, int chainIndex, int iteration, int linkIndex,
+                  int loopCount, int targetIndex, int rootIndex, int boneIndex, const float d1[3],
                   const float d2[3], const float axis[3], float dot, float half, const float acc[4],
                   const float rotq[4]) {
     if (InterlockedCompareExchange(&gIkProbeArmed, 0, 0) == 0 || chainIndex != 0)
@@ -120,8 +120,8 @@ void WriteIkProbe(unsigned char* model, int chainIndex, int iteration, int linkI
                  "{\"bone_count\":%d,\"chain\":%d,\"iteration\":%d,\"loops\":%d,"
                  "\"link_position\": %d, \"target\": %d, \"root\": %d, "
                  "\"bone\":%d,\"d1_bits\":",
-                 static_cast<int>(mdl::Mdl(model)->boneCount), chainIndex, iteration, loopCount,
-                 linkIndex, targetIndex, rootIndex, boneIndex);
+                 static_cast<int>(model->boneCount), chainIndex, iteration, loopCount, linkIndex,
+                 targetIndex, rootIndex, boneIndex);
     WriteFloatBits(stream, d1, 3);
     std::fputs(",\"d2_bits\":", stream);
     WriteFloatBits(stream, d2, 3);
@@ -139,7 +139,7 @@ void WriteIkProbe(unsigned char* model, int chainIndex, int iteration, int linkI
     std::fclose(stream);
 }
 
-void WriteIkPrecheck(unsigned char* model, int chainIndex, int iteration, int linkIndex,
+void WriteIkPrecheck(const mdl::ModelRecord* model, int chainIndex, int iteration, int linkIndex,
                      const float d1[3], const float d2[3], float diff2,
                      const mdl::BoneRecord& target, const mdl::BoneRecord& root,
                      const mdl::BoneRecord& link) {
@@ -516,7 +516,7 @@ void BoneTransform_StandardLocals(D3& d3, mdl::BoneRecord* boneRecords, int bone
 // rotation-only mirror; root keeps +52 = +116 and +180 = identity.
 // +244 copy gate per CopyGate.
 void BoneTransform_WorldPass(D3& d3, mdl::BoneRecord* boneRecords, int boneCount,
-                             mdl::BoneOrderEntry* extTable, unsigned char* const* modelSlots,
+                             mdl::BoneOrderEntry* extTable, mdl::ModelRecord* const* modelSlots,
                              unsigned char afterPhysics, int layer, int physicsMode) {
     for (int i = 0; i < boneCount; ++i) {
         mdl::BoneRecord& bone = boneRecords[i];
@@ -531,8 +531,8 @@ void BoneTransform_WorldPass(D3& d3, mdl::BoneRecord* boneRecords, int boneCount
         if (extIdx >= 0) {
             const std::int32_t slot = extTable[extIdx].linkedModel;
             if (slot >= 0) { // 0x4945FE
-                unsigned char* model2 = modelSlots[slot];
-                mdl::BoneRecord* bones2 = mdl::Bones(model2);
+                const mdl::ModelRecord* model2 = modelSlots[slot];
+                mdl::BoneRecord* bones2 = model2->boneTable;
                 const std::int32_t extBone = extTable[extIdx].linkedBone;
                 const mdl::BoneRecord& src = bones2[extBone];
                 D3DXMATRIXF ext, tmp, local;
@@ -567,8 +567,8 @@ void BoneTransform_WorldPass(D3& d3, mdl::BoneRecord* boneRecords, int boneCount
             // slot==-1,parent<0 route (0x7FF7CB4DB015) converge on the same
             // extTable[0].linkedModel test at 0x7FF7CB4DB0D8.
             if (extTable[0].linkedModel >= 0) {
-                unsigned char* model2 = modelSlots[extTable[0].linkedModel];
-                mdl::BoneRecord* bones2 = mdl::Bones(model2);
+                const mdl::ModelRecord* model2 = modelSlots[extTable[0].linkedModel];
+                mdl::BoneRecord* bones2 = model2->boneTable;
                 const mdl::BoneRecord& src = bones2[extTable[0].linkedBone];
                 D3DXMATRIXF ext, tmp, local;
                 std::memcpy(&ext, src.matExtra, sizeof(ext));
@@ -599,9 +599,9 @@ void BoneTransform_WorldPass(D3& d3, mdl::BoneRecord* boneRecords, int boneCount
 // +20 angle}; PMX limit planes, PMD axis projection and the knee hinge
 // flip per the file header.  The floating-point sequence is ported
 // verbatim (x87 fidelity notes included) - do not reorder.
-void BoneTransform_CcdIk(D3& d3, unsigned char* m, mdl::BoneRecord* boneRecords, mdl::IkChain* iks,
-                         int ikCount, unsigned char afterPhysics, int layer, int physicsMode,
-                         bool pmx2) {
+void BoneTransform_CcdIk(D3& d3, const mdl::ModelRecord* m, mdl::BoneRecord* boneRecords,
+                         mdl::IkChain* iks, int ikCount, unsigned char afterPhysics, int layer,
+                         int physicsMode, bool pmx2) {
     for (int ci = 0; ci < ikCount; ++ci) {
         mdl::IkChain& ik = iks[ci];
         mdl::BoneRecord& target = boneRecords[ik.boneIndex];
@@ -1024,17 +1024,17 @@ void ArmBoneTransformIkProbe() {
 #endif
 }
 
-void BoneFrameTransform(unsigned char* m, unsigned char afterPhysics, int layer,
-                        unsigned char* const* modelSlots,
+void BoneFrameTransform(mdl::ModelRecord* m, unsigned char afterPhysics, int layer,
+                        mdl::ModelRecord* const* modelSlots,
                         int physicsMode) { // 0x493A60
     D3 d3;
-    mdl::ModelRecord& model = *mdl::Mdl(m);
+    mdl::ModelRecord& model = *m;
     const int boneCount = static_cast<int>(model.boneCount);
     mdl::BoneRecord* boneRecords = model.boneTable;
-    mdl::IkChain* iks = mdl::IkChains(m);
+    mdl::IkChain* iks = m->ikChains;
     const int ikCount = static_cast<int>(model.ikChainCount);
     const bool pmx2 = model.physicsMode == 2;
-    mdl::BoneOrderEntry* extTable = mdl::BoneOrder(m);
+    mdl::BoneOrderEntry* extTable = m->boneOrderTable;
 
     // five sequential passes at the original phase boundaries (header)
     BoneTransform_PhysicsSweptLocals(d3, boneRecords, boneCount, afterPhysics,

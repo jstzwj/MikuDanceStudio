@@ -44,6 +44,27 @@ void Lbl(MMDApp* a, const char* s, HDC hdc, int size, int x, int y) {
 
 } // namespace
 
+// Shared scrollbar state consumed by WM_VSCROLL, including its thumb delta.
+void RefreshTimelineScrollbar(MMDApp* app, int clientHeight) {
+    // bone-list scrollbar refresh (SCROLLINFO embedded at this+2372)
+    app->state.scrollCbSize = sizeof(SCROLLINFO);
+    app->state.scrollFMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    app->state.scrollNMin = 0;
+    if (app->CameraMode() == 0) {
+        mdl::ModelRecord* model = app->SelectedModel();
+        app->state.scrollNMax = model->boneListRows - 3;
+        app->state.scrollNPos = model->boneListPos;
+    } else {
+        app->state.scrollNMax = app->DisplayObjectListMatchCount() - 2;
+        app->state.scrollNPos = app->DisplayObjectListScrollPosition();
+    }
+    const int page = (clientHeight - 398) / 14 - 1;
+    app->state.scrollNMax += page;
+    app->state.scrollNPage = page;
+    SetScrollInfo(GetDlgItem(app->MainWindow(), panel::kTimelineVScroll), SB_CTL,
+                  reinterpret_cast<SCROLLINFO*>(&app->state.scrollCbSize), TRUE);
+}
+
 void HandleWindowPaint(MMDApp* app) {
     HWND hwnd = static_cast<HWND>(app->Hwnd());
     PAINTSTRUCT ps;
@@ -388,23 +409,7 @@ void HandleWindowPaint(MMDApp* app) {
     if (app->WindowLayoutReady() != 0)
         FrameDriver(app); // 0x46B090
 
-    // bone-list scrollbar refresh (SCROLLINFO embedded at this+2372)
-    app->state.scrollCbSize = 28;
-    app->state.scrollFMask = 7; // SIF_ALL
-    app->state.scrollNMin = 0;
-    if (app->CameraMode() == 0) {
-        unsigned char* model = app->SelectedModel();
-        app->state.scrollNMax = mikudancestudio::mdl::Mdl(model)->boneListRows - 3;
-        app->state.scrollNPos = mikudancestudio::mdl::Mdl(model)->boneListPos;
-    } else {
-        app->state.scrollNMax = app->DisplayObjectListMatchCount() - 2;
-        app->state.scrollNPos = app->DisplayObjectListScrollPosition();
-    }
-    const int page = (rc.bottom - 398) / 14 - 1;
-    app->state.scrollNMax += page;
-    app->state.scrollNPage = page;
-    SetScrollInfo(GetDlgItem(hwnd, panel::kTimelineVScroll), SB_CTL,
-                  reinterpret_cast<SCROLLINFO*>(&app->state.scrollCbSize), TRUE);
+    RefreshTimelineScrollbar(app, rc.bottom);
 }
 
 } // namespace mikudancestudio

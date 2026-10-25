@@ -101,7 +101,7 @@ constexpr int kSheetOffX = 0;    //      SRCPAINT "disabled" column
 
 // --- model object fields (bone-edit mode) ---------------------------------
 // Reached through the ModelRecord accessors (morphCount / boneCount /
-// morphKeyIndices / boneKeyIndices / boneListSelLine / maxFrame /
+// morphTimelineRows / boneTimelineRows / boneListSelLine / maxFrame /
 // displayRootBone).  The former x86-raw constants (0x2D80/0x2D84/0x2DB4/
 // 0x2DB8/0x2DBC/0x31B0/0x3900) drifted from the x64 layout and read
 // unrelated fields on the 64-bit build.
@@ -114,7 +114,7 @@ constexpr int kSheetOffX = 0;    //      SRCPAINT "disabled" column
 // state.bmpRes101.)
 
 // Current model slot for the slot-order index (this+0x910) - 0x414F6F.
-unsigned char* CurrentModel(MMDApp* app) {
+mdl::ModelRecord* CurrentModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
@@ -418,18 +418,18 @@ void PanelPaint(MMDApp* app) {
         FinishPanel(len, len);
     } else {
         // --- 6b. bone-edit mode: bone / morph / IK lists -------------------
-        unsigned char* model = CurrentModel(app);
+        mdl::ModelRecord* model = CurrentModel(app);
         const std::int32_t limit = scroll + rows;
 
         // model display/IK list (model+0x26E8) - 0x414F6F..0x415122
-        mdl::DisplayKey* displayKeys = mdl::DisplayKeys(model);
+        mdl::DisplayKey* displayKeys = model->displayKeys;
         if (static_cast<std::int32_t>(displayKeys[0].frame) < limit) {
             int record = 0;
             for (;;) {
                 const mdl::DisplayKey& key = displayKeys[record];
                 const int row = static_cast<std::int32_t>(key.frame) - scroll;
                 if (row >= 0) {
-                    const int link = mdl::Mdl(model)->boneListSelLine;
+                    const int link = model->boneListSelLine;
                     if (link != 0) {
                         const int x = kTimelineFrameColumnWidth * row + kIconLeft;
                         const int y = kTimelineTrackRowHeight * link + 17;
@@ -447,10 +447,10 @@ void PanelPaint(MMDApp* app) {
         }
 
         // morph list (model+0x26E4, 20-byte records) - 0x415129..0x41557A
-        mdl::ModelRecord* modelRecord = mdl::Mdl(model);
+        mdl::ModelRecord* modelRecord = model;
         if (static_cast<std::int32_t>(modelRecord->morphCount) > 0) {
-            mdl::MorphKey* morphList = mdl::MorphKeys(model);
-            std::uint32_t* morphLinks = modelRecord->morphKeyIndices;
+            mdl::MorphKey* morphList = model->morphKeys;
+            std::int32_t* morphLinks = modelRecord->morphTimelineRows;
             std::int32_t* mapMorph = app->state.rowHitMorph;
             const std::int32_t morphCnt = static_cast<std::int32_t>(modelRecord->morphCount);
             for (int head = 0; head < morphCnt; ++head) {
@@ -522,11 +522,11 @@ void PanelPaint(MMDApp* app) {
         }
 
         // IK list (model+0x26E0, 60-byte records) - 0x41557A..0x415C6B
-        const std::int32_t ikCnt = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+        const std::int32_t ikCnt = static_cast<std::int32_t>(model->boneCount);
         if (ikCnt > 0) {
-            mdl::BoneKey* ikList = mdl::BoneKeys(model);
-            mdl::BoneRecord* bones = mdl::Bones(model);
-            std::uint32_t* ikLinks = mdl::Mdl(model)->boneKeyIndices;
+            mdl::BoneKey* ikList = model->boneKeys;
+            mdl::BoneRecord* bones = model->boneTable;
+            std::int32_t* ikLinks = model->boneTimelineRows;
             std::int32_t* mapIk = app->state.rowHitBone; // old name kMapIk
             for (int head = 0; head < ikCnt; ++head) {   // chain-head index (x)
                 if (static_cast<std::int32_t>(ikList[head].frame) >= limit)
@@ -537,7 +537,7 @@ void PanelPaint(MMDApp* app) {
                     const int row = static_cast<std::int32_t>(key.frame) - scroll;
                     if (row >= 0) {
                         const int link = ikLinks[head];
-                        if (link != 0 || head == mdl::Mdl(model)->displayRootBone) {
+                        if (link != 0 || head == model->displayRootBone) {
                             // visibility flag (+56) maintenance (0x415631..0x4156CB)
                             if (app->SelectionBoxDragging() != 0 &&
                                 app->TimelineSelectionChanged() == 0 && link < 0) {
@@ -609,7 +609,7 @@ void PanelPaint(MMDApp* app) {
                 }
             }
         }
-        const std::uint32_t a = static_cast<std::uint32_t>(mdl::Mdl(model)->maxFrame) + 20;
+        const std::uint32_t a = static_cast<std::uint32_t>(model->maxFrame) + 20;
         const std::uint32_t b = static_cast<std::uint32_t>(app->LastRegisteredFrame()) + 20;
         FinishPanel(a, b);
     }

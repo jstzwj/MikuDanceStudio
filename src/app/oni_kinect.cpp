@@ -81,7 +81,7 @@ static IDirect3DDevice9* OniRenderDevice(MMDApp* app) {
 namespace {
 
 // DxOpenNI.dll entry points, in GetProcAddress order (0x429dad..0x429e2b).
-const char* const kOniExports[static_cast<std::size_t>(OniExport::Count)] = {
+const char* const kOniExports[] = {
     "?OpenNIInit@@YG_NPAUHWND__@@_NPAUIDirect3DDevice9@@PA_WPAD@Z",
     "?OpenNIClean@@YGXXZ",
     "?OpenNIDrawDepthMap@@YGX_N@Z",
@@ -95,10 +95,6 @@ void KinMessageBox(MMDApp* app, const char* en, const char* jp) {
     MessageBoxA(static_cast<HWND>(app->Hwnd()), app->EnglishUI() != 0 ? en : jp, "Kinect",
                 MB_OK); // 0x5292a8
 }
-
-// bool __stdcall OpenNIInit(HWND, bool, IDirect3DDevice9*, wchar_t*, char*)
-using OpenNiInitFn = unsigned char(__stdcall*)(HWND, unsigned char, IDirect3DDevice9*,
-                                               const wchar_t*, const char*);
 
 // JP-locale MessageBox texts - verbatim Shift-JIS bytes from .rdata.
 // 0x52C528 "DxOpenNI.dll is missing from the Data folder..." (DLL missing)
@@ -168,27 +164,33 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
 
     // 0x429da6..0x429e86: seven GetProcAddress fills + any-null test.
     // The named entries retain the DLL lookup order in native runtime storage.
-    for (int i = 0; i < static_cast<int>(OniExport::Count); ++i)
-        s.OniExportSlot(static_cast<OniExport>(i)) =
-            reinterpret_cast<void*>(GetProcAddress(module, kOniExports[i]));
-    bool anyNull = false;
-    for (int i = 0; i < static_cast<int>(OniExport::Count); ++i)
-        anyNull = anyNull || s.OniExportSlot(static_cast<OniExport>(i)) == nullptr;
-    if (anyNull) {
+    auto& api = s.OpenNi();
+    api.initialize =
+        reinterpret_cast<decltype(api.initialize)>(GetProcAddress(module, kOniExports[0]));
+    api.clean = reinterpret_cast<decltype(api.clean)>(GetProcAddress(module, kOniExports[1]));
+    api.drawDepthMap =
+        reinterpret_cast<decltype(api.drawDepthMap)>(GetProcAddress(module, kOniExports[2]));
+    api.depthTexture =
+        reinterpret_cast<decltype(api.depthTexture)>(GetProcAddress(module, kOniExports[3]));
+    api.jointPosition =
+        reinterpret_cast<decltype(api.jointPosition)>(GetProcAddress(module, kOniExports[4]));
+    api.isTracking =
+        reinterpret_cast<decltype(api.isTracking)>(GetProcAddress(module, kOniExports[5]));
+    api.version = reinterpret_cast<decltype(api.version)>(GetProcAddress(module, kOniExports[6]));
+    if (!api.Complete()) {
         KinMessageBox(app,
                       "\"DxOpenNI.dll\" version is wrong.\n"
                       "(Version1.30 is necessary)", // 0x52c2d8
                       kJpOniVersion130);            // 0x52c298
         FreeLibrary(module);                        // 0x42a008
         s.state.oniModule = nullptr;
+        s.OpenNi() = {};
         return;
     }
 
     // 0x429ed4..0x429f2d: version gate (1.30 / 1.40 / 1.50 bit-exact).
-    auto getVersion =
-        reinterpret_cast<void(__stdcall*)(float*)>(s.OniExportSlot(OniExport::Version));
     float version = 0.0f;
-    getVersion(&version);
+    api.version(&version);
     std::uint8_t versionCode;
     if (version == 1.3f) { // 0x52c290
         versionCode = 0x0D;
@@ -203,17 +205,18 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
                       kJpOniVersionRange);                          // 0x52c1f8
         FreeLibrary(module);
         s.state.oniModule = nullptr;
+        s.OpenNi() = {};
         return;
     }
     s.state.openniVersion = versionCode;
 
     // 0x429f2f..0x429f5b: OpenNIInit(hwnd, english, device, exedir, path).
-    auto init = reinterpret_cast<OpenNiInitFn>(s.OniExportSlot(OniExport::Initialize));
-    const unsigned char ok =
-        init(hwnd, s.EnglishUI(), OniRenderDevice(app), s.state.exeDir, sjisPath);
+    const bool ok =
+        api.initialize(hwnd, s.EnglishUI() != 0, OniRenderDevice(app), s.state.exeDir, sjisPath);
     if (ok == 0) {
         FreeLibrary(module); // 0x42a001
         s.state.oniModule = nullptr;
+        s.OpenNi() = {};
         return;
     }
 
@@ -221,7 +224,7 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     s.state.depthDeviceEnabled = 1;                                  // 0x429f85
 
     if (s.CameraMode() == 0) { // 0x429f8b
-        unsigned char* model = s.SelectedModel();
+        mdl::ModelRecord* model = s.SelectedModel();
         ModelInitMorphSlots(model); // 0x4a89b0
     }
 
@@ -245,15 +248,14 @@ void DisableKinect(MMDApp* app) {
 
     // Unconditional call through the stored OpenNIClean pointer, exactly
     // like the original (reachable only after a successful OpenNiInit).
-    auto clean = reinterpret_cast<void(__stdcall*)()>(s.OniExportSlot(OniExport::Clean));
-    clean(); // 0x42a074
+    s.OpenNi().clean(); // 0x42a074
 
     s.state.depthDeviceEnabled = 0; // 0x42a084
     s.state.autoRepeat = 0;         // 0x42a08b
 
-    unsigned char* model = s.SelectedModel();
+    mdl::ModelRecord* model = s.SelectedModel();
     if (model != nullptr) // 0x42a092
-        SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame, s.PlaybackPhysicsMode());
+        SeekModelFrame(*model, s.state.currentFrame, s.PlaybackPhysicsMode());
 
     s.state.fpsLimit = // 0x42a0ac
         s.state.fpsLimitSaved;

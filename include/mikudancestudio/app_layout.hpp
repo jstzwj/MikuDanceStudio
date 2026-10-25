@@ -33,6 +33,10 @@
 
 namespace mikudancestudio {
 
+namespace mdl {
+struct ModelRecord;
+}
+
 constexpr std::size_t kAppObjectSize = sizeof(void*) == 8 ? 0xA55E0 : 0xA4530;
 
 // Model-slot capacity: the x64 recompile widened the model array from the
@@ -155,18 +159,13 @@ struct MMDAppState {
     void* reservedGravityClipboard;   // +0x36C
     void* reservedAccessoryClipboard; // +0x370
 #endif
-    void* cameraKeyTrack;     // x64 pin 976
-    void* lightKeyTrack;      // x64 pin 984
-    void* selfShadowKeyTrack; // x64 pin 992
-    void* gravityKeyTrack;    // x64 pin 1000
-    void* accKeyTracks[255];  // x64 pin 1008
-#if defined(_M_X64)
-    void* modelSlots[255]; // x64 pin 3048
-#else
-    void* modelSlots[100]; // x86 pin 1920  // was "x64 pin 3048" - that pin
-                           // belongs to the _M_X64 branch above
-#endif
-    unsigned char slotIdx; // x64 pin 5088
+    void* cameraKeyTrack;                          // x64 pin 976
+    void* lightKeyTrack;                           // x64 pin 984
+    void* selfShadowKeyTrack;                      // x64 pin 992
+    void* gravityKeyTrack;                         // x64 pin 1000
+    void* accKeyTracks[255];                       // x64 pin 1008
+    mdl::ModelRecord* modelSlots[kModelSlotCount]; // x86 pin 1920 / x64 pin 3048
+    unsigned char slotIdx;                         // x64 pin 5088
     RawPad<3> pad54;
     std::int32_t editMode;
     unsigned char groundShadowEnabled;
@@ -217,7 +216,7 @@ struct MMDAppState {
     // found flag + the cached control-point pair, y as 127-complement)
     unsigned char interpCurveUniformFound;    // +0x9DA04
     unsigned char interpCurveControlCache[4]; // +0x9DA05..08
-    unsigned char pendingTimelineSelectionRow;
+    unsigned char draggedInterpolationPoint;
     unsigned char lightA[6];
     unsigned char lightB[6];
     unsigned char lightC[6];
@@ -524,7 +523,7 @@ struct MMDAppState {
     std::uint32_t reservedOniExportSlot4;
 #if defined(_M_X64)
     // the blob keeps the 8-byte OpenNI tracking-callback slot (0xA1360)
-    // plus its alignment fill; the port reads PlatformRuntimeState::oniExports[5]
+    // plus its alignment fill; the port reads PlatformRuntimeState::openNi.isTracking
     RawPad<12> pad231;
 #else
     void* reservedOpenniTrackingCallback; // ?OpenNIIsTracking@@YGXPA_N@Z (registered

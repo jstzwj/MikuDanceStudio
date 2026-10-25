@@ -70,10 +70,6 @@ void DrawControlText(MMDApp* app, HWND hwnd, HDC hdc, RECT rc) {
 // Reference: ../translated/MikuMikuDance/fcn_00429770.cpp
 // =========================================================================//
 
-// VA 0x004C2680 - defined in ui_refresh.cpp; original is __thiscall on the
-// 0x25C streaming-file sub-object.
-void CloseDataFile(void* file);
-
 void HandleTimer100(MMDApp* app) {
     CloseDataFile(app->Audio()); // this+204 (0xCC)
     app->AudioSeekReady() = 1;   // this+656054

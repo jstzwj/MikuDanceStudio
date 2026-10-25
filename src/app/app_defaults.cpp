@@ -57,7 +57,7 @@ void MMDApp::InitDefaults() {
     s.BoneBoxSelectionActive() = 0;
     s.TimelineStartFrame() = 0;
     s.CurrentFrame() = 0;
-    s.PendingTimelineSelectionRow() = TimelineSelectionRow::None;
+    s.DraggedInterpolationPoint() = InterpolationControlPoint::None;
 
     // 6-iteration light-default loop
     for (int i = 0; i < 6; ++i) {
@@ -190,12 +190,7 @@ void MMDApp::InitDefaults() {
     s.AviStereoWidthMultiplier() = 2;
     state.depthDeviceEnabled = 0;
     state.oniModule = nullptr;
-    OniExportSlot(OniExport::Initialize) = nullptr;
-    OniExportSlot(OniExport::Clean) = nullptr;
-    OniExportSlot(OniExport::DrawDepthMap) = nullptr;
-    DepthTextureCallback() = nullptr;
-    OniExportSlot(OniExport::JointPosition) = nullptr;
-    s.OpenniTrackingCallback() = nullptr;
+    OpenNi() = {};
     state.kinectMirrorEnabled = 1;
     state.kinectInitLostBone = 0;
     state.depthTextureCompositionEnabled = 1;

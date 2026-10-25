@@ -67,6 +67,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -283,7 +284,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
     auto& s = *app;
 
     // ---- 1. per-model keyframe application (0x4175A8) --------------------
-    unsigned char** models = s.ModelSlots();
+    mdl::ModelRecord** models = s.ModelSlots();
     for (int j = 0; j < kModelSlotCount; ++j)
         if (models[j] != nullptr)
             AdvanceModelKeyframes(models[j], s.PlaybackCursorSeconds(), s.PlaybackPhysicsMode());

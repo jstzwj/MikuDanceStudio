@@ -6,7 +6,8 @@
 #include <memory>
 
 namespace mikudancestudio {
-MMDApp::MMDApp() : state{} {}
+MMDApp::MMDApp() : state{} {
+}
 }
 
 namespace {
@@ -14,8 +15,8 @@ using namespace mikudancestudio;
 int failures = 0;
 
 template <class Key, class Source, class Register, class Matches>
-void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source,
-                Register registerKey, Matches matches) {
+void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source, Register registerKey,
+                Matches matches) {
     const int initialFailures = failures;
     const auto check = [&](bool condition, const char* message) {
         if (!condition) {
@@ -26,17 +27,17 @@ void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source,
     app.CurrentFrame() = 0;
     app.state.lastRegisteredFrame = 0;
     track = nullptr;
-    check(registerKey(&app, &source) == 0, "missing track returns failure");
+    check(registerKey(&app, source) == 0, "missing track returns failure");
 
     auto table = std::make_unique<Key[]>(10000);
     track = table.get();
     const auto put = [&](unsigned relativeFrame) {
         source.frame = relativeFrame;
-        check(registerKey(&app, &source) == 1, "registration succeeds");
+        check(registerKey(&app, source) == 1, "registration succeeds");
     };
     put(10);
-    check(table[0].next == 1 && table[1].previous == 0 &&
-              table[1].frame == 10 && table[1].next == 0,
+    check(table[0].next == 1 && table[1].previous == 0 && table[1].frame == 10 &&
+              table[1].next == 0,
           "first nonzero frame follows the head");
     put(20);
 
@@ -47,9 +48,8 @@ void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source,
     put(0);
     check(table[0].selected == 1 && matches(table[0], source),
           "frame zero overwrites the head payload");
-    check(table[0].next == 1 && table[1].previous == 0 &&
-              table[1].next == 2 && table[2].previous == 1 &&
-              table[3].selected == 0 && table[3].frame == 0,
+    check(table[0].next == 1 && table[1].previous == 0 && table[1].next == 2 &&
+              table[2].previous == 1 && table[3].selected == 0 && table[3].frame == 0,
           "head overwrite preserves neighbours and allocates no record");
     check(app.state.lastRegisteredFrame == 20,
           "head overwrite preserves the last registered frame");
@@ -64,8 +64,7 @@ void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source,
     put(3);
     check(table[2].frame == 20 && matches(table[2], source),
           "clipboard frame is relative to the current frame");
-    check(app.state.lastRegisteredFrame == 30,
-          "only inserted later frames extend the timeline");
+    check(app.state.lastRegisteredFrame == 30, "only inserted later frames extend the timeline");
 
     const auto checkChain = [&](std::initializer_list<unsigned> frames) {
         unsigned index = 0, previous = 0, ordinal = 0;
@@ -102,13 +101,12 @@ void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source,
         app.state.lastRegisteredFrame = 9999;
         put(0);
         put(9999);
-        check(matches(table[0], source) && matches(table[9999], source) &&
-                  table[0].selected == 1 && table[9999].selected == 1,
+        check(matches(table[0], source) && matches(table[9999], source) && table[0].selected == 1 &&
+                  table[9999].selected == 1,
               "full tracks still overwrite existing head and tail payloads");
         bool intact = true;
         for (unsigned i = 0; i < 10000; ++i) {
-            intact &= table[i].frame == i &&
-                      table[i].previous == (i == 0 ? 0 : i - 1) &&
+            intact &= table[i].frame == i && table[i].previous == (i == 0 ? 0 : i - 1) &&
                       table[i].next == (i == 9999 ? 0 : i + 1);
         }
         check(intact && app.state.lastRegisteredFrame == 9999,
@@ -116,7 +114,7 @@ void CheckTrack(const char* name, MMDApp& app, Key*& track, Source source,
     }
     track = nullptr;
 }
-}  // namespace
+} // namespace
 
 int main() {
     using namespace mikudancestudio;
@@ -126,12 +124,13 @@ int main() {
     camera.eye[1] = 12.5f;
     camera.parentModel = 2;
     camera.parentBone = 4;
-    CheckTrack("camera", *app, app->CameraKeys(), camera,
-               [](MMDApp* a, const void* s) { return RegisterCameraKey(a, s); },
-               [](const auto& k, const auto& s) {
-                   return k.distance == s.distance && k.eye[1] == s.eye[1] &&
-                          k.parentModel == s.parentModel && k.parentBone == s.parentBone;
-               });
+    CheckTrack(
+        "camera", *app, app->CameraKeys(), camera,
+        [](MMDApp* a, const mdl::CameraClipboardRecord& s) { return RegisterCameraKey(a, s); },
+        [](const auto& k, const auto& s) {
+            return k.distance == s.distance && k.eye[1] == s.eye[1] &&
+                   k.parentModel == s.parentModel && k.parentBone == s.parentBone;
+        });
     mdl::LightClipboardRecord light{};
     light.color[0] = 0.75f;
     light.direction[1] = -1.0f;
@@ -142,10 +141,9 @@ int main() {
     mdl::ShadowClipboardRecord shadow{};
     shadow.mode = 2;
     shadow.distance = 0.125f;
-    CheckTrack("shadow", *app, app->ShadowKeys(), shadow, RegisterSelfShadowKey,
-               [](const auto& k, const auto& s) {
-                   return k.mode == s.mode && k.distance == s.distance;
-               });
+    CheckTrack(
+        "shadow", *app, app->ShadowKeys(), shadow, RegisterSelfShadowKey,
+        [](const auto& k, const auto& s) { return k.mode == s.mode && k.distance == s.distance; });
     mdl::GravityClipboardRecord gravity{};
     gravity.acceleration = 9.8f;
     gravity.direction[1] = -1.0f;
@@ -153,9 +151,8 @@ int main() {
     gravity.noiseEnabled = 1;
     CheckTrack("gravity", *app, app->GravityKeys(), gravity, RegisterGravityKey,
                [](const auto& k, const auto& s) {
-                   return k.acceleration == s.acceleration &&
-                          k.direction[1] == s.direction[1] && k.noise == s.noise &&
-                          k.noiseEnabled == s.noiseEnabled;
+                   return k.acceleration == s.acceleration && k.direction[1] == s.direction[1] &&
+                          k.noise == s.noise && k.noiseEnabled == s.noiseEnabled;
                });
     return failures == 0 ? 0 : 1;
 }

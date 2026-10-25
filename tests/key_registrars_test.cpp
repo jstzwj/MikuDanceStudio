@@ -20,14 +20,13 @@ void Check(bool ok, const char* message) {
 }
 }
 namespace mikudancestudio {
-void AppendBoneKeyToUndo(unsigned char*, int index) {
+void AppendBoneKeyToUndo(mdl::ModelRecord*, int index) {
     undoRecords.push_back(index);
 }
 }
 int main() {
     using namespace mikudancestudio;
     auto model = std::make_unique<mdl::ModelRecord>();
-    auto* raw = reinterpret_cast<unsigned char*>(model.get());
     std::array<mdl::BoneRecord, 2> bones{};
     std::array<mdl::BoneKey, 8> boneKeys{};
     model->boneTable = bones.data();
@@ -49,8 +48,8 @@ int main() {
     bone.physicsDisabled = 1;
     for (unsigned char i = 0; i < 16; ++i)
         bone.interpolation[i] = i + 10;
-    ResetBoneKeyCursor(raw);
-    Check(RegisterBoneKey(raw, bone, 3, 0), "register named bone");
+    ResetBoneKeyCursor(model.get());
+    Check(RegisterBoneKey(model.get(), bone, 3, 0), "register named bone");
     Check(boneKeys[1].next == 2 && boneKeys[2].frame == 10 && boneKeys[2].previous == 1,
           "bone lookup and relative frame preserve links");
     Check(std::memcmp(boneKeys[2].position, bone.position, 12) == 0 &&
@@ -61,11 +60,11 @@ int main() {
     Check(undoRecords == std::vector<int>({1, 2}), "bone append records both changed links");
     bone.frame = 0;
     undoRecords.clear();
-    Check(RegisterBoneKey(raw, bone, 0, 0) && boneKeys[1].next == 2 &&
+    Check(RegisterBoneKey(model.get(), bone, 0, 0) && boneKeys[1].next == 2 &&
               undoRecords == std::vector<int>({1}),
           "frame zero overwrites the head with one undo entry");
     bone.frame = 20;
-    Check(RegisterMirroredBoneKey(raw, bone, 0), "register reflected key");
+    Check(RegisterMirroredBoneKey(model.get(), bone, 0), "register reflected key");
     const auto& mirrored = boneKeys[boneKeys[2].next];
     Check(mirrored.position[0] == -2 && mirrored.position[1] == 3 && mirrored.position[2] == 4 &&
               mirrored.rotation[0] == .25f && mirrored.rotation[1] == -.5f &&
@@ -86,16 +85,16 @@ int main() {
     strcpy_s(morph.name, "smile");
     morph.frame = 9;
     morph.value = .625f;
-    ResetMorphKeyCursor(raw);
-    Check(RegisterMorphKeyFromRecord(raw, morph, 2), "register second morph");
+    ResetMorphKeyCursor(model.get());
+    Check(RegisterMorphKeyFromRecord(model.get(), morph, 2), "register second morph");
     Check(morphKeys[1].next == 2 && morphKeys[2].frame == 11 && morphKeys[2].value == .625f,
           "morph lookup advances one native record, on both architectures");
     morph.value = .25f;
-    Check(RegisterMorphKeyFromRecord(raw, morph, 2) && morphKeys[2].value == .25f &&
+    Check(RegisterMorphKeyFromRecord(model.get(), morph, 2) && morphKeys[2].value == .25f &&
               morphKeys[2].next == 0,
           "morph overwrite allocates no extra key");
     strcpy_s(morph.name, "missing");
-    Check(RegisterMorphKeyFromRecord(raw, morph, 2) && morphKeys[2].value == .25f,
+    Check(RegisterMorphKeyFromRecord(model.get(), morph, 2) && morphKeys[2].value == .25f,
           "unknown morph remains a successful no-op");
     std::array<mdl::DisplayKey, 8> displayKeys{};
     std::array<mdl::IkChain, 2> chains{};
@@ -126,9 +125,9 @@ int main() {
     selectorEntries[1].modelIndex = -1;
     selectorEntries[1].boneIndex = 5;
     model->searchCursor = 1;
-    Check(
-        RegisterDisplayKeyFromRecord(raw, 6, 1, 2, ikEntries.data(), 2, selectorEntries.data(), 2),
-        "register display inputs");
+    Check(RegisterDisplayKeyFromRecord(model.get(), 6, 1, 2, ikEntries.data(), 2,
+                                       selectorEntries.data(), 2),
+          "register display inputs");
     Check(displayKeys[0].next == 1 && displayKeys[1].frame == 8 && flags[1][0] == 0 &&
               flags[1][1] == 1,
           "IK names resolve independently of input order");

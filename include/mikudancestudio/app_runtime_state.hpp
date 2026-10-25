@@ -13,6 +13,7 @@
 #include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/dialog_order_arrays.hpp"
 #include "mikudancestudio/path_workspace.hpp"
+#include "mikudancestudio/openni_api.hpp"
 
 namespace mikudancestudio {
 
@@ -96,20 +97,9 @@ struct RenderRuntimeState {
     IDirect3DVertexBuffer9* pictureOverlayVertices = nullptr;
 };
 
-enum class OniExport : std::size_t {
-    Initialize,
-    Clean,
-    DrawDepthMap,
-    DepthTexture,
-    JointPosition,
-    IsTracking,
-    Version,
-    Count,
-};
-
 struct PlatformRuntimeState {
     void* instance = nullptr;
-    void* oniExports[static_cast<std::size_t>(OniExport::Count)]{};
+    OpenNiApi openNi;
     WINDOWPLACEMENT savedPlacement{};
 };
 

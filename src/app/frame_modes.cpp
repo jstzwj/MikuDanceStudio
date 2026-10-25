@@ -1,21 +1,8 @@
-// ===========================================================================
-// Frame-driver interaction modes (0x0046B090 region @ 0x470Cxx..0x4712xx)
-// ===========================================================================
-// Verified raw offsets (Ghidra ground truth):
-//   this+4/+8       previous mouse X/Y      this+0xC/+0x10 current mouse X/Y
-//   this+0x24 (36)  precision selector A    this+0xC0 (192) selector B
-//   this+0x88 (136) transform selector A    this+0x8C (140) selector B
-//   this+0x2F8 (760) model-mode flag        this+0x330 (816) anim gate
-//   this+0x308/30C/310 camera translate X/Y/Z
-//   this+0x314/318  camera rotation angles
-//   this+0x9EDD1 (650705) drag-active flag
-//   this+0x9ED98 (650648) select-state gate
-//   this+0x910 (2320) frame index  this+0xA0430 (656432) frame cursor
-//   this+0xA05D1 (656849) view-dirty  this+0xA442C (672812) view-lock
-//
-// Camera drag scales are recovered from the original image; the exact values
-// and precision of each declaration are preserved below.
-// =========================================================================//
+// Frame-driver viewport input (original x86 sub_46B090, x64 sub_7FF7CB4474F0).
+// Poll key edges, update picking/box selection, then consume operation-panel
+// drags. ViewportDragMode describes the second-stage drag, not the tool hit
+// code in ViewportToolAction. Undo snapshots belong to the press edge;
+// box-selection readouts and the active bone are finalized on release.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "mikudancestudio/panel_controls.hpp"
@@ -209,7 +196,7 @@ ViewportToolAction ViewportToolAtPoint(MMDApp* app) {
             const int px = x - app->ViewportToolCenterX();
             const int py = y - app->ViewportToolCenterY();
             if (px > 41 && px < 61 && py > -8 && py < 8)
-                operation = ViewportToolAction::BoneScaleHandle;
+                operation = ViewportToolAction::BoneMoveHorizontalHandle;
             else if (px > -13 && px < 8 && py > -61 && py < -42)
                 operation = ViewportToolAction::BoneMoveVerticalHandle;
             else if (px > -13 && px < 11 && py > -16 && py < 8)
@@ -305,14 +292,16 @@ void RestoreViewportToolCursor(MMDApp* app, ViewportToolAction operation) {
     while (ShowCursor(TRUE) < 0) {}
 }
 
-unsigned char* ActiveBoneModel(MMDApp* app) {
-    return app->ModelSlot(app->state.slotIdx);
+mdl::ModelRecord* ActiveBoneModel(MMDApp* app) {
+    return app->SelectedModel();
 }
 
 void PickBoneAtCursor(MMDApp* app) {
-    auto* model = mdl::Mdl(ActiveBoneModel(app));
-    if (model && PickBoneAtPoint(*model, app->MouseX(), app->MouseY(), app->PlaybackPhysicsMode(),
-                                 app->ShiftModifierActive())) {
+    auto* model = ActiveBoneModel(app);
+    if (model) {
+        PickBoneAtPoint(*model, app->MouseX(), app->MouseY(), app->PlaybackPhysicsMode(),
+                        app->ShiftModifierActive());
+        // The original refreshes the panel even when the click misses.
         RebuildTimelineTrackPanel(app);
         InvalidateSelectionReadouts(app);
     }
@@ -321,35 +310,18 @@ void PickBoneAtCursor(MMDApp* app) {
 void UpdateBoneBoxSelection(MMDApp* app) {
     if (app->BoneBoxSelectionActive() == 0)
         return;
-    unsigned char* model = ActiveBoneModel(app);
+    mdl::ModelRecord* model = ActiveBoneModel(app);
     if (model == nullptr)
         return;
-    auto* bones = mikudancestudio::mdl::Bones(model);
-    auto* selected = mikudancestudio::mdl::Mdl(model)->boneSelection;
-    const int count = mikudancestudio::mdl::Mdl(model)->boneCount;
-    if (bones == nullptr || selected == nullptr || count <= 0)
-        return;
-
     const int left = std::min(app->BoneBoxStartX(), app->MouseX());
     const int right = std::max(app->BoneBoxStartX(), app->MouseX());
     const int top = std::min(app->BoneBoxStartY(), app->MouseY());
     const int bottom = std::max(app->BoneBoxStartY(), app->MouseY());
-    const bool additive = app->ShiftModifierActive();
-    bool changed = false;
-    for (int i = 0; i < count; ++i) {
-        const mdl::BoneRecord& bone = bones[i];
-        const mdl::BoneType type = bone.type;
-        const bool eligible = type <= mdl::BoneType::Effector || type == mdl::BoneType::FixedAxis;
-        const int x = bone.selState;
-        const int y = bone.selState2;
-        const bool inside = eligible && x > left && x < right && y > top && y < bottom;
-        const std::uint8_t next = inside ? 1 : (additive ? selected[i] : 0);
-        changed |= selected[i] != next;
-        selected[i] = next;
-    }
-    if (changed)
-        RebuildTimelineTrackPanel(app);
+    SelectBonesInScreenRect(*model, left, top, right, bottom, app->ShiftModifierActive());
+    // Selection bytes update while held; the panel refresh belongs to release.
 }
+
+} // namespace
 
 void BeginOrEndViewportToolDrag(MMDApp* app, ViewportToolAction operation) {
     const int leftState = app->LeftMouseButtonState();
@@ -365,12 +337,12 @@ void BeginOrEndViewportToolDrag(MMDApp* app, ViewportToolAction operation) {
                                                          ViewportDragMode::ViewAxisRotateX,
                                                          ViewportDragMode::ViewAxisRotateY,
                                                          ViewportDragMode::ViewAxisRotateZ,
-                                                         ViewportDragMode::BoneScale,
+                                                         ViewportDragMode::BoneMoveHorizontal,
                                                          ViewportDragMode::BoneMoveVertical,
                                                          ViewportDragMode::BoneMoveScreenPlane,
-                                                         ViewportDragMode::LocalAxisTranslateX,
-                                                         ViewportDragMode::LocalAxisTranslateY,
-                                                         ViewportDragMode::LocalAxisTranslateZ,
+                                                         ViewportDragMode::AxisRotateX,
+                                                         ViewportDragMode::AxisRotateY,
+                                                         ViewportDragMode::AxisRotateZ,
                                                          ViewportDragMode::PhysicsAxisX,
                                                          ViewportDragMode::PhysicsAxisY,
                                                          ViewportDragMode::PhysicsAxisZ,
@@ -426,19 +398,18 @@ void BeginOrEndViewportToolDrag(MMDApp* app, ViewportToolAction operation) {
             }
         }
     } else if (leftState == 2) {
-        app->PendingTimelineSelectionRow() = TimelineSelectionRow::None;
+        app->DraggedInterpolationPoint() = InterpolationControlPoint::None;
         const ViewportToolAction viewOperation = app->ViewToolDragOperation();
         const ViewportDragMode mode = app->InteractionDragMode();
         if (viewOperation == ViewportToolAction::CameraOrbit ||
             viewOperation == ViewportToolAction::CameraPan) {
             RestoreViewportToolCursor(app, viewOperation);
             app->ViewToolDragOperation() = ViewportToolAction::None;
-        }
-        if (mode != ViewportDragMode::None) {
+        } else if (mode != ViewportDragMode::None) {
             if (mode >= ViewportDragMode::ViewAxisRotateX &&
                 mode <= ViewportDragMode::ViewAxisRotateZ)
                 app->EditMode() = ViewportEditMode::Rotate;
-            else if (mode >= ViewportDragMode::BoneScale &&
+            else if (mode >= ViewportDragMode::BoneMoveHorizontal &&
                      mode <= ViewportDragMode::BoneMoveScreenPlane)
                 app->EditMode() = ViewportEditMode::Move;
             if (viewOperation >= ViewportToolAction::TransformAxisX &&
@@ -448,12 +419,16 @@ void BeginOrEndViewportToolDrag(MMDApp* app, ViewportToolAction operation) {
             }
             app->InteractionDragMode() = ViewportDragMode::None;
             app->state.a06B5 = 0;
+        } else if (app->BoneBoxSelectionActive() != 0) {
+            app->BoneBoxSelectionActive() = 0;
+            if (auto* model = app->SelectedModel()) {
+                FinishBoneBoxSelection(*model, app->ShiftModifierActive());
+                RebuildTimelineTrackPanel(app);
+                InvalidateSelectionReadouts(app);
+            }
         }
-        app->BoneBoxSelectionActive() = 0;
     }
 }
-
-} // namespace
 
 bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y, int physicsMode, bool additive) {
     if (!model.boneTable || !model.boneSelection || model.boneCount == 0)
@@ -466,12 +441,13 @@ bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y, int physicsMode, boo
         // Original x64 0x7FF7CB451B92..0x7FF7CB451BFE: the physics
         // gate reads hasRigidBody, independently of the bone type byte.
         if (!(bone.flags & mdl::kBoneFlagVisible) ||
-            !(bone.type < mdl::BoneType::InertTip || bone.type == mdl::BoneType::FixedAxis))
+            !(static_cast<std::int8_t>(bone.type) < static_cast<int>(mdl::BoneType::InertTip) ||
+              bone.type == mdl::BoneType::FixedAxis))
             continue;
         if (bone.hasRigidBody && (physicsMode == 1 || (physicsMode == 2 && !bone.physicsDisabled)))
             continue;
-        const int dx = bone.selState - x;
-        const int dy = bone.selState2 - y;
+        const int dx = bone.screenX - x;
+        const int dy = bone.screenY - y;
         if (dx * dx + dy * dy >= 64)
             continue;
         if (additive) {
@@ -502,6 +478,45 @@ bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y, int physicsMode, boo
         }
     }
     return changed;
+}
+
+void SelectBonesInScreenRect(mdl::ModelRecord& model, int left, int top, int right, int bottom,
+                             bool additive) {
+    if (!model.boneTable || !model.boneSelection)
+        return;
+    for (std::uint32_t i = 0; i < model.boneCount; ++i) {
+        const auto& bone = model.boneTable[i];
+        // x64 452EA6..452EC4: unlike clicking, box selection includes hidden
+        // types <= 6 and fixed-axis bones, without the rigid-body gate.
+        const bool eligible =
+            static_cast<std::int8_t>(bone.type) <= static_cast<int>(mdl::BoneType::Effector) ||
+            bone.type == mdl::BoneType::FixedAxis;
+        if (eligible && bone.screenX > left && bone.screenX < right && bone.screenY > top &&
+            bone.screenY < bottom)
+            model.boneSelection[i] = 1;
+        else if (!additive)
+            model.boneSelection[i] = 0;
+    }
+}
+
+void FinishBoneBoxSelection(mdl::ModelRecord& model, bool additive) {
+    if (!model.boneSelection || model.boneCount == 0)
+        return;
+    // x64 452136..4521F7: preserve the active bone if it remains selected.
+    if (model.selectedBone < 0 || !model.boneSelection[model.selectedBone]) {
+        if (!additive)
+            model.selectedBone = -1;
+        if (model.boneSelection[0])
+            model.selectedBone = 0;
+    }
+    int count = 0, last = -1;
+    for (std::uint32_t i = 0; i < model.boneCount; ++i)
+        if (model.boneSelection[i]) {
+            ++count;
+            last = static_cast<int>(i);
+        }
+    if (count == 1)
+        model.selectedBone = last;
 }
 
 void MouseInteractionBegin(MMDApp* app) {
@@ -798,18 +813,18 @@ void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode) {
         api.multiply(&rot, reinterpret_cast<d3dx::D3DXMATRIXF*>(&app->CameraAttachmentBasis()),
                      &rot);
 
-    unsigned char* model = app->SelectedModel();
-    auto* bones = mikudancestudio::mdl::Bones(model);
+    mdl::ModelRecord* model = app->SelectedModel();
+    auto* bones = model->boneTable;
 
     auto modeOrigin = [&](int modeValue, d3dx::D3DXMATRIXF* out) {
         if (modeValue == 1) { // 0x41AD79
-            const mdl::BoneRecord& rec = bones[mdl::Mdl(model)->centerBone];
+            const mdl::BoneRecord& rec = bones[model->centerBone];
             const float tx = -rec.matInit[12];
             const float ty = -rec.matInit[13];
             const float tz = -rec.matInit[14];
             api.translation(out, tx, ty, tz);
         } else if (modeValue == 2) { // 0x41ADC6
-            std::int32_t idx = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            std::int32_t idx = model->selectedBone;
             if (idx < 0)
                 idx = 0;
             const mdl::BoneRecord& rec = bones[idx];

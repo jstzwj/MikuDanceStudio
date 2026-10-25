@@ -67,7 +67,7 @@
 //   264 108  0x0048ABB0    0x40=1; toggle byte app+0xA0CC8 with
 //                          CheckMenuItem 0x108
 //   265 109  0x0048ACA7    app+0xA0CC4 = 1; check 0x109, uncheck
-//                          0x10D/0x10E/0x110; ModelKinematicSync(0x4B2210)
+//                          0x10D/0x10E/0x110; ApplyModelBonePhysicsMode(0x4B2210)
 //                          over the 100 model slots; 0x9EDB5=1
 //   266 10A  0x0048AEE1    if app+0xA0CCC set: return; 0x4C=1, 0xBC=1;
 //                          CreateDialogParamA (0x323 EN / 0x322 JP,
@@ -309,7 +309,7 @@ static_assert(__builtin_bit_cast(std::uint32_t, kPiFloat) == 0x40490FD8u, "flt_5
 
 // Active model = slot array at app+0x780 indexed by byte app+0x910.
 static unsigned char* ActiveModel(MMDApp* app) {
-    return app->SelectedModel();
+    return mdl::ModelBytes(app->SelectedModel());
 }
 
 // 0x40A680 / 0x40A690 / 0x40A6B0 / 0x40A6D0 - the D3DX angle helpers of the
@@ -399,7 +399,7 @@ static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x30
 // VA 0x0041E9C0 - enhance-model dialog init: mirrors the ten 100-byte SJIS
 // toon texture file-name slots of the active model (+0x33D8) into edits 709..718.
 void FillToonTextureEdits(MMDApp* app, HWND hDlg) { // VA 0x0041E9C0
-    unsigned char* model = app->SelectedModel();
+    unsigned char* model = mdl::ModelBytes(app->SelectedModel());
     for (int i = 0; i < 10; ++i)
         SendMessageA(GetDlgItem(hDlg, panel::kToon01Edit + i), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(mdl::Mdl(model)->pmdToonFileNames[i]));
@@ -941,7 +941,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // 265/269/270/272 (0x0048ACA7/0x48AC0E/0x48AD38/0x48ADCC): view-mode
     // radios - app+0xA0CC4 = 1/2/3/0, the matching menu item
     // (0x109/0x10D/0x10E/0x110) is checked, the other three unchecked,
-    // then ModelKinematicSync (0x4B2210, thiscall(model, app+0xA0CC4))
+    // then ApplyModelBonePhysicsMode (0x4B2210, thiscall(model, app+0xA0CC4))
     // over the 100 model slots.  Cases 265/269/270 set 0x9EDB5 = 1.
     // ------------------------------------------------------------------
     case MDS_CMD_PHYSICS_ALWAYS: {
@@ -953,9 +953,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         // x64 dispatcher sub_7FF7CB45F550 case 265 twin walks all 255 slots
         // (mov r13d, 0FFh ... dec r13 at 0x7FF7CB46F309..0x7FF7CB46F32D).
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
+            mdl::ModelRecord* model = app->ModelSlot(i);
             if (model != nullptr) {
-                ModelKinematicSync(model); // orig: thiscall(model, 0xA0CC4)
+                ApplyModelBonePhysicsMode(
+                    model, app->PlaybackPhysicsMode()); // orig: thiscall(model, 0xA0CC4)
             }
         }
         app->PhysicsResetPending() = 1;
@@ -969,9 +970,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_UNCHECKED);
         CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_UNCHECKED);
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
+            mdl::ModelRecord* model = app->ModelSlot(i);
             if (model != nullptr) {
-                ModelKinematicSync(model);
+                ApplyModelBonePhysicsMode(model, app->PlaybackPhysicsMode());
             }
         }
         app->PhysicsResetPending() = 1;
@@ -985,9 +986,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_CHECKED);
         CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_UNCHECKED);
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
+            mdl::ModelRecord* model = app->ModelSlot(i);
             if (model != nullptr) {
-                ModelKinematicSync(model);
+                ApplyModelBonePhysicsMode(model, app->PlaybackPhysicsMode());
             }
         }
         app->PhysicsResetPending() = 1;
@@ -1001,9 +1002,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_UNCHECKED);
         CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_CHECKED);
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
+            mdl::ModelRecord* model = app->ModelSlot(i);
             if (model != nullptr) {
-                ModelKinematicSync(model);
+                ApplyModelBonePhysicsMode(model, app->PlaybackPhysicsMode());
             }
         }
         return;
@@ -1382,9 +1383,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         // x64 dispatcher twin (0x7FF7CB4701EF..0x7FF7CB470228) walks all
         // 255 slots before each SetModelColor (sub_7FF7CB4F2240) call.
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
+            mdl::ModelRecord* model = app->ModelSlot(i);
             if (model != nullptr) {
-                SetModelColor(reinterpret_cast<MMDApp*>(model), nr, ng, nb);
+                SetModelColor(model, nr, ng, nb);
             }
         }
         return;
@@ -1468,9 +1469,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             // x64 dispatcher twin (0x7FF7CB470326..0x7FF7CB47034F) walks all
             // 255 slots (movzx eax,[rbx+0A137Eh]; mov [rcx+3CA5h],al).
             for (int i = 0; i < kModelSlotCount; ++i) {
-                unsigned char* model = app->ModelSlot(i);
+                mdl::ModelRecord* model = app->ModelSlot(i);
                 if (model != nullptr) {
-                    mdl::Mdl(model)->openniVersion = app->state.openniVersion;
+                    model->openniVersion = app->state.openniVersion;
                 }
             }
         } else {

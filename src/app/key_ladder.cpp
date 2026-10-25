@@ -85,7 +85,7 @@ void PumpDisplayShortcuts(MMDApp* app, const KeyboardInputContext& input) {
             CheckMenuItem(menu, MDS_CMD_TOGGLE_MODEL_TRANSPARENCY,
                           state.characterTransparentMode != 0 ? MF_CHECKED : MF_UNCHECKED);
             for (int slot = 0; slot < kModelSlotCount; ++slot) {
-                unsigned char* model = app->ModelSlot(slot);
+                unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
                 if (model != nullptr)
                     mdl::Mdl(model)->displayState = state.characterTransparentMode;
             }
@@ -229,14 +229,14 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     if (focusOK() && modelMode() && !playing() && !focusInEdit) {
         // ---- 'X' (0x472D5C): redo / rotate mode ------------------------------
         if (pressed(LetterKey::X)) {
-            unsigned char* model = app->SelectedModel();
+            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
             if (ctrl() && model != nullptr && mdl::Mdl(model)->redoDirty != 0) {
                 // Redo one ring entry (0x4A2490), then enable the undo button
                 // / disable redo exactly like the pump tail, and re-seek the
                 // frame when the new ring head is not a pose-only record.
                 // The original passes &app+0x980 so the redo can move the
                 // current frame itself.
-                RedoModelEdit(model, app->CurrentFrame());
+                RedoModelEdit(mdl::Mdl(model), app->CurrentFrame());
                 auto* record = mdl::Mdl(model);
                 if (record->UndoCursor() == record->LatestUndoCursor()) {
                     EnableWindow(GetDlgItem(main, panel::kRedoButton), FALSE);
@@ -262,12 +262,12 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
 
         // ---- 'Z' (0x472ED7): undo / move mode -------------------------------
         if (pressed(LetterKey::Z)) {
-            unsigned char* model = app->SelectedModel();
+            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
             if (ctrl() && model != nullptr && mdl::Mdl(model)->undoDirty != 0) {
                 // Undo one ring entry (0x4A1870), then the mirror-image button
                 // tail of the X branch.  Like the redo, the frame pointer aims
                 // straight at app+0x980.
-                UndoModelEdit(model, app->CurrentFrame());
+                UndoModelEdit(mdl::Mdl(model), app->CurrentFrame());
                 auto* record = mdl::Mdl(model);
                 if (record->undoRings[0].slots[record->UndoCursor()].operation ==
                     mdl::UndoOperation::Empty) {

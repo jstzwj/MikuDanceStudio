@@ -1,4 +1,4 @@
-// Bone-edit undo snapshot (original VA 0x0042D6E0; ).
+// Bone-edit undo snapshot (original VA 0x0042D6E0).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -17,14 +17,14 @@ void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
     if (app == nullptr)
         return;
     const unsigned modelSlot = app->state.slotIdx;
-    auto* model = static_cast<unsigned char*>(app->state.modelSlots[modelSlot]);
+    auto* model = app->ModelSlot(modelSlot);
     if (model == nullptr)
         return;
 
-    const int boneCount = mikudancestudio::mdl::Mdl(model)->boneCount;
-    auto* selected = mikudancestudio::mdl::Mdl(model)->boneSelection;
-    auto* dirty = mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
-    auto* bones = mikudancestudio::mdl::Bones(model);
+    const int boneCount = model->boneCount;
+    auto* selected = model->boneSelection;
+    auto* editFlags = model->bonePhysicsState;
+    auto* bones = model->boneTable;
     if (boneCount <= 0 || selected == nullptr || bones == nullptr)
         return;
 
@@ -44,14 +44,14 @@ void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
     // +0x3559, immediately after the undoState ring cursor (+0x3550, depth 30). The old x86 offsets
     // 12732/12733 land in unused gap15 padding on x64 and break the Ctrl+Z/Y gates; use
     // typed fields (both architecture offsets are pinned by model_layout.hpp).
-    mikudancestudio::mdl::Mdl(model)->undoDirty = 1;
-    mikudancestudio::mdl::Mdl(model)->redoDirty = 0;
-    auto& ringIndex = mikudancestudio::mdl::Mdl(model)->UndoCursor();
+    model->undoDirty = 1;
+    model->redoDirty = 0;
+    auto& ringIndex = model->UndoCursor();
     if (++ringIndex >= mdl::kUndoHistoryDepth)
         ringIndex = 0;
-    mikudancestudio::mdl::Mdl(model)->LatestUndoCursor() = ringIndex;
+    model->LatestUndoCursor() = ringIndex;
 
-    auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[ringIndex];
+    auto& undo = model->undoRings[0].slots[ringIndex];
     undo.operation = mdl::UndoOperation::BonePose;
     undo.recordCount = selectedCount;
     auto*& oldSnapshot = undo.bonePose;
@@ -63,7 +63,7 @@ void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
     auto* snapshot = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
         ::operator new(sizeof(mikudancestudio::mdl::BonePoseSnapshot) * selectedCount));
     oldSnapshot = snapshot;
-    std::memset(snapshot, 0, static_cast<std::size_t>(36) * selectedCount);
+    std::memset(snapshot, 0, sizeof(*snapshot) * selectedCount);
 
     int output = 0;
     for (int i = 0; i < boneCount; ++i) {
@@ -74,7 +74,7 @@ void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
         record.boneIndex = i;
         std::memcpy(record.position, bone->trans, sizeof(record.position));
         std::memcpy(record.rotation, bone->rotQuat, sizeof(record.rotation));
-        record.physicsDisabled = dirty != nullptr ? dirty[i] : 0;
+        record.poseEdited = editFlags != nullptr ? editFlags[i] : 0;
     }
 }
 

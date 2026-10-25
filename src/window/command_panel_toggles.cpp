@@ -127,27 +127,24 @@ namespace mikudancestudio {
 // Active model = slot array at this+0x780 indexed by byte this+0x910.
 // (sub_47E8A0 pattern; the original re-derives it on every use.)
 static unsigned char* ActiveModel(MMDApp* app) {
-    return app->SelectedModel();
+    return mdl::ModelBytes(app->SelectedModel());
 }
 
-// The four frame-selection clear loops shared by cases 452/468/487
-// (0x48681D / 0x4868C2 / 0x48696B): zero the selection byte at +0x48 of the
-// 0x54-stride bone frames, +0x24 of the 0x28-stride morph frames, +0x14 of
-// the 0x18-stride camera/light frames, +0x21 of the 0x24-stride frames and
-// +0x18 of the 0x3C-stride frames of all 255 tables at app+0x384.
+// Clear selections in the four global tracks and all accessory tracks.
+// Shared by cases 452/468/487 (0x48681D / 0x4868C2 / 0x48696B).
 void ClearFrameSelection(MMDApp* app) {
     app->SceneModified() = 1;
-    for (std::size_t i = 0; i < 10000; ++i) {
+    for (std::size_t i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
         app->CameraKeys()[i].selected = 0;
         app->LightKeys()[i].selected = 0;
         app->ShadowKeys()[i].selected = 0;
         app->GravityKeys()[i].selected = 0;
     }
-    for (int k = 0; k < 0xFF; ++k) {
-        unsigned char* tbl = reinterpret_cast<unsigned char*>(app->AccessoryKeys(k));
-        if (tbl != nullptr) {
-            for (std::size_t i = 0; i < 0x927C0u; i += 0x3C) {
-                *(tbl + i + 0x18) = 0;
+    for (int k = 0; k < mdl::kAccessorySlotCount; ++k) {
+        mdl::AccessoryKey* keys = app->AccessoryKeys(k);
+        if (keys != nullptr) {
+            for (std::size_t i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
+                keys[i].selected = 0;
             }
         }
     }
@@ -220,7 +217,7 @@ void IdentityCtor(void* obj);                                    // VA 0x004C46F
 static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
     const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCURSEL, 0, 0);
     std::int32_t found = -1;
-    for (int i = 0; i < 0xFF; ++i) {
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i) {
         mdl::AccessoryRecord* acc = app->AccessorySlot(i);
         if (acc != nullptr && static_cast<int>(acc->order) == static_cast<int>(sel)) {
             found = i;
@@ -261,15 +258,16 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
         ::operator delete(app->AccessoryKeys(found));
         app->AccessoryKeys(found) = nullptr;
     }
-    // fresh 0x927C0 frame blob with an identity frame seeded
+    // Recreate the accessory timeline with the original frame-zero defaults.
     app->SceneModified() = 1;
-    unsigned char* blob = static_cast<unsigned char*>(::operator new(0x927C0));
-    app->AccessoryKeys(found) = reinterpret_cast<mdl::AccessoryKey*>(blob);
-    memset(blob, 0, 0x927C0);
-    blob[0x0C] = 1;
-    *reinterpret_cast<std::int32_t*>(blob + 0x10) = -1;
-    *reinterpret_cast<float*>(blob + 0x34) = 1.0f;
-    *reinterpret_cast<float*>(blob + 0x38) = 1.0f;
+    auto* keys = static_cast<mdl::AccessoryKey*>(
+        ::operator new(mdl::kTimelineKeyCapacity * sizeof(mdl::AccessoryKey)));
+    app->AccessoryKeys(found) = keys;
+    memset(keys, 0, mdl::kTimelineKeyCapacity * sizeof(*keys));
+    keys[0].visible = 1;
+    keys[0].parentModel = -1;
+    keys[0].scale = 1.0f;
+    keys[0].opacity = 1.0f;
     // combo rebuild: 0x1D7 select = oldSel, 0x1B2 index shifted
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_DELETESTRING,
                  static_cast<WPARAM>(sel), 0);
@@ -277,7 +275,7 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
                  static_cast<WPARAM>(sel + 4), 0);
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, 0, 0);
     // fix indices above the deleted one
-    for (int i = 0; i < 0xFF; ++i) {
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i) {
         mdl::AccessoryRecord* p = app->AccessorySlot(i);
         if (p != nullptr && static_cast<int>(p->order) > oldSel) {
             --p->order;
@@ -285,7 +283,7 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
     }
     // find the first slot with index 0 (new selection)
     std::int32_t firstFree = 0x100;
-    for (int i = 0; i < 0xFF; ++i) {
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i) {
         mdl::AccessoryRecord* p = app->AccessorySlot(i);
         if (p != nullptr && p->order == 0) {
             firstFree = i;

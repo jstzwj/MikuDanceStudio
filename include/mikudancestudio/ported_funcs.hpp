@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <cstdio>
 
+class btRigidBody;
+
 namespace mikudancestudio {
 
 class MMDApp;
@@ -28,9 +30,16 @@ struct BoneClipboardRecord;
 struct MorphClipboardRecord;
 struct IkClipboardState;
 struct SelectorClipboardState;
+struct CameraClipboardRecord;
+struct LightClipboardRecord;
+struct ShadowClipboardRecord;
+struct GravityClipboardRecord;
+struct AccessoryClipboardKey;
 }
+struct RigidBodyCreationResult;
 struct PathResolutionWorkspace;
 struct DShowRecorder;
+struct WaveAudioContext;
 class D3DRenderer;  // d3d_wrapper.hpp (the "0x1D574" render/locale object)
 class PhysicsScene; // physics_scene.hpp (the "0x48" physics scene wrapper)
 
@@ -56,7 +65,7 @@ wchar_t* ExtractDirFromPath(wchar_t* destination, const wchar_t* fullPath);
 
 // ---- subsystem init targets (bodies pending; offsets in offsets.hpp) -----
 void RendererInit(D3DRenderer* renderer);             // VA 0x00406D40 (locale/font)
-void InitAudioContext(void* sub);                     // VA 0x004C2450
+void InitAudioContext(WaveAudioContext* audio);       // VA 0x004C2450
 void InitDShowRecorder(DShowRecorder* recorder);      // VA 0x00408EA0
 void InitAccessoryRecord(void* sub);                  // VA 0x004C4760
 bool InitAxisMesh(MMDApp* app);                       // VA 0x004C5150
@@ -74,58 +83,62 @@ void LoadModelFile(MMDApp* app, const wchar_t* path); // VA 0x00460430 (.pmd/.pm
 void LoadAccessoryFile(const wchar_t* path);          // VA 0x00460B30 (.x)
 
 // ---- model object chain (0x460430 -> 0x4A8DC0 -> 0x4BF3E0) ---------------
-void ModelInitDefaults(unsigned char* model);   // VA 0x004A8DC0
-void ModelInitMorphSlots(unsigned char* model); // VA 0x004A89B0
-bool ModelLoadPMD(unsigned char* model, HWND hwnd, const wchar_t* path, D3DRenderer* sub, int a5,
+void ModelInitDefaults(mdl::ModelRecord* model);   // VA 0x004A8DC0
+void ModelInitMorphSlots(mdl::ModelRecord* model); // VA 0x004A89B0
+bool ModelLoadPMD(mdl::ModelRecord* model, HWND hwnd, const wchar_t* path, D3DRenderer* sub, int a5,
                   std::uint8_t a6, std::uint8_t a7, PhysicsScene* a8,
                   PathResolutionWorkspace& paths); // VA 0x004BF3E0
 // a6 = message-box gate (constant 1 at 0x460430), a7 = EnglishUI flag
 // (stored to model+12740), a8 = 0x048 pointer *(app+0x9EDB0), typed as
 // PhysicsScene* (stored to model+60 - the physics scene wrapper).  Full
 // arg map in pmd_load.cpp header.
-bool LoadPMX(unsigned char* model, D3DRenderer* sub, std::uint8_t showInfo, std::uint8_t englishUI,
-             PathResolutionWorkspace& paths, int fh);          // VA 0x004B77E0
-void ModelDispose(unsigned char* model);                       // VA 0x0048F830
-void DisposeAccessory(void* accessory);                        // VA 0x004C4700
-void InitBoneSortOrder(unsigned char* model);                  // VA 0x00490070
-void PostLoadInit(unsigned char* model);                       // VA 0x0049C850
-bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub); // 0x4032B0
-void ModelKinematicSync(unsigned char* model);                 // VA 0x004B22F0
-void ModelDynamicReseat(unsigned char* model);                 // VA 0x004B3460
-void ModelPhysicsReadback(unsigned char* model);               // VA 0x004B25D0
+bool LoadPMX(mdl::ModelRecord* model, D3DRenderer* sub, std::uint8_t showInfo,
+             std::uint8_t englishUI, PathResolutionWorkspace& paths, int fh); // VA 0x004B77E0
+void ModelDispose(mdl::ModelRecord* model);                                   // VA 0x0048F830
+void DeleteModel(mdl::ModelRecord* model, int freeFlag);                      // VA 0x0040A710
+void DisposeAccessory(void* accessory);                                       // VA 0x004C4700
+void InitBoneSortOrder(mdl::ModelRecord* model);                              // VA 0x00490070
+void PostLoadInit(mdl::ModelRecord* model);                                   // VA 0x0049C850
+bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub);                // 0x4032B0
+// Apply the selected physics view mode to Bullet flags, independently of pose synchronization.
+void ApplyModelBonePhysicsMode(mdl::ModelRecord* model, int mode); // VA 0x004B2210
+void ModelKinematicSync(mdl::ModelRecord* model);                  // VA 0x004B22F0
+void ModelDynamicReseat(mdl::ModelRecord* model);                  // VA 0x004B3460
+void ModelPhysicsReadback(mdl::ModelRecord* model);                // VA 0x004B25D0
 void PhysicsFrame(MMDApp* app, unsigned char selActive); // FrameDriver physics section 0x46F0D0..
 void PlaybackCatchup(MMDApp* app, unsigned char selActive);
 // FrameDriver playback section 0x46EEE0..
 void PlaybackPoseAdvance(MMDApp* app, int advance); // VA 0x004175A0
-void InitModelTrackCursors(unsigned char* model, float cursor,
+void InitModelTrackCursors(mdl::ModelRecord* model, float cursor,
                            int physicsMode); // VA 0x004A2CD0
-void AdvanceModelKeyframes(unsigned char* model, float cursor,
+void AdvanceModelKeyframes(mdl::ModelRecord* model, float cursor,
                            int physicsMode); // VA 0x004A31D0
-float BoneEase(unsigned char* model, int channel, int keyIdx,
+float BoneEase(const mdl::ModelRecord* model, int channel, int keyIdx,
                float t); // VA 0x004A05A0 (VMD easing)
-void NotifyBonePhysicsMode(unsigned char* model, int boneIdx,
+void NotifyBonePhysicsMode(mdl::ModelRecord* model, int boneIdx,
                            unsigned char mode); // VA 0x00499B50
 int SeekModelFrame(mdl::ModelRecord& model, int frame,
-                   int physicsMode); // VA 0x004B4260 (frame seek)
-void FinishAviRecord(MMDApp* app);   // VA 0x00464A00
-                                     // (recording-end epilogue; full port)
-void StopPlayback(MMDApp* app);      // VA 0x004341E0
-                                     // (playback-end UI restore; full port)
-void CloseDataFile(void* file);      // VA 0x004C2680 (ui_refresh.cpp)
+                   int physicsMode);         // VA 0x004B4260 (frame seek)
+void FinishAviRecord(MMDApp* app);           // VA 0x00464A00
+                                             // (recording-end epilogue; full port)
+void StopPlayback(MMDApp* app);              // VA 0x004341E0
+                                             // (playback-end UI restore; full port)
+void CloseDataFile(WaveAudioContext* audio); // VA 0x004C2680 (ui_refresh.cpp)
 // WAV open/play chain of the 0x25C audio context (src/media/wave_audio.cpp).
 // WaveStartPlayback supersedes the old void 0x4C2760(void*) stub decl
 // (that stub body has since been deleted from stubs.cpp).
-void WaveCtxReset(void* obj);                         // VA 0x004C2660
-bool WaveFindDataChunk(void* obj, FILE* stream);      // VA 0x004C26F0
-bool WaveStartPlayback(void* obj);                    // VA 0x004C2760
-bool WaveStreamRead(void* obj, void* buf, int bytes); // VA 0x004C2960
-bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2,
+void WaveCtxReset(WaveAudioContext* audio);                         // VA 0x004C2660
+bool WaveFindDataChunk(WaveAudioContext* audio, FILE* stream);      // VA 0x004C26F0
+bool WaveStartPlayback(WaveAudioContext* audio);                    // VA 0x004C2760
+bool WaveStreamRead(WaveAudioContext* audio, void* buf, int bytes); // VA 0x004C2960
+bool WaveStreamFeed(WaveAudioContext* audio, void* buf, int bytes, void* buf2,
                     int bytes2); // VA 0x004C2C90
-bool WaveLoadFile(void* obj, const wchar_t* path,
-                  PathResolutionWorkspace& paths);  // VA 0x004C2F70
-void SetFrameNormalized(int v);                     // VA 0x004C2B80 (ui_timeline_gfx.cpp)
-void TimelineDrawTicks(int frameOffset, int width); // VA 0x004C2A00 (ui_timeline_gfx.cpp)
-void WaveSeekAndFeed(void* obj, double seconds);    // VA 0x004C34A0
+bool WaveLoadFile(WaveAudioContext* audio, const wchar_t* path,
+                  PathResolutionWorkspace& paths);           // VA 0x004C2F70
+void SetFrameNormalized(int v);                              // VA 0x004C2B80 (ui_timeline_gfx.cpp)
+void TimelineDrawTicks(int frameOffset, int width);          // VA 0x004C2A00 (ui_timeline_gfx.cpp)
+void WaveRestartAt(WaveAudioContext* audio, double seconds); // VA 0x004C3530
+void WaveSeekAndFeed(WaveAudioContext* audio, double seconds); // VA 0x004C34A0
 
 // ---- edit-commit chain (ui_edit_commit.cpp) -------------------------------
 void CommitEditControl(MMDApp* app, HWND edit);        // VA 0x00463640
@@ -142,45 +155,42 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND, UINT, WPARAM, LPARAM); // VA 0x0044C
 INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK GravitySettingDlgProc(HWND, UINT, WPARAM, LPARAM);
-void SetPhysicsMode(unsigned char* model, int a2, unsigned char* const* modelSlots,
-                    int a4);                 // VA 0x004A9220
-void ModelApplyMorphs(unsigned char* model); // VA 0x004970B0
-void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
+void SetPhysicsMode(mdl::ModelRecord* model, int afterPhysics, mdl::ModelRecord* const* modelSlots,
+                    int physicsMode);           // VA 0x004A9220
+void ModelApplyMorphs(mdl::ModelRecord* model); // VA 0x004970B0
+void UpdateModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model,
                               const float frameWorld[16]); // VA 0x004B0C50
-void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float sy, float sz,
-                     const float* matrix, int mode, float mass, float dampLin, float dampRot,
-                     float restitution, float friction, char group,
+void CreateRigidBody(PhysicsScene* scene, RigidBodyCreationResult& out, int shape, float sx,
+                     float sy, float sz, const float* matrix, int mode, float mass, float dampLin,
+                     float dampRot, float restitution, float friction, char group,
                      std::uint16_t mask); // VA 0x004064F0
-int CreatePhysJoint(PhysicsScene* scene, void* bodyA, void* bodyB, float ax, float ay, float az,
-                    float aq0, float aq1, float aq2, float aq3, float bx, float by, float bz,
-                    float bq0, float bq1, float bq2, float bq3, float linUpper0, float linUpper1,
-                    float linUpper2, float linLower0, float linLower1, float linLower2,
-                    float angUpper0, float angUpper1, float angUpper2, float angLower0,
-                    float angLower1, float angLower2, float spring0, float spring1, float spring2,
-                    float spring3, float spring4,
+int CreatePhysJoint(PhysicsScene* scene, btRigidBody* bodyA, btRigidBody* bodyB, float ax, float ay,
+                    float az, float aq0, float aq1, float aq2, float aq3, float bx, float by,
+                    float bz, float bq0, float bq1, float bq2, float bq3, float linUpper0,
+                    float linUpper1, float linUpper2, float linLower0, float linLower1,
+                    float linLower2, float angUpper0, float angUpper1, float angUpper2,
+                    float angLower0, float angLower1, float angLower2, float spring0, float spring1,
+                    float spring2, float spring3, float spring4,
                     float spring5); // VA 0x00406010
 void TransformJointPointOriginal(float out[3], const float point[3], const float matrix[16]);
 // Joint limit-sphere radius bound shared by the PMD/PMX loaders (returns
 // distA + distB + the limit norm; see physics_create.cpp for the x64 anchors).
 float JointRadiusBound(const float limits[6], float distA, float distB);
-void BoneFrameTransform(unsigned char* model, unsigned char a2, int a3,
-                        unsigned char* const* modelSlots,
-                        int a5); // VA 0x00493A60 (per-frame bone
-                                 // transform updater; a2 channel,
-                                 // a3 frame/layer, a4 slot array,
-                                 // a5 physics mode)
+void BoneFrameTransform(mdl::ModelRecord* model, unsigned char afterPhysics, int layer,
+                        mdl::ModelRecord* const* modelSlots,
+                        int physicsMode); // VA 0x00493A60 (per-layer bone transform/IK update)
 void ArmBoneTransformIkProbe();
 
 // ---- model-load path helpers --------------------------------------------
 const wchar_t* ResolveUserFilePath(PathResolutionWorkspace& paths,
                                    const wchar_t* path); // VA 0x4089F0
-bool ResolveAnsiUserFile(unsigned char* sub, const char* mbName, wchar_t* wideOut,
+bool ResolveAnsiUserFile(D3DRenderer* renderer, const char* mbName, wchar_t* wideOut,
                          rsize_t sizeWords,
                          PathResolutionWorkspace& paths); // VA 0x407BA0
-errno_t ConvertMaterialName(unsigned char* sub, const char* mbName, wchar_t* wideOut,
+errno_t ConvertMaterialName(D3DRenderer* renderer, const char* mbName, wchar_t* wideOut,
                             rsize_t sizeWords,
-                            const wchar_t* dirW);         // VA 0x407DA0
-int LoadTextureShared(unsigned char* sub, wchar_t* path); // VA 0x407490
+                            const wchar_t* dirW);            // VA 0x407DA0
+int LoadTextureShared(D3DRenderer* renderer, wchar_t* path); // VA 0x407490
 void FillPanelBottom(HDC, int x, int y, int w, int h, std::uint32_t color, std::uint32_t edge,
                      int flag);         // VA 0x40DF10
 void PostModelReload2(MMDApp*);         // VA 0x0040D940 (ported)
@@ -225,8 +235,15 @@ void HandleLButtonUp(MMDApp*);                          // VA 0x0044A9A0
 void HandleLButtonDblClk(MMDApp*);                      // VA 0x0044AAA0
 void HandleMouseActivate(MMDApp*);                      // VA 0x004632F0
 void HandleMouseWheel(int wheelDelta);                  // VA 0x0044BD70
-void RebuildTimelineTrackPanel(MMDApp*);                // VA 0x0042F1E0
-void InvalidateSelectionReadouts(MMDApp*);              // VA 0x0040D070
+void DispatchSeparateWindowCommand(MMDApp*, unsigned short id); // VA 0x004620A0
+void RefreshAfterFrameApply(MMDApp*);                           // VA 0x00432FA0
+void ScrollDisplayBoneIntoView(MMDApp*, int boneIndex);         // VA 0x0041A280
+void SelectDisplayBone(MMDApp*, int boneIndex);                 // VA 0x00438CD0
+void SelectPreviousDisplayBone(MMDApp*);                        // VA 0x00438D60
+void SelectNextDisplayBone(MMDApp*);                            // VA 0x00438F50
+void RefreshTimelineScrollbar(MMDApp*, int clientHeight);
+void RebuildTimelineTrackPanel(MMDApp*);   // VA 0x0042F1E0
+void InvalidateSelectionReadouts(MMDApp*); // VA 0x0040D070
 
 // ---- model queries used by the effect-API exports -------------------------
 int GetPmdNum(MMDApp* app); // VA 0x0042A110
@@ -241,41 +258,51 @@ bool InitToonTextures(MMDApp* app);     // VA 0x00424DC0 (reclassified: toon, no
 bool InitSceneFontTexture(MMDApp* app); // VA 0x0042AE80
 
 // ---- frame driver sub-phases (0x0046B090; bodies pending) -----------------
-void MouseInteractionBegin(MMDApp*);        // mouse-delta snapshot
-void MouseInteractionEnd(MMDApp*);          // mouse position update
-void ModeRotate(MMDApp*, int axis);         // modes 1..3 view-axis bone rotation
-void ModeTranslate(MMDApp*, int axis);      // modes 4..6 local-axis bone rotation
-void ModeScale(MMDApp*);                    // mode 7 horizontal bone move
-void ModeBoneRotate(MMDApp*, int part);     // modes 8..9 vertical/combined move
-void ModePhysicsBody(MMDApp*, int axis);    // modes 10..12 local-axis/record move
-void ModeCameraAdjust(MMDApp*, int part);   // modes 13..15
-void ModeAngleAdjust(MMDApp*, int part);    // modes 16..18
-void BoneLocalAxes(MMDApp*, float out[16]); // VA 0x0040E670
-void BoneEditModes(MMDApp*);                // VA 0x475A6E..0x4786FA
-void PushBoneEditUndo(MMDApp*);             // VA 0x0042D6E0
+void MouseInteractionBegin(MMDApp*);                        // mouse-delta snapshot
+void MouseInteractionEnd(MMDApp*);                          // mouse position update
+void ModeRotate(MMDApp*, int axis);                         // modes 1..3 view-axis bone rotation
+void ModeTranslate(MMDApp*, int axis);                      // modes 4..6 local-axis bone rotation
+void ModeScale(MMDApp*);                                    // mode 7 horizontal bone move
+void ModeBoneRotate(MMDApp*, int part);                     // modes 8..9 vertical/combined move
+void ModePhysicsBody(MMDApp*, int axis);                    // modes 10..12 local-axis/record move
+void ModeCameraAdjust(MMDApp*, int part);                   // modes 13..15
+void ModeAngleAdjust(MMDApp*, int part);                    // modes 16..18
+void BoneLocalAxes(const mdl::ModelRecord*, float out[16]); // VA 0x0040E670
+void BoneEditModes(MMDApp*);                                // VA 0x475A6E..0x4786FA
+void PushBoneEditUndo(MMDApp*);                             // VA 0x0042D6E0
 // Select a timeline track, clear the other row selections, and refresh the
 // panel only when the selection changes (original VA 0x00440AC0).
 void SelectTimelineTrack(GlobalTimelineTrack track);
 void SelectAccessoryTimelineTrack(int slot);
-void TimelineAdvance(MMDApp*);                        // VA 0x00460130
-void ReloadModels(MMDApp*);                           // VA 0x0042E640
-void PostModelReload(MMDApp*);                        // VA 0x0041A650 (0x41A650 was an
-                                                      //  alias of this - decl removed)
-void SelectionReeval(MMDApp*);                        // VA 0x00430510
-void PostDeviceReset(MMDApp*);                        // VA 0x00440DB0
-void UpdateBoneFrames(MMDApp*);                       // VA 0x00433A40
-void RenderFrameScene(MMDApp*);                       // VA 0x0046DC00..0x0046E787
-bool RecordingReadbackPass(MMDApp*);                  // VA 0x0046E787..0x0046EFB7
-ULONG DownsampleCaptureSurface(MMDApp*);              // VA 0x00425970
-void DrawAccessoryDebug(MMDApp*);                     // VA 0x00420F30
-void DrawPhysicsCollisionDebug(PhysicsScene*);        // VA 0x00406950
-void DrawBoneOperationAxis(MMDApp*, const float[16]); // VA 0x0042DB10
-void SetupFrameWorldTransform(MMDApp*);               // VA 0x0046B185..0x0046BC20
-bool UseEffectModelRenderer(MMDApp*);                 // gate at VA 0x0046DD9A
-void RenderShadowMap(MMDApp*, const float[16]);       // VA 0x00426CD0
-void RenderModelsFixed(MMDApp*);                      // VA 0x00425D20
-void RenderModelsEffect(MMDApp*, const float[16]);    // VA 0x004277E0
-void RenderAccessoriesFixed(MMDApp*);                 // VA 0x004C4A10
+void TimelineAdvance(MMDApp*);                                // VA 0x00460130
+void ReloadModels(MMDApp*);                                   // VA 0x0042E640
+void PostModelReload(MMDApp*);                                // VA 0x0041A650 (0x41A650 was an
+                                                              //  alias of this - decl removed)
+void SelectionReeval(MMDApp*);                                // VA 0x00430510
+void CurvePanelRepaint(MMDApp*);                              // x64 RVA 0x62BB0
+void DragInterpolationControlPoint(MMDApp*);                  // VA 0x00416280
+void InitSelectNavDialog(MMDApp*, HWND);                      // VA 0x00466630
+void SyncSelectAttachCombo(MMDApp*, HWND);                    // VA 0x00461C20
+void RebuildTargetBoneList(MMDApp*, HWND, int keepSelection); // VA 0x0043D2E0
+void CommitTargetBonePick(MMDApp*, HWND);                     // VA 0x0043D560
+void RefreshSelectNavDisplay(MMDApp*, HWND);                  // VA 0x004250C0
+void ApplyBoneAttach(MMDApp*, HWND);                          // VA 0x0043D610
+void ResetModelSelection(MMDApp*);                            // VA 0x004256C0
+void StepFrame(MMDApp* app, bool forward);                    // VA 0x00430F20 / 0x004312E0
+void PostDeviceReset(MMDApp*);                                // VA 0x00440DB0
+void UpdateBoneFrames(MMDApp*);                               // VA 0x00433A40
+void RenderFrameScene(MMDApp*);                               // VA 0x0046DC00..0x0046E787
+bool RecordingReadbackPass(MMDApp*);                          // VA 0x0046E787..0x0046EFB7
+ULONG DownsampleCaptureSurface(MMDApp*);                      // VA 0x00425970
+void DrawAccessoryDebug(MMDApp*);                             // VA 0x00420F30
+void DrawPhysicsCollisionDebug(PhysicsScene*);                // VA 0x00406950
+void DrawBoneOperationAxis(MMDApp*, const mdl::ModelRecord*, const float[16]); // VA 0x0042DB10
+void SetupFrameWorldTransform(MMDApp*);            // VA 0x0046B185..0x0046BC20
+bool UseEffectModelRenderer(MMDApp*);              // gate at VA 0x0046DD9A
+void RenderShadowMap(MMDApp*, const float[16]);    // VA 0x00426CD0
+void RenderModelsFixed(MMDApp*);                   // VA 0x00425D20
+void RenderModelsEffect(MMDApp*, const float[16]); // VA 0x004277E0
+void RenderAccessoriesFixed(MMDApp*);              // VA 0x004C4A10
 void RenderAccessoriesFixedRange(MMDApp*, int, int);
 void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp*);
 void RenderAccessoriesShadow(MMDApp*); // VA 0x004C52D0
@@ -322,34 +349,39 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName); // VA 0x00434B60 (wide
                                                          //  path, _wsopen_s per x64
                                                          //  0x7FF7CB48D1B7)
 void PanelPaint(MMDApp* app);                            // VA 0x00414610 (ui_panel_paint.cpp)
-int ResetMorphKeyCursor(unsigned char* model);           // VA 0x004A49A0
-bool RegisterBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec, int frameOffset,
+int MarkKeyTrackRangeByName(mdl::ModelRecord* model, std::uint32_t from, std::uint32_t to,
+                            const char* name);    // VA 0x004A27F0
+int ResetMorphKeyCursor(mdl::ModelRecord* model); // VA 0x004A49A0
+bool RegisterBoneKey(mdl::ModelRecord* model, mdl::BoneClipboardRecord& rec, int frameOffset,
                      unsigned char useSelected); // 0x0049D880,
                                                  //  (VMD/paste buffer)
-bool RegisterMirroredBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec,
-                             int frameOffset);             // 0x0049E310
-void ResetBoneKeyCursor(unsigned char* model);             // VA 0x004A4940
-void AppendBoneKeyToUndo(unsigned char* model, int index); // VA 0x0049D410, was
-                                                           // 0x49D410
+bool RegisterMirroredBoneKey(mdl::ModelRecord* model, mdl::BoneClipboardRecord& rec,
+                             int frameOffset);                // 0x0049E310
+void ResetBoneKeyCursor(mdl::ModelRecord* model);             // VA 0x004A4940
+void AppendBoneKeyToUndo(mdl::ModelRecord* model, int index); // VA 0x0049D410, was
+                                                              // 0x49D410
 // VA 0x0049D4D0 - auto-smoothed interpolation rebuild (model_keyframe_edit).
-void RebuildBoneKeyInterpolation(unsigned char* model, int index, int lane);
+void RebuildBoneKeyInterpolation(mdl::ModelRecord* model, int index, int lane);
 
-int RegisterBonePoseAtFrame(unsigned char* model, int boneIdx, std::uint32_t frame,
+int RegisterBonePoseAtFrame(mdl::ModelRecord* model, int boneIdx, std::uint32_t frame,
                             int mode); // VA 0x004B38A0,
 
-void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode);
+void RegisterSelectedBoneKeys(mdl::ModelRecord* model, int frame, int mode);
 // VA 0x004C2080
-void ResetDisplayKeyCursor(unsigned char* model); // VA 0x004A4A00
-void DeleteMarkedModelKeys(unsigned char* model, int frame);
+void ResetDisplayKeyCursor(mdl::ModelRecord* model); // VA 0x004A4A00
+void DeleteMarkedModelKeys(mdl::ModelRecord* model, int frame);
 // VA 0x004A09E0
-void UndoModelEdit(unsigned char* model, std::int32_t& frame);
+void UndoModelEdit(mdl::ModelRecord* model, std::int32_t& frame);
 // VA 0x004A1870
-void RedoModelEdit(unsigned char* model, std::int32_t& frame);
+void RedoModelEdit(mdl::ModelRecord* model, std::int32_t& frame);
 // VA 0x004A2490
+void SnapshotPoseBeforeFrameChange(mdl::ModelRecord* model, int frame); // VA 0x004A0080
+void SnapshotSelectedKeysForUndo(mdl::ModelRecord* model, int frame);   // VA 0x004A1510
+void SyncModelEditControls(mdl::ModelRecord* model);                    // VA 0x004A02C0
 // Exact 0x43F15E..0x43F60D inline block used by the frame-range scaler:
 // convert the deletion snapshot to type 4, then open the paired type-2
 // reinsertion snapshot with room for three 64-byte bone-key records per key.
-void BeginRangeScaleBoneUndo(unsigned char* model, int frame, int transformedKeyCount);
+void BeginRangeScaleBoneUndo(mdl::ModelRecord* model, int frame, int transformedKeyCount);
 // Global-track key registrars (0x410AA0 camera / 0x411900 light /
 // 0x4120B0 self-shadow / 0x412DF0 gravity): real bodies in
 // src/model/global_key_registration.cpp (sorted 10000-record list insert;
@@ -359,11 +391,11 @@ void BeginRangeScaleBoneUndo(unsigned char* model, int frame, int transformedKey
 // overflowAdvertised: point count printed in the table-full error. The paste path (this function's x64 prototype
 // at 0x410AA0) prints 10000; the live camera registrar (0x410560/x64 0x7FF7CB47B18D) prints
 // 600000. The original values differ between the two sites, hence the parameter.
-int RegisterCameraKey(MMDApp* app, const void* rec,
-                      int overflowAdvertised = 10000);   // VA 0x00410AA0
-int RegisterLightKey(MMDApp* app, const void* rec);      // VA 0x00411900
-int RegisterSelfShadowKey(MMDApp* app, const void* rec); // VA 0x004120B0
-int RegisterGravityKey(MMDApp* app, const void* rec);    // VA 0x00412DF0
+int RegisterCameraKey(MMDApp* app, const mdl::CameraClipboardRecord& rec,
+                      int overflowAdvertised = 10000);                         // VA 0x00410AA0
+int RegisterLightKey(MMDApp* app, const mdl::LightClipboardRecord& rec);       // VA 0x00411900
+int RegisterSelfShadowKey(MMDApp* app, const mdl::ShadowClipboardRecord& rec); // VA 0x004120B0
+int RegisterGravityKey(MMDApp* app, const mdl::GravityClipboardRecord& rec);   // VA 0x00412DF0
 // Track appliers (src/model/track_apply.cpp)
 void RegisterGravityKeyCurrent(MMDApp* app, std::int32_t frame); // VA 0x00412B20
 void ApplyGravityTrack(MMDApp* app);                             // VA 0x00412330
@@ -382,7 +414,8 @@ INT_PTR CALLBACK DialogFuncStub(HWND hwnd, UINT msg, WPARAM wp,
 // ---- v2 loader misc dependencies (decls; bodies elsewhere) ----------------
 void* ConstructArrayElements(void* block, std::uint32_t elementSize, std::uint32_t count,
                              void* constructor);
-int PasteAccessoryKeyRecord(MMDApp* app, void* record, int useSelectedSlot);
+int PasteAccessoryKeyRecord(MMDApp* app, const mdl::AccessoryClipboardKey& record,
+                            int useSelectedSlot);
 void IdentityCtor(void* obj); // VA 0x004C46F0
                               // (original: identity ctor
                               //  `return this;`; callers
@@ -398,24 +431,24 @@ void SyncAccessoryEditPanel(MMDApp* app);      // VA 0x004134E0
 void RefreshSelfShadowPanel(MMDApp* app); // VA 0x00411B90
 void RefreshLightPanel(MMDApp* app);      // VA 0x00411070
 void TraceSceneLightState(MMDApp* app, const char* stage);
-void RelayoutSidebarControls(MMDApp* app);                // VA 0x00442EB0
-void SetModelColor(MMDApp* model, int r, int g, int b);   // VA 0x004A4850
-void SeekSelectedModelToCurrentFrame(MMDApp* app);        // ,
-                                                          // VA 0x004220C0 (model_frame_seek.cpp)
+void RelayoutSidebarControls(MMDApp* app);                        // VA 0x00442EB0
+void SetModelColor(mdl::ModelRecord* model, int r, int g, int b); // VA 0x004A4850
+void SeekSelectedModelToCurrentFrame(MMDApp* app);                // ,
+// VA 0x004220C0 (model_frame_seek.cpp)
 void SaveEnhancedModel(MMDApp* app, const wchar_t* path); // ,
                                                           // VA 0x0041EC10 (enhance_model_io.cpp)
-void ReloadTextureCache(void* renderer);                  // VA 0x004076E0
+void ReloadTextureCache(D3DRenderer* renderer);           // VA 0x004076E0
                                                           // (enhance_model_io.cpp)
-bool RegisterMorphKeyFromRecord(unsigned char* model, const mdl::MorphClipboardRecord& rec,
-                                int frameOffset);                         // VA 0x0049F190
-void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frame); // 0x0049EEE0
-bool RegisterDisplayKeyFromRecord(unsigned char* model, int frame, unsigned char view, int ikCount,
-                                  const mdl::IkClipboardState* ikEntries, int selCount,
+bool RegisterMorphKeyFromRecord(mdl::ModelRecord* model, const mdl::MorphClipboardRecord& rec,
+                                int frameOffset);                            // VA 0x0049F190
+void RegisterMorphKeyCurrent(mdl::ModelRecord* model, int morph, int frame); // 0x0049EEE0
+bool RegisterDisplayKeyFromRecord(mdl::ModelRecord* model, int frame, unsigned char view,
+                                  int ikCount, const mdl::IkClipboardState* ikEntries, int selCount,
                                   const mdl::SelectorClipboardState* selEntries,
-                                  int frameOffset);              // 0x0049F8C0
-void RegisterDisplayKeyCurrent(unsigned char* model, int frame); // 0x0049F480
-void RegisterAccessoryKey(MMDApp* app, int frame, int slot);     // 0x00413CB0
-void DeleteMarkedKeyframes(MMDApp* app);                         // VA 0x004316B0
+                                  int frameOffset);                 // 0x0049F8C0
+void RegisterDisplayKeyCurrent(mdl::ModelRecord* model, int frame); // 0x0049F480
+void RegisterAccessoryKey(MMDApp* app, int frame, int slot);        // 0x00413CB0
+void DeleteMarkedKeyframes(MMDApp* app);                            // VA 0x004316B0
 void SaveVmdFile(const wchar_t* path);             // VA 0x00419370 (src/io/vmd_save.cpp)
 void LoadAviFile(MMDApp* app);                     // VA 0x00433250 (real, src/media/media_load.cpp)
 void LoadBackgroundPicture(MMDApp* app);           // VA 0x004337A0 (real; the
@@ -456,9 +489,10 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive);
 // 0x7FF7CB44A3EC): depth-map drawing request + menu 0x124 enabled/disabled state, called at the end of
 // the selActive detection block in frame_driver.cpp.
 void ManageKinectRecordGate(MMDApp* app, unsigned char selActive);
-bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame); // sub_7FF7CB4F2EB0
-bool RegisterTraceBoneKey(unsigned char* model, unsigned boneIdx,     // sub_7FF7CB4F23E0
-                          int slot, int mode, unsigned frame);
+bool RegisterKinectPoseCapture(mdl::ModelRecord* model, unsigned frame); // x64 0x7FF7CB4F2EB0
+void ModelVertexHistoryPush(mdl::ModelRecord* model, int samples);
+char ModelStandardPoseSetup(mdl::ModelRecord* model, bool recordEnable,
+                            unsigned char mirrorLeftRight, unsigned char skeletonFlag);
 // ---- VSQ loader / auto lipsync (src/io/vsq_load.cpp) --------------------
 void LoadVsqFile(MMDApp* app, const wchar_t* path); // VA 0x00435FE0
 // big-endian readers used by the SMF walkers (src/model/model_query_helpers.cpp)

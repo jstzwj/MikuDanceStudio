@@ -98,7 +98,7 @@ void TraceOperationInput(MMDApp* app, const char* phase) {
         return;
     std::uint32_t quaternion[4]{};
     const unsigned slot = app->state.slotIdx;
-    auto* model = app->ModelSlot(slot);
+    auto* model = mdl::ModelBytes(app->ModelSlot(slot));
     if (model != nullptr) {
         const int selected = mikudancestudio::mdl::Mdl(model)->selectedBone;
         auto* bones = mikudancestudio::mdl::Bones(model);
@@ -403,12 +403,12 @@ void FrameDriver(MMDApp* app) {
         case ViewportDragMode::ViewAxisRotateZ:
             ModeRotate(app, static_cast<int>(mode) - 1);
             break;
-        case ViewportDragMode::LocalAxisTranslateX:
-        case ViewportDragMode::LocalAxisTranslateY:
-        case ViewportDragMode::LocalAxisTranslateZ:
+        case ViewportDragMode::AxisRotateX:
+        case ViewportDragMode::AxisRotateY:
+        case ViewportDragMode::AxisRotateZ:
             ModeTranslate(app, static_cast<int>(mode) - 4);
             break;
-        case ViewportDragMode::BoneScale:
+        case ViewportDragMode::BoneMoveHorizontal:
             ModeScale(app);
             break;
         case ViewportDragMode::BoneMoveVertical:
@@ -442,14 +442,13 @@ void FrameDriver(MMDApp* app) {
     MouseInteractionEnd(app);
 
     // ---- 4. selection callback (0x46DCA4..0x46DCCD) ---------------------
-    unsigned char selActive = 0;
+    bool selActive = false;
     if (s.state.frameStepPlayback == 0 &&  // 0x9ED90
         s.state.depthDeviceEnabled != 0) { // 0xA03B8
         // 0xA03D4 = the OpenNI is-tracking callback slot (literal was a
         // +0x80 decimal slip that landed mid-cameraAttachmentBasis)
         // ?OpenNIIsTracking@@YGXPA_N@Z - void __stdcall OpenNIIsTracking(bool*)
-        using OpenNIIsTrackingFn = void(__stdcall*)(unsigned char*);
-        auto cb = reinterpret_cast<OpenNIIsTrackingFn>(s.OpenniTrackingCallback()); // 0xA03D4
+        auto cb = s.OpenNi().isTracking; // 0xA03D4
         if (cb != nullptr)
             cb(&selActive);
         // 0x46DCCF..0x46DD61 (x64 0x7FF7CB44A34C..0x7FF7CB44A3EC): the original

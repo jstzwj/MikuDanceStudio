@@ -332,7 +332,7 @@ void HandlePaletteChanged2(HDC hdc) {
                 DrawGlyph(app, "Playing", hdc, 20, xBase + 10, hideTop - 22, 0xFF, 0xFF, 0xFF,
                           1); // 0x42C492
             } else {
-                unsigned char* model = app->SelectedModel();
+                unsigned char* model = mdl::ModelBytes(app->SelectedModel());
                 if (model != nullptr) { // 0x42C4AD
                     const mikudancestudio::mdl::ModelRecord& record =
                         *mikudancestudio::mdl::Mdl(model);
@@ -375,7 +375,7 @@ void HandlePaletteChanged2(HDC hdc) {
             DrawGlyph(app, kJpPlaying, hdc, 20, xBase + 10, hideTop - 22, 0xFF, 0xFF, 0xFF,
                       1); // 0x42C645
         } else {
-            unsigned char* model = app->SelectedModel();
+            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
             if (model != nullptr) { // 0x42C660
                 const mikudancestudio::mdl::ModelRecord& record = *mikudancestudio::mdl::Mdl(model);
                 sprintf_s(buffer, 0x100, "%s", record.name);

@@ -34,7 +34,7 @@
 // editor): rigidScratchArray = rigid-body scratch array
 // (mdl::RigidRecord x 100000, index state.selectedRigidIndex), jointScratchArray =
 // joint scratch array (mdl::JointRecord x 100000, index state.selectedJointIndex).
-// In the scratch copies the RigidRecord::keyData slot holds the combo-box
+// In the scratch copies the RigidRecord::bodyId slot holds the combo-box
 // index (-1 = deleted slot) and JointRecord::constraint holds the joint
 // combo index; RigidRecord::noCollapse holds the *collision* mask while
 // editing (bit set = collides with group N+1; inverted back to the PMD
@@ -79,6 +79,7 @@
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/physics_scene.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 
@@ -240,13 +241,13 @@ Joint* EditJoints() {
     return static_cast<Joint*>(app->JointScratchArray());
 }
 
-// The scratch copies reuse RigidRecord::keyData as the body-list combo index
+// The scratch copies reuse RigidRecord::bodyId as the body-list combo index
 // (-1 marks a deleted slot; the original stores the plain int there).
 int BodyComboIndex(const Rigid& rb) {
-    return static_cast<int>(reinterpret_cast<std::intptr_t>(rb.keyData));
+    return static_cast<int>(rb.bodyId);
 }
 void SetBodyComboIndex(Rigid& rb, int index) {
-    rb.keyData = reinterpret_cast<void*>(static_cast<std::intptr_t>(index));
+    rb.bodyId = static_cast<std::intptr_t>(index);
 }
 // JointRecord::constraint doubles as the joint-list combo index while the
 // dialog owns the records.
@@ -573,7 +574,7 @@ LRESULT CALLBACK PhysicsEditSubclassProc(HWND hWnd, UINT msg, WPARAM wParam,
 // ---------------------------------------------------------------------------
 void InitPhysicsModelDialog(HWND hDlg) { // VA 0x0045F670
     MMDApp* app = g_Block;
-    mdl::ModelRecord* model = mdl::Mdl(app->SelectedModel());
+    mdl::ModelRecord* model = app->SelectedModel();
 
     EnableWindow(GetDlgItem(app->state.hwnd, panel::kPlayButton), FALSE);
 
@@ -966,7 +967,7 @@ void FlipPhysicsDialogPage(HWND hDlg, int bodyPage) { // VA 0x00421C20
 // ---------------------------------------------------------------------------
 void PickPivotBone(HWND hDlg) { // VA 0x00420DC0
     MMDApp* app = g_Block;
-    mdl::ModelRecord* model = mdl::Mdl(app->SelectedModel());
+    mdl::ModelRecord* model = app->SelectedModel();
     const int sel =
         static_cast<int>(SendMessageA(GetDlgItem(hDlg, kPivotBoneCombo), CB_GETCURSEL, 0, 0));
     Joint& jt = EditJoints()[app->state.selectedJointIndex];
@@ -1129,7 +1130,7 @@ void ApplyJointRecordToEdits(HWND hDlg, int idx) { // VA 0x004214A0
 void CommitPhysicsEdits(HWND hDlg) { // VA 0x004220F0
     (void)hDlg;
     MMDApp* app = g_Block;
-    mdl::ModelRecord* model = mdl::Mdl(app->SelectedModel());
+    mdl::ModelRecord* model = app->SelectedModel();
     PhysicsScene* scene = app->Physics();
     d3dx::Api& d3dx = d3dx::Get();
     Rigid* bodies = EditBodies();
@@ -1142,7 +1143,7 @@ void CommitPhysicsEdits(HWND hDlg) { // VA 0x004220F0
     ::operator delete(model->jointTable);
     model->jointTable = nullptr;
     for (std::uint32_t i = 0; i < model->rigidCount; ++i)
-        RemovePhysRigidBody(scene, static_cast<btRigidBody*>(model->rigidTable[i].body));
+        RemovePhysRigidBody(scene, model->rigidTable[i].body);
     ::operator delete(model->rigidTable);
     model->rigidTable = nullptr;
 
@@ -1188,12 +1189,12 @@ void CommitPhysicsEdits(HWND hDlg) { // VA 0x004220F0
         std::memcpy(&boneInit, linkedBone.matInit, sizeof(boneInit));
         d3dx.multiply(&mat, &mat, &boneInit);
 
-        void* bodyOut[2] = {nullptr, nullptr};
+        RigidBodyCreationResult bodyOut{};
         CreateRigidBody(scene, bodyOut, ed.shape, ed.size[0], ed.size[1], ed.size[2], &mat.m[0][0],
                         ed.mode, ed.mass, ed.linearDamping, ed.angularDamping, ed.restitution,
                         ed.friction, static_cast<char>(ed.group), ed.noCollapse);
-        dst.keyData = bodyOut[0];
-        dst.body = bodyOut[1];
+        dst.bodyId = bodyOut.id;
+        dst.body = bodyOut.body;
         SetBodyComboIndex(ed, bodyIndex);
         if (ed.mode > 0 && ed.boneIndex >= 0)
             bones[ed.boneIndex].hasRigidBody = 1;

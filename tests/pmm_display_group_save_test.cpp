@@ -27,11 +27,12 @@ int main() {
     model->boneListPos = 0x12345678;
     model->maxFrame = 0x23456789;
     std::array<mdl::DisplayGroup, 255> groups{};
-    std::array<unsigned char*, kModelSlotCount> slots{};
-    slots.back() = reinterpret_cast<unsigned char*>(model.get());
+    std::array<mdl::ModelRecord*, kModelSlotCount> slots{};
+    slots.back() = model.get();
 
     FILE* rawFile = nullptr;
-    if (tmpfile_s(&rawFile) != 0 || !rawFile) return 1;
+    if (tmpfile_s(&rawFile) != 0 || !rawFile)
+        return 1;
     const std::unique_ptr<FILE, decltype(&std::fclose)> file(rawFile, &std::fclose);
     const int fd = _fileno(file.get());
 
@@ -44,7 +45,7 @@ int main() {
 
     for (unsigned count : {0u, 1u, 255u}) {
         model->groupCount = static_cast<unsigned char>(count);
-        model->groupNames = count == 0 ? nullptr : groups.data();
+        model->displayGroups = count == 0 ? nullptr : groups.data();
         for (unsigned shift : {0u, 1u}) {
             for (bool englishNames : {false, true}) {
                 for (unsigned i = 0; i < count; ++i) {

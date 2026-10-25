@@ -29,12 +29,7 @@ namespace mikudancestudio {
 using editor::ClearModelKeyMarks;
 
 // Editor dependencies not declared by the shared interface.
-void SnapshotSelectedKeysForUndo(unsigned char* model, int frame); // VA 0x004A1510
-void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode);     // VA 0x0041ACD0
-void StepFrame(MMDApp* app, bool forward);        // VA 0x00430F20 (fwd) / 0x004312E0
-void DeleteModel(unsigned char* model, int flag); // VA 0x0040A710 model dispose
-int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from, std::uint32_t to,
-                            const char* name); // VA 0x004A27F0
+void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode); // VA 0x0041ACD0
 
 // ---------------------------------------------------------------------------
 // Helpers shared by the family.
@@ -42,7 +37,7 @@ int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from, std::uint3
 
 // Active model = slot array at this+0x780 indexed by byte this+0x910
 // (sub_47E8A0 pattern; the original re-derives it on every use).
-static unsigned char* ActiveModel(MMDApp* app) {
+static mdl::ModelRecord* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
@@ -199,7 +194,7 @@ void DeleteMarkedKeyframes(MMDApp* app) {
             }
         }
     } else {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         if (model != nullptr)
             DeleteMarkedModelKeys(model, app->state.currentFrame);
     }
@@ -218,9 +213,9 @@ void DeleteMarkedKeyframes(MMDApp* app) {
         }
         SyncAccessoryEditPanel(app);
     } else {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         if (model != nullptr) {
-            SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+            SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
         }
     }
 }
@@ -346,8 +341,8 @@ void SelectGlobalFrameRange(Key* keys, std::uint32_t from, std::uint32_t to) {
 }
 
 // First marked bone key; returns -1 when none is present.
-std::int32_t FirstSelectedBoneKey(unsigned char* model) {
-    mdl::BoneKey* keys = mdl::BoneKeys(model);
+std::int32_t FirstSelectedBoneKey(mdl::ModelRecord* model) {
+    mdl::BoneKey* keys = model->boneKeys;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
         if (keys[i].allocated != 0) {
             return i;
@@ -521,8 +516,8 @@ static void UndoKeyframeEdit(MMDApp* app, HWND hwnd) {
         return; // was: break (switch exit)
     }
     app->SceneModified() = 1;
-    unsigned char* model = ActiveModel(app);
-    mdl::ModelRecord& record = *mdl::Mdl(model);
+    mdl::ModelRecord* model = ActiveModel(app);
+    mdl::ModelRecord& record = *model;
     UndoModelEdit(model, app->state.currentFrame);
     const std::int32_t cnt = record.UndoCursor();
     if (record.undoRings[0].slots[cnt].operation == mdl::UndoOperation::Empty) {
@@ -554,8 +549,8 @@ static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
         return; // was: break (switch exit)
     }
     app->SceneModified() = 1;
-    unsigned char* model = ActiveModel(app);
-    mdl::ModelRecord& record = *mdl::Mdl(model);
+    mdl::ModelRecord* model = ActiveModel(app);
+    mdl::ModelRecord& record = *model;
     RedoModelEdit(model, app->state.currentFrame);
     if (record.UndoCursor() == record.LatestUndoCursor()) {
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
@@ -570,7 +565,7 @@ static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
     if (record.undoRings[0].slots[cnt].operation != mdl::UndoOperation::BonePose) {
         // original: sub_4B4260(ecx = model, frame = app+0x980,
         // app+0xA0CC4)
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
     }
     SetFocus(hwnd);
     app->PhysicsResetPending() = 1;
@@ -710,51 +705,50 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
         if (TextEqN(text, kJpAllFrame, 7) || TextEqN(text, "All frame", 10)) {
             // bone sweep (loc_482D40..482DB2)
             {
-                unsigned char* model = ActiveModel(app);
-                SelectModelFrameRange(mdl::BoneKeys(model), mdl::kBoneKeyCapacity,
-                                      mdl::Mdl(model)->boneCount, static_cast<std::uint32_t>(from),
+                mdl::ModelRecord* model = ActiveModel(app);
+                SelectModelFrameRange(model->boneKeys, mdl::kBoneKeyCapacity, model->boneCount,
+                                      static_cast<std::uint32_t>(from),
                                       static_cast<std::uint32_t>(to));
             }
             // morph sweep (loc_482DE0..482E52, gated on 0x2D80 > 0)
             {
-                unsigned char* model = ActiveModel(app);
-                const std::uint32_t morphCount = mdl::Mdl(model)->morphCount;
+                mdl::ModelRecord* model = ActiveModel(app);
+                const std::uint32_t morphCount = model->morphCount;
                 if (morphCount > 0) {
-                    SelectModelFrameRange(mdl::MorphKeys(model), mdl::kMorphKeyCapacity, morphCount,
+                    SelectModelFrameRange(model->morphKeys, mdl::kMorphKeyCapacity, morphCount,
                                           static_cast<std::uint32_t>(from),
                                           static_cast<std::uint32_t>(to));
                 }
             }
             // camera sweep (loc_482E60..482ED8)
             {
-                unsigned char* model = ActiveModel(app);
-                SelectModelFrameRange(mdl::DisplayKeys(model), mdl::kDisplayKeyCapacity, 1,
+                mdl::ModelRecord* model = ActiveModel(app);
+                SelectModelFrameRange(model->displayKeys, mdl::kDisplayKeyCapacity, 1,
                                       static_cast<std::uint32_t>(from),
                                       static_cast<std::uint32_t>(to));
             }
         } else if (TextEqN(text, kJpAllFacial, 11) || TextEqN(text, "All facial", 11)) {
             // morph sweep only (loc_482F30..482FA2)
-            unsigned char* model = ActiveModel(app);
-            const std::uint32_t morphCount = mdl::Mdl(model)->morphCount;
+            mdl::ModelRecord* model = ActiveModel(app);
+            const std::uint32_t morphCount = model->morphCount;
             if (morphCount > 0) {
-                SelectModelFrameRange(mdl::MorphKeys(model), mdl::kMorphKeyCapacity, morphCount,
+                SelectModelFrameRange(model->morphKeys, mdl::kMorphKeyCapacity, morphCount,
                                       static_cast<std::uint32_t>(from),
                                       static_cast<std::uint32_t>(to));
             }
         } else if (TextEqN(text, kJpAllBone, 13) || TextEqN(text, "All bone", 9)) {
             // bone sweep only (loc_482FF2..483064)
-            unsigned char* model = ActiveModel(app);
-            SelectModelFrameRange(mdl::BoneKeys(model), mdl::kBoneKeyCapacity,
-                                  mdl::Mdl(model)->boneCount, static_cast<std::uint32_t>(from),
-                                  static_cast<std::uint32_t>(to));
+            mdl::ModelRecord* model = ActiveModel(app);
+            SelectModelFrameRange(model->boneKeys, mdl::kBoneKeyCapacity, model->boneCount,
+                                  static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to));
         } else if (TextEqN(text, kJpSelBone, 9) || TextEqN(text, "Sel Bone", 9)) {
             // selected-bone sweep (loc_4830D0..48310F): 0x4A27F0 per
             // selected bone (0x2D94 byte array), name at 0x26BC +
             // i*0x25C
-            unsigned char* model = ActiveModel(app);
-            const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
+            mdl::ModelRecord* model = ActiveModel(app);
+            const std::int32_t boneCount = model->boneCount;
             if (boneCount > 0) {
-                const mdl::ModelRecord& record = *mdl::Mdl(model);
+                const mdl::ModelRecord& record = *model;
                 unsigned char* sel = record.boneSelection;
                 const mdl::BoneRecord* bones = record.boneTable;
                 for (std::int32_t i = 0; i < boneCount; ++i) {
@@ -768,8 +762,8 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
             // selected-morph sweep (loc_483173..4831B2): morph table
             // 0x26DC, 0x2E stride, selected byte +0x2C, count byte
             // 0x2DAC
-            unsigned char* model = ActiveModel(app);
-            const mdl::ModelRecord& record = *mdl::Mdl(model);
+            mdl::ModelRecord* model = ActiveModel(app);
+            const mdl::ModelRecord& record = *model;
             const std::uint8_t morphCount = record.facialFrameCount;
             if (morphCount != 0) {
                 mdl::FrameGroup* groups = record.displayFrames;
@@ -783,7 +777,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
             }
         } else {
             // fallback (loc_4831B6..4831CB): treat the text as a name
-            unsigned char* model = ActiveModel(app);
+            mdl::ModelRecord* model = ActiveModel(app);
             MarkKeyTrackRangeByName(model, static_cast<std::uint32_t>(from),
                                     static_cast<std::uint32_t>(to), text);
         }
@@ -843,11 +837,11 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
 static void SyncKeyframeSelection(MMDApp* app) {
     if (app->CameraMode() == 0) {
         // ---- model mode (loc_480D1D..loc_4810F3) ----
-        unsigned char* model = ActiveModel(app);
-        mdl::ModelRecord* modelRecord = mdl::Mdl(model);
-        mdl::BoneKey* boneKeys = mdl::BoneKeys(model);
-        mdl::MorphKey* morphKeys = mdl::MorphKeys(model);
-        mdl::DisplayKey* displayKeys = mdl::DisplayKeys(model);
+        mdl::ModelRecord* model = ActiveModel(app);
+        mdl::ModelRecord* modelRecord = model;
+        mdl::BoneKey* boneKeys = model->boneKeys;
+        mdl::MorphKey* morphKeys = model->morphKeys;
+        mdl::DisplayKey* displayKeys = model->displayKeys;
 
         // loop A: bone marks -> bone/morph/camera
         for (std::uint32_t keyIndex = 0;
@@ -1001,14 +995,14 @@ static void CopyInterpolationCurve(MMDApp* app, HWND hwnd) {
         }
         SetFocus(hwnd);
     } else {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         const std::int32_t idx = FirstSelectedBoneKey(model);
         if (idx < 0) {
             SetFocus(hwnd);
             return; // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kCurvePasteButton), TRUE);
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
+        mdl::BoneKey* keys = model->boneKeys;
         if (sel < 4) {
             // 6 rows duplicated from the single frame at idx+sel
             for (std::int32_t i = 0; i < 6; ++i) {
@@ -1052,10 +1046,10 @@ static void PasteInterpolationCurve(MMDApp* app, HWND hwnd) {
         SelectionReeval(app);
         SetFocus(hwnd);
     } else {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         // original: 0x4A1510(ecx = model, frame = dword app+0x980)
         SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
+        mdl::BoneKey* keys = model->boneKeys;
         for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
             mdl::BoneKey& key = keys[i];
             if (key.allocated == 0) {
@@ -1101,10 +1095,10 @@ static void ResetInterpolationCurves(MMDApp* app, HWND hwnd) {
         SelectionReeval(app);
         SetFocus(hwnd);
     } else {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         // original: 0x4A1510(ecx = model, frame = dword app+0x980)
         SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
+        mdl::BoneKey* keys = model->boneKeys;
         for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
             mdl::BoneKey& key = keys[i];
             if (key.allocated == 0) {
@@ -1192,8 +1186,8 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     std::int32_t found = -1;
     // Slot search loop: x64 0x7FF7CB460A73 mov r13d,0FFh (bound 255)
     for (std::int32_t i = 0; i < kModelSlotCount; ++i) {
-        unsigned char* m = app->ModelSlot(i);
-        if (m != nullptr && mdl::Mdl(m)->comboSelIndex == sel) {
+        mdl::ModelRecord* m = app->ModelSlot(i);
+        if (m != nullptr && m->comboSelIndex == sel) {
             found = i;
             break;
         }
@@ -1202,8 +1196,8 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
         return; // was: break (switch exit)
     }
     app->state.enterKeyState = 1;
-    unsigned char* model = app->ModelSlot(found);
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
+    mdl::ModelRecord* model = app->ModelSlot(found);
+    const mdl::ModelRecord& record = *model;
     char text[0x100];
     if (app->state.englishUI != 0) {
         sprintf_s(text, 0x100, kMsgDelModelEn, record.nameEn);
@@ -1266,23 +1260,23 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_CALCULATION_ORDER, 1);
     // Per-slot fixup: x64 0x7FF7CB460DB5 mov rax,r13 (=0xFF) + trailing dec rax/jne
     for (std::int32_t j = 0; j < kModelSlotCount; ++j) {
-        unsigned char* m = app->ModelSlot(j);
+        mdl::ModelRecord* m = app->ModelSlot(j);
         if (m == nullptr) {
             continue;
         }
         EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_DRAW_ORDER, 0);
         EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_CALCULATION_ORDER, 0);
-        if (mdl::Mdl(m)->comboSelIndex > oldSel) {
-            --mdl::Mdl(m)->comboSelIndex;
+        if (m->comboSelIndex > oldSel) {
+            --m->comboSelIndex;
         }
-        if (mdl::Mdl(m)->comboSelIndex2 > oldIdx) {
-            --mdl::Mdl(m)->comboSelIndex2;
+        if (m->comboSelIndex2 > oldIdx) {
+            --m->comboSelIndex2;
         }
         // bone parent table 0x4CCE4 (0x14 stride) - entries pointing at
         // the deleted slot index are severed
-        mdl::ModelRecord& record = *mdl::Mdl(m);
+        mdl::ModelRecord& record = *m;
         mdl::DetachBoneBindings(record.boneOrderTable, record.boneOrderCount, found);
-        mdl::DisplayKey* displayKeys = mdl::DisplayKeys(m);
+        mdl::DisplayKey* displayKeys = m->displayKeys;
         for (std::int32_t keyIndex = 0; keyIndex < static_cast<int>(mdl::kDisplayKeyCapacity);
              ++keyIndex) {
             auto* states = mdl::SelectorStates(displayKeys[keyIndex]);
@@ -1370,10 +1364,10 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
     if (app->AccessoryApplyGate() == 0) {
         return; // was: break (switch exit)
     }
-    unsigned char* model = ActiveModel(app);
+    mdl::ModelRecord* model = ActiveModel(app);
     // original: sub_4B4260(ecx = model, frame = app+0x980,
     // app+0xA0CC4)
-    SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+    SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
     RebuildTimelineTrackPanel(app);
     SelectionReeval(app);
 }
@@ -1548,12 +1542,12 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
     // ------------------------------------------------------------------
     case panel::kRegisterModelDisplayButton: {
         app->SceneModified() = 1;
-        unsigned char* model = ActiveModel(app);
-        ClearModelKeyMarks(mdl::BoneKeys(model), mdl::kBoneKeyCapacity);
-        ClearModelKeyMarks(mdl::MorphKeys(model), mdl::kMorphKeyCapacity);
-        ClearModelKeyMarks(mdl::DisplayKeys(model), mdl::kDisplayKeyCapacity);
+        mdl::ModelRecord* model = ActiveModel(app);
+        ClearModelKeyMarks(model->boneKeys, mdl::kBoneKeyCapacity);
+        ClearModelKeyMarks(model->morphKeys, mdl::kMorphKeyCapacity);
+        ClearModelKeyMarks(model->displayKeys, mdl::kDisplayKeyCapacity);
         RegisterDisplayKeyCurrent(model, app->state.currentFrame);
-        const std::int32_t v = static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
+        const std::int32_t v = static_cast<std::int32_t>(model->maxFrame);
         if (app->state.lastRegisteredFrame < v) {
             app->state.lastRegisteredFrame = v;
         }
@@ -1565,7 +1559,7 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
     // 439 (0x0047F3AF): checkbox 0x1B7 -> model byte 0x2D8D (1/0).
     // ------------------------------------------------------------------
     case panel::kModelVisibleCheckbox: {
-        mdl::Mdl(ActiveModel(app))->loadComplete =
+        ActiveModel(app)->loadComplete =
             IsDlgButtonChecked(hwnd, panel::kModelVisibleCheckbox) == 1 ? 1 : 0;
         break;
     }
@@ -1576,17 +1570,17 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
     // def_47E903, a no-op for these ids.
     // ------------------------------------------------------------------
     case panel::kShadowCheckbox: {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         if (model != nullptr) {
-            mdl::ModelRecord& record = *mdl::Mdl(model);
+            mdl::ModelRecord& record = *model;
             record.toonFlag = record.toonFlag == 0 ? 1 : 0;
         }
         break;
     }
     case panel::kAddBlendCheckbox: {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         if (model != nullptr) {
-            mdl::ModelRecord& record = *mdl::Mdl(model);
+            mdl::ModelRecord& record = *model;
             record.postLoadFlag2 = record.postLoadFlag2 == 0 ? 1 : 0;
         }
         break;
@@ -1599,8 +1593,8 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
     case panel::kIkOnRadio: {
         const LRESULT sel =
             SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
-        unsigned char* model = ActiveModel(app);
-        mdl::IkChain* chains = mdl::Mdl(model)->ikChains;
+        mdl::ModelRecord* model = ActiveModel(app);
+        mdl::IkChain* chains = model->ikChains;
         if (chains != nullptr) {
             chains[sel].enabled = 1;
         }
@@ -1609,8 +1603,8 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
     case panel::kIkOffRadio: {
         const LRESULT sel =
             SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
-        unsigned char* model = ActiveModel(app);
-        mdl::IkChain* chains = mdl::Mdl(model)->ikChains;
+        mdl::ModelRecord* model = ActiveModel(app);
+        mdl::IkChain* chains = model->ikChains;
         if (chains != nullptr) {
             chains[sel].enabled = 0;
         }

@@ -57,7 +57,7 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) { // 0x460430
     void* block = operator new(mdl::kSize); // architecture-correct model ABI
     if (block == nullptr)                   //  thunk 0x4C46F0 in original)
         return;
-    unsigned char* model = static_cast<unsigned char*>(block);
+    mdl::ModelRecord* model = static_cast<mdl::ModelRecord*>(block);
     app->ModelSlot(slot) = model;
     std::memset(model, 0, mdl::kSize);
     ModelInitDefaults(model); // 0x4A8DC0
@@ -68,20 +68,20 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) { // 0x460430
                      app->Physics(),          // a8: -> m+60 scene
                      app->PathWorkspace())) { // 0x4BF3E0
         app->SceneModified() = 1;
-        const char* name = app->EnglishUI() == 0 ? mdl::Mdl(model)->name : mdl::Mdl(model)->nameEn;
-        mdl::Mdl(model)->comboSelIndex = static_cast<std::uint8_t>(
+        const char* name = app->EnglishUI() == 0 ? model->name : model->nameEn;
+        model->comboSelIndex = static_cast<std::uint8_t>(
             SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_ADDSTRING, 0,
                          reinterpret_cast<LPARAM>(name)));
         SendMessageA(GetDlgItem(hwnd, panel::kMainComboGround), CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(name));
         SendMessageA(GetDlgItem(hwnd, panel::kMainComboNormal), CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(name));
-        mdl::Mdl(model)->comboSelIndex2 = mdl::Mdl(model)->comboSelIndex;
-        SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_SETCURSEL,
-                     mdl::Mdl(model)->comboSelIndex, 0);
-        app->state.mainModelComboSelection = mdl::Mdl(model)->comboSelIndex;
+        model->comboSelIndex2 = model->comboSelIndex;
+        SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_SETCURSEL, model->comboSelIndex,
+                     0);
+        app->state.mainModelComboSelection = model->comboSelIndex;
         app->SetSelectedModelSlot(static_cast<std::uint8_t>(slot));
-        mikudancestudio::mdl::Mdl(model)->displayState = app->state.characterTransparentMode;
+        model->displayState = app->state.characterTransparentMode;
 
         if (app->CameraMode() != 0) {
             RebuildModelModePanel(app); // 0x44D610
@@ -122,8 +122,8 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) { // 0x460430
         MENUITEMINFOA mii{};
         mii.cbSize = sizeof(mii);
         mii.fMask = MIIM_STATE;
-        unsigned char* curModel = app->SelectedModel();
-        mii.fState = mdl::Mdl(curModel)->physicsMode == 2 ? (MFS_GRAYED | MFS_DISABLED) : 0;
+        mdl::ModelRecord* curModel = app->SelectedModel();
+        mii.fState = curModel->physicsMode == 2 ? (MFS_GRAYED | MFS_DISABLED) : 0;
         SetMenuItemInfoA(GetSubMenu(GetMenu(hwnd), 7), 2, TRUE, &mii);
         DrawMenuBar(hwnd);
 
@@ -144,9 +144,9 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) { // 0x460430
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), 0);
         InvalidateSelectionReadouts(app); // 0x40D070
     } else {
-        void* oldModel = app->ModelSlot(slot);
+        mdl::ModelRecord* oldModel = app->ModelSlot(slot);
         if (oldModel != nullptr) {
-            ModelDispose(static_cast<unsigned char*>(oldModel)); // 0x48F830
+            ModelDispose(oldModel); // 0x48F830
             ::operator delete(oldModel);
             app->ModelSlot(slot) = nullptr;
         }

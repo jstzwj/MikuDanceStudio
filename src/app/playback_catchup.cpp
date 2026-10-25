@@ -144,19 +144,19 @@ void BumpCursor(MMDApp* app) {
 // the selected-model skip (var_14A1 && 2F8==0 && 910==slot).
 void OrderedMorphPhysicsPass(MMDApp* app, int count, bool selSkip) {
     auto& s = *app;
-    unsigned char** models = s.ModelSlots();
+    mdl::ModelRecord** models = s.ModelSlots();
     // x64 pump sub_7FF7CB4474F0: both ordering passes run order and slot
     // walks to 255 (block 1 cmp edi/rbx, 0FFh at 0x7FF7CB44BB0E/0x7FF7CB44BADA;
     // block 2 at 0x7FF7CB44BDDA/0x7FF7CB44BD7D; comboSelIndex2 = model+0x3109).
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int j = 0; j < kModelSlotCount; ++j) {
-            unsigned char* mdl = models[j];
-            if (mdl == nullptr || mikudancestudio::mdl::Mdl(mdl)->comboSelIndex2 != order)
+            mdl::ModelRecord* model = models[j];
+            if (model == nullptr || model->comboSelIndex2 != order)
                 continue;
             if (selSkip && s.CameraMode() == 0 && s.SelectedModelSlot() == j)
-                continue;          // 0x46F471
-            ModelApplyMorphs(mdl); // 0x46F1AE
-            SetPhysicsMode(mdl, 0, models, count);
+                continue;            // 0x46F471
+            ModelApplyMorphs(model); // 0x46F1AE
+            SetPhysicsMode(model, 0, models, count);
         }
     }
 }
@@ -165,7 +165,7 @@ void OrderedMorphPhysicsPass(MMDApp* app, int count, bool selSkip) {
 // forward, with the selected-model skip).
 void KinematicSyncPass(MMDApp* app, bool reverse, bool selSkip) {
     auto& s = *app;
-    unsigned char** models = s.ModelSlots();
+    mdl::ModelRecord** models = s.ModelSlots();
     // x64: reverse walk is a 255 count-down from slot 254
     // (mov edi, 0FFh ... dec rdi at 0x7FF7CB44BB16); forward-with-skip walk
     // counts down 255 from slot 0 (mov esi, 0FFh ... dec rsi at 0x7FF7CB44BDF1).
@@ -173,12 +173,12 @@ void KinematicSyncPass(MMDApp* app, bool reverse, bool selSkip) {
     const int end = reverse ? -1 : kModelSlotCount;
     const int step = reverse ? -1 : 1;
     for (int j = begin; j != end; j += step) {
-        unsigned char* mdl = models[j];
-        if (mdl == nullptr)
+        mdl::ModelRecord* model = models[j];
+        if (model == nullptr)
             continue;
         if (selSkip && s.CameraMode() == 0 && s.SelectedModelSlot() == j)
-            continue;            // 0x46F4F1
-        ModelKinematicSync(mdl); // 0x46F1F7
+            continue;              // 0x46F4F1
+        ModelKinematicSync(model); // 0x46F1F7
     }
 }
 
@@ -401,14 +401,14 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
             }
             tracePlayLeft = 400;
             tracePassLeft = 100;
-            unsigned char* mdl = s.ModelSlot(0);
+            mdl::ModelRecord* model = s.ModelSlot(0);
             FILE* tf2 = fopen(tp, "a");
-            if (tf2 && mdl != nullptr) {
-                const std::int32_t boneCnt = mdl::Mdl(mdl)->boneCount;
-                unsigned char* const active = mdl::Mdl(mdl)->boneTrackActive;
-                std::uint32_t* const cursors = mdl::Mdl(mdl)->boneKeyCursors;
-                mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(mdl);
-                const mdl::BoneKey* const keyList = mdl::BoneKeys(mdl);
+            if (tf2 && model != nullptr) {
+                const std::int32_t boneCnt = model->boneCount;
+                unsigned char* const active = model->boneTrackActive;
+                std::uint32_t* const cursors = model->boneKeyCursors;
+                mikudancestudio::mdl::BoneRecord* const bones = model->boneTable;
+                const mdl::BoneKey* const keyList = model->boneKeys;
                 fprintf(tf2, "loadstate boneCnt=%d\n", boneCnt);
                 for (int b = 0; b < boneCnt && b < 12; ++b)
                     fprintf(tf2,
@@ -470,14 +470,13 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
 #ifdef MIKUDANCESTUDIO_DIAG
                     if (tracePlayLeft > 0 && getenv("MIKUDANCESTUDIO_TRACE_PLAY")) {
                         --tracePlayLeft;
-                        unsigned char* mdl = s.ModelSlot(0);
+                        mdl::ModelRecord* model = s.ModelSlot(0);
                         FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_PLAY"), "a");
                         if (tf) {
-                            if (mdl != nullptr) {
-                                mikudancestudio::mdl::BoneRecord* bones =
-                                    mikudancestudio::mdl::Bones(mdl);
-                                const std::int32_t boneCount = static_cast<std::int32_t>(
-                                    mikudancestudio::mdl::Mdl(mdl)->boneCount);
+                            if (model != nullptr) {
+                                mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
+                                const std::int32_t boneCount =
+                                    static_cast<std::int32_t>(model->boneCount);
                                 fprintf(tf, "sub cursor=%.5f target=%.5f bones=", Cursor(app),
                                         target);
                                 for (int bi = 0; bi < boneCount && bi < 8; ++bi)

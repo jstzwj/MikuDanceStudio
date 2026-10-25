@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "mikudancestudio/bone_key_layout.hpp"
 #include "mikudancestudio/bone_layout.hpp"
 #include "mikudancestudio/model_layout.hpp"
 #include "mikudancestudio/subrecord_layout.hpp"
@@ -119,26 +120,6 @@ static_assert(sizeof(BoneReference) == 8, "bone reference ABI");
 // arbitrary byte buffers.  Bone and morph records contain no pointers and
 // therefore keep their x86 size on x64.  DisplayKey contains two owned
 // buffers, so it naturally grows from 28 to 40 bytes on x64.
-struct BoneKey {
-    std::uint32_t frame;
-    std::uint32_t previous;
-    std::uint32_t next;
-    std::uint8_t interpolation[16];
-    float position[3];
-    float rotation[4];
-    std::uint8_t allocated;
-    std::uint8_t physicsDisabled;
-    std::uint8_t reserved[2];
-};
-static_assert(sizeof(BoneKey) == 60, "bone key ABI");
-static_assert(offsetof(BoneKey, frame) == 0, "bone key frame ABI");
-static_assert(offsetof(BoneKey, previous) == 4, "bone key previous ABI");
-static_assert(offsetof(BoneKey, next) == 8, "bone key next ABI");
-static_assert(offsetof(BoneKey, interpolation) == 12, "bone key interpolation ABI");
-static_assert(offsetof(BoneKey, position) == 28, "bone key position ABI");
-static_assert(offsetof(BoneKey, rotation) == 40, "bone key rotation ABI");
-static_assert(offsetof(BoneKey, allocated) == 56, "bone key allocated ABI");
-static_assert(offsetof(BoneKey, physicsDisabled) == 57, "bone key physics ABI");
 
 struct MorphKey {
     std::uint32_t frame;
@@ -198,8 +179,6 @@ inline const BoneReference* SelectorStates(const DisplayKey& key) {
     return static_cast<const BoneReference*>(key.selectorStates);
 }
 
-constexpr std::size_t kPoseTraceFlag = offsetof(ModelRecord, poseTraceRecording);
-constexpr std::size_t kPoseTraceBuffer = offsetof(ModelRecord, poseTraceBuffer);
 constexpr std::size_t kPmdModelNameBytes = 20;
 
 enum class PmxTextBufferSlot : std::size_t {
@@ -217,14 +196,6 @@ template <typename T> inline const T& At(const unsigned char* m, std::size_t off
     return *reinterpret_cast<const T*>(m + off);
 }
 
-inline std::uint8_t& PoseTraceFlag(unsigned char* m) {
-    return reinterpret_cast<ModelRecord*>(m)->poseTraceRecording;
-}
-
-inline void*& PoseTraceBuffer(unsigned char* m) {
-    return reinterpret_cast<ModelRecord*>(m)->poseTraceBuffer;
-}
-
 // Typed view of the model object: routes table pointers through
 // ModelRecord so the field offset is correct on both architectures
 // The typed record owns architecture-correct field placement.
@@ -236,6 +207,16 @@ inline const ModelRecord* Mdl(const unsigned char* m) {
     return reinterpret_cast<const ModelRecord*>(m);
 }
 
+// Temporary boundary for remaining editing, UI and rendering routines whose model
+// parameters still use byte views. Never reinterpret an array of model pointers.
+inline unsigned char* ModelBytes(ModelRecord* model) {
+    return reinterpret_cast<unsigned char*>(model);
+}
+
+inline const unsigned char* ModelBytes(const ModelRecord* model) {
+    return reinterpret_cast<const unsigned char*>(model);
+}
+
 inline IkChain*& IkChains(unsigned char* m) {
     return Mdl(m)->ikChains;
 }
@@ -244,48 +225,20 @@ inline PmdVertex*& PmdVertices(unsigned char* m) {
     return Mdl(m)->rawVertices;
 }
 
-inline std::uint32_t& BaseVertexMorphCount(unsigned char* m) {
-    return Mdl(m)->morph0Count;
-}
-
-inline std::int32_t& BoneMorphOffsetCount(unsigned char* m) {
-    return Mdl(m)->boneMorphCount;
-}
-
-inline PmdVertexMorphEntry*& BaseVertexMorphTable(unsigned char* m) {
-    return Mdl(m)->morph0Table;
-}
-
-inline BoneMorphOffsetRecord*& BoneMorphOffsets(unsigned char* m) {
-    return Mdl(m)->boneMorphTable;
-}
-
 template <typename T> inline T*& ResourceAs(void*& storage) {
     return reinterpret_cast<T*&>(storage);
-}
-
-inline wchar_t*& PmxTextBuffer(unsigned char* m, PmxTextBufferSlot slot) {
-    return Mdl(m)->pmxTextBuffers[static_cast<std::size_t>(slot)];
 }
 
 inline ModelMaterialRecord*& Materials(unsigned char* m) {
     return Mdl(m)->materials;
 }
 
-inline const ModelMaterialRecord& Material(const unsigned char* bytes) {
-    return *reinterpret_cast<const ModelMaterialRecord*>(bytes);
-}
-
-inline FrameGroup*& RigidGroups(unsigned char* m) {
-    return ResourceAs<FrameGroup>(Mdl(m)->rbGroups);
-}
-
-inline FrameGroup*& DisplayFrames(unsigned char* m) {
-    return Mdl(m)->displayFrames;
+inline FrameGroup*& DisplayBones(unsigned char* m) {
+    return Mdl(m)->displayBones;
 }
 
 inline DisplayGroup*& DisplayGroups(unsigned char* m) {
-    return ResourceAs<DisplayGroup>(Mdl(m)->groupNames);
+    return Mdl(m)->displayGroups;
 }
 
 inline char (*PmdToonFileNames(unsigned char* m))[100] {
@@ -302,47 +255,11 @@ inline std::int32_t*& PmxIndices(unsigned char* m) {
     return ResourceAs<std::int32_t>(Mdl(m)->indices);
 }
 
-inline PmxUvMorphCounts& UvMorphCounts(unsigned char* m) {
-    return Mdl(m)->uvMorphCounts;
-}
-
-inline PmxUvMorphTables& UvMorphTables(unsigned char* m) {
-    return Mdl(m)->uvMorphTables;
-}
-
-inline PmxUvMorphEntry*& PmxUvMorphBaseTable(unsigned char* m) {
-    return UvMorphTables(m).byFamily[0];
-}
-
-inline PmxUvMorphEntry*& AdditionalUvMorphTable(unsigned char* m, std::size_t family) {
-    return UvMorphTables(m).byFamily[family + 1];
-}
-
-inline PmxMaterialMorphPools& MaterialMorphPools(unsigned char* m) {
-    return Mdl(m)->materialMorphPools;
-}
-
-inline MaterialMorphPool*& MaterialMorphBase(unsigned char* m) {
-    return MaterialMorphPools(m).base;
-}
-
-inline MaterialMorphPool*& MaterialMorphAdd(unsigned char* m) {
-    return MaterialMorphPools(m).additive;
-}
-
-inline MaterialMorphPool*& MaterialMorphMul(unsigned char* m) {
-    return MaterialMorphPools(m).multiplicative;
-}
-
-// Typed views of the per-model record tables.  Strides are the natural
+// Compatibility views for remaining byte-based UI callers. Strides are the natural
 // sizeof() of each record - 604/624 bones, 136/192 morphs,
 // 172/192 rigids, 140/152 joints (x86/x64).
 inline BoneRecord*& Bones(unsigned char* m) {
     return Mdl(m)->boneTable;
-}
-
-inline unsigned char* BoneBytes(BoneRecord* bones, std::size_t index) {
-    return reinterpret_cast<unsigned char*>(&bones[index]);
 }
 
 inline MorphRecord*& Morphs(unsigned char* m) {
@@ -357,18 +274,6 @@ inline MorphKey*& MorphKeys(unsigned char* m) {
     return Mdl(m)->morphKeys;
 }
 
-inline std::uint32_t*& BoneKeyIndices(unsigned char* m) {
-    return Mdl(m)->boneKeyIndices;
-}
-
-inline std::uint32_t*& MorphKeyIndices(unsigned char* m) {
-    return Mdl(m)->morphKeyIndices;
-}
-
-inline unsigned char* MorphBytes(MorphRecord* morphs, std::size_t index) {
-    return reinterpret_cast<unsigned char*>(&morphs[index]);
-}
-
 inline RigidRecord*& Rigids(unsigned char* m) {
     return Mdl(m)->rigidTable;
 }
@@ -377,24 +282,8 @@ inline JointRecord*& Joints(unsigned char* m) {
     return Mdl(m)->jointTable;
 }
 
-inline unsigned char* RigidBytes(RigidRecord* records, std::size_t index) {
-    return reinterpret_cast<unsigned char*>(&records[index]);
-}
-
-inline unsigned char* JointBytes(JointRecord* records, std::size_t index) {
-    return reinterpret_cast<unsigned char*>(&records[index]);
-}
-
 inline DisplayKey*& DisplayKeys(unsigned char* m) {
     return Mdl(m)->displayKeys;
-}
-
-inline BoneOrderEntry*& BoneOrder(unsigned char* m) {
-    return Mdl(m)->boneOrderTable;
-}
-
-inline std::uint32_t& BoneOrderCount(unsigned char* m) {
-    return Mdl(m)->boneOrderCount;
 }
 
 } // namespace mikudancestudio::mdl

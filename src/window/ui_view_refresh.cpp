@@ -103,7 +103,7 @@ void InvalidateSelectionReadouts(MMDApp* app) {
 // [byte this+0x910]; selected bone index = model+0x2D90; if < 0, all seven
 // controls get "-----".  Otherwise bone record = (model+0x26BC) + sizeof(mikudancestudio::mdl::BoneRecord) *idx
 // (604 = 0x25C stride) and the layout is picked by
-//     (this+0xA0CC4 == 3) & &bone->hasRigidBody:
+//     ((PlaybackPhysicsMode() == 3) & bone->hasRigidBody) != 0:
 //   rotation layout  : "%1.2f" of bone->ikBackup/0x18C/0x190, quat at +0x194
 //   position layout  : "%1.2f" of bone->trans/0x144/0x148, quat at +0x14C
 // The original re-derives the model pointer before every access (no side
@@ -125,8 +125,8 @@ void InvalidateSelectionReadouts(MMDApp* app) {
 //   (dbl_52B768) and 180.0 (dbl_52B760)
 //   0x223/0x224/0x225: "%1.1f" of the three degrees values, each snapped to
 //     0 when |v| < (double)(1e-7f).
-// Every float store in the original goes through an x87 fstp dword (float
-// truncation); the port mirrors that with explicit static_cast<float>.
+// The formulas above describe x86. The x64 original calls atan2f/asinf/cosf
+// and converts angles with divss/mulss; preserve those rounding stages too.
 //
 // The original returns the BOOL of the last SetWindowTextA; the declared
 // signature is void.
@@ -152,17 +152,32 @@ void PostViewRefresh(MMDApp* app) {
             posz = -posz;
         sprintf_s(text, 0x100, "%1.2f", static_cast<double>(posz));
         SetWindowTextA(GetDlgItem(hwnd, panel::kReadoutPosZEdit), text);
+#if defined(_M_X64)
+        // The x64 readout divides and multiplies in binary32 before printf.
+        float ang = static_cast<float>(app->CameraPitch() / -3.141592f) * 180.0f;
+#else
         float ang = static_cast<float>( // 0x40D25C
             -static_cast<double>(app->CameraPitch()) / 3.141592f * 180.0f);
+#endif
         if (std::fabs(static_cast<double>(ang)) < 1e-7f) // 0x40D26E
             ang = 0.0f;
         sprintf_s(text, 0x100, "%1.1f", static_cast<double>(ang));
         SetWindowTextA(GetDlgItem(hwnd, panel::kReadoutRotXEdit), text);
+#if defined(_M_X64)
+        sprintf_s(text, 0x100, "%1.1f",
+                  static_cast<double>(static_cast<float>(app->CameraYaw() / 3.141592f) * 180.0f));
+#else
         sprintf_s(text, 0x100, "%1.1f", // 0x40D2E3
                   static_cast<double>(app->CameraYaw()) / 3.141592f * 180.0f);
+#endif
         SetWindowTextA(GetDlgItem(hwnd, panel::kReadoutRotYEdit), text);
+#if defined(_M_X64)
+        sprintf_s(text, 0x100, "%1.1f",
+                  static_cast<double>(static_cast<float>(app->CameraRoll() / 3.141592f) * 180.0f));
+#else
         sprintf_s(text, 0x100, "%1.1f", // 0x40D329
                   static_cast<double>(app->CameraRoll()) / 3.141592f * 180.0f);
+#endif
         SetWindowTextA(GetDlgItem(hwnd, panel::kReadoutRotZEdit), text);
         if (app->CameraParentModel() < 0) {
             float camAngle = static_cast<float>(-static_cast<double>(app->CameraDistance()));
@@ -177,25 +192,23 @@ void PostViewRefresh(MMDApp* app) {
     }
 
     // ---- bone readout ------------------------------------------------------
-    unsigned char* model = app->SelectedModel();
-    const std::int32_t boneIdx = mikudancestudio::mdl::Mdl(model)->selectedBone;
+    mdl::ModelRecord* model = app->SelectedModel();
+    const std::int32_t boneIdx = model->selectedBone;
     if (boneIdx < 0) { // 0x40D401 jl
         for (int id = panel::kReadoutPosXEdit; id <= panel::kReadoutDistEdit; ++id)
             SetWindowTextA(GetDlgItem(hwnd, id), "-----");
         return;
     }
-    mikudancestudio::mdl::BoneRecord* bone = &mikudancestudio::mdl::Bones(model)[boneIdx];
+    mikudancestudio::mdl::BoneRecord* bone = &model->boneTable[boneIdx];
     const float* display;
     const float* quat;
-    if (((app->PlaybackPhysicsMode() == 3) & // 0x40D417
-         (*reinterpret_cast<unsigned char*>(&bone->hasRigidBody) != 0)) != 0) {
-        // rotation-mode layout
-        display = reinterpret_cast<const float*>(bone->ikBackup); // +0x18C/+0x190
-        quat = reinterpret_cast<const float*>(bone->ikBackup + 3);
+    if (((app->PlaybackPhysicsMode() == 3) & bone->hasRigidBody) != 0) { // 0x40D417
+        // Physics mode 3 displays the saved pose of a rigid-body bone.
+        display = bone->ikBackup;
+        quat = bone->ikBackup + 3;
     } else {
-        // position/scale layout
-        display = reinterpret_cast<const float*>(bone->trans); // +0x144/+0x148
-        quat = reinterpret_cast<const float*>(bone->rotQuat);
+        display = bone->trans;
+        quat = bone->rotQuat;
     }
     sprintf_s(text, 0x100, "%1.2f", static_cast<double>(display[0]));
     SetWindowTextA(GetDlgItem(hwnd, panel::kReadoutPosXEdit), text);
@@ -208,21 +221,37 @@ void PostViewRefresh(MMDApp* app) {
     auto* d3dx = &d3dx::Get();
     d3dx->matrixRotationQuaternion(&m, quat); // (x,y,z,w quaternion)
 
-    // Euler extraction (0x40D643..).  Every intermediate is float-truncated
-    // exactly as the original x87 sequence (fstp dword) does.
+    // Euler extraction: x86 stores each CRT result as float; x64 calls the
+    // single-precision CRT. Keep those architecture-specific results.
     const float m12 = m.m[0][1];
     const float m22 = m.m[1][1];
     const float m31 = m.m[2][0];
     const float m32 = m.m[2][1];
     const float m33 = m.m[2][2];
 
+#if defined(_M_X64)
+    float rz = atan2f(m12, m22);
+#else
     float rz = static_cast<float>(std::atan2(static_cast<double>(m12), static_cast<double>(m22)));
+#endif
     app->BoneRotationEditDegreesZ() = rz; // 0x40D658 (0xA04C8)
+#if defined(_M_X64)
+    float rx = asinf(-m32);
+#else
     float rx = static_cast<float>(std::asin(-static_cast<double>(m32)));
+#endif
     app->BoneRotationEditDegreesX() = rx; // 0x40D671 (0xA04C0)
+#if defined(_M_X64)
+    float ry = atan2f(m31, m33);
+#else
     float ry = static_cast<float>(std::atan2(static_cast<double>(m31), static_cast<double>(m33)));
+#endif
     app->BoneRotationEditDegreesY() = ry; // 0x40D68C (0xA04C4)
+#if defined(_M_X64)
+    float c = cosf(rx);
+#else
     float c = static_cast<float>(std::cos(static_cast<double>(rx)));
+#endif
 
     if (std::fabs(static_cast<double>(c)) < 1e-6f) { // 0x40D6AD flt_52B740
         // Gimbal lock: add +/- 3.141592f (flt_52B738/73C) by the sign of the
@@ -239,11 +268,18 @@ void PostViewRefresh(MMDApp* app) {
     if (std::fabs(static_cast<double>(rz)) < 1e-6f)
         rz = 0.0f;
 
-    // Radians -> degrees in double, pi = (double)3.141592f (dbl_52B768),
-    // 180.0 (dbl_52B760); each result stored back as float.
+    // Radians -> degrees: x86 evaluates in double then stores a float;
+    // x64 rounds the division and multiplication separately to float.
+#if defined(_M_X64)
+    // divss/mulss at x64 RVA 0x214C9..0x2150C; keep the x86 x87 path below.
+    rx = static_cast<float>(rx / 3.141592f) * 180.0f;
+    ry = static_cast<float>(ry / -3.141592f) * 180.0f;
+    rz = static_cast<float>(rz / -3.141592f) * 180.0f;
+#else
     rx = static_cast<float>(static_cast<double>(rx) / 3.141592f * 180.0f);
     ry = static_cast<float>(-static_cast<double>(ry) / 3.141592f * 180.0f);
     rz = static_cast<float>(180.0f * (-static_cast<double>(rz) / 3.141592f));
+#endif
     app->BoneRotationEditDegreesX() = rx; // 0x40D797 (fst)
     app->BoneRotationEditDegreesY() = ry; // 0x40D7A9
     app->BoneRotationEditDegreesZ() = rz; // 0x40D7BF

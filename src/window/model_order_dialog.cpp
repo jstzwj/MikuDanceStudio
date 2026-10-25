@@ -42,10 +42,10 @@ void InitModelCalculateOrderDialog(int count, HWND hDlg) {
     int row = 0;
     for (int calculationOrder = 0; calculationOrder < kModelSlotCount; ++calculationOrder) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
-            unsigned char* model = app->ModelSlot(slot);
-            if (model == nullptr || mdl::Mdl(model)->comboSelIndex2 != calculationOrder)
+            mdl::ModelRecord* model = app->ModelSlot(slot);
+            if (model == nullptr || model->comboSelIndex2 != calculationOrder)
                 continue;
-            const auto& record = *mdl::Mdl(model);
+            const auto& record = *model;
             const char* name = app->EnglishUI() != 0 ? record.nameEn : record.name;
             SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_ADDSTRING, 0,
                          reinterpret_cast<LPARAM>(name));
@@ -61,8 +61,8 @@ void ApplyModelCalculateOrderDialog(MMDApp* app, int count, HWND hDlg) {
     (void)hDlg;
     const std::int32_t* slots = app->DialogOrders().modelIndices.get();
     for (int row = 0; row < count; ++row) {
-        unsigned char* model = app->ModelSlot(slots[row]);
-        mdl::Mdl(model)->comboSelIndex2 = static_cast<unsigned char>(row);
+        mdl::ModelRecord* model = app->ModelSlot(slots[row]);
+        model->comboSelIndex2 = static_cast<unsigned char>(row);
     }
 }
 
@@ -74,8 +74,8 @@ void BuildModelDrawOrderIndices(MMDApp* app, int count) { // VA 0x0041E7B0
     for (int ord = 1; ord < count; ++ord) {
         // Original x64 0x7FF7CB4A991A scans all 255 model slots.
         for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
-            if (model != nullptr && mdl::Mdl(model)->comboSelIndex == ord) {
+            mdl::ModelRecord* model = app->ModelSlot(i);
+            if (model != nullptr && model->comboSelIndex == ord) {
                 order[ord] = i + 1;
                 break;
             }
@@ -91,8 +91,8 @@ void ApplyModelDisplayOrderDialog(MMDApp* app, int count, HWND hDlg) { // VA 0x0
     (void)hDlg;
     std::int32_t* order = app->DialogOrders().modelIndices.get();
     for (int i = 1; i < count; ++i) {
-        unsigned char* model = app->ModelSlot(order[i] - 1);
-        mdl::Mdl(model)->comboSelIndex = static_cast<unsigned char>(i);
+        mdl::ModelRecord* model = app->ModelSlot(order[i] - 1);
+        model->comboSelIndex = static_cast<unsigned char>(i);
     }
     ApplyModelComboSelection(app); // 0x44D940
 }

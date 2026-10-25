@@ -70,7 +70,7 @@ void WriteBytes(const char* path, const void* bytes, DWORD size) {
     CloseHandle(file);
 }
 
-void DumpModelVertexBuffers(MMDApp* app, unsigned char* model,
+void DumpModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model,
                             const mdl::SkinnedVertexBase* mainVertices,
                             const mdl::EdgeVertex* edgeVertices, std::uint32_t count,
                             std::uint32_t mainStride) {
@@ -103,7 +103,7 @@ void DumpModelVertexBuffers(MMDApp* app, unsigned char* model,
     WriteBytes(path, edgeVertices, sizeof(*edgeVertices) * count);
     std::snprintf(path, sizeof(path), "%s\\model.%03d.meta.json", directory, slot);
     char metadata[160]{};
-    const mdl::ModelRecord& state = *mdl::Mdl(model);
+    const mdl::ModelRecord& state = *model;
     const int chars =
         std::snprintf(metadata, sizeof(metadata),
                       "{\"schema\":1,\"slot\":%d,\"format\":%u,"
@@ -112,7 +112,7 @@ void DumpModelVertexBuffers(MMDApp* app, unsigned char* model,
     WriteBytes(path, metadata, static_cast<DWORD>(chars));
 }
 #else
-inline void DumpModelVertexBuffers(MMDApp*, unsigned char*, const mdl::SkinnedVertexBase*,
+inline void DumpModelVertexBuffers(MMDApp*, mdl::ModelRecord*, const mdl::SkinnedVertexBase*,
                                    const mdl::EdgeVertex*, std::uint32_t, std::uint32_t) {
 }
 #endif
@@ -393,15 +393,15 @@ void AccumPmxVertexMorph(mdl::PmxVertex* vertices, const mdl::MorphRecord& morph
 // flattened UV base tables restore every morph-targeted component first,
 // then each morph (including morph zero - unlike PMD) accumulates its
 // weighted offsets; group morphs scale the vertex/UV morphs they reference.
-void ApplyPmxVertexMorphs(unsigned char* model) {
-    mdl::ModelRecord& record = *mdl::Mdl(model);
-    mdl::MorphRecord* morphs = mdl::Morphs(model);
+void ApplyPmxVertexMorphs(mdl::ModelRecord* model) {
+    mdl::ModelRecord& record = *model;
+    mdl::MorphRecord* morphs = model->morphs;
     mdl::PmxVertex* vertices = record.pmxVertices;
     if (morphs == nullptr || vertices == nullptr)
         return;
 
-    const mdl::PmdVertexMorphEntry* base = mdl::BaseVertexMorphTable(model);
-    const std::uint32_t baseCount = mdl::BaseVertexMorphCount(model);
+    const mdl::PmdVertexMorphEntry* base = model->morph0Table;
+    const std::uint32_t baseCount = model->morph0Count;
     if (base != nullptr) {
         for (std::uint32_t i = 0; i < baseCount; ++i) {
             mdl::PmxVertex& vertex = vertices[base[i].vertexIndex];
@@ -412,8 +412,8 @@ void ApplyPmxVertexMorphs(unsigned char* model) {
     }
 
     for (int family = 0; family < 5; ++family) {
-        const mdl::PmxUvMorphEntry* entries = mdl::UvMorphTables(model).byFamily[family];
-        const std::int32_t count = mdl::UvMorphCounts(model).byFamily[family];
+        const mdl::PmxUvMorphEntry* entries = model->uvMorphTables.byFamily[family];
+        const std::int32_t count = model->uvMorphCounts.byFamily[family];
         if (entries == nullptr || count <= 0)
             continue;
         for (int i = 0; i < count; ++i) {
@@ -449,11 +449,11 @@ void ApplyPmxVertexMorphs(unsigned char* model) {
 
 // 0x4B0C74..0x4B0CE9 and 0x4B1C9C..0x4B1D8B.  PMD morph zero is
 // the base table; all following morphs contain offsets indexed through it.
-void ApplyPmdVertexMorphs(unsigned char* model) {
-    mdl::ModelRecord& record = *mdl::Mdl(model);
+void ApplyPmdVertexMorphs(mdl::ModelRecord* model) {
+    mdl::ModelRecord& record = *model;
     mdl::PmdVertex* vertices = record.rawVertices;
-    const mdl::PmdVertexMorphEntry* base = mdl::BaseVertexMorphTable(model);
-    const std::uint32_t baseCount = mdl::BaseVertexMorphCount(model);
+    const mdl::PmdVertexMorphEntry* base = model->morph0Table;
+    const std::uint32_t baseCount = model->morph0Count;
     if (vertices == nullptr || base == nullptr)
         return;
 
@@ -465,7 +465,7 @@ void ApplyPmdVertexMorphs(unsigned char* model) {
         vertex.position[2] = entry.offset[2];
     }
 
-    mikudancestudio::mdl::MorphRecord* morphs = mikudancestudio::mdl::Morphs(model);
+    mikudancestudio::mdl::MorphRecord* morphs = model->morphs;
     const int morphCount = record.morphCount;
     if (morphs == nullptr || morphCount <= 1)
         return;
@@ -488,9 +488,9 @@ void ApplyPmdVertexMorphs(unsigned char* model) {
     }
 }
 
-float PmdEdgeDistance(MMDApp* app, unsigned char* model, const float frameWorld[16]) {
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
-    auto* bones = mdl::Bones(model);
+float PmdEdgeDistance(MMDApp* app, const mdl::ModelRecord* model, const float frameWorld[16]) {
+    const mdl::ModelRecord& record = *model;
+    auto* bones = model->boneTable;
     const int boneCount = record.boneCount;
     float modelPoint[3]{};
     if (bones != nullptr && boneCount > 0) {
@@ -513,12 +513,12 @@ float PmdEdgeDistance(MMDApp* app, unsigned char* model, const float frameWorld[
            record.edgeScale;
 }
 
-void SkinPmd(unsigned char* model, float edgeDistance, mdl::EdgeVertex* edgeVertices,
+void SkinPmd(const mdl::ModelRecord* model, float edgeDistance, mdl::EdgeVertex* edgeVertices,
              mdl::SkinnedVertexBase* mainVertices) {
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
+    const mdl::ModelRecord& record = *model;
     const std::uint32_t vertexCount = record.vertexCount;
     auto* vertices = record.rawVertices;
-    auto* bones = mdl::Bones(model);
+    auto* bones = model->boneTable;
     const int boneCount = record.boneCount;
     if (vertices == nullptr || bones == nullptr)
         return;
@@ -573,13 +573,13 @@ void SkinPmd(unsigned char* model, float edgeDistance, mdl::EdgeVertex* edgeVert
 // expansion normal * frame scale * vertex scale * material size and the
 // fixed 0.005 shrink.
 template <std::size_t AdditionalUvCount>
-void SkinPmx(unsigned char* model, float edgeDistance, bool opaqueEdge,
+void SkinPmx(const mdl::ModelRecord* model, float edgeDistance, bool opaqueEdge,
              mdl::EdgeVertex* edgeVertices, mdl::SkinnedVertex<AdditionalUvCount>* mainVertices) {
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
+    const mdl::ModelRecord& record = *model;
     const std::uint32_t vertexCount = record.vertexCount;
     const mdl::PmxVertex* vertices = record.pmxVertices;
-    const mdl::BoneRecord* bones = mdl::Bones(model);
-    const mdl::ModelMaterialRecord* materials = mdl::Materials(model);
+    const mdl::BoneRecord* bones = model->boneTable;
+    const mdl::ModelMaterialRecord* materials = model->materials;
     const int boneCount = static_cast<int>(record.boneCount);
     d3dx::Api& d3dxApi = d3dx::Get();
     if (vertices == nullptr || bones == nullptr || materials == nullptr)
@@ -635,8 +635,8 @@ void SkinPmx(unsigned char* model, float edgeDistance, bool opaqueEdge,
 // A count above four matches no worker and the original leaves both
 // buffers untouched that frame. The frame edge scale is the same
 // camera-distance value the PMD path uses (x64 computes it once for both).
-void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model, const float frameWorld[16]) {
-    mdl::ModelRecord& state = *mdl::Mdl(model);
+void UpdatePmxModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float frameWorld[16]) {
+    mdl::ModelRecord& state = *model;
     ApplyPmxVertexMorphs(model);
 
     const unsigned int additionalUv = state.pmxAdditionalUvCount;
@@ -690,10 +690,10 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model, const float 
 
 } // namespace
 
-void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model, const float frameWorld[16]) {
+void UpdateModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float frameWorld[16]) {
     if (app == nullptr || model == nullptr || frameWorld == nullptr)
         return;
-    mdl::ModelRecord& state = *mdl::Mdl(model);
+    mdl::ModelRecord& state = *model;
     if (state.loadComplete == 0 || state.vertexCount == 0)
         return;
 

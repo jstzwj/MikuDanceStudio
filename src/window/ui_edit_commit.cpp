@@ -67,9 +67,7 @@
 
 namespace mikudancestudio {
 
-// Dependencies still stubbed (stubs.cpp): RefreshAfterFrameApply frame-apply
-// refresh chain (real body: ui_frame_step.cpp), PushBoneEditUndo bone-edit
-// keyframe register.
+// Frame-apply refresh and pose-edit snapshot entry points.
 void RefreshAfterFrameApply(MMDApp* app); // VA 0x00432FA0
 void PushBoneEditUndo(MMDApp* app);       // VA 0x0042D6E0
 
@@ -82,7 +80,7 @@ static constexpr double kPiLit = 3.141592025756836;
 namespace {
 
 // Active model = slot array app+0x780 indexed by byte app+0x910.
-unsigned char* SlotModel(MMDApp* app) {
+mdl::ModelRecord* SlotModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
@@ -94,7 +92,7 @@ mdl::AccessoryRecord* SelectedAccessory(MMDApp* app) {
 // Z*X*Y euler composition of the 547/548/549 bone-rotation commits:
 // D3DXMatrixRotationZ x rotX x rotY, result quaternion into the bone record
 // (+332 inside the 604-stride bone array).
-void ComposeEulerToBone(MMDApp* app, unsigned char* model, int sel) {
+void ComposeEulerToBone(MMDApp* app, mdl::ModelRecord* model, int sel) {
     d3dx::D3DXMATRIXF rot{};
     d3dx::D3DXMATRIXF tmp{};
     auto* d3dx = &d3dx::Get();
@@ -103,9 +101,9 @@ void ComposeEulerToBone(MMDApp* app, unsigned char* model, int sel) {
     d3dx->multiply(&rot, &rot, &tmp);
     d3dx->rotY(&tmp, app->state.eulerY);
     d3dx->multiply(&rot, &rot, &tmp);
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
-    d3dx->quatFromMatrix(reinterpret_cast<float*>(&bones[sel].rotQuat[0]), &rot);
-    mikudancestudio::mdl::Mdl(model)->bonePhysicsState[sel] = 1;
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
+    d3dx->quatFromMatrix(bones[sel].rotQuat, &rot);
+    model->bonePhysicsState[sel] = 1;
 }
 
 } // namespace
@@ -124,12 +122,12 @@ void CommitEditControlTail(MMDApp* app, HWND edit) {
         GetWindowTextA(edit, text, 100);
         const double v = atof(text);
         if (!cameraMode) {
-            unsigned char* model = SlotModel(app);
-            const int sel = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            mdl::ModelRecord* model = SlotModel(app);
+            const int sel = model->selectedBone;
             if (sel >= 0) {
                 PushBoneEditUndo(app);
-                mikudancestudio::mdl::Bones(model)[sel].trans[0] = static_cast<float>(v);
-                mikudancestudio::mdl::Mdl(model)->bonePhysicsState[sel] = 1;
+                model->boneTable[sel].trans[0] = static_cast<float>(v);
+                model->bonePhysicsState[sel] = 1;
             }
             PostViewRefresh(app);
             return;
@@ -144,12 +142,12 @@ void CommitEditControlTail(MMDApp* app, HWND edit) {
         GetWindowTextA(edit, text, 100);
         const double v = atof(text);
         if (!cameraMode) {
-            unsigned char* model = SlotModel(app);
-            const int sel = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            mdl::ModelRecord* model = SlotModel(app);
+            const int sel = model->selectedBone;
             if (sel >= 0) {
                 PushBoneEditUndo(app);
-                mikudancestudio::mdl::Bones(model)[sel].trans[1] = static_cast<float>(v);
-                mikudancestudio::mdl::Mdl(model)->bonePhysicsState[sel] = 1;
+                model->boneTable[sel].trans[1] = static_cast<float>(v);
+                model->bonePhysicsState[sel] = 1;
             }
             PostViewRefresh(app);
             return;
@@ -164,12 +162,12 @@ void CommitEditControlTail(MMDApp* app, HWND edit) {
         GetWindowTextA(edit, text, 100);
         double v = atof(text);
         if (!cameraMode) {
-            unsigned char* model = SlotModel(app);
-            const int sel = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            mdl::ModelRecord* model = SlotModel(app);
+            const int sel = model->selectedBone;
             if (sel >= 0) {
                 PushBoneEditUndo(app);
-                mikudancestudio::mdl::Bones(model)[sel].trans[2] = static_cast<float>(v);
-                mikudancestudio::mdl::Mdl(model)->bonePhysicsState[sel] = 1;
+                model->boneTable[sel].trans[2] = static_cast<float>(v);
+                model->bonePhysicsState[sel] = 1;
             }
             PostViewRefresh(app);
             return;
@@ -186,8 +184,8 @@ void CommitEditControlTail(MMDApp* app, HWND edit) {
         GetWindowTextA(edit, text, 100);
         const double v = atof(text);
         if (!cameraMode) {
-            unsigned char* model = SlotModel(app);
-            const int sel = mikudancestudio::mdl::Mdl(model)->selectedBone;
+            mdl::ModelRecord* model = SlotModel(app);
+            const int sel = model->selectedBone;
             if (sel >= 0) {
                 PushBoneEditUndo(app);
                 app->state.eulerX = static_cast<float>(v * kPiLit / 180.0);
@@ -215,8 +213,8 @@ void CommitEditControlTail(MMDApp* app, HWND edit) {
             PostViewRefresh(app);
             return;
         }
-        unsigned char* model = SlotModel(app);
-        const int sel = mikudancestudio::mdl::Mdl(model)->selectedBone;
+        mdl::ModelRecord* model = SlotModel(app);
+        const int sel = model->selectedBone;
         if (sel >= 0) {
             PushBoneEditUndo(app);
             app->state.eulerX =     // re-convert stored
@@ -240,8 +238,8 @@ void CommitEditControlTail(MMDApp* app, HWND edit) {
             PostViewRefresh(app);
             return;
         }
-        unsigned char* model = SlotModel(app);
-        const int sel = mikudancestudio::mdl::Mdl(model)->selectedBone;
+        mdl::ModelRecord* model = SlotModel(app);
+        const int sel = model->selectedBone;
         if (sel >= 0) {
             PushBoneEditUndo(app);
             app->state.eulerX =
@@ -424,11 +422,10 @@ void CommitEditControl(MMDApp* app, HWND edit) {
             char text[256];
             GetWindowTextA(edit, text, 8);
             const double v = atof(text);
-            unsigned char* model = SlotModel(app);
-            const int selector = mikudancestudio::mdl::Mdl(model)
-                                     ->selectedMorphs[(morphEdit - panel::kMorphEdit0) / 5];
-            if (mikudancestudio::mdl::Morphs(model) != nullptr && selector >= 0)
-                mikudancestudio::mdl::Morphs(model)[selector].value = static_cast<float>(v);
+            mdl::ModelRecord* model = SlotModel(app);
+            const int selector = model->selectedMorphs[(morphEdit - panel::kMorphEdit0) / 5];
+            if (model->morphs != nullptr && selector >= 0)
+                model->morphs[selector].value = static_cast<float>(v);
             SendMessageA(GetDlgItem(main, morphEdit - 1), TBM_SETPOS, 1,
                          static_cast<LPARAM>(static_cast<int>(v * 100.0)));
             CommitEditControlTail(app, edit);

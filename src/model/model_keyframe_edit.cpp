@@ -3,11 +3,11 @@
 //   0x0049D410  append one touched bone-key record to the undo slot
 //               ( -> AppendBoneKeyToUndo)
 //   0x004A0080  SnapshotPoseBeforeFrameChange: snapshot
-//               the current pose/selection before changing frame
+//               the current pose/edit markers before changing frame
 //   0x004A02C0  SyncModelEditControls: synchronize model
 //               manipulation controls
 //   0x004A1510  SnapshotSelectedKeysForUndo: create an
-//               undo snapshot for selected display keys
+//               undo snapshot for selected bone keys
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -26,37 +26,33 @@
 namespace mikudancestudio {
 namespace {
 
-struct BoneKeyUndoEntry {
-    std::int32_t index;
-    mdl::BoneKey key;
-};
-static_assert(sizeof(BoneKeyUndoEntry) == 64, "bone-key undo record");
+using mdl::BoneKeyUndoEntry;
 
-mdl::UndoRecord& CurrentUndo(unsigned char* model) {
-    return mdl::Mdl(model)->undoRings[0].slots[mdl::Mdl(model)->UndoCursor()];
+mdl::UndoRecord& CurrentUndo(mdl::ModelRecord* model) {
+    return model->undoRings[0].slots[model->UndoCursor()];
 }
 
-mdl::UndoRecord& UndoAt(unsigned char* model, int index) {
-    return mdl::Mdl(model)->undoRings[0].slots[index];
+mdl::UndoRecord& UndoAt(mdl::ModelRecord* model, int index) {
+    return model->undoRings[0].slots[index];
 }
 
-mdl::UndoRecord& RedoAt(unsigned char* model, int index) {
-    return mdl::Mdl(model)->undoRings[1].slots[index];
+mdl::UndoRecord& RedoAt(mdl::ModelRecord* model, int index) {
+    return model->undoRings[1].slots[index];
 }
 
-void SetFrameEdit(unsigned char* model, int frame) {
+void SetFrameEdit(mdl::ModelRecord* model, int frame) {
     char text[0x100];
     sprintf_s(text, sizeof(text), "%d", frame);
-    const HWND edit = GetDlgItem(*reinterpret_cast<HWND*>(model), panel::kCurrentFrameEdit);
+    const HWND edit = GetDlgItem(static_cast<HWND>(model->hwnd), panel::kCurrentFrameEdit);
     const int length = GetWindowTextLengthA(edit);
     SendMessageA(edit, EM_SETSEL, 0, length);
     SendMessageA(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text));
 }
 
-void CaptureAndApplyPose(unsigned char* model, const mdl::BonePoseSnapshot* source,
+void CaptureAndApplyPose(mdl::ModelRecord* model, const mdl::BonePoseSnapshot* source,
                          mdl::BonePoseSnapshot* capture, int count) {
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
-    unsigned char* selected = mdl::Mdl(model)->bonePhysicsState;
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
+    unsigned char* editFlags = model->bonePhysicsState;
     for (int i = 0; i < count; ++i) {
         const auto& in = source[i];
         auto& out = capture[i];
@@ -65,28 +61,28 @@ void CaptureAndApplyPose(unsigned char* model, const mdl::BonePoseSnapshot* sour
         out.boneIndex = index;
         std::memcpy(out.position, bone->trans, sizeof out.position);
         std::memcpy(out.rotation, bone->rotQuat, sizeof out.rotation);
-        out.physicsDisabled = selected[index];
+        out.poseEdited = editFlags[index];
         std::memcpy(bone->trans, in.position, sizeof in.position);
         std::memcpy(bone->rotQuat, in.rotation, sizeof in.rotation);
-        selected[index] = in.physicsDisabled;
+        editFlags[index] = in.poseEdited;
     }
 }
 
-void ApplyPose(unsigned char* model, const mdl::BonePoseSnapshot* source, int count) {
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
-    unsigned char* selected = mdl::Mdl(model)->bonePhysicsState;
+void ApplyPose(mdl::ModelRecord* model, const mdl::BonePoseSnapshot* source, int count) {
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
+    unsigned char* editFlags = model->bonePhysicsState;
     for (int i = 0; i < count; ++i) {
         const auto& in = source[i];
         const int index = in.boneIndex;
         auto* bone = &bones[index];
         std::memcpy(bone->trans, in.position, sizeof in.position);
         std::memcpy(bone->rotQuat, in.rotation, sizeof in.rotation);
-        selected[index] = in.physicsDisabled;
+        editFlags[index] = in.poseEdited;
     }
 }
 
-void AdvanceUndo(unsigned char* model) {
-    mdl::ModelRecord& record = *mdl::Mdl(model);
+void AdvanceUndo(mdl::ModelRecord* model) {
+    mdl::ModelRecord& record = *model;
     record.UndoCursor() += 1;
     record.undoDirty = 1;
     record.redoDirty = 0;
@@ -95,30 +91,30 @@ void AdvanceUndo(unsigned char* model) {
     record.LatestUndoCursor() = record.UndoCursor();
 }
 
-void ReplaceBuffer(void*& slot, std::size_t bytes) {
+template <typename Record> void ReplaceBuffer(Record*& slot, std::size_t count) {
     if (slot != nullptr) {
         ::operator delete(slot);
         slot = nullptr;
     }
-    slot = ::operator new(bytes);
-    std::memset(slot, 0, bytes);
+    slot = static_cast<Record*>(::operator new(count * sizeof(Record)));
+    std::memset(slot, 0, count * sizeof(Record));
 }
 
-void SnapshotPose(unsigned char* model, mdl::UndoRecord& undo) {
-    const std::int32_t count = mdl::Mdl(model)->boneCount;
-    void*& slot = reinterpret_cast<void*&>(undo.bonePose);
-    ReplaceBuffer(slot, static_cast<std::size_t>(count) * sizeof(mdl::BonePoseSnapshot));
+void SnapshotPose(mdl::ModelRecord* model, mdl::UndoRecord& undo) {
+    const std::int32_t count = model->boneCount;
+    auto*& slot = undo.bonePose;
+    ReplaceBuffer(slot, static_cast<std::size_t>(count));
 
-    auto* dst = static_cast<mdl::BonePoseSnapshot*>(slot);
-    mikudancestudio::mdl::BoneRecord* pose = mikudancestudio::mdl::Bones(model);
-    unsigned char* selected = mdl::Mdl(model)->bonePhysicsState;
+    auto* dst = slot;
+    mikudancestudio::mdl::BoneRecord* pose = model->boneTable;
+    unsigned char* editFlags = model->bonePhysicsState;
     for (std::int32_t i = 0; i < count; ++i) {
         auto& out = dst[i];
         auto* src = &pose[i];
         out.boneIndex = i;
         std::memcpy(out.position, src->trans, sizeof out.position);
         std::memcpy(out.rotation, src->rotQuat, sizeof out.rotation);
-        out.physicsDisabled = selected[i];
+        out.poseEdited = editFlags[i];
     }
 }
 
@@ -136,10 +132,10 @@ void ResetBoneInterpolation(mdl::BoneKey& record, int lane) {
 // VA 0x0049D4D0: regenerate one automatically-smoothed position lane after
 // inserting/overwriting a bone key.  Rotation (lane 3) always receives the
 // original default Bezier tuple.
-void RebuildBoneInterpolation(unsigned char* model, int index, int lane) {
-    mdl::BoneKey* const keys = mdl::BoneKeys(model);
+void RebuildBoneInterpolation(mdl::ModelRecord* model, int index, int lane) {
+    mdl::BoneKey* const keys = model->boneKeys;
     mdl::BoneKey& record = keys[index];
-    if (lane >= 3 || index < static_cast<int>(mdl::Mdl(model)->boneCount)) {
+    if (lane >= 3 || index < static_cast<int>(model->boneCount)) {
         ResetBoneInterpolation(record, lane);
         return;
     }
@@ -152,7 +148,7 @@ void RebuildBoneInterpolation(unsigned char* model, int index, int lane) {
         return;
     }
 
-    if (previous < static_cast<int>(mdl::Mdl(model)->boneCount)) {
+    if (previous < static_cast<int>(model->boneCount)) {
         record.interpolation[lane] = 64;
         record.interpolation[lane + 4] = 0;
     } else {
@@ -193,7 +189,7 @@ void RebuildBoneInterpolation(unsigned char* model, int index, int lane) {
     }
 }
 
-void BoneKeyOverflow(unsigned char* model) {
+void BoneKeyOverflow(mdl::ModelRecord* model) {
     static const char kJpOverflow[] =
         "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67\x90\x94\x82\xaa%d"
         "\x8c\xc2\x82\xf0\x89\x7a\x82\xa6\x82\xdc\x82\xb5\x82\xbd\n"
@@ -204,46 +200,46 @@ void BoneKeyOverflow(unsigned char* model) {
         "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
     static const char kJpTitle[] = "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
     char text[0x100];
-    if (mikudancestudio::mdl::Mdl(model)->physicsFlags != 0) {
+    if (model->physicsFlags != 0) {
         sprintf_s(text, sizeof(text),
                   "You cannot regist over %d point\n"
                   "Please execute 'delete unused frame'",
                   static_cast<int>(mdl::kBoneKeyCapacity));
-        MessageBoxA(*reinterpret_cast<HWND*>(model), text, "register frame", 0);
+        MessageBoxA(static_cast<HWND>(model->hwnd), text, "register frame", 0);
     } else {
         sprintf_s(text, sizeof(text), kJpOverflow, static_cast<int>(mdl::kBoneKeyCapacity));
-        MessageBoxA(*reinterpret_cast<HWND*>(model), text, kJpTitle, 0);
+        MessageBoxA(static_cast<HWND>(model->hwnd), text, kJpTitle, 0);
     }
 }
 
 } // namespace
 
-void AppendBoneKeyToUndo(unsigned char* model, int index) { // VA 0x0049D410
+void AppendBoneKeyToUndo(mdl::ModelRecord* model, int index) { // VA 0x0049D410
     if (model == nullptr)
         return;
-    unsigned char* visited = mdl::Mdl(model)->keyVisitMap;
+    unsigned char* visited = model->keyVisitMap;
     if (visited[index] != 0)
         return;
 
     visited[index] = 1;
-    auto& undo = CurrentUndo(model);
+    auto& undo = model->undoRings[0].slots[model->UndoCursor()];
     std::int32_t& count = undo.recordCount;
-    auto* records = static_cast<BoneKeyUndoEntry*>(undo.auxiliaryPose);
+    auto* records = undo.keySnapshots;
     records[count].index = index;
-    std::memcpy(&records[count].key, &mdl::BoneKeys(model)[index], sizeof(mdl::BoneKey));
+    std::memcpy(&records[count].key, &model->boneKeys[index], sizeof(mdl::BoneKey));
     ++count;
 }
 
-int RegisterBonePoseAtFrame(unsigned char* model, int boneIndex, // VA 0x004B38A0
+int RegisterBonePoseAtFrame(mdl::ModelRecord* model, int boneIndex, // VA 0x004B38A0
                             std::uint32_t frame, int mode) {
     if (model == nullptr)
         return static_cast<int>(frame);
 
-    const HWND hwnd = *reinterpret_cast<HWND*>(model);
+    const HWND hwnd = static_cast<HWND>(model->hwnd);
     const bool autoInterpolation = SendMessageA(GetDlgItem(hwnd, panel::kPhysicsFrameCheckbox),
                                                 BM_GETCHECK, 0, 0) == BST_CHECKED;
-    mdl::BoneKey* const keys = mdl::BoneKeys(model);
-    mdl::BoneRecord* const bone = &mdl::Bones(model)[boneIndex];
+    mdl::BoneKey* const keys = model->boneKeys;
+    mdl::BoneRecord* const bone = &model->boneTable[boneIndex];
 
     int current = boneIndex;
     if (keys[current].frame < frame) {
@@ -257,7 +253,7 @@ int RegisterBonePoseAtFrame(unsigned char* model, int boneIndex, // VA 0x004B38A
         }
     }
 
-    auto fill = [&](int recordIndex) {
+    auto fill = [&](int recordIndex, bool inserted) {
         mdl::BoneKey& record = keys[recordIndex];
         const bool usePhysicsPose =
             bone->hasRigidBody != 0 && (mode == 1 || (mode >= 2 && bone->physicsDisabled == 0));
@@ -288,7 +284,7 @@ int RegisterBonePoseAtFrame(unsigned char* model, int boneIndex, // VA 0x004B38A
         if (autoInterpolation) {
             for (int lane = 0; lane < 4; ++lane)
                 RebuildBoneInterpolation(model, recordIndex, lane);
-        } else {
+        } else if (inserted) {
             for (int lane = 0; lane < 4; ++lane)
                 ResetBoneInterpolation(record, lane);
         }
@@ -298,15 +294,14 @@ int RegisterBonePoseAtFrame(unsigned char* model, int boneIndex, // VA 0x004B38A
     mdl::BoneKey& currentRecord = keys[current];
     if (currentRecord.frame == frame) {
         AppendBoneKeyToUndo(model, current);
-        fill(current);
+        fill(current, false);
     } else {
-        // x64 sub_7FF7CB4E9DB0 at 0x7FF7CB4EA46F: scan free slots from persistent cursor
-        // searchCursor (model+0x22B8); advance it on occupied slots,
-        // monotonically, just as in RegisterBoneKey (key_registrars.cpp).
-        int freeIndex = static_cast<int>(mdl::Mdl(model)->searchCursor);
+        // Pose registration scans from the track heads on every insertion.
+        // Unlike clipboard registration, it does not advance searchCursor
+        // (x64 0x7FF7CB4E84AF / 0x7FF7CB4E8B37; x86 0x4B3A39 / 0x4B3E58).
+        int freeIndex = static_cast<int>(model->boneCount);
         if (keys[freeIndex].frame != 0) {
             for (;;) {
-                ++mdl::Mdl(model)->searchCursor;
                 ++freeIndex;
                 if (freeIndex >= static_cast<int>(mdl::kBoneKeyCapacity)) {
                     BoneKeyOverflow(model);
@@ -335,28 +330,28 @@ int RegisterBonePoseAtFrame(unsigned char* model, int boneIndex, // VA 0x004B38A
             fresh.next = static_cast<std::uint32_t>(current);
         }
         fresh.frame = frame;
-        fill(freeIndex);
+        fill(freeIndex, true);
     }
 
-    if (frame > mikudancestudio::mdl::Mdl(model)->maxFrame)
-        mikudancestudio::mdl::Mdl(model)->maxFrame = frame;
+    if (frame > model->maxFrame)
+        model->maxFrame = frame;
     return static_cast<int>(frame);
 }
 
-void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode) { // VA 0x004C2080
+void RegisterSelectedBoneKeys(mdl::ModelRecord* model, int frame, int mode) { // VA 0x004C2080
     if (model == nullptr)
         return;
 
-    const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
-    unsigned char* const selected = mdl::Mdl(model)->boneSelection;
-    unsigned char* const secondary = mdl::Mdl(model)->bonePhysicsState;
+    const std::int32_t boneCount = model->boneCount;
+    unsigned char* const selected = model->boneSelection;
+    unsigned char* const editFlags = model->bonePhysicsState;
     std::int32_t selectedCount = 0;
     for (std::int32_t i = 0; i < boneCount; ++i) {
         if (selected[i] != 0)
             ++selectedCount;
     }
 
-    const HWND hwnd = *reinterpret_cast<HWND*>(model);
+    const HWND hwnd = static_cast<HWND>(model->hwnd);
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     AdvanceUndo(model);
@@ -366,17 +361,17 @@ void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode) { // VA
     undo.frame = frame;
     SnapshotPose(model, undo);
     undo.recordCount = 0;
-    void*& keysSlot = undo.auxiliaryPose;
-    ReplaceBuffer(keysSlot, static_cast<std::size_t>(selectedCount) * 0xC0);
+    auto*& keysSlot = undo.keySnapshots;
+    ReplaceBuffer(keysSlot, static_cast<std::size_t>(selectedCount) * mdl::kUndoKeysPerInsertion);
 
-    std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(model);
+    std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
+    mdl::BoneKey* const boneKeys = model->boneKeys;
     for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i)
         boneKeys[i].allocated = 0;
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
+    mdl::MorphKey* const morphKeys = model->morphKeys;
     for (std::size_t i = 0; i < mdl::kMorphKeyCapacity; ++i)
         morphKeys[i].allocated = 0;
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
     for (std::size_t i = 0; i < mdl::kDisplayKeyCapacity; ++i)
         displayKeys[i].allocated = 0;
 
@@ -384,17 +379,17 @@ void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode) { // VA
         if (selected[i] == 0)
             continue;
         RegisterBonePoseAtFrame(model, i, static_cast<std::uint32_t>(frame), mode);
-        secondary[i] = 0;
+        editFlags[i] = 0;
     }
 }
 
-void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame) {
+void SnapshotPoseBeforeFrameChange(mdl::ModelRecord* model, int frame) {
     if (model == nullptr)
         return;
-    const std::int32_t count = mdl::Mdl(model)->boneCount;
-    unsigned char* selected = mdl::Mdl(model)->bonePhysicsState;
+    const std::int32_t count = model->boneCount;
+    unsigned char* editFlags = model->bonePhysicsState;
     std::int32_t first = 0;
-    while (first < count && selected[first] == 0)
+    while (first < count && editFlags[first] == 0)
         ++first;
     if (first >= count)
         return;
@@ -407,22 +402,19 @@ void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame) {
     SnapshotPose(model, undo);
 }
 
-void SnapshotSelectedKeysForUndo(unsigned char* model, int frame) {
+void SnapshotSelectedKeysForUndo(mdl::ModelRecord* model, int frame) {
     if (model == nullptr)
         return;
-    mdl::BoneKey* const keys = mdl::BoneKeys(model);
+    mdl::BoneKey* const keys = model->boneKeys;
     std::int32_t selectedCount = 0;
-    for (std::int32_t group = 0; group < static_cast<std::int32_t>(mdl::kBoneKeyCapacity / 6);
-         ++group) {
-        for (int lane = 0; lane < 6; ++lane) {
-            if (keys[group * 6 + lane].allocated != 0)
-                ++selectedCount;
-        }
+    for (std::size_t index = 0; index < mdl::kBoneKeyCapacity; ++index) {
+        if (keys[index].allocated != 0)
+            ++selectedCount;
     }
     if (selectedCount == 0)
         return;
 
-    const HWND hwnd = *reinterpret_cast<HWND*>(model);
+    const HWND hwnd = static_cast<HWND>(model->hwnd);
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
 
@@ -433,9 +425,9 @@ void SnapshotSelectedKeysForUndo(unsigned char* model, int frame) {
     undo.frame = frame;
     SnapshotPose(model, undo);
 
-    void*& selectedSlot = undo.auxiliaryPose;
-    ReplaceBuffer(selectedSlot, static_cast<std::size_t>(selectedCount) * sizeof(BoneKeyUndoEntry));
-    std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
+    auto*& selectedSlot = undo.keySnapshots;
+    ReplaceBuffer(selectedSlot, static_cast<std::size_t>(selectedCount));
+    std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
     for (std::size_t index = 0; index < mdl::kBoneKeyCapacity; ++index) {
         if (keys[index].allocated != 0)
             AppendBoneKeyToUndo(model, index);
@@ -446,13 +438,13 @@ void SnapshotSelectedKeysForUndo(unsigned char* model, int frame) {
 // just made the deletion snapshot at the current cursor.  Type 4 tells
 // Undo/Redo to chain that entry with the type-2 snapshot opened here for the
 // transformed records which are about to be inserted.
-void BeginRangeScaleBoneUndo(unsigned char* model, int frame, int transformedKeyCount) {
+void BeginRangeScaleBoneUndo(mdl::ModelRecord* model, int frame, int transformedKeyCount) {
     if (model == nullptr || transformedKeyCount <= 0)
         return;
 
     CurrentUndo(model).operation = mdl::UndoOperation::ChainedBoneKeys;
 
-    const HWND hwnd = *reinterpret_cast<HWND*>(model);
+    const HWND hwnd = static_cast<HWND>(model->hwnd);
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     AdvanceUndo(model);
@@ -463,22 +455,23 @@ void BeginRangeScaleBoneUndo(unsigned char* model, int frame, int transformedKey
     undo.frame = frame;
     SnapshotPose(model, undo);
 
-    void*& keySlot = undo.auxiliaryPose;
-    ReplaceBuffer(keySlot, static_cast<std::size_t>(transformedKeyCount) * 0xC0);
-    std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
+    auto*& keySlot = undo.keySnapshots;
+    ReplaceBuffer(keySlot,
+                  static_cast<std::size_t>(transformedKeyCount) * mdl::kUndoKeysPerInsertion);
+    std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
 }
 
 // VA 0x004A09E0: delete every marked model-mode key.  The three key arrays
 // retain their fixed-capacity slots; non-root records are unlinked and reset,
 // while root records keep their track-head role with default values.
-void DeleteMarkedModelKeys(unsigned char* model, int frame) { // VA 0x004A09E0
+void DeleteMarkedModelKeys(mdl::ModelRecord* model, int frame) { // VA 0x004A09E0
     if (model == nullptr)
         return;
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(model);
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
-    const std::size_t boneCount = mikudancestudio::mdl::Mdl(model)->boneCount;
-    const std::size_t morphCount = mikudancestudio::mdl::Mdl(model)->morphCount;
+    mdl::BoneKey* const boneKeys = model->boneKeys;
+    mdl::MorphKey* const morphKeys = model->morphKeys;
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
+    const std::size_t boneCount = model->boneCount;
+    const std::size_t morphCount = model->morphCount;
 
     int selectedBoneKeys = 0;
     for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
@@ -486,7 +479,7 @@ void DeleteMarkedModelKeys(unsigned char* model, int frame) { // VA 0x004A09E0
             ++selectedBoneKeys;
     }
     if (selectedBoneKeys != 0) {
-        const HWND hwnd = *reinterpret_cast<HWND*>(model);
+        const HWND hwnd = static_cast<HWND>(model->hwnd);
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
         AdvanceUndo(model);
@@ -495,9 +488,10 @@ void DeleteMarkedModelKeys(unsigned char* model, int frame) { // VA 0x004A09E0
         undo.recordCount = 0;
         undo.frame = frame;
         SnapshotPose(model, undo);
-        void*& keySlot = undo.auxiliaryPose;
-        ReplaceBuffer(keySlot, static_cast<std::size_t>(selectedBoneKeys) * 0xC0);
-        std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
+        auto*& keySlot = undo.keySnapshots;
+        ReplaceBuffer(keySlot,
+                      static_cast<std::size_t>(selectedBoneKeys) * mdl::kUndoKeysPerInsertion);
+        std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
     }
 
     // Reset every display/IK key record.
@@ -515,10 +509,10 @@ void DeleteMarkedModelKeys(unsigned char* model, int frame) { // VA 0x004A09E0
         rec.allocated = 0;
         rec.visible = 1;
         auto* ik = mdl::IkStates(rec);
-        for (std::uint32_t j = 0; j < mikudancestudio::mdl::Mdl(model)->ikChainCount; ++j)
+        for (std::uint32_t j = 0; j < model->ikChainCount; ++j)
             ik[j] = 1;
         auto* selectors = mdl::SelectorStates(rec);
-        for (std::uint32_t j = 0; j < mikudancestudio::mdl::Mdl(model)->boneOrderCount; ++j) {
+        for (std::uint32_t j = 0; j < model->boneOrderCount; ++j) {
             selectors[j].modelIndex = -1;
             selectors[j].boneIndex = 0;
         }
@@ -546,10 +540,10 @@ void DeleteMarkedModelKeys(unsigned char* model, int frame) { // VA 0x004A09E0
         rec.previous = 0;
     }
 
-    const HWND hwnd = *reinterpret_cast<HWND*>(model);
+    const HWND hwnd = static_cast<HWND>(model->hwnd);
     const bool autoInterpolation = SendMessageA(GetDlgItem(hwnd, panel::kPhysicsFrameCheckbox),
                                                 BM_GETCHECK, 0, 0) == BST_CHECKED;
-    mdl::BoneRecord* const bones = mdl::Bones(model);
+    mdl::BoneRecord* const bones = model->boneTable;
     for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
         mdl::BoneKey& rec = boneKeys[i];
         if (rec.allocated == 0)
@@ -583,15 +577,15 @@ void DeleteMarkedModelKeys(unsigned char* model, int frame) { // VA 0x004A09E0
 
 // VA 0x004A1870: undo one ring entry, capturing the displaced state into the
 // parallel redo ring at 0x2A34. Type 4 entries are chained recursively by MMD.
-void UndoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A1870
+void UndoModelEdit(mdl::ModelRecord* model, std::int32_t& frame) { // VA 0x004A1870
     if (model == nullptr)
         return;
-    int cursor = static_cast<int>(mdl::Mdl(model)->UndoCursor());
+    int cursor = static_cast<int>(model->UndoCursor());
     auto& undo = UndoAt(model, cursor);
     const mdl::UndoOperation type = undo.operation;
     if (type == mdl::UndoOperation::Empty) {
-        EnableWindow(GetDlgItem(*reinterpret_cast<HWND*>(model), panel::kUndoButton), FALSE);
-        mdl::Mdl(model)->undoDirty = 0;
+        EnableWindow(GetDlgItem(static_cast<HWND>(model->hwnd), panel::kUndoButton), FALSE);
+        model->undoDirty = 0;
         return;
     }
 
@@ -600,29 +594,28 @@ void UndoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A1870
     redo.recordCount = count;
     if (type == mdl::UndoOperation::BonePose || type == mdl::UndoOperation::BonePoseWithFrame) {
         redo.operation = mdl::UndoOperation::BonePose;
-        void*& redoPose = reinterpret_cast<void*&>(redo.bonePose);
-        ReplaceBuffer(redoPose, static_cast<std::size_t>(count) * sizeof(mdl::BonePoseSnapshot));
-        CaptureAndApplyPose(model, undo.bonePose, redo.bonePose, count);
+        auto*& redoPose = redo.bonePose;
+        ReplaceBuffer(redoPose, static_cast<std::size_t>(count));
         if (type == mdl::UndoOperation::BonePoseWithFrame) {
             frame = static_cast<int>(undo.frame);
             SetFrameEdit(model, frame);
         }
+        CaptureAndApplyPose(model, undo.bonePose, redo.bonePose, count);
     } else if (type == mdl::UndoOperation::BoneKeys ||
                type == mdl::UndoOperation::ChainedBoneKeys) {
         redo.operation = mdl::UndoOperation::BoneKeys;
-        void*& redoKeys = redo.auxiliaryPose;
-        ReplaceBuffer(redoKeys, static_cast<std::size_t>(count) * sizeof(BoneKeyUndoEntry));
-        std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
-        const int boneCount = static_cast<int>(mdl::Mdl(model)->boneCount);
-        void*& redoPose = reinterpret_cast<void*&>(redo.bonePose);
-        ReplaceBuffer(redoPose,
-                      static_cast<std::size_t>(boneCount) * sizeof(mdl::BonePoseSnapshot));
+        auto*& redoKeys = redo.keySnapshots;
+        ReplaceBuffer(redoKeys, static_cast<std::size_t>(count));
+        std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
+        const int boneCount = static_cast<int>(model->boneCount);
+        auto*& redoPose = redo.bonePose;
+        ReplaceBuffer(redoPose, static_cast<std::size_t>(boneCount));
         frame = static_cast<int>(undo.frame);
         SetFrameEdit(model, frame);
         CaptureAndApplyPose(model, undo.bonePose, redo.bonePose, boneCount);
-        mdl::BoneKey* const keys = mdl::BoneKeys(model);
-        const auto* source = static_cast<const BoneKeyUndoEntry*>(undo.auxiliaryPose);
-        auto* capture = static_cast<BoneKeyUndoEntry*>(redoKeys);
+        mdl::BoneKey* const keys = model->boneKeys;
+        const auto* source = undo.keySnapshots;
+        auto* capture = redoKeys;
         for (int i = 0; i < count; ++i) {
             const int index = source[i].index;
             capture[i].index = index;
@@ -631,26 +624,26 @@ void UndoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A1870
         }
     }
 
-    cursor = cursor == 0 ? 29 : cursor - 1;
-    mdl::Mdl(model)->UndoCursor() = cursor;
+    cursor = cursor == 0 ? mdl::kUndoHistoryDepth - 1 : cursor - 1;
+    model->UndoCursor() = cursor;
     if (UndoAt(model, cursor).operation == mdl::UndoOperation::ChainedBoneKeys)
         UndoModelEdit(model, frame);
 }
 
 // VA 0x004A2490: redo the parallel-ring entry selected by advancing the
 // cursor. Type 2/4 restores complete 60-byte key records byte-for-byte.
-void RedoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A2490
+void RedoModelEdit(mdl::ModelRecord* model, std::int32_t& frame) { // VA 0x004A2490
     if (model == nullptr)
         return;
-    int cursor = static_cast<int>(mdl::Mdl(model)->UndoCursor()) + 1;
+    int cursor = static_cast<int>(model->UndoCursor()) + 1;
     if (cursor >= mdl::kUndoHistoryDepth)
         cursor = 0;
-    mdl::Mdl(model)->UndoCursor() = cursor;
+    model->UndoCursor() = cursor;
     auto& redo = RedoAt(model, cursor);
     const mdl::UndoOperation type = redo.operation;
     if (type == mdl::UndoOperation::Empty) {
-        EnableWindow(GetDlgItem(*reinterpret_cast<HWND*>(model), panel::kRedoButton), FALSE);
-        mdl::Mdl(model)->redoDirty = 0;
+        EnableWindow(GetDlgItem(static_cast<HWND>(model->hwnd), panel::kRedoButton), FALSE);
+        model->redoDirty = 0;
         return;
     }
     const int count = redo.recordCount;
@@ -658,10 +651,12 @@ void RedoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A2490
         ApplyPose(model, redo.bonePose, count);
     } else if (type == mdl::UndoOperation::BoneKeys ||
                type == mdl::UndoOperation::ChainedBoneKeys) {
-        mdl::BoneKey* const keys = mdl::BoneKeys(model);
-        const auto* source = static_cast<const BoneKeyUndoEntry*>(redo.auxiliaryPose);
+        mdl::BoneKey* const keys = model->boneKeys;
+        const auto* source = redo.keySnapshots;
         for (int i = 0; i < count; ++i) {
-            const int index = source[i].index;
+            // The original takes destinations from the undo entry and
+            // replacement payloads from the parallel redo entry.
+            const int index = UndoAt(model, cursor).keySnapshots[i].index;
             std::memcpy(&keys[index], &source[i].key, sizeof(mdl::BoneKey));
         }
         frame = static_cast<int>(UndoAt(model, cursor).frame);
@@ -671,11 +666,11 @@ void RedoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A2490
         RedoModelEdit(model, frame);
 }
 
-void ResetDisplayKeyCursor(unsigned char* model) { // VA 0x004A4A00
+void ResetDisplayKeyCursor(mdl::ModelRecord* model) { // VA 0x004A4A00
     if (model == nullptr)
         return;
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
-    std::int32_t& freeIndex = mdl::Mdl(model)->searchCursor;
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
+    std::int32_t& freeIndex = model->searchCursor;
     freeIndex = 1;
     if (displayKeys == nullptr)
         return;
@@ -685,15 +680,14 @@ void ResetDisplayKeyCursor(unsigned char* model) { // VA 0x004A4A00
     }
 }
 
-void SyncModelEditControls(unsigned char* model) {
+void SyncModelEditControls(mdl::ModelRecord* model) {
     if (model == nullptr)
         return;
-    const HWND hwnd = *reinterpret_cast<HWND*>(model);
+    const HWND hwnd = static_cast<HWND>(model->hwnd);
     SendMessageA(GetDlgItem(hwnd, panel::kModelVisibleCheckbox), BM_SETCHECK,
-                 mikudancestudio::mdl::Mdl(model)->loadComplete != 0 ? BST_CHECKED : BST_UNCHECKED,
-                 0);
+                 model->loadComplete != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
 
-    mdl::IkChain* chains = mdl::IkChains(model);
+    mdl::IkChain* chains = model->ikChains;
     if (chains != nullptr) {
         const LRESULT sel =
             SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
@@ -702,7 +696,7 @@ void SyncModelEditControls(unsigned char* model) {
                          enabled ? panel::kIkOnRadio : panel::kIkOffRadio);
     }
 
-    mdl::MorphRecord* morphs = mdl::Morphs(model);
+    mdl::MorphRecord* morphs = model->morphs;
     if (morphs == nullptr)
         return;
     static constexpr int kSliderIds[4] = {panel::kMorphSlider0, panel::kMorphSlider1,
@@ -711,7 +705,7 @@ void SyncModelEditControls(unsigned char* model) {
                                         panel::kMorphEdit3};
     char text[0x100];
     for (int lane = 0; lane < 4; ++lane) {
-        const std::int32_t index = mdl::Mdl(model)->selectedMorphs[lane];
+        const std::int32_t index = model->selectedMorphs[lane];
         if (index < 0)
             continue;
         const float value = morphs[static_cast<std::size_t>(index)].value;
@@ -725,7 +719,7 @@ void SyncModelEditControls(unsigned char* model) {
 // Exported entry for the frame-line delete command (0x43A650) - the body
 // above is the verbatim port of VA 0x0049D4D0 but lives in the anonymous
 // namespace.  VA 0x0049D4D0.
-void RebuildBoneKeyInterpolation(unsigned char* model, int index, int lane) { // VA 0x0049D4D0
+void RebuildBoneKeyInterpolation(mdl::ModelRecord* model, int index, int lane) { // VA 0x0049D4D0
     RebuildBoneInterpolation(model, index, lane);
 }
 

@@ -19,6 +19,7 @@
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -235,7 +236,7 @@ void ComposeCallbackTexture(MMDApp* app,
     DepthTextureProvider callback = app->DepthTextureCallback();
     if (callback == nullptr)
         return;
-    IDirect3DBaseTexture9* texture = nullptr;
+    IDirect3DTexture9* texture = nullptr;
     callback(&texture);
     DrawFullscreenQuad(device, texture, app->RightViewportVertices());
 }
@@ -395,7 +396,8 @@ void RenderFrameScene(MMDApp* app) {
     // 0x46E556..0x46E592: selected-bone local/global operation axis.
     if (app->CameraMode() == 0 && app->PlaybackActive() == 0 &&
         app->FrameCopyOrPhysicsDialog() == 0) {
-        DrawBoneOperationAxis(app, reinterpret_cast<const float*>(&frameWorld));
+        DrawBoneOperationAxis(app, app->SelectedModel(),
+                              reinterpret_cast<const float*>(&frameWorld));
     }
 
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);

@@ -4,18 +4,21 @@
 
 #include "mikudancestudio/model.hpp"
 
-namespace mikudancestudio { void ModelInitDefaults(unsigned char*); }
+namespace mikudancestudio {
+void ModelInitDefaults(mdl::ModelRecord*);
+}
 
 int main() {
     using namespace mikudancestudio;
     std::vector<unsigned char> storage(mdl::kSize, 0);
     auto* bytes = storage.data();
     auto& model = *mdl::Mdl(bytes);
-    ModelInitDefaults(bytes);
+    ModelInitDefaults(&model);
     int failures = 0;
     const auto check = [&](bool condition, const char* message) {
         std::printf("%s: %s\n", condition ? "PASS" : "FAIL", message);
-        if (!condition) ++failures;
+        if (!condition)
+            ++failures;
     };
     check(model.boneKeyCursors == nullptr && model.morphKeyCursors == nullptr,
           "failed-load cleanup receives null animation cursors");
@@ -36,14 +39,14 @@ int main() {
     bool identity = true;
     for (int joint = 0; joint < 17; ++joint)
         for (int component = 0; component < 4; ++component)
-            identity &= readFloat(quaternionOffset + (joint * 4 + component) * 4)
-                     == (component == 3 ? 1.0f : 0.0f);
+            identity &= readFloat(quaternionOffset + (joint * 4 + component) * 4) ==
+                        (component == 3 ? 1.0f : 0.0f);
     check(identity, "all 17 standard-pose quaternions are identity");
     bool history = true;
     for (int sample = 0; sample < 23 * 30; ++sample)
         for (int component = 0; component < 3; ++component)
-            history &= readFloat(historyOffset + (sample * 3 + component) * 4)
-                    == (component == 1 ? -999.0f : 0.0f);
+            history &= readFloat(historyOffset + (sample * 3 + component) * 4) ==
+                       (component == 1 ? -999.0f : 0.0f);
     check(history, "all 690 tracking history samples carry the missing-joint sentinel");
     bool current = true;
     for (int joint = 0; joint < 23; ++joint)
@@ -51,7 +54,8 @@ int main() {
     check(current, "all 23 current joints carry the missing-joint sentinel");
     bool toonUntouched = true;
     for (const auto& filename : model.pmdToonFileNames)
-        for (char c : filename) toonUntouched &= c == 0;
+        for (char c : filename)
+            toonUntouched &= c == 0;
     check(toonUntouched, "tracking initialization does not overwrite toon filenames");
     model.pmxTextEncoding = 0;
     model.pmxAdditionalUvCount = 0;
@@ -61,7 +65,7 @@ int main() {
     model.pmxBoneIndexSize = 2;
     model.pmxMorphIndexSize = 1;
     model.pmxRigidIndexSize = 1;
-    check(mdl::PoseTraceBuffer(bytes) == nullptr,
+    check(model.poseTraceBuffer == nullptr,
           "a valid PMX header does not create a pose-trace allocation");
     return failures == 0 ? 0 : 1;
 }

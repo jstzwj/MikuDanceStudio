@@ -104,7 +104,7 @@ void SelectAccessoryTimelineTrack(int slot) {
 // Stream/read-context teardown for the background data loader.  The context
 // is the 0x25C-byte object reached through app+0xCC (audioContext;
 // Timer100 0x429770 and FrameDriver 0x46B090 load it into ecx).  __thiscall,
-// no stack args; the port keeps the placeholder void* file = the context.
+// no stack args; the port receives the audio context explicitly.
 //
 //   1. if an async read is active (ctx+0x234 != 0) and the completion flag
 //      (ctx+0x248) is still 0, set it to 1 and spin on Sleep(1) until a
@@ -116,8 +116,7 @@ void SelectAccessoryTimelineTrack(int slot) {
 //
 // Reference: ../translated/MikuMikuDance/fcn_004c2680.cpp
 // =========================================================================//
-void CloseDataFile(void* file) {
-    auto* audio = static_cast<WaveAudioContext*>(file);
+void CloseDataFile(WaveAudioContext* audio) {
 
     // ---- step 1: wait for an in-flight async read to finish --------------
     // 0x004C2683 cmp [esi+234h], 0 / 0x004C268C test [esi+248h]

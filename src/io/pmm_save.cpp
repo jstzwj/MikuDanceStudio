@@ -16,15 +16,15 @@
 //   0x41B381  per existing model slot (0..99, byte = 0-based slot index):
 //             name1 (len+bytes, model+0x2248), name2 (model+0x227A),
 //             0x100-byte Shift-JIS path (WideToSjis of model+0x24BC),
-//             W1 bone count byte (0x26D4), display-frame name table
+//             W1 display-group count byte (0x26D4), bone name table
 //             (count 0x2D84, 0x25C-stride names at *0x26BC), morph name
-//             table (0x2D80, 0x88 stride at *0x26C4), IK frame table
-//             (0x2D88, W4 per 0x18-stride record at *0x26C0), rigid frame
+//             table (0x2D80, 0x88 stride at *0x26C4), IK chain table
+//             (0x2D88, W4 per 0x18-stride record at *0x26C0), external-parent selector
 //             table (0x4CCE8, W4 per 0x14-stride record at *0x4CCE4),
 //             W1 0x2D7C, W1 bool 0x2D8D, W4 0x2D90, W4x5 0x2D9C..0x2DAC,
-//             W1 bone-count byte again + per-bone bools (0x65-stride
+//             W1 group-count byte again + per-group bools (0x65-stride
 //             records at *0x26D0, flag byte at +100), W4 0x31AC/0x31B0,
-//             dense display-frame keys [0, count) (0x3C-stride records at
+//             dense bone keys [0, count) (0x3C-stride records at
 //             *0x26E0: W4 +0/+4/+8, W1 x4 (+0xC..+0x18), W4 x7
 //             (+0x1C..+0x34), W1 bool +0x38/+0x39 - the dense loop counter
 //             is 16-bit in the original and its record offset wraps with
@@ -32,15 +32,15 @@
 //             60*kBoneKeyCapacity bytes) scan counting frame!=0 records,
 //             W4 count, then the
 //             same records prefixed by W4(frame index); morph keys
-//             (0x14-stride at *0x26E4, dense + sparse to 20000), rigid/IK
+//             (0x14-stride at *0x26E4, dense + sparse to 20000), display/IK/selector
 //             keys (0x1C-stride at *0x26E8: W4 +0/+4/+8 + W1 bool +0xC
-//             base record; per record IK bool table at +0x10, float pairs
+//             base record; per record IK bool table at +0x10, integer reference pairs
 //             at +0x18, W1 bool +0x14; sparse scan 1..1000 re-emits the
 //             per-record sub tables), then the current pose dump: per
-//             display frame (0x25C records at *0x26BC) W4x7 +0x140..+0x158,
+//             bone (0x25C records at *0x26BC) W4x7 +0x140..+0x158,
 //             W1 bool +0x1ED, W1 bool *0x2D98[i], W1 bool *0x2D94[i]; per
 //             morph W4 (+0x30 of the 0x88 records); per IK W1 bool +0x12;
-//             per rigid W4 +4/+8/+0xC/+0x10 of the 0x14 records; finally
+//             per selector W4 +4/+8/+0xC/+0x10 of the 0x14 records; finally
 //             W1 bool 0x31BE, W4 0x31C0, W1 bool 0x37C0, W1 0x2D7D.
 //   0x41C9AE  camera track (*0x374): W4x12 record 0 (+0..+0x24,+0x4C,+0x50),
 //             W1 x24 (+0x28/+0x2E/+0x34/+0x3A + j, j=0..5), W1 bool +0x40,
@@ -166,7 +166,7 @@ void WritePmmMorphKey(int fd, const mdl::MorphKey& key) {
     W(fd, &allocated, 1);
 }
 
-void WritePmmDisplayKey(int fd, const mdl::DisplayKey& key, int ikCount, int rigidCount) {
+void WritePmmDisplayKey(int fd, const mdl::DisplayKey& key, int ikCount, int selectorCount) {
     W(fd, &key.frame, 4);
     W(fd, &key.previous, 4);
     W(fd, &key.next, 4);
@@ -178,7 +178,7 @@ void WritePmmDisplayKey(int fd, const mdl::DisplayKey& key, int ikCount, int rig
         W(fd, &enabled, 1);
     }
     const auto* pairs = mdl::SelectorStates(key);
-    for (int i = 0; i < rigidCount; ++i)
+    for (int i = 0; i < selectorCount; ++i)
         W(fd, &pairs[i], sizeof(pairs[i]));
     const unsigned char allocated = key.allocated != 0;
     W(fd, &allocated, 1);
@@ -387,60 +387,58 @@ void WritePmmFileHeader(int fd, MMDApp* s, HWND main, char* hdr) {
 } // namespace
 
 // 2. per-model block (0x41B355..0x41C981)
-void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned char** const slots,
-                                 char* text) {
+void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer,
+                                 mdl::ModelRecord* const* const slots, char* text) {
     // ---- 2. per-model block (0x41B355..0x41C981) ------------------------
     // Not a file-format cap: the x64 save twin sub_7FF7CB4950A0 writes the
     // slot id byte for every occupied slot of the full array (inc dl /
     // cmp dl, 0FFh / jb at 0x7FF7CB496C11..0x7FF7CB496C1A), so the on-disk
     // bound is the slot capacity (0..254 on x64).
     for (unsigned char slot = 0; slot < kModelSlotCount; ++slot) { // loc_41B360
-        if (slots[slot] == 0)
+        if (slots[slot] == nullptr)
             continue;
         W(fd, &slot, 1); // 0x41B381
-        unsigned char* const model = slots[slot];
+        const mdl::ModelRecord* const model = slots[slot];
 
         { // name1 at model+0x2248
-            const unsigned char len =
-                NameLen(reinterpret_cast<const unsigned char*>(mdl::Mdl(model)->name));
-            W(fd, &len, 1);                    // 0x41B3B7
-            W(fd, mdl::Mdl(model)->name, len); // 0x41B3D9
+            const unsigned char len = NameLen(reinterpret_cast<const unsigned char*>(model->name));
+            W(fd, &len, 1);          // 0x41B3B7
+            W(fd, model->name, len); // 0x41B3D9
         }
         { // name2 at model+0x227A
             const unsigned char len =
-                NameLen(reinterpret_cast<const unsigned char*>(mdl::Mdl(model)->nameEn));
-            W(fd, &len, 1);                      // 0x41B40F
-            W(fd, mdl::Mdl(model)->nameEn, len); // 0x41B432
+                NameLen(reinterpret_cast<const unsigned char*>(model->nameEn));
+            W(fd, &len, 1);            // 0x41B40F
+            W(fd, model->nameEn, len); // 0x41B432
         }
 
         WideToSjis(renderer, text, // 0x41B45D
-                   mdl::Mdl(model)->path, 0x100);
+                   model->path, 0x100);
         W(fd, text, 0x100); // 0x41B471
 
-        const mdl::ModelRecord* const record = mdl::Mdl(model);
-        const std::int32_t dispCount = static_cast<std::int32_t>(record->boneCount);
-        const std::int32_t morphCount = static_cast<std::int32_t>(record->morphCount);
-        const std::int32_t ikCount = static_cast<std::int32_t>(record->ikChainCount);
-        const std::int32_t rigidCount = static_cast<std::int32_t>(record->boneOrderCount);
-        mdl::BoneRecord* const bones = mdl::Bones(model);
-        mdl::MorphRecord* const morphs = mdl::Morphs(model);
-        mdl::IkChain* const ikChains = mdl::IkChains(model);
-        mdl::BoneOrderEntry* const rigidFrames = mdl::BoneOrder(model);
-        mdl::BoneKey* const dispKeys = mdl::BoneKeys(model);
-        mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
-        mdl::DisplayKey* const physKeys = mdl::DisplayKeys(model);
+        const std::int32_t boneCount = static_cast<std::int32_t>(model->boneCount);
+        const std::int32_t morphCount = static_cast<std::int32_t>(model->morphCount);
+        const std::int32_t ikCount = static_cast<std::int32_t>(model->ikChainCount);
+        const std::int32_t selectorCount = static_cast<std::int32_t>(model->boneOrderCount);
+        const mdl::BoneRecord* const bones = model->boneTable;
+        const mdl::MorphRecord* const morphs = model->morphs;
+        const mdl::IkChain* const ikChains = model->ikChains;
+        const mdl::BoneOrderEntry* const selectors = model->boneOrderTable;
+        const mdl::BoneKey* const boneKeys = model->boneKeys;
+        const mdl::MorphKey* const morphKeys = model->morphKeys;
+        const mdl::DisplayKey* const displayKeys = model->displayKeys;
 
-        W(fd, &record->groupCount, 1);                        // 0x41B48E
-        W(fd, &record->boneCount, sizeof(record->boneCount)); // 0x41B4AC
-        if (dispCount != 0 && dispCount > 0) {
-            for (std::int32_t i = 0; i < dispCount; ++i) {
+        W(fd, &model->groupCount, 1);                       // 0x41B48E
+        W(fd, &model->boneCount, sizeof(model->boneCount)); // 0x41B4AC
+        if (boneCount != 0 && boneCount > 0) {
+            for (std::int32_t i = 0; i < boneCount; ++i) {
                 const unsigned char len =
                     NameLen(reinterpret_cast<const unsigned char*>(bones[i].name));
                 W(fd, &len, 1);            // 0x41B4FF
                 W(fd, bones[i].name, len); // 0x41B524
             }
         }
-        W(fd, &record->morphCount, sizeof(record->morphCount)); // 0x41B562
+        W(fd, &model->morphCount, sizeof(model->morphCount)); // 0x41B562
         if (morphCount != 0 && morphCount > 0) {
             for (std::int32_t i = 0; i < morphCount; ++i) {
                 const unsigned char len =
@@ -449,31 +447,31 @@ void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned c
                 W(fd, morphs[i].name, len); // 0x41B5D4
             }
         }
-        W(fd, &record->ikChainCount, sizeof(record->ikChainCount)); // 0x41B612
+        W(fd, &model->ikChainCount, sizeof(model->ikChainCount)); // 0x41B612
         if (ikCount != 0 && ikCount > 0) {
             for (std::int32_t i = 0; i < ikCount; ++i)
                 W(fd, &ikChains[i].boneIndex, sizeof(ikChains[i].boneIndex));
         }
-        W(fd, &record->boneOrderCount,
-          sizeof(record->boneOrderCount)); // 0x41B680
-        if (rigidCount != 0 && rigidCount > 0) {
-            for (std::int32_t i = 0; i < rigidCount; ++i)
-                W(fd, &rigidFrames[i].boneIndex,
-                  sizeof(rigidFrames[i].boneIndex)); // 0x41B6B5
+        W(fd, &model->boneOrderCount,
+          sizeof(model->boneOrderCount)); // 0x41B680
+        if (selectorCount != 0 && selectorCount > 0) {
+            for (std::int32_t i = 0; i < selectorCount; ++i)
+                W(fd, &selectors[i].boneIndex,
+                  sizeof(selectors[i].boneIndex)); // 0x41B6B5
         }
-        W(fd, &record->comboSelIndex, 1); // 0x41B6EF
+        W(fd, &model->comboSelIndex, 1); // 0x41B6EF
         {
-            const unsigned char b = record->loadComplete != 0;
+            const unsigned char b = model->loadComplete != 0;
             W(fd, &b, 1); // 0x41B719
         }
-        W(fd, &record->selectedBone, sizeof(record->selectedBone)); // 0x41B737
-        for (const std::int32_t selectedMorph : mdl::Mdl(model)->selectedMorphs)
+        W(fd, &model->selectedBone, sizeof(model->selectedBone)); // 0x41B737
+        for (const std::int32_t selectedMorph : model->selectedMorphs)
             W(fd, &selectedMorph, sizeof(selectedMorph)); // 0x41B75B
 
-        const unsigned char groupCount = record->groupCount;
-        W(fd, &record->groupCount, 1); // 0x41B790
+        const unsigned char groupCount = model->groupCount;
+        W(fd, &model->groupCount, 1); // 0x41B790
         if (groupCount != 0) {
-            const mdl::DisplayGroup* const groups = mdl::DisplayGroups(model);
+            const mdl::DisplayGroup* const groups = model->displayGroups;
             for (unsigned char i = 0; i < groupCount; ++i) { // 0x41B7D5
                 // x64 RVA 0x75886: compare group+0x64, then setne.
                 // Persist the UI state as a bool, independent of either name.
@@ -481,35 +479,35 @@ void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned c
                 W(fd, &b, 1);
             }
         }
-        W(fd, &record->boneListPos, sizeof(record->boneListPos)); // 0x41B800
-        W(fd, &record->maxFrame, sizeof(record->maxFrame));       // 0x41B81F
+        W(fd, &model->boneListPos, sizeof(model->boneListPos)); // 0x41B800
+        W(fd, &model->maxFrame, sizeof(model->maxFrame));       // 0x41B81F
 
-        // dense display-frame key records (0x41B860..0x41BAA4); the
+        // Dense bone-key records (0x41B860..0x41BAA4); the
         // original walks both the counter and the record offset through
         // a 16-bit register (movzx eax, bx at 0x41BABA), so the pair
         // wraps together past 65535.
-        if (dispCount != 0 && dispCount > 0) {
-            for (std::uint16_t i = 0; static_cast<std::int32_t>(i) < dispCount; ++i) {
-                WritePmmBoneKey(fd, dispKeys[i]);
+        if (boneCount != 0 && boneCount > 0) {
+            for (std::uint16_t i = 0; static_cast<std::int32_t>(i) < boneCount; ++i) {
+                WritePmmBoneKey(fd, boneKeys[i]);
             }
         }
         // sparse half: signed scan count*0x3C <= off < 60*kBoneKeyCapacity
         { // 0x41BACC
             std::int32_t cnt = 0;
-            if (dispCount < static_cast<std::int32_t>(mdl::kBoneKeyCapacity)) {
-                for (std::int32_t i = dispCount;
+            if (boneCount < static_cast<std::int32_t>(mdl::kBoneKeyCapacity)) {
+                for (std::int32_t i = boneCount;
                      i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i)
-                    if (dispKeys[i].frame != 0)
+                    if (boneKeys[i].frame != 0)
                         ++cnt;
             }
             W(fd, &cnt, 4);                                                     // 0x41BB2D
-            if (dispCount < static_cast<std::int32_t>(mdl::kBoneKeyCapacity)) { // 0x41BB44
-                for (std::int32_t i = dispCount;
+            if (boneCount < static_cast<std::int32_t>(mdl::kBoneKeyCapacity)) { // 0x41BB44
+                for (std::int32_t i = boneCount;
                      i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
-                    if (dispKeys[i].frame == 0)
+                    if (boneKeys[i].frame == 0)
                         continue;
                     W(fd, &i, 4); // 0x41BB92
-                    WritePmmBoneKey(fd, dispKeys[i]);
+                    WritePmmBoneKey(fd, boneKeys[i]);
                 }
             }
         }
@@ -538,28 +536,28 @@ void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned c
             }
         }
 
-        // rigid/IK base record (0x41C173..)
-        WritePmmDisplayKey(fd, physKeys[0], ikCount, rigidCount);
-        { // sparse rigid/IK scan, mdl::kDisplayKeyCapacity records of 0x1C (0x41C353..)
+        // Display/IK/external-parent base record (0x41C173..)
+        WritePmmDisplayKey(fd, displayKeys[0], ikCount, selectorCount);
+        { // Sparse display/IK scan, mdl::kDisplayKeyCapacity records of 0x1C (0x41C353..)
             std::int32_t cnt = 0;
             for (std::int32_t i = 1; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
-                if (physKeys[i].frame != 0)
+                if (displayKeys[i].frame != 0)
                     ++cnt;
             W(fd, &cnt, 4);
             for (std::int32_t i = 1; i < static_cast<int>(mdl::kDisplayKeyCapacity);
                  ++i) { // 0x41C394
-                if (physKeys[i].frame == 0)
+                if (displayKeys[i].frame == 0)
                     continue;
                 W(fd, &i, 4);
-                WritePmmDisplayKey(fd, physKeys[i], ikCount, rigidCount);
+                WritePmmDisplayKey(fd, displayKeys[i], ikCount, selectorCount);
             }
         }
 
         // current pose dump (0x41C5EB..0x41C8AD)
-        if (dispCount != 0 && dispCount > 0) {
-            unsigned char* const physicsState = record->bonePhysicsState;
-            unsigned char* const selection = record->boneSelection;
-            for (std::int32_t i = 0; i < dispCount; ++i) {
+        if (boneCount != 0 && boneCount > 0) {
+            unsigned char* const physicsState = model->bonePhysicsState;
+            unsigned char* const selection = model->boneSelection;
+            for (std::int32_t i = 0; i < boneCount; ++i) {
                 W(fd, &bones[i].trans[0], 4);   // 0x41C5EB
                 W(fd, &bones[i].trans[1], 4);   // 0x41C611
                 W(fd, &bones[i].trans[2], 4);   // 0x41C637
@@ -591,26 +589,26 @@ void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned c
                 W(fd, &b, 1); // 0x41C812
             }
         }
-        if (rigidCount != 0 && rigidCount > 0) {
-            for (std::int32_t i = 0; i < rigidCount; ++i) {
-                W(fd, &rigidFrames[i].windowStart, 4); // 0x41C867
-                W(fd, &rigidFrames[i].windowEnd, 4);   // 0x41C88A
-                W(fd, &rigidFrames[i].linkedModel, 4); // 0x41C8AD
-                W(fd, &rigidFrames[i].linkedBone, 4);  // 0x41C8D0
+        if (selectorCount != 0 && selectorCount > 0) {
+            for (std::int32_t i = 0; i < selectorCount; ++i) {
+                W(fd, &selectors[i].windowStart, 4); // 0x41C867
+                W(fd, &selectors[i].windowEnd, 4);   // 0x41C88A
+                W(fd, &selectors[i].linkedModel, 4); // 0x41C8AD
+                W(fd, &selectors[i].linkedBone, 4);  // 0x41C8D0
             }
         }
         {
             const unsigned char b = // 0x41C91A
-                record->postLoadFlag2 != 0;
+                model->postLoadFlag2 != 0;
             W(fd, &b, 1);
         }
-        W(fd, &record->edgeScale, sizeof(record->edgeScale)); // 0x41C939
+        W(fd, &model->edgeScale, sizeof(model->edgeScale)); // 0x41C939
         {
             const unsigned char b = // 0x41C963
-                record->toonFlag != 0;
+                model->toonFlag != 0;
             W(fd, &b, 1);
         }
-        const unsigned char displayOrder = mdl::Mdl(model)->comboSelIndex2;
+        const unsigned char displayOrder = model->comboSelIndex2;
         W(fd, &displayOrder, sizeof(displayOrder)); // 0x41C981
     }
 }
@@ -701,8 +699,8 @@ void WritePmmAccessoryBlocks(int fd, const D3DRenderer* renderer,
         if (accessories[slot] == 0)
             continue;
         W(fd, &slot, 1);
-        const mdl::AccessoryRecord& accessory = *mdl::Accessory(accessories[slot]);
-        const auto* const track = reinterpret_cast<const mdl::AccessoryKey*>(accTracks[slot]);
+        const mdl::AccessoryRecord& accessory = *accessories[slot];
+        const auto* const track = accTracks[slot];
 
         W(fd, accessory.name, sizeof accessory.name); // 0x41D370
         WideToSjis(renderer, text,                    // 0x41D39B
@@ -926,14 +924,14 @@ void WritePmmShadowAndConfig2(int fd, MMDApp* s, HWND main, char* text) {
 }
 
 // 11. per-model tail (0x41E70D)
-void WritePmmModelTail(int fd, unsigned char** const slots) {
+void WritePmmModelTail(int fd, mdl::ModelRecord* const* const slots) {
     // ---- 11. per-model tail (0x41E70D) -----------------------------------
     // x64 twin walks slots 0..254 (cmp dl, 0FFh / jb at 0x7FF7CB498DC2).
     for (unsigned char slot = 0; slot < kModelSlotCount; ++slot) { // loc_41E6F0
-        if (slots[slot] == 0)
+        if (slots[slot] == nullptr)
             continue;
         W(fd, &slot, 1);
-        const std::int32_t registration = mdl::Mdl(slots[slot])->frameRegistrationSelection;
+        const std::int32_t registration = slots[slot]->frameRegistrationSelection;
         W(fd, &registration, 4); // 0x41E72C
     }
 }
@@ -955,7 +953,7 @@ void SaveSceneFile(MMDApp* app) {
     char hdr[0x100]; // sprintf buffer at stack -0x34
     wchar_t title[0x100];
 
-    unsigned char** const slots = s->ModelSlots();
+    mdl::ModelRecord* const* const slots = s->ModelSlots();
     mdl::AccessoryRecord** const accessories = s->AccessorySlots();
     mdl::AccessoryKey** const accTracks = s->AccessoryKeyTracks();
     HWND const main = reinterpret_cast<HWND>(s->Hwnd());

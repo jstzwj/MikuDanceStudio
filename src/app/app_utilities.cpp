@@ -473,7 +473,7 @@ void JumpNextKeyframe(MMDApp* app) { // 0x441070
     }
 
     // ---- model branch (byte @+760 == 0) --------------------------------
-    unsigned char* model = s.SelectedModel(); // 0x441285
+    unsigned char* model = mdl::ModelBytes(s.SelectedModel()); // 0x441285
     std::uint32_t best = 0xFFFFFFFAu;
 
     // Display/IK key track (the named gate keeps its x64 layout correct).
@@ -716,8 +716,8 @@ void JumpPrevKeyframe(MMDApp* app) { // 0x4414C0
     }
 
     // ---- model branch (byte @+760 == 0) --------------------------------
-    unsigned char* model = s.SelectedModel(); // 0x44177e
-    std::uint32_t best = 0;                   // 0x441787
+    unsigned char* model = mdl::ModelBytes(s.SelectedModel()); // 0x44177e
+    std::uint32_t best = 0;                                    // 0x441787
 
     // Display/IK key track.
     if (mdl::Mdl(model)->displayKeyframesPresent != 0) { // 0x441789

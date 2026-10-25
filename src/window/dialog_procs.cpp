@@ -25,8 +25,8 @@
 // (HIWORD==1) from 669/673/677 route to sub_461C20 / sub_43D2E0(hDlg,0)
 // / sub_43D560; id 2 cancels with EndDialog(1).
 //
-// The selection-dialog call targets remain pending.  The frame-range apply
-// target is ported in frame_range_apply.cpp.
+// Selection helpers live in dialog_select_ops.cpp; frame-range scaling
+// lives in frame_range_apply.cpp. Their shared declarations are in ported_funcs.hpp.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -42,19 +42,9 @@
 
 namespace mikudancestudio {
 
-// ---- pending dependencies (stubs.cpp / dialog_select_ops.cpp) -------------
-// All of the 0x466630/0x461C20/0x43Dxxx family are __thiscall on Block in
-// the original (caller loads ECX from the Block global), so the HWND-only
-// stub signatures were missing the MMDApp* first parameter.  The bodies are
-// ported in dialog_select_ops.cpp with these corrected signatures.
-void InitSelectNavDialog(MMDApp* app, HWND hDlg);                      // VA 0x00466630
-void SyncSelectAttachCombo(MMDApp* app, HWND hDlg);                    // VA 0x00461C20
-void ResetModelSelection(MMDApp* app);                                 // VA 0x004256C0
-void ApplyBoneAttach(MMDApp* app, HWND hDlg);                          // VA 0x0043D610
-void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection); // VA 0x0043D2E0
-void CommitTargetBonePick(MMDApp* app, HWND hDlg);                     // VA 0x0043D560
-void ApplyFrameRangeScale(HWND hDlg);                                  // VA 0x0043E970
-                                                                       // (frame_range_apply.cpp)
+// Frame-range apply reads the active application through g_Block.
+void ApplyFrameRangeScale(HWND hDlg); // VA 0x0043E970
+                                      // (frame_range_apply.cpp)
 
 // ===========================================================================
 // VA 0x0044C5D0 - FrameRangeDlgProc

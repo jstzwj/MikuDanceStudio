@@ -89,16 +89,15 @@
 namespace mikudancestudio {
 namespace {
 
-// One of the four bone-transform sliders (505/510/515/520).  The original
-// repeats the block with different operands; the axis offsets live on the
-// current model (per-axis selected bone index), the echo label differs.
+// One of the four morph sliders. Each panel keeps its own selected morph
+// index on the current model and echoes the value into its paired edit.
 void HandleMorphSlider(MMDApp* app, HWND hwnd, int sliderId, std::size_t lane, int echoId) {
-    unsigned char* model = app->SelectedModel();
-    const std::int32_t boneIdx = mdl::Mdl(model)->selectedMorphs[lane];
-    // Gate (0x44AF11): proceed iff (physics == 2 || boneIdx > 0) &&
-    // boneIdx >= 0 - the original ORs the physics byte with a positive
+    mdl::ModelRecord* model = app->SelectedModel();
+    const std::int32_t morphIndex = model->selectedMorphs[lane];
+    // Gate (0x44AF11): proceed iff (physics == 2 || morphIndex > 0) &&
+    // morphIndex >= 0 - the original ORs the physics byte with a positive
     // index; only a negative index unconditionally skips.
-    if (boneIdx < 0 || (boneIdx <= 0 && mdl::Mdl(model)->physicsMode != 2)) {
+    if (morphIndex < 0 || (morphIndex <= 0 && model->physicsMode != 2)) {
         return;
     }
 
@@ -106,9 +105,9 @@ void HandleMorphSlider(MMDApp* app, HWND hwnd, int sliderId, std::size_t lane, i
     const double scaled = static_cast<double>(pos) / 100.0;
 
     model = app->SelectedModel();
-    mdl::MorphRecord* records = mdl::Morphs(model);
+    mdl::MorphRecord* records = model->morphs;
     if (records != nullptr) {
-        const std::int32_t idx = mdl::Mdl(model)->selectedMorphs[lane];
+        const std::int32_t idx = model->selectedMorphs[lane];
         records[static_cast<std::size_t>(idx)].value = static_cast<float>(scaled);
     }
 

@@ -7,17 +7,13 @@
 
 #include <cstdint>
 
+#include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
-
-// x64 0x7FF7CB482BB0 - the selection re-evaluation body, ported in
-// misc_dialogs.cpp as CurvePanelRepaint (same original as the x86
-// 0x00430510 entry this file used to carry inline).
-void CurvePanelRepaint(MMDApp* app);
 
 namespace {
 
@@ -141,55 +137,56 @@ void DragInterpolationControlPoint(MMDApp* app) { // VA 0x00416280
         SendMessageA(GetDlgItem(window, panel::kInterpCurveCombo), CB_GETCURSEL, 0, 0));
 
     if (app->CameraMode() != 0) { // 0x416337
-        unsigned char* records = reinterpret_cast<unsigned char*>(app->CameraKeys());
+        mdl::CameraKey* records = app->CameraKeys();
         if (records != nullptr) {
-            for (int off = 0; off < 840000; off += 84) {
-                if (records[off + 72] == 0)
+            for (std::size_t index = 0; index < mdl::kTimelineKeyCapacity; ++index) {
+                mdl::CameraKey& record = records[index];
+                if (record.selected == 0)
                     continue;
-                const std::uint8_t mode = app->state.pendingTimelineSelectionRow;
-                if (mode == 1) {
-                    unsigned char* base;
+                const InterpolationControlPoint point = app->DraggedInterpolationPoint();
+                if (point == InterpolationControlPoint::First) {
+                    int channel;
                     if (selected >= 6) { // 0x416397
                         for (int c = 0; c < 6; ++c) {
-                            records[off + 40 + c] = static_cast<std::uint8_t>(x);
-                            records[off + 46 + c] = static_cast<std::uint8_t>(y);
+                            record.interpolation[0][c] = static_cast<std::uint8_t>(x);
+                            record.interpolation[1][c] = static_cast<std::uint8_t>(y);
                         }
-                        base = records + off;
+                        channel = 0;
                     } else { // 0x4163A2
-                        records[off + selected + 40] = static_cast<std::uint8_t>(x);
-                        records[off + selected + 46] = static_cast<std::uint8_t>(y);
-                        base = records + off + selected;
+                        record.interpolation[0][selected] = static_cast<std::uint8_t>(x);
+                        record.interpolation[1][selected] = static_cast<std::uint8_t>(y);
+                        channel = selected;
                     }
-                    drawn = {x, y, static_cast<std::int8_t>(base[52]),
-                             static_cast<std::int8_t>(base[58])};
-                } else if (mode == 2) {
-                    unsigned char* base;
+                    drawn = {x, y, static_cast<std::int8_t>(record.interpolation[2][channel]),
+                             static_cast<std::int8_t>(record.interpolation[3][channel])};
+                } else if (point == InterpolationControlPoint::Second) {
+                    int channel;
                     if (selected >= 6) { // 0x41648F
                         for (int c = 0; c < 6; ++c) {
-                            records[off + 52 + c] = static_cast<std::uint8_t>(x);
-                            records[off + 58 + c] = static_cast<std::uint8_t>(y);
+                            record.interpolation[2][c] = static_cast<std::uint8_t>(x);
+                            record.interpolation[3][c] = static_cast<std::uint8_t>(y);
                         }
-                        base = records + off;
+                        channel = 0;
                     } else { // 0x41649A
-                        records[off + selected + 52] = static_cast<std::uint8_t>(x);
-                        records[off + selected + 58] = static_cast<std::uint8_t>(y);
-                        base = records + off + selected;
+                        record.interpolation[2][selected] = static_cast<std::uint8_t>(x);
+                        record.interpolation[3][selected] = static_cast<std::uint8_t>(y);
+                        channel = selected;
                     }
-                    drawn = {static_cast<std::int8_t>(base[40]), static_cast<std::int8_t>(base[46]),
-                             x, y};
+                    drawn = {static_cast<std::int8_t>(record.interpolation[0][channel]),
+                             static_cast<std::int8_t>(record.interpolation[1][channel]), x, y};
                 }
             }
         }
     } else { // 0x41656B
-        unsigned char* model = app->SelectedModel();
-        mdl::BoneKey* records = model != nullptr ? mdl::BoneKeys(model) : nullptr;
+        mdl::ModelRecord* model = app->SelectedModel();
+        mdl::BoneKey* records = model != nullptr ? model->boneKeys : nullptr;
         if (records != nullptr) {
             for (int index = 0; index < static_cast<int>(mdl::kBoneKeyCapacity); ++index) {
                 mdl::BoneKey& record = records[index];
                 if (record.allocated == 0)
                     continue;
-                const std::uint8_t mode = app->state.pendingTimelineSelectionRow;
-                if (mode == 1) {
+                const InterpolationControlPoint point = app->DraggedInterpolationPoint();
+                if (point == InterpolationControlPoint::First) {
                     int channel;
                     if (selected >= 4) { // 0x4165C7
                         for (int c = 0; c < 4; ++c) {
@@ -204,7 +201,7 @@ void DragInterpolationControlPoint(MMDApp* app) { // VA 0x00416280
                     }
                     drawn = {x, y, static_cast<std::int8_t>(record.interpolation[8 + channel]),
                              static_cast<std::int8_t>(record.interpolation[12 + channel])};
-                } else if (mode == 2) {
+                } else if (point == InterpolationControlPoint::Second) {
                     int channel;
                     if (selected >= 4) { // 0x416725
                         for (int c = 0; c < 4; ++c) {

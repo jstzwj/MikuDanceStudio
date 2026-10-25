@@ -75,14 +75,13 @@ namespace mikudancestudio {
 void PanelPaint(MMDApp* app);
 
 // Not-yet-ported refresh helpers (src/app/late_ports.cpp).
-void SyncAccessoryEditPanel(MMDApp* a);        // 0x4134E0
-void RefreshLightPanel(MMDApp* a);             // 0x411070
-void ApplyGravityTrack(MMDApp* a);             // 0x412330
-void RefreshSelfShadowPanel(MMDApp* a);        // 0x411B90
-void DragInterpolationControlPoint(MMDApp* a); // 0x416280
-void ReloadModels(MMDApp* a);                  // 0x42E640
-void RelayoutSidebarControls(MMDApp* a);       // 0x442EB0
-void ApplyAccessoryTrack(MMDApp* a, int idx);  // 0x413120
+void SyncAccessoryEditPanel(MMDApp* a);       // 0x4134E0
+void RefreshLightPanel(MMDApp* a);            // 0x411070
+void ApplyGravityTrack(MMDApp* a);            // 0x412330
+void RefreshSelfShadowPanel(MMDApp* a);       // 0x411B90
+void ReloadModels(MMDApp* a);                 // 0x42E640
+void RelayoutSidebarControls(MMDApp* a);      // 0x442EB0
+void ApplyAccessoryTrack(MMDApp* a, int idx); // 0x413120
 
 namespace {
 
@@ -101,13 +100,13 @@ constexpr int kSidebarMin = 250; // 0xFA  sidebar drag minimum
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-unsigned char* CurrentModel(MMDApp* app) {
+mdl::ModelRecord* CurrentModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
 // Frame-remap walk over 16-byte offset records {idx, parent, slot, frame}
 // referenced by the band lists (display mode 0x444F8C..0x445833), or by the
-// model bone/morph/IK lists (bone-edit mode 0x445889..0x446040).  Every
+// model display/morph/bone lists (bone-edit mode 0x445889..0x446040).  Every
 // record that references list entry `idx` rewrites the entry's frame so the
 // dragged frames land on the hovered row:
 //   row == 0: frame = rec.frame                       (direct copy)
@@ -334,35 +333,34 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
             app->SceneModified() = 1;
             if (app->CameraMode() == 0) {
                 // ---- bone-edit mode (0x445887..0x446065) ------------------
-                unsigned char* model = CurrentModel(app);
-                mdl::ModelRecord& record = *mdl::Mdl(model);
-                // bone list: 28-byte records, idx > 0 (0x44588F..0x445B30)
+                mdl::ModelRecord* model = CurrentModel(app);
+                mdl::ModelRecord& record = *model;
+                // Display/IK keys: skip the root record (0x44588F..0x445B30).
                 RemapList(app,
                           reinterpret_cast<const int*>(
-                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone)),
-                          app->TimelineSelectionCount(TimelineSelectionBand::ModelBone),
-                          mdl::DisplayKeys(model), row, -1, &record.maxFrame);
+                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelDisplay)),
+                          app->TimelineSelectionCount(TimelineSelectionBand::ModelDisplay),
+                          model->displayKeys, row, -1, &record.maxFrame);
                 // morph list: 20-byte records, idx >= model count
                 // (0x445B38..0x445D90)
                 RemapList(app,
                           reinterpret_cast<const int*>(
                               app->TimelineSelectionRecords(TimelineSelectionBand::ModelMorph)),
                           app->TimelineSelectionCount(TimelineSelectionBand::ModelMorph),
-                          mdl::MorphKeys(model), row, static_cast<std::int32_t>(record.morphCount),
+                          model->morphKeys, row, static_cast<std::int32_t>(record.morphCount),
                           &record.maxFrame);
-                // IK list: 60-byte records, idx >= model count
+                // Bone keys: skip per-bone root records, idx >= boneCount
                 // (0x445D9E..0x446040)
                 RemapList(app,
                           reinterpret_cast<const int*>(
-                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelIk)),
-                          app->TimelineSelectionCount(TimelineSelectionBand::ModelIk),
-                          mdl::BoneKeys(model), row, static_cast<std::int32_t>(record.boneCount),
+                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone)),
+                          app->TimelineSelectionCount(TimelineSelectionBand::ModelBone),
+                          model->boneKeys, row, static_cast<std::int32_t>(record.boneCount),
                           &record.maxFrame);
                 PanelPaint(app); // 0x446044
                 // 0x446065: original __thiscall(this=model, dword0x980,
                 // dword0xA0CC4).
-                SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
-                               app->state.playbackPhysicsMode);
+                SeekModelFrame(*model, app->state.currentFrame, app->state.playbackPhysicsMode);
             } else {
                 // ---- display mode (0x444F8A..0x44587D) --------------------
                 // four fixed band lists (84/40/24/36-byte records)
@@ -555,10 +553,10 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                                             });
             } else {
                 // ---- bone-edit mode hover (0x44653B) ----------------------
-                unsigned char* model = CurrentModel(app);
-                mdl::DisplayKey* displayKeys = mdl::DisplayKeys(model);
-                mdl::MorphKey* morphKeys = mdl::MorphKeys(model);
-                mdl::BoneKey* boneKeys = mdl::BoneKeys(model);
+                mdl::ModelRecord* model = CurrentModel(app);
+                mdl::DisplayKey* displayKeys = model->displayKeys;
+                mdl::MorphKey* morphKeys = model->morphKeys;
+                mdl::BoneKey* boneKeys = model->boneKeys;
                 if (!app->ShiftModifierActive()) {
                     // clear bone/morph/IK visibility flags for all 200 rows
                     // (0x44653F..0x4467F0)
@@ -622,7 +620,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
     }
 
     // --- 6. physics-enabled hover helper (0x446A4C) -------------------------
-    if (app->PendingTimelineSelectionRow() != TimelineSelectionRow::None)
+    if (app->DraggedInterpolationPoint() != InterpolationControlPoint::None)
         DragInterpolationControlPoint(app);
 }
 

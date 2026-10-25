@@ -106,7 +106,7 @@ void TestBoneRegisterCombo(mds::MMDApp& app, HWND combo) {
     model->boneCount = static_cast<std::uint32_t>(bones.size());
     model->boneTable = bones.data();
     const int slot = mds::kModelSlotCount - 1;
-    app.ModelSlot(slot) = reinterpret_cast<unsigned char*>(model.get());
+    app.ModelSlot(slot) = model.get();
     constexpr int included[] = {0, 1, 2, 3, 4, 5, 6, 8, 10, 11};
     for (int english : {0, 1}) {
         app.EnglishUI() = static_cast<unsigned char>(english);

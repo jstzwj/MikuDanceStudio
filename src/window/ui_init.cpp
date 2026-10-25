@@ -718,9 +718,9 @@ void RefillBoneRegisterCombo(MMDApp* app, int slot) {
     HWND combo = GetDlgItem(static_cast<HWND>(app->Hwnd()), panel::kBoneRegisterCombo);
     SendMessageA(combo, CB_RESETCONTENT, 0, 0); // 0x41006D
     if (slot >= 0) {
-        unsigned char* model = app->ModelSlot(slot);
+        const mdl::ModelRecord* model = app->ModelSlot(slot);
         if (model != nullptr) {
-            const auto* record = mdl::Mdl(model);
+            const auto* record = model;
             const auto boneCount = static_cast<std::int32_t>(record->boneCount);
             const mdl::BoneRecord* bones = record->boneTable;
             for (std::int32_t i = 0; i < boneCount; ++i) { // 0x4100B1

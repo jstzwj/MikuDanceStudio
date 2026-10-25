@@ -47,22 +47,10 @@
 
 namespace mikudancestudio {
 
-// ---- display refresh --------------------------------------------------------
-// VA 0x004250C0 - select-dialog value display refresh (thiscall app, hDlg);
-// full port at the bottom of this file (local matrix + euler decomposition
-// into edits 688..693).
-void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg); // VA 0x004250C0
-
-// ---- intra-family forward declarations (mutual recursion) ------------------
-void SyncSelectAttachCombo(MMDApp* app, HWND hDlg);                    // VA 0x00461C20
-void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection); // VA 0x0043D2E0
-
 namespace {
 
-// ---- app offsets, kept file-local -------------------------------------------
-
 // ---- model-object access ---------------------------------------------------
-// All model state goes through the typed mdl::Mdl() view; the former raw
+// Model helpers pass ModelRecord pointers directly; the former raw
 // offsets were x86-only and read garbage on the x64 baseline:
 //   0x26E0/0x26E4/0x26E8 were never separate selection buffers - they are
 //     boneKeys/morphKeys/displayKeys (x64 0x2790/0x2798/0x27A0), whose
@@ -80,11 +68,11 @@ const char kJpNone[] = "\x82\xc8\x82\xb5";
 // JP 0x52E7D4 "ground" - combo 673 entry 1
 const char kJpGround[] = "\x92\x6e\x96\xca";
 
-unsigned char* ActiveModel(MMDApp* app) {
+mdl::ModelRecord* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-unsigned char* ModelAt(MMDApp* app, int slot) {
+mdl::ModelRecord* ModelAt(MMDApp* app, int slot) {
     return app->ModelSlot(slot);
 }
 
@@ -92,17 +80,12 @@ bool English(MMDApp* app) {
     return app->state.englishUI != 0; // 0xA0B4C / x64 0xA1B90
 }
 
-// The dialog and model use the same external-parent selector type.
-mdl::BoneOrderEntry* ModelSelectRecords(unsigned char* model) {
-    return mdl::BoneOrder(model);
-}
-
 mdl::BoneOrderEntry* SelRecord(MMDApp* app, int item) {
     return app->SelectNavRecords() + item;
 }
 
-LPARAM StrParam(const void* s) {
-    return reinterpret_cast<LPARAM>(const_cast<void*>(s));
+LPARAM StrParam(const char* text) {
+    return reinterpret_cast<LPARAM>(text);
 }
 
 } // namespace
@@ -117,11 +100,10 @@ void InitSelectNavDialog(MMDApp* app, HWND hDlg) { // VA 0x00466630
         app->SelectNavRecords() = nullptr;
     }
 
-    unsigned char* model = ActiveModel(app);
-    const int count =
-        static_cast<int>(mdl::Mdl(model)->boneOrderCount); // x86 0x4CCE8 / x64 0x96478
+    mdl::ModelRecord* model = ActiveModel(app);
+    const int count = static_cast<int>(model->boneOrderCount); // x86 0x4CCE8 / x64 0x96478
     auto* const records =
-        mdl::CopyBoneBindings(ModelSelectRecords(model), static_cast<std::size_t>(count));
+        mdl::CopyBoneBindings(model->boneOrderTable, static_cast<std::size_t>(count));
     app->SelectNavRecords() = records;
 
     const HWND combo669 = GetDlgItem(hDlg, panel::kBoneNameCombo);  // 0x46671F
@@ -135,12 +117,12 @@ void InitSelectNavDialog(MMDApp* app, HWND hDlg) { // VA 0x00466630
     int selItem = 0; // 0x46676B
     int item = 1;    // 0x466773
     if (count > 1) {
-        mdl::BoneRecord* const bones = mdl::Bones(model);
+        mdl::BoneRecord* const bones = model->boneTable;
         do {
             const int boneIdx = records[item].boneIndex; // 0x46679D
             const char* name = English(app) ? bones[boneIdx].nameEn : bones[boneIdx].name;
             SendMessageA(combo669, CB_ADDSTRING, 0, StrParam(name)); // 0x4667C1
-            if (mdl::Mdl(model)->selectedBone == boneIdx)            // 0x4667F1
+            if (model->selectedBone == boneIdx)                      // 0x4667F1
                 selItem = item;
             ++item;
         } while (item < count);
@@ -177,10 +159,10 @@ void InitSelectNavDialog(MMDApp* app, HWND hDlg) { // VA 0x00466630
     // (cmp esi, 0FFh at 0x7FF7CB4BABB2 / cmp edi, 0FFh at 0x7FF7CB4BAB0D).
     for (int ord = 0; ord < kModelSlotCount; ++ord) { // 0x4669DE
         int slot = 0;
-        unsigned char* m = nullptr;
+        mdl::ModelRecord* m = nullptr;
         for (; slot < kModelSlotCount; ++slot) { // 0x466911
-            unsigned char* cand = ModelAt(app, slot);
-            if (cand != nullptr && mdl::Mdl(cand)->comboSelIndex2 ==
+            mdl::ModelRecord* cand = ModelAt(app, slot);
+            if (cand != nullptr && cand->comboSelIndex2 ==
                                        static_cast<unsigned char>(ord)) { // x86 0x2D7D / x64 0x3109
                 m = cand;
                 break;
@@ -188,7 +170,7 @@ void InitSelectNavDialog(MMDApp* app, HWND hDlg) { // VA 0x00466630
         }
         if (m == nullptr)
             continue; // LABEL_40
-        const mdl::ModelRecord* const mrec = mdl::Mdl(m);
+        const mdl::ModelRecord* const mrec = m;
         const char* name = English(app) ? mrec->nameEn : mrec->name; // x64 0x22F2 / 0x22C0
         if (slot == app->SelectedModelSlot()) {                      // 0x46692A
             sprintf_s(Buffer, 0x100, "(%s)", name);                  // 0x466951
@@ -260,9 +242,9 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) { // VA 0x
     rec->linkedModel = modelSlot;                  // 0x43D3B1
     SendMessageA(combo677, CB_RESETCONTENT, 0, 0); // 0x43D3B5
 
-    unsigned char* const model = ModelAt(app, modelSlot);
-    mdl::BoneRecord* const bones = mdl::Bones(model);
-    const int boneCount = static_cast<int>(mdl::Mdl(model)->boneCount); // 0x2D84
+    mdl::ModelRecord* const model = ModelAt(app, modelSlot);
+    mdl::BoneRecord* const bones = model->boneTable;
+    const int boneCount = static_cast<int>(model->boneCount); // 0x2D84
 
     int nSelectable = 0;                  // 0x43D3CA
     for (int i = 0; i < boneCount; ++i) { // 0x43D3E8
@@ -334,7 +316,7 @@ void CommitTargetBonePick(MMDApp* app, HWND hDlg) { // VA 0x0043D560
 void ResetModelSelection(MMDApp* app) { // VA 0x004256C0
     app->SceneModified() = 1;           // 0x4256C5
 
-    unsigned char* const model = ActiveModel(app);
+    mdl::ModelRecord* const model = ActiveModel(app);
 
     // The "selection tracks" are the timeline key pools themselves: the
     // x64 twin sub_7FF7CB4BBA80 walks boneKeys (+0x2790) 100000 groups of
@@ -347,24 +329,24 @@ void ResetModelSelection(MMDApp* app) { // VA 0x004256C0
     // the record's "allocated" slot, the same one ui_editor_click.cpp's
     // ClearActiveModelFlags sweeps, so follow the capacity constants
     // instead of hard-coding group counts.
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(model);
+    mdl::BoneKey* const boneKeys = model->boneKeys;
     for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) // 0x4256CC
         boneKeys[i].allocated = 0;
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
+    mdl::MorphKey* const morphKeys = model->morphKeys;
     for (std::size_t j = 0; j < mdl::kMorphKeyCapacity; ++j) // 0x42577C
         morphKeys[j].allocated = 0;
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
     for (std::size_t k = 0; k < mdl::kDisplayKeyCapacity; ++k) // 0x425806
         displayKeys[k].allocated = 0;
 
     // restore the saved 20-byte select records into the model
-    const int count = static_cast<int>(mdl::Mdl(model)->boneOrderCount); // 0x4258B2 / x64 0x96478
+    const int count = static_cast<int>(model->boneOrderCount); // 0x4258B2 / x64 0x96478
     if (count > 0) {
-        std::copy_n(app->SelectNavRecords(), count, ModelSelectRecords(model));
+        std::copy_n(app->SelectNavRecords(), count, model->boneOrderTable);
     }
 
     RegisterDisplayKeyCurrent(model, app->state.currentFrame); // 0x42592E
-    const auto registeredFrames = mdl::Mdl(model)->maxFrame;   // 0x31B0
+    const auto registeredFrames = model->maxFrame;             // 0x31B0
     if (app->LastRegisteredFrame() < registeredFrames)         // 0x42594E
         app->LastRegisteredFrame() = registeredFrames;
 
@@ -383,8 +365,8 @@ void ApplyBoneAttach(MMDApp* app, HWND hDlg) { // VA 0x0043D610
         SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCURSEL, 0, 0)); // 0x43D655
     const mdl::BoneOrderEntry* const rec = SelRecord(app, boneSel);
 
-    unsigned char* const model = ActiveModel(app);
-    mdl::BoneRecord* const bones = mdl::Bones(model); // 0x26BC
+    mdl::ModelRecord* const model = ActiveModel(app);
+    mdl::BoneRecord* const bones = model->boneTable; // 0x26BC
     mdl::BoneRecord& bone = bones[rec->boneIndex];
 
     auto* d3dx = &d3dx::Get();
@@ -409,8 +391,8 @@ void ApplyBoneAttach(MMDApp* app, HWND hDlg) { // VA 0x0043D610
         } else {
             // attach to a bone of another model: bake the target bone's
             // world placement relative to the current bone's position
-            unsigned char* const tmodel = ModelAt(app, rec->linkedModel); // 0x43D73B
-            mdl::BoneRecord& target = mdl::Bones(tmodel)[rec->linkedBone];
+            mdl::ModelRecord* const tmodel = ModelAt(app, rec->linkedModel); // 0x43D73B
+            mdl::BoneRecord& target = tmodel->boneTable[rec->linkedBone];
             const float* const tpos = target.position;
             X = *reinterpret_cast<d3dx::D3DXMATRIXF*>(target.matExtra); // 0x43D764
             d3dx->translation(&T, tpos[0], tpos[1], tpos[2]);           // 0x43D7A9
@@ -442,16 +424,16 @@ void ApplyBoneAttach(MMDApp* app, HWND hDlg) { // VA 0x0043D610
     app->SceneModified() = 1; // 0x43D9F8
 
     // Single-bone selection state.
-    unsigned char* const selFlags = mdl::Mdl(model)->boneSelection;
-    const int boneCount = static_cast<int>(mdl::Mdl(model)->boneCount);
+    unsigned char* const selFlags = model->boneSelection;
+    const int boneCount = static_cast<int>(model->boneCount);
     for (int i = 0; i < boneCount; ++i) // 0x43DA3F
         selFlags[i] = 0;
     selFlags[rec->boneIndex] = 1; // 0x43DA5E
 
     RegisterSelectedBoneKeys(model, app->state.currentFrame, // 0x43DA7E
                              app->PlaybackPhysicsMode());
-    const auto registeredFrames = mdl::Mdl(model)->maxFrame; // 0x31B0
-    if (app->LastRegisteredFrame() < registeredFrames)       // 0x43DA9D
+    const auto registeredFrames = model->maxFrame;     // 0x31B0
+    if (app->LastRegisteredFrame() < registeredFrames) // 0x43DA9D
         app->LastRegisteredFrame() = registeredFrames;
 
     PanelPaint(app);               // 0x414610
@@ -495,8 +477,8 @@ void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg) { // VA 0x004250C0
         return;
     }
 
-    unsigned char* model = s.SelectedModel();
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
+    mdl::ModelRecord* model = s.SelectedModel();
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
     const mdl::BoneOrderEntry* const rec = SelRecord(app, sel); // 0xA0668 + 20*sel
     mikudancestudio::mdl::BoneRecord* bone = &bones[rec->boneIndex];
 
@@ -505,8 +487,8 @@ void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg) { // VA 0x004250C0
     if (kind == 1) { // 0x42521A
         std::memcpy(&m, bone->matInit, sizeof m);
     } else if (kind >= 2) { // 0x425286
-        unsigned char* srcModel = s.ModelSlot(rec->linkedModel);
-        mikudancestudio::mdl::BoneRecord* srcBones = mikudancestudio::mdl::Bones(srcModel);
+        mdl::ModelRecord* srcModel = s.ModelSlot(rec->linkedModel);
+        mikudancestudio::mdl::BoneRecord* srcBones = srcModel->boneTable;
         mikudancestudio::mdl::BoneRecord& src = srcBones[rec->linkedBone];
         std::memcpy(&m, &src.matInit[0], sizeof m);
         const float* const p = src.position; // x64 0x13C (bone+316)
@@ -541,29 +523,46 @@ void RefreshSelectNavDisplay(MMDApp* app, HWND hDlg) { // VA 0x004250C0
     float& pitch = values[3]; // v54
     float& roll = values[4];  // v55
     float& yaw = values[5];   // v56
-    // x64 twin sub_7FF7CB4BB3E0: single-precision atan2f/asinf/cosf
-    // (0x7FF7CB4BB83C atan2f(m01,m11), 0x7FF7CB4BB84D asinf(-m21),
-    // 0x7FF7CB4BB867 atan2f(m20,m22)), not the x86 single-argument atan.
+#if defined(_M_X64)
+    // x64 RVA 0x9B83C..0x9B89B calls the single-precision CRT functions.
     yaw = atan2f(m.m[0][1], m.m[1][1]);
     pitch = asinf(-m.m[2][1]);
     roll = atan2f(m.m[2][0], m.m[2][2]);
     const float c = cosf(pitch);
-    if (fabsf(c) < 0.000001f) { // gimbal lock
-        yaw = static_cast<float>(static_cast<double>(yaw) +
-                                 (static_cast<double>(m.m[0][1]) <= 0.0 ? -3.141592 : 3.141592));
-        roll = static_cast<float>(static_cast<double>(roll) +
-                                  (static_cast<double>(m.m[2][0]) <= 0.0 ? -3.141592 : 3.141592));
+#else
+    // x86 0x42546D..0x4254C8 uses the x87 CRT and float stores.
+    yaw = static_cast<float>(
+        std::atan2(static_cast<double>(m.m[0][1]), static_cast<double>(m.m[1][1])));
+    pitch = static_cast<float>(std::asin(-static_cast<double>(m.m[2][1])));
+    roll = static_cast<float>(
+        std::atan2(static_cast<double>(m.m[2][0]), static_cast<double>(m.m[2][2])));
+    const float c = static_cast<float>(std::cos(static_cast<double>(pitch)));
+#endif
+    // Both originals compare with the float epsilon. The x86 function keeps
+    // flt_52B740 on the x87 stack; x64 uses comiss (RVA 0x9B8AA..0x9B92F).
+    constexpr float kEulerEpsilon = 0.000001f;
+    if (std::fabs(static_cast<double>(c)) < kEulerEpsilon) { // gimbal lock
+        // Both constants are float, including x86 flt_52B738/52B73C.
+        yaw += m.m[0][1] <= 0.0f ? -3.141592f : 3.141592f;
+        roll += m.m[2][0] <= 0.0f ? -3.141592f : 3.141592f;
     }
-    if (fabs(static_cast<double>(pitch)) < 0.000001)
+    if (std::fabs(static_cast<double>(pitch)) < kEulerEpsilon)
         pitch = 0.0f;
-    if (fabs(static_cast<double>(roll)) < 0.000001)
+    if (std::fabs(static_cast<double>(roll)) < kEulerEpsilon)
         roll = 0.0f;
-    if (fabs(static_cast<double>(yaw)) < 0.000001)
+    if (std::fabs(static_cast<double>(yaw)) < kEulerEpsilon)
         yaw = 0.0f;
     constexpr float kPiDeg = 3.141592025756836f;
+#if defined(_M_X64)
+    // The x64 dialog rounds both the division and multiplication to float.
+    pitch = static_cast<float>(pitch / kPiDeg) * 180.0f;
+    roll = static_cast<float>(roll / -kPiDeg) * 180.0f;
+    yaw = static_cast<float>(yaw / -kPiDeg) * 180.0f;
+#else
     pitch = static_cast<float>(static_cast<double>(pitch) / kPiDeg * 180.0);
     roll = static_cast<float>(-static_cast<double>(roll) / kPiDeg * 180.0);
     yaw = static_cast<float>(180.0 * (-static_cast<double>(yaw) / kPiDeg));
+#endif
     const double eps = 0.0000001000000011686097;
     if (fabs(static_cast<double>(pitch)) < eps)
         pitch = 0.0f;

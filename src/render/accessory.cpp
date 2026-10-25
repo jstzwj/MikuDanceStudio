@@ -109,7 +109,7 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
     auto* model = app->ModelSlot(modelSlot);
     if (model == nullptr)
         return;
-    auto* bones = mikudancestudio::mdl::Bones(model);
+    auto* bones = model->boneTable;
     const int boneIndex = std::max(mdl::Accessory(accessory)->parentBone, 0);
     auto* bone = &bones[boneIndex];
     api.translation(&part, bone->position[0], bone->position[1], bone->position[2]);
@@ -362,18 +362,18 @@ bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material, const cha
                     wchar_t* destination) {
     wchar_t converted[256] = {};
     wchar_t* directory = mdl::Accessory(accessory)->directory;
-    auto* wrapperBytes = reinterpret_cast<unsigned char*>(sub);
-    ConvertMaterialName(wrapperBytes, name, converted, 0x100, directory);
+
+    ConvertMaterialName(sub, name, converted, 0x100, directory);
     swprintf_s(destination, 0x200, L"%s%s", directory, converted);
-    if (LoadTextureShared(wrapperBytes, destination))
+    if (LoadTextureShared(sub, destination))
         return true;
     char fallback[256] = {};
     const wchar_t* xFile = mdl::Accessory(accessory)->sourcePath;
     if (!ExtractXTexture(xFile, static_cast<int>(material), fallback))
         return false;
-    ConvertMaterialName(wrapperBytes, fallback, converted, 0x100, directory);
+    ConvertMaterialName(sub, fallback, converted, 0x100, directory);
     swprintf_s(destination, 0x200, L"%s%s", directory, converted);
-    return LoadTextureShared(wrapperBytes, destination) != 0;
+    return LoadTextureShared(sub, destination) != 0;
 }
 
 // ---- "Cannot find xfile!!" (x64 sub_7FF7CB4FC560 not-found paths) -------
@@ -468,8 +468,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
         fgets(line, sizeof(line), vac);
         if (char* lf = strchr(line, '\n'))
             *lf = '\0';
-        if (!ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(sub), line, meshPath, 0x100,
-                                 paths)) {
+        if (!ResolveAnsiUserFile(sub, line, meshPath, 0x100, paths)) {
             fclose(vac);
             return false;
         }

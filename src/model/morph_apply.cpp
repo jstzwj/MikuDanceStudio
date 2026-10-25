@@ -236,15 +236,15 @@ void AccumMatMorph(mdl::MaterialMorphPool* addP, mdl::MaterialMorphPool* mulP, i
 
 } // namespace
 
-void ModelApplyMorphs(unsigned char* m) {
-    mdl::ModelRecord& model = *mdl::Mdl(m);
+void ModelApplyMorphs(mdl::ModelRecord* m) {
+    mdl::ModelRecord& model = *m;
     if (model.physicsMode != 2)
         return;
 
     mdl::MorphRecord* morphs = model.morphs;
     const int morphCount = static_cast<int>(model.morphCount);
-    mdl::BoneMorphOffsetRecord* work = mdl::BoneMorphOffsets(m);
-    const int workCount = mdl::BoneMorphOffsetCount(m);
+    mdl::BoneMorphOffsetRecord* work = m->boneMorphTable;
+    const int workCount = m->boneMorphCount;
 
     // ---- 1. bone morph offsets into the work records ----------------------
     for (int i = 0; i < workCount; ++i) {
@@ -279,8 +279,8 @@ void ModelApplyMorphs(unsigned char* m) {
 
     // ---- 2. material morph pools ------------------------------------------
     const int matCount = static_cast<int>(model.materialCount);
-    auto* addP = mdl::MaterialMorphAdd(m);
-    auto* mulP = mdl::MaterialMorphMul(m);
+    auto* addP = m->materialMorphPools.additive;
+    auto* mulP = m->materialMorphPools.multiplicative;
     std::memset(addP, 0, sizeof(*addP) * static_cast<std::size_t>(matCount));
     for (int i = 0; i < matCount; ++i) {
         mdl::MaterialMorphChannels& slot = mulP[i].channels;
@@ -321,7 +321,7 @@ void ModelApplyMorphs(unsigned char* m) {
 
     // ---- 3. compose into the material records ------------------------------
     auto* mats = model.materials;
-    auto* baseP = mdl::MaterialMorphBase(m);
+    auto* baseP = m->materialMorphPools.base;
     for (int i = 0; i < matCount; ++i) {
         mdl::ModelMaterialRecord& mat = mats[i];
         const mdl::MaterialMorphChannels& add = addP[i].channels;

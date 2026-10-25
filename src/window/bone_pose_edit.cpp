@@ -24,39 +24,37 @@ using ResetPositionScalar = double;
 
 void ResetSelectedBonePose(MMDApp* app) {
     PushBoneEditUndo(app); // prep (thiscall)
-    unsigned char* model = app->SelectedModel();
-    auto* modelRecord = mikudancestudio::mdl::Mdl(model);
-    unsigned char* selected = modelRecord->boneSelection;
+    mdl::ModelRecord* model = app->SelectedModel();
+    unsigned char* selected = model->boneSelection;
     if (selected[0] != 0) {
         // Bone 0: clear Y and reset the quaternion; X/Z stay unchanged.
         // Original stores: 0x144, 0x14C..0x154 = 0,
         // 0x158 = 1; the x87 0.0/1.0 pair is kept live across the
         // stores in the original
-        auto& root = modelRecord->boneTable[0];
+        auto& root = model->boneTable[0];
         root.trans[1] = 0.0f;
         root.rotQuat[0] = 0.0f;
         root.rotQuat[1] = 0.0f;
         root.rotQuat[2] = 0.0f;
         root.rotQuat[3] = 1.0f;
     }
-    const std::int32_t boneCount = modelRecord->boneCount;
-    unsigned char* physicsState = modelRecord->bonePhysicsState;
+    const std::int32_t boneCount = model->boneCount;
+    unsigned char* editFlags = model->bonePhysicsState;
     for (std::int32_t i = 1; i < boneCount; ++i) {
         model = app->SelectedModel();
-        modelRecord = mikudancestudio::mdl::Mdl(model);
-        selected = modelRecord->boneSelection;
-        physicsState = modelRecord->bonePhysicsState;
+        selected = model->boneSelection;
+        editFlags = model->bonePhysicsState;
         if (selected[i] == 0) {
             continue;
         }
-        mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
+        mikudancestudio::mdl::BoneRecord* const bones = model->boneTable;
         mikudancestudio::mdl::BoneRecord* bone = &bones[i];
         if (bone->parent == -1) {
             // ---- no parent: bake via own quaternion ----------------
             d3dx::D3DXMATRIXF mat{};
             auto* d3dx = &d3dx::Get();
-            { d3dx->matrixRotationQuaternion(&mat, reinterpret_cast<const float*>(bone->rotQuat)); }
-            const ResetPositionScalar posX = *reinterpret_cast<float*>(bone->position);
+            { d3dx->matrixRotationQuaternion(&mat, bone->rotQuat); }
+            const ResetPositionScalar posX = bone->position[0];
             const ResetPositionScalar posY = bone->position[1];
             const ResetPositionScalar posZ = bone->position[2];
             // var_9CC = _11*x + _21*y + _31*z + _41 - x + frame0.x
@@ -96,32 +94,30 @@ void ResetSelectedBonePose(MMDApp* app) {
             resetPositionZ -= posZ;
             resetPositionZ += bones[0].trans[2];
             // Compare against the current stored pose.
-            const int positionXChanged =
-                (*reinterpret_cast<float*>(bone->trans) != resetPositionX) ? 1 : 0;
+            const int positionXChanged = (bone->trans[0] != resetPositionX) ? 1 : 0;
             const int positionYChanged = (bone->trans[1] != resetPositionY) ? 1 : 0;
             const int positionZChanged = (bone->trans[2] != resetPositionZ) ? 1 : 0;
-            const int rotationXChanged =
-                (*reinterpret_cast<float*>(bone->rotQuat) != bones[0].rotQuat[0]) ? 1 : 0;
+            const int rotationXChanged = (bone->rotQuat[0] != bones[0].rotQuat[0]) ? 1 : 0;
             const int rotationYChanged = (bone->rotQuat[1] != bones[0].rotQuat[1]) ? 1 : 0;
             const int rotationZChanged = (bone->rotQuat[2] != bones[0].rotQuat[2]) ? 1 : 0;
             const int rotationWChanged = (bone->rotQuat[3] != bones[0].rotQuat[3]) ? 1 : 0;
             if ((positionXChanged | positionYChanged | positionZChanged | rotationXChanged |
                  rotationYChanged | rotationZChanged | rotationWChanged) != 0) {
-                *reinterpret_cast<float*>(bone->trans) = static_cast<float>(resetPositionX);
+                bone->trans[0] = static_cast<float>(resetPositionX);
                 bone->trans[1] = static_cast<float>(resetPositionY);
                 bone->trans[2] = static_cast<float>(resetPositionZ);
                 // Root quaternion copied into this bone's pose.
                 memcpy(bone->rotQuat, bones[0].rotQuat, sizeof bone->rotQuat);
-                physicsState[i] = 1;
+                editFlags[i] = 1;
             }
         } else {
             // ---- has parent: identity written ----------------------
             // comparisons are made against 0.0 for pos + quat x/y/z and
             // 1.0 for quat w (the x87 keeps a live [1.0, 0.0] pair)
-            const int positionXChanged = (*reinterpret_cast<float*>(bone->trans) != 0.0) ? 1 : 0;
+            const int positionXChanged = (bone->trans[0] != 0.0) ? 1 : 0;
             const int positionYChanged = (bone->trans[1] != 0.0) ? 1 : 0;
             const int positionZChanged = (bone->trans[2] != 0.0) ? 1 : 0;
-            const int rotationXChanged = (*reinterpret_cast<float*>(bone->rotQuat) != 0.0) ? 1 : 0;
+            const int rotationXChanged = (bone->rotQuat[0] != 0.0) ? 1 : 0;
             const int rotationYChanged = (bone->rotQuat[1] != 0.0) ? 1 : 0;
             const int rotationZChanged = (bone->rotQuat[2] != 0.0) ? 1 : 0;
             const int rotationWChanged = (bone->rotQuat[3] != 1.0) ? 1 : 0;
@@ -135,7 +131,7 @@ void ResetSelectedBonePose(MMDApp* app) {
                 // x64 RVA 0x405AA clears quaternion Z too (+0x15C).
                 bone->rotQuat[2] = 0.0f;
                 bone->rotQuat[3] = 1.0f;
-                physicsState[i] = 1;
+                editFlags[i] = 1;
             }
         }
     }

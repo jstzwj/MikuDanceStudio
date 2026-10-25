@@ -6,8 +6,8 @@
 // VA 0x004A9220  SetPhysicsMode   - bone pose source selector + propagation
 //
 // Binary analysis notes (verified against IDA session mmd932):
-//   * All three are __thiscall on the physics scene wrapper stored at
-//     model+60: scene+64 = btDiscreteDynamicsWorld*, scene+56 = constraint
+//   * The creation routines use the physics scene stored at model+60;
+//     SetPhysicsMode receives the model. scene+64 = world, scene+56 = constraint
 //     id counter (0x406010 increments it and returns the old value).
 //   * 0x4064F0 tail: out[0] = *(body+548) = btRigidBody::m_debugBodyId
 //     (stock 2.75 assigns it from the static uniqueId counter inside
@@ -54,7 +54,7 @@
 namespace mikudancestudio {
 namespace {
 
-void QuatFromMatrix(float out[4], const void* m16) {
+void QuatFromMatrix(float out[4], const float m16[16]) {
     d3dx::Get().quatFromMatrix(out, reinterpret_cast<const d3dx::D3DXMATRIXF*>(m16));
 }
 
@@ -220,12 +220,13 @@ float JointRadiusBound(const float limits[6], float distA, float distB) {
 // VA 0x004064F0 - build one Bullet rigid body from PMD data.
 // shape 0 = sphere(sx), 1 = box(sx,sy,sz), 2 = capsule(sx radius, sy height).
 // mode != 0 -> dynamic (mass used); mode == 0 -> kinematic bone follower.
-// out[0] receives the body id (m_debugBodyId), out[1] the btRigidBody*.
+// out.id receives the Bullet debug ID; out.body receives the owned btRigidBody*.
 // The scene world is built by SceneConstruct (0x4032B0) during UI creation
 // (0x466D20), so it is always live here like in the original.
-void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float sy, float sz,
-                     const float* mat16, int mode, float mass, float dampLin, float dampAng,
-                     float restitution, float friction, char grp, std::uint16_t mask) {
+void CreateRigidBody(PhysicsScene* scene, RigidBodyCreationResult& out, int shape, float sx,
+                     float sy, float sz, const float* mat16, int mode, float mass, float dampLin,
+                     float dampAng, float restitution, float friction, char grp,
+                     std::uint16_t mask) {
     btDiscreteDynamicsWorld* world = scene->world;
     btCollisionShape* colShape = nullptr;
     if (shape == 0) {
@@ -235,9 +236,8 @@ void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float
     } else if (shape == 2) {
         colShape = new btCapsuleShape(sx, sy); // 0x4065CF
     } else {
-        out[0] = reinterpret_cast<void*>( // 0x4068A4
-            static_cast<std::intptr_t>(-1));
-        out[1] = nullptr;
+        out.id = -1; // 0x4068A4
+        out.body = nullptr;
         return;
     }
 
@@ -273,9 +273,8 @@ void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float
 
     DumpRigidCreateState(shape, mode, mat16, q, body);
 
-    out[0] = reinterpret_cast<void*>( // 0x406899
-        static_cast<std::intptr_t>(body->m_debugBodyId));
-    out[1] = body;
+    out.id = body->m_debugBodyId; // 0x406899
+    out.body = body;
 }
 
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -299,13 +298,13 @@ static std::string WordsHex(const float* values, int count) {
 // VA 0x00406010 - build one 6DOF spring joint between two rigid bodies.
 // Returns the constraint id assigned from the scene counter (scene+56);
 // the btGeneric6DofSpringConstraint pointer is retained by the world.
-int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB, float ax, float ay, float az,
-                    float aq0, float aq1, float aq2, float aq3, float bx, float by, float bz,
-                    float bq0, float bq1, float bq2, float bq3, float linUpper0, float linUpper1,
-                    float linUpper2, float linLower0, float linLower1, float linLower2,
-                    float angUpper0, float angUpper1, float angUpper2, float angLower0,
-                    float angLower1, float angLower2, float spring0, float spring1, float spring2,
-                    float spring3, float spring4, float spring5) {
+int CreatePhysJoint(PhysicsScene* scene, btRigidBody* rbA, btRigidBody* rbB, float ax, float ay,
+                    float az, float aq0, float aq1, float aq2, float aq3, float bx, float by,
+                    float bz, float bq0, float bq1, float bq2, float bq3, float linUpper0,
+                    float linUpper1, float linUpper2, float linLower0, float linLower1,
+                    float linLower2, float angUpper0, float angUpper1, float angUpper2,
+                    float angLower0, float angLower1, float angLower2, float spring0, float spring1,
+                    float spring2, float spring3, float spring4, float spring5) {
     btDiscreteDynamicsWorld* world = scene->world;
 #ifdef MIKUDANCESTUDIO_DIAG
     // Env-gated (MIKUDANCESTUDIO_DUMP_JOINTARGS=<path>) creation-argument trace -
@@ -347,7 +346,7 @@ int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB, float ax, float a
 #endif
 
     auto* con = new btGeneric6DofSpringConstraint( // 0x406048
-        *static_cast<btRigidBody*>(rbA), *static_cast<btRigidBody*>(rbB), frameA, frameB, true);
+        *rbA, *rbB, frameA, frameB, true);
 
     con->setLinearLowerLimit( // 0x4062xx
         btVector3(linLower0, linLower1, linLower2));
@@ -392,11 +391,11 @@ int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB, float ax, float a
 // Physics mode 2 additionally applies the accumulated bone-morph offsets.
 // The transform updater then runs once for every bone layer through
 // ModelRecord::maxBoneLayer.
-void SetPhysicsMode(unsigned char* m, int afterPhysics, unsigned char* const* modelSlots,
+void SetPhysicsMode(mdl::ModelRecord* m, int afterPhysics, mdl::ModelRecord* const* modelSlots,
                     int physicsMode) {
-    mdl::ModelRecord& model = *mdl::Mdl(m);
+    mdl::ModelRecord& model = *m;
     const int boneCount = model.boneCount;
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(m);
+    mikudancestudio::mdl::BoneRecord* bones = m->boneTable;
     for (int i = 0; i < boneCount; ++i) {
         mikudancestudio::mdl::BoneRecord* bone = &bones[i];
         const unsigned char flag = bone->hasRigidBody;
@@ -410,8 +409,8 @@ void SetPhysicsMode(unsigned char* m, int afterPhysics, unsigned char* const* mo
     }
 
     if (model.physicsMode == 2) {
-        const int recCount = mdl::BoneMorphOffsetCount(m);
-        mdl::BoneMorphOffsetRecord* records = mdl::BoneMorphOffsets(m);
+        const int recCount = m->boneMorphCount;
+        mdl::BoneMorphOffsetRecord* records = m->boneMorphTable;
         for (int i = 0; i < recCount; ++i) {
             const mdl::BoneMorphOffsetRecord& record = records[i];
             mikudancestudio::mdl::BoneRecord* bone = &bones[record.boneIndex];
@@ -419,7 +418,7 @@ void SetPhysicsMode(unsigned char* m, int afterPhysics, unsigned char* const* mo
             bone->physicsOffset[1] += record.translation[1];
             bone->physicsOffset[2] += record.translation[2];
             float out[4];
-            QuatMultiply(out, reinterpret_cast<const float*>(bone->physicsQuat), record.rotation);
+            QuatMultiply(out, bone->physicsQuat, record.rotation);
             std::memcpy(bone->physicsQuat, out, 16);
         }
     }

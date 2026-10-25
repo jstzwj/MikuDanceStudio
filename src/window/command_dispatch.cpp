@@ -71,7 +71,7 @@ constexpr std::size_t kModelComboOrder2D7C = 0x2D7C;
 // bones (type byte +0x1E4 == 8 or < 7; EN name +0x14 when the english-UI
 // byte 0xA0B4C is set, JP name +0x0 otherwise) and set the cursor to 0.
 void RepopulateBoneCombo(MMDApp* app, HWND combo, std::int32_t modelSlot) {
-    unsigned char* model = app->ModelSlot(modelSlot);
+    unsigned char* model = mdl::ModelBytes(app->ModelSlot(modelSlot));
     const mdl::ModelRecord* record = mdl::Mdl(model);
     const mdl::BoneRecord* bones = record->boneTable;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(record->boneCount); ++i) {
@@ -111,7 +111,7 @@ void MorphRowSelect(MMDApp* app, HWND hwnd, HWND combo, std::size_t lane, int sp
     char text[0x100];
     const LRESULT sel = SendMessageA(combo, CB_GETCURSEL, 0, 0);
     SendMessageA(combo, CB_GETLBTEXT, sel, reinterpret_cast<LPARAM>(text));
-    const mdl::ModelRecord* record = mdl::Mdl(app->SelectedModel());
+    const mdl::ModelRecord* record = app->SelectedModel();
     if (static_cast<std::int32_t>(record->morphCount) <= 0) {
         return;
     }
@@ -126,14 +126,14 @@ void MorphRowSelect(MMDApp* app, HWND hwnd, HWND combo, std::size_t lane, int sp
     if (index < 0) {
         return;
     }
-    mdl::Mdl(app->SelectedModel())->selectedMorphs[lane] = index;
+    app->SelectedModel()->selectedMorphs[lane] = index;
     const float v = record->morphs[index].value;
     SendMessageA(GetDlgItem(hwnd, spinId), TBM_SETPOS, 1,
                  static_cast<LPARAM>(static_cast<std::int32_t>(v * 100.0))); // dbl_52B8E0
     sprintf_s(text, 0x100u, "%5.4f", static_cast<double>(v));
     SetWindowTextA(GetDlgItem(hwnd, textId), text);
     // display-frame row sweep (0x48ec01..0x48ec41)
-    mdl::ModelRecord* live = mdl::Mdl(app->SelectedModel());
+    mdl::ModelRecord* live = app->SelectedModel();
     mdl::FrameGroup* groups = live->displayFrames;
     for (std::uint8_t i = 0; i < live->facialFrameCount; ++i) {
         groups[i].selected = (groups[i].targetIndex == index) ? 1 : 0;
@@ -153,7 +153,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
     if (ctrl == GetDlgItem(hwnd, panel::kIkChainCombo)) {
         const LRESULT sel =
             SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
-        mdl::IkChain* chains = mdl::Mdl(app->SelectedModel())->ikChains;
+        mdl::IkChain* chains = app->SelectedModel()->ikChains;
         if (chains != nullptr) {
             CheckRadioButton(hwnd, panel::kIkOnRadio, panel::kIkOffRadio,
                              chains[sel].enabled != 0 ? panel::kIkOnRadio : panel::kIkOffRadio);
@@ -218,7 +218,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
             // Slot scan bound 255: x64 0x7FF7CB472E70 loads mov r13d,0FFh and scans the slot array in 8-byte
             // steps (only the x86 original uses 0x64)
             for (; slot < kModelSlotCount; ++slot) {
-                unsigned char* model = app->ModelSlot(slot);
+                unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
                 if (model != nullptr && mdl::Mdl(model)->comboSelIndex == static_cast<int>(sel)) {
                     found = true;
                     break;
@@ -243,7 +243,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
             const std::int32_t parent = app->CameraParentModel();
             if (parent >= 0) {
                 const mdl::BoneRecord& bone =
-                    mdl::Mdl(app->ModelSlot(parent))->boneTable[app->CameraParentBone()];
+                    app->ModelSlot(parent)->boneTable[app->CameraParentBone()];
                 const double px = bone.position[0];
                 const double py = bone.position[1];
                 const double pz = bone.position[2];
@@ -282,7 +282,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                      reinterpret_cast<LPARAM>(text));
         const std::int32_t parent = app->CameraParentModel();
         if (parent >= 0) {
-            const std::int32_t index = FindBoneByName(app->ModelSlot(parent), text);
+            const std::int32_t index =
+                FindBoneByName(mdl::ModelBytes(app->ModelSlot(parent)), text);
             if (index >= 0) {
                 app->CameraParentBone() = index;
                 SelectTimelineTrack(GlobalTimelineTrack::Camera);
@@ -311,7 +312,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
             bool found = false;
             // Slot scan bound 255: x64 0x7FF7CB4732F7 loads mov r13d,0FFh (same as 0x1C1)
             for (; slot < kModelSlotCount; ++slot) {
-                unsigned char* model = app->ModelSlot(slot);
+                unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
                 if (model != nullptr && mdl::Mdl(model)->comboSelIndex == static_cast<int>(sel)) {
                     found = true;
                     break;
@@ -341,7 +342,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                      reinterpret_cast<LPARAM>(text));
         mdl::AccessoryRecord* acc = app->AccessorySlot(app->SelectedAccessorySlot());
         if (acc != nullptr && acc->parentModel >= 0) {
-            const std::int32_t index = FindBoneByName(app->ModelSlot(acc->parentModel), text);
+            const std::int32_t index =
+                FindBoneByName(mdl::ModelBytes(app->ModelSlot(acc->parentModel)), text);
             if (index >= 0) {
                 acc->parentBone = index;
                 SelectAccessoryTimelineTrack(static_cast<int>(app->SelectedAccessorySlot()));
@@ -387,7 +389,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
     // on the active model (0x4CCF0, restored when the model is re-selected;
     // cleared to 3 on scene load).
     if (ctrl == GetDlgItem(hwnd, panel::kRegisterScopeCombo)) {
-        unsigned char* model = app->SelectedModel();
+        unsigned char* model = mdl::ModelBytes(app->SelectedModel());
         if (model != nullptr) {
             const LRESULT sel =
                 SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_GETCURSEL, 0, 0);
@@ -519,7 +521,7 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         // 0x487FF5..0x48803C: push the new flag into every loaded model's
         // displayState (+0x2D8C)
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
-            unsigned char* model = s.ModelSlot(slot);
+            unsigned char* model = mdl::ModelBytes(s.ModelSlot(slot));
             if (model != nullptr)
                 mdl::Mdl(model)->displayState = flag;
         }

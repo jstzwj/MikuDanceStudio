@@ -144,7 +144,7 @@ void HandleLButtonUp(MMDApp* app) {
         SelectionReeval(app); // 0x430510
     }
 
-    app->PendingTimelineSelectionRow() = TimelineSelectionRow::None;
+    app->DraggedInterpolationPoint() = InterpolationControlPoint::None;
 }
 
 } // namespace mikudancestudio

@@ -51,70 +51,68 @@ namespace {
 
 // App-field offsets (file-local).
 
-unsigned char* ActiveModel(MMDApp* app) {
+mdl::ModelRecord* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-mikudancestudio::mdl::UndoRecord& CurrentUndo(unsigned char* model) {
-    return mikudancestudio::mdl::Mdl(model)
-        ->undoRings[0]
-        .slots[mikudancestudio::mdl::Mdl(model)->UndoCursor()];
+mikudancestudio::mdl::UndoRecord& CurrentUndo(mdl::ModelRecord* model) {
+    return model->undoRings[0].slots[model->UndoCursor()];
 }
 
 // Undo slot header (0x43A055..0x43A2D2 / 0x43AC..0x43B0x in both bone
 // frame-line commands): dirty/redo flags, cursor advance with the 30-slot
 // wrap, type 2, current frame, then the pose snapshot.
-void BeginUndoEdit(unsigned char* model, std::uint32_t frame) {
-    mdl::Mdl(model)->undoDirty = 1;
-    mdl::Mdl(model)->redoDirty = 0;
-    std::int32_t cursor = mikudancestudio::mdl::Mdl(model)->UndoCursor() + 1;
+void BeginUndoEdit(mdl::ModelRecord* model, std::uint32_t frame) {
+    model->undoDirty = 1;
+    model->redoDirty = 0;
+    std::int32_t cursor = model->UndoCursor() + 1;
     if (cursor >= mdl::kUndoHistoryDepth)
         cursor = 0;
-    mikudancestudio::mdl::Mdl(model)->UndoCursor() = cursor;
-    mikudancestudio::mdl::Mdl(model)->LatestUndoCursor() = cursor;
+    model->UndoCursor() = cursor;
+    model->LatestUndoCursor() = cursor;
     auto& undo = CurrentUndo(model);
     undo.operation = mdl::UndoOperation::BoneKeys;
     undo.frame = frame;
 }
 
 // Pose snapshot: boneCount x 0x24 records {boneIdx, pos(3f), quat(4f),
-// selection byte} taken from the bone structs at +320/+332 and the
-// selection array model+0x2D98.
-void SnapshotPose(unsigned char* model) {
+// pending-pose-edit byte}. The flag comes from bonePhysicsState, not
+// boneSelection (x64 0x7FF7CB4A9EC0 / 0x7FF7CB4AA8C0 read model+0x3128).
+void SnapshotPose(mdl::ModelRecord* model) {
     auto& undo = CurrentUndo(model);
     auto*& slot = undo.bonePose;
     if (slot != nullptr) {
         ::operator delete(slot);
         slot = nullptr;
     }
-    const std::int32_t count = mdl::Mdl(model)->boneCount;
+    const std::int32_t count = model->boneCount;
     slot = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(::operator new(
         static_cast<std::size_t>(count) * sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
     std::memset(slot, 0, static_cast<std::size_t>(count) * sizeof(*slot));
-    mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
-    unsigned char* selected = mdl::Mdl(model)->boneSelection;
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
+    const unsigned char* editFlags = model->bonePhysicsState;
     for (std::int32_t i = 0; i < count; ++i) {
         auto& out = slot[i];
         mikudancestudio::mdl::BoneRecord* bone = &bones[i];
         out.boneIndex = i;
         std::memcpy(out.position, bone->trans, sizeof out.position);
         std::memcpy(out.rotation, bone->rotQuat, sizeof out.rotation);
-        out.physicsDisabled = selected[i];
+        out.poseEdited = editFlags[i];
     }
 }
 
 // Key-record snapshot buffer: count field zeroed, keys buffer reallocated
 // (freed then malloc'ed and zeroed; original 0x43A4DE..0x43A555).
-void AllocUndoKeys(unsigned char* model, std::size_t bytes) {
+void AllocUndoKeys(mdl::ModelRecord* model, std::size_t count) {
     auto& undo = CurrentUndo(model);
     undo.recordCount = 0;
-    void*& slot = undo.auxiliaryPose;
+    auto*& slot = undo.keySnapshots;
     if (slot != nullptr) {
         ::operator delete(slot);
         slot = nullptr;
     }
-    slot = static_cast<unsigned char*>(::operator new(bytes));
-    std::memset(slot, 0, bytes);
+    slot = static_cast<mdl::BoneKeyUndoEntry*>(::operator new(count * sizeof(*slot)));
+    std::memset(slot, 0, count * sizeof(*slot));
 }
 
 // Clear a removed bone-key record (0x43B1F9..0x43B20D / 0x43B637..):
@@ -186,9 +184,9 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
 
     if (app->CameraMode() == 0) {
         // ---- bone mode: shift every non-head key at frame >= currentFrame up one
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t boneCount = model->boneCount;
+        mdl::BoneKey* keys = model->boneKeys;
 
         int affected = 0; // stack0xfffffff8 (0x439E75..0x439F9D)
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
@@ -207,9 +205,9 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
         // Allocate the undo key buffer by affected key count: x64 0x7FF7CB4A9F98
         // operator new(saturated_mul(v9, 0x40)), where v9 is the affected count calculated above.
         AllocUndoKeys(model, // 0x43A4DE..
-                      static_cast<std::size_t>(affected) * 0x40);
-        std::memset(mdl::Mdl(model)->keyVisitMap, 0,
-                    sizeof(mdl::Mdl(model)->keyVisitMap)); // 0x43A555
+                      static_cast<std::size_t>(affected));
+        std::memset(model->keyVisitMap, 0,
+                    sizeof(model->keyVisitMap)); // 0x43A555
 
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) { // 0x43A56D..
             mdl::BoneKey& key = keys[i];
@@ -217,14 +215,13 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
             if (keyFrame != 0 && i >= boneCount && keyFrame >= currentFrame) {
                 AppendBoneKeyToUndo(model, i); // snapshot record
                 key.frame = keyFrame + 1;
-                if (static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame) <
+                if (static_cast<std::int32_t>(model->maxFrame) <
                     static_cast<std::int32_t>(keyFrame) + 1)
-                    mdl::Mdl(model)->maxFrame = static_cast<std::int32_t>(keyFrame) + 1;
+                    model->maxFrame = static_cast<std::int32_t>(keyFrame) + 1;
             }
         }
 
-        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
-                       app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, static_cast<int>(currentFrame), app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
         app->SceneModified() = 1;
@@ -254,9 +251,9 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
 
     if (app->CameraMode() == 0) {
         // ---- bone mode
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t boneCount = model->boneCount;
+        mdl::BoneKey* keys = model->boneKeys;
 
         // Undo sizing (0x43A675..0x43A72E): a key exactly at the current
         // frame consumes three snapshot slots (prev/self/next), a key
@@ -280,9 +277,9 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
         BeginUndoEdit(model, currentFrame); // 0x43AB9C..
         SnapshotPose(model);                // 0x43ACF2..
         AllocUndoKeys(model,                // 0x43AF60..
-                      static_cast<std::size_t>(affected) * 0x40);
-        std::memset(mdl::Mdl(model)->keyVisitMap, 0,
-                    sizeof(mdl::Mdl(model)->keyVisitMap)); // 0x43AFD3
+                      static_cast<std::size_t>(affected));
+        std::memset(model->keyVisitMap, 0,
+                    sizeof(model->keyVisitMap)); // 0x43AFD3
 
         // Auto-interpolation rebuild gate: checkbox 0x212 (0x43AFF4).
         const bool autoInterp =
@@ -342,8 +339,7 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
             }
         }
 
-        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
-                       app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, static_cast<int>(currentFrame), app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
         app->SceneModified() = 1;
@@ -412,20 +408,20 @@ void InsertFacialLightFrameLine(MMDApp* app) {
     }
 
     // ---- facial mode: morph keys, 0x14 stride x 20000 (no undo)
-    unsigned char* model = ActiveModel(app);
-    const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
-    mdl::MorphKey* keys = mdl::MorphKeys(model);
+    mdl::ModelRecord* model = ActiveModel(app);
+    const std::int32_t morphCount = model->morphCount;
+    mdl::MorphKey* keys = model->morphKeys;
     for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
         mdl::MorphKey& key = keys[i];
         const std::uint32_t keyFrame = key.frame;
         if (keyFrame != 0 && i >= morphCount && keyFrame >= currentFrame) {
             key.frame = keyFrame + 1;
-            if (static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame) <
+            if (static_cast<std::int32_t>(model->maxFrame) <
                 static_cast<std::int32_t>(keyFrame) + 1)
-                mdl::Mdl(model)->maxFrame = static_cast<std::int32_t>(keyFrame) + 1;
+                model->maxFrame = static_cast<std::int32_t>(keyFrame) + 1;
         }
     }
-    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame), app->PlaybackPhysicsMode());
+    SeekModelFrame(*model, static_cast<int>(currentFrame), app->PlaybackPhysicsMode());
     PanelPaint(app);
     SelectionReeval(app);
     app->SceneModified() = 1;
@@ -437,9 +433,9 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
 
     if (app->CameraMode() == 0) {
         // ---- facial mode: morph keys, 0x14 stride x 20000
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
-        mdl::MorphKey* keys = mdl::MorphKeys(model);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t morphCount = model->morphCount;
+        mdl::MorphKey* keys = model->morphKeys;
         for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
             mdl::MorphKey& key = keys[i];
             const std::uint32_t keyFrame = key.frame;
@@ -477,8 +473,7 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
                 }
             }
         }
-        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
-                       app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, static_cast<int>(currentFrame), app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
         app->SceneModified() = 1;
@@ -534,7 +529,7 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
 // / 0x7FF7CB4654D0 use BYTE stores on the flag only (the x86 build's dword
 // store also swept the physics byte and padding - not reproduced).
 void SelectFrameGroup(MMDApp* app, FrameGroup group) {
-    unsigned char* model = ActiveModel(app);
+    mdl::ModelRecord* model = ActiveModel(app);
 
     if (group == FrameGroup::Bone) {
         // 0xD9: all bone frames (0x26E0 table, 0x3C x kBoneKeyCapacity).
@@ -542,8 +537,8 @@ void SelectFrameGroup(MMDApp* app, FrameGroup group) {
         // +0x38 flag byte (clear, then conditional byte store of 1); the
         // x86 build's dword store used to sweep +0x39 (physics) and
         // +0x3A..+0x3B along - keep them intact.
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
-        const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
+        mdl::BoneKey* keys = model->boneKeys;
+        const std::int32_t boneCount = model->boneCount;
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
             mdl::BoneKey& key = keys[i];
             key.allocated = 0;
@@ -555,7 +550,7 @@ void SelectFrameGroup(MMDApp* app, FrameGroup group) {
         // 0xDA: all disp/IK/OP frames (0x26E8 table, 0x28 x 1000 on x64).
         // 0x7FF7CB465540..0x7FF7CB4655A2: byte stores at +0x18 only, plus
         // the forced record-0 flag after the loop.
-        mdl::DisplayKey* frames = mdl::DisplayKeys(model);
+        mdl::DisplayKey* frames = model->displayKeys;
         for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             frames[i].allocated = 0;
             if (frames[i].frame != 0) {
@@ -566,8 +561,8 @@ void SelectFrameGroup(MMDApp* app, FrameGroup group) {
     } else {
         // 0xDC: all facial frames (0x26E4 table, 0x14 x 20000).
         // 0x7FF7CB4654D0..0x7FF7CB46552E: byte stores at +0x10 only.
-        mdl::MorphKey* frames = mdl::MorphKeys(model);
-        const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
+        mdl::MorphKey* frames = model->morphKeys;
+        const std::int32_t morphCount = model->morphCount;
         for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
             frames[i].allocated = 0;
             if (i < morphCount || frames[i].frame != 0) {

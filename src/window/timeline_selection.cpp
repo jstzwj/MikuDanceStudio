@@ -16,15 +16,15 @@ void ClearModelTimelineKeySelection(MMDApp& app) {
     // invariant here instead of dereferencing slot 0/null.
     if (app.SelectedModel() == nullptr)
         return;
-    unsigned char* model = app.SelectedModel();
-    mikudancestudio::mdl::BoneKey* boneKeys = mikudancestudio::mdl::BoneKeys(model);
+    mdl::ModelRecord* model = app.SelectedModel();
+    mikudancestudio::mdl::BoneKey* boneKeys = model->boneKeys;
     for (std::size_t i = 0; i < mikudancestudio::mdl::kBoneKeyCapacity; ++i)
         boneKeys[i].allocated = 0;
 
-    mikudancestudio::mdl::MorphKey* morphKeys = mikudancestudio::mdl::MorphKeys(model);
+    mikudancestudio::mdl::MorphKey* morphKeys = model->morphKeys;
     for (std::size_t i = 0; i < mikudancestudio::mdl::kMorphKeyCapacity; ++i)
         morphKeys[i].allocated = 0;
-    mikudancestudio::mdl::DisplayKey* displayKeys = mikudancestudio::mdl::DisplayKeys(model);
+    mikudancestudio::mdl::DisplayKey* displayKeys = model->displayKeys;
     for (std::size_t i = 0; i < mikudancestudio::mdl::kDisplayKeyCapacity; ++i)
         displayKeys[i].allocated = 0;
 }

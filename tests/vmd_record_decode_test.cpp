@@ -62,27 +62,27 @@ MMDApp::MMDApp() : state{} {
 }
 MMDApp* g_Block = nullptr;
 int LoadVmdMotion(MMDApp*, const wchar_t*);
-int RegisterCameraKey(MMDApp*, const void* record, int) {
-    cameras.push_back(*static_cast<const mdl::CameraClipboardRecord*>(record));
+int RegisterCameraKey(MMDApp*, const mdl::CameraClipboardRecord& record, int) {
+    cameras.push_back(record);
     return 1;
 }
-int RegisterLightKey(MMDApp*, const void* record) {
-    light = *static_cast<const mdl::LightClipboardRecord*>(record);
+int RegisterLightKey(MMDApp*, const mdl::LightClipboardRecord& record) {
+    light = record;
     return 1;
 }
-int RegisterSelfShadowKey(MMDApp*, const void* record) {
-    shadow = *static_cast<const mdl::ShadowClipboardRecord*>(record);
+int RegisterSelfShadowKey(MMDApp*, const mdl::ShadowClipboardRecord& record) {
+    shadow = record;
     return 1;
 }
-bool RegisterBoneKey(unsigned char*, mdl::BoneClipboardRecord& record, int, unsigned char) {
+bool RegisterBoneKey(mdl::ModelRecord*, mdl::BoneClipboardRecord& record, int, unsigned char) {
     bone = record;
     return true;
 }
-bool RegisterMorphKeyFromRecord(unsigned char*, const mdl::MorphClipboardRecord& record, int) {
+bool RegisterMorphKeyFromRecord(mdl::ModelRecord*, const mdl::MorphClipboardRecord& record, int) {
     morph = record;
     return true;
 }
-bool RegisterDisplayKeyFromRecord(unsigned char*, int, unsigned char visible, int count,
+bool RegisterDisplayKeyFromRecord(mdl::ModelRecord*, int, unsigned char visible, int count,
                                   const mdl::IkClipboardState* states, int,
                                   const mdl::SelectorClipboardState*, int) {
     displayVisible = visible;
@@ -90,12 +90,12 @@ bool RegisterDisplayKeyFromRecord(unsigned char*, int, unsigned char visible, in
         ik = states[0];
     return count == 1;
 }
-void ResetBoneKeyCursor(unsigned char*) {
+void ResetBoneKeyCursor(mdl::ModelRecord*) {
 }
-int ResetMorphKeyCursor(unsigned char*) {
+int ResetMorphKeyCursor(mdl::ModelRecord*) {
     return 0;
 }
-void ResetDisplayKeyCursor(unsigned char*) {
+void ResetDisplayKeyCursor(mdl::ModelRecord*) {
 }
 int SeekModelFrame(mdl::ModelRecord&, int, int) {
     return 42;
@@ -185,7 +185,7 @@ int main() {
     model->displayKeys = displayKeys.get();
     strcpy_s(model->name, "fixture");
     app->CameraMode() = 0;
-    app->ModelSlot(0) = reinterpret_cast<unsigned char*>(model.get());
+    app->ModelSlot(0) = model.get();
     FileBytes file;
     file.Text("Vocaloid Motion Data 0002", 30);
     file.Text("fixture", 20);
@@ -229,7 +229,7 @@ int main() {
     for (auto& ring : model->undoRings)
         for (auto& slot : ring.slots) {
             ::operator delete(slot.bonePose);
-            ::operator delete(slot.auxiliaryPose);
+            ::operator delete(slot.keySnapshots);
         }
     DeleteFileW(path);
     return failures ? 1 : 0;

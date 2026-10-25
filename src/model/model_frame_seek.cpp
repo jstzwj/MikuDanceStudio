@@ -112,7 +112,7 @@ inline void InterpolateSeekRotation(mdl::BoneRecord* bone, const float previousR
 }
 
 void SeekDisplayTrack(mdl::ModelRecord& model, std::uint32_t frameU32) {
-    auto* m = reinterpret_cast<unsigned char*>(&model);
+    auto* m = &model;
     mdl::DisplayKey* const keys = model.displayKeys;
     int found = 0;
     bool resolved = false;
@@ -203,7 +203,7 @@ int SeekMorphTracks(mdl::ModelRecord& model, std::uint32_t frameU32) {
     return result;
 }
 
-void SeekBoneFrame(unsigned char* m, mdl::BoneRecord* bone, mdl::BoneKey* keys, int b,
+void SeekBoneFrame(mdl::ModelRecord* m, mdl::BoneRecord* bone, mdl::BoneKey* keys, int b,
                    std::uint32_t frameU32, int physicsMode) {
     int found = b; // bone b's first record is #b
     bool resolved = false;
@@ -231,7 +231,7 @@ void SeekBoneFrame(unsigned char* m, mdl::BoneRecord* bone, mdl::BoneKey* keys, 
             }
             const int selIdx = bone->slotIndex;
             if (selIdx >= 0) {
-                const mdl::BoneOrderEntry& window = mdl::BoneOrder(m)[selIdx];
+                const mdl::BoneOrderEntry& window = m->boneOrderTable[selIdx];
                 const std::uint32_t selStart = window.windowStart;
                 if (rec.frame < selStart && selStart <= frameU32) {
                     // zero position + quaternion xyz, w = 1.0
@@ -338,7 +338,7 @@ void SeekBoneFrame(unsigned char* m, mdl::BoneRecord* bone, mdl::BoneKey* keys, 
     std::uint32_t snapRef = 0;
     const int selIdx = bone->slotIndex;
     if (selIdx >= 0) {
-        const mdl::BoneOrderEntry& window = mdl::BoneOrder(m)[selIdx];
+        const mdl::BoneOrderEntry& window = m->boneOrderTable[selIdx];
         const std::uint32_t selStart = window.windowStart;
         const std::uint32_t selEnd = window.windowEnd;
         if (selStart < curFrame && prevFrame < selStart) {
@@ -389,7 +389,6 @@ int SeekModelFrame(mdl::ModelRecord& model, int frameArg, int physicsMode) {
     const auto frame = static_cast<std::uint32_t>(frameArg);
     SeekDisplayTrack(model, frame);
     int result = SeekMorphTracks(model, frame);
-    auto* bytes = reinterpret_cast<unsigned char*>(&model);
     const int count = static_cast<int>(model.boneCount);
     for (int index = 0; index < count; ++index) {
         mdl::BoneRecord& bone = model.boneTable[index];
@@ -398,7 +397,7 @@ int SeekModelFrame(mdl::ModelRecord& model, int frameArg, int physicsMode) {
         if (type > static_cast<std::int8_t>(mdl::BoneType::Effector) &&
             bone.type != mdl::BoneType::FixedAxis)
             continue;
-        SeekBoneFrame(bytes, &bone, model.boneKeys, index, frame, physicsMode);
+        SeekBoneFrame(&model, &bone, model.boneKeys, index, frame, physicsMode);
         result = index + 1;
     }
     return result;
@@ -406,8 +405,8 @@ int SeekModelFrame(mdl::ModelRecord& model, int frameArg, int physicsMode) {
 
 // Seek the selected model and request reevaluation.
 void SeekSelectedModelToCurrentFrame(MMDApp* app) {
-    unsigned char* model = app->SelectedModel();
-    SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+    mdl::ModelRecord* model = app->SelectedModel();
+    SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
     app->RecordedFrameCountByte1() = 1;
 }
 

@@ -9,9 +9,14 @@ int refreshed = 0;
 }
 namespace mikudancestudio {
 // Isolate navigation from window/render initialization and downstream playback.
-MMDApp::MMDApp() : state{} {}
-void RefreshAfterFrameApply(MMDApp*) { ++applied; }
-void PostViewRefresh(MMDApp*) { ++refreshed; }
+MMDApp::MMDApp() : state{} {
+}
+void RefreshAfterFrameApply(MMDApp*) {
+    ++applied;
+}
+void PostViewRefresh(MMDApp*) {
+    ++refreshed;
+}
 void JumpNextKeyframe(MMDApp*);
 void JumpPrevKeyframe(MMDApp*);
 }
@@ -29,28 +34,34 @@ int main() {
     rows[1].targetIndex = 0;
     rows[1].selected = 1;
     keys[0].next = 2;
-    keys[2].frame = 10; keys[2].next = 3;
-    keys[3].frame = 30; keys[3].previous = 2;
+    keys[2].frame = 10;
+    keys[2].next = 3;
+    keys[3].frame = 30;
+    keys[3].previous = 2;
     keys[1].next = 4;
-    keys[4].frame = 15; keys[4].previous = 1; keys[4].next = 5;
-    keys[5].frame = 25; keys[5].previous = 4;
+    keys[4].frame = 15;
+    keys[4].previous = 1;
+    keys[4].next = 5;
+    keys[5].frame = 25;
+    keys[5].previous = 4;
     model->displayFrames = rows;
     model->morphKeys = keys;
     model->facialFrameCount = 2;
     app->SetSelectedModelSlot(0);
-    app->ModelSlot(0) = reinterpret_cast<unsigned char*>(model.get());
+    app->ModelSlot(0) = model.get();
     bool ok = true;
     auto check = [&](bool next, unsigned current, unsigned expected, bool applies) {
         app->state.currentFrame = current;
         const int beforeApply = applied, beforeRefresh = refreshed;
-        if (next) mds::JumpNextKeyframe(app.get());
-        else mds::JumpPrevKeyframe(app.get());
-        if (app->state.currentFrame != expected ||
-            applied - beforeApply != int(applies) ||
+        if (next)
+            mds::JumpNextKeyframe(app.get());
+        else
+            mds::JumpPrevKeyframe(app.get());
+        if (app->state.currentFrame != expected || applied - beforeApply != int(applies) ||
             refreshed - beforeRefresh != int(applies)) {
             std::fprintf(stderr, "%s from %u: expected %u/apply=%d, got %u/apply=%d/refresh=%d\n",
-                next ? "next" : "prev", current, expected, int(applies),
-                app->state.currentFrame, applied - beforeApply, refreshed - beforeRefresh);
+                         next ? "next" : "prev", current, expected, int(applies),
+                         app->state.currentFrame, applied - beforeApply, refreshed - beforeRefresh);
             ok = false;
         }
     };

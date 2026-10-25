@@ -8,7 +8,7 @@
 // v932x64) are recorded per function:
 //   ApplyCameraFrameScaleAdd  ->  sub_7FF7CB4BC330   (called by camera dialog proc sub_7FF7CB478860, x86 0x43DAD0)
 //   ApplyBoneFrameScaleAdd ->  sub_7FF7CB4BC9C0   (called by bone dialog proc sub_7FF7CB4789D0, x86 0x43E000)
-//   RegisterBoneUndoSnapshot  ->  sub_7FF7CB4EEBD0   (bone apply's pre-loop undo registration)
+//   SnapshotSelectedKeysForUndo ->  sub_7FF7CB4EEBD0   (bone apply's pre-loop undo registration)
 //   ApplyMorphScaleAdd  ->  sub_7FF7CB4BD120   (called by dialog proc sub_7FF7CB478B40)
 //   ApplyPhysicsOnOff  ->  sub_7FF7CB4BED40   (called by dialog proc sub_7FF7CB4BEC00)
 // =========================================================================//
@@ -267,10 +267,9 @@ void CurvePanelRepaint(MMDApp* app) {                            // x64 0x7FF7CB
         ScanCurveTrack(app, app->CameraKeys(), mdl::kTimelineKeyCapacity, 6, channel, baseline,
                        firstChannels, found, perChannelUniform);
     } else {
-        unsigned char* model = app->SelectedModel();
-        ScanCurveTrack(app, model != nullptr ? mdl::BoneKeys(model) : nullptr,
-                       mdl::kBoneKeyCapacity, 4, channel, baseline, firstChannels, found,
-                       perChannelUniform);
+        mdl::ModelRecord* model = app->SelectedModel();
+        ScanCurveTrack(app, model != nullptr ? model->boneKeys : nullptr, mdl::kBoneKeyCapacity, 4,
+                       channel, baseline, firstChannels, found, perChannelUniform);
     }
 
     if (app->state.interpCurveUniformFound != 0) {
@@ -289,54 +288,6 @@ void CurvePanelRepaint(MMDApp* app) {                            // x64 0x7FF7CB
     RECT dirty{kCurveDirtyLeft, client.bottom - kCurveDirtyTopMargin, kCurveDirtyRight,
                client.bottom - kCurveDirtyBottomMargin};
     InvalidateRect(window, &dirty, FALSE);
-}
-
-// ===========================================================================
-// x64 0x7FF7CB4ED750 - MorphPanelRefresh(model)
-// ===========================================================================
-// Facial/IK panel echo of one model record: checkbox 439 mirrors the
-// visibility byte (loadComplete, x64 +12569), the radio pair 444/445
-// mirrors the IK-chain state of combo 443's current selection
-// (ikChains[sel].enabled -> 444 else 445), and each of the four morph
-// selectors (selectedMorphs[0..3], x64 +12592..) with an index >= 0 parks
-// morphs[idx].value * 100 on its trackbar (505/510/515/520) and echoes
-// "%5.4f" into the paired edit (506/511/516/521).  Negative selectors
-// leave their group untouched (unlike PostLoadInit's echo).
-// =========================================================================//
-void MorphPanelRefresh(unsigned char* model) { // x64 0x7FF7CB4ED750
-    constexpr int kModelVisibleCheck = panel::kModelVisibleCheckbox;
-    constexpr int kIkChainCombo = panel::kIkChainCombo;
-    constexpr int kIkOnRadio = panel::kIkOnRadio;
-    constexpr int kIkOffRadio = panel::kIkOffRadio;
-    static const int kMorphSlider[4] = {panel::kMorphSlider0, panel::kMorphSlider1,
-                                        panel::kMorphSlider2, panel::kMorphSlider3};
-    static const int kMorphEdit[4] = {panel::kMorphEdit0, panel::kMorphEdit1, panel::kMorphEdit2,
-                                      panel::kMorphEdit3};
-
-    mdl::ModelRecord* m = mdl::Mdl(model);
-    HWND window = static_cast<HWND>(m->hwnd);
-
-    SendMessageA(GetDlgItem(window, kModelVisibleCheck), BM_SETCHECK, m->loadComplete != 0 ? 1 : 0,
-                 0);
-    if (m->ikChains != nullptr) {
-        const int selection =
-            static_cast<int>(SendMessageA(GetDlgItem(window, kIkChainCombo), CB_GETCURSEL, 0, 0));
-        CheckRadioButton(window, kIkOnRadio, kIkOffRadio,
-                         m->ikChains[selection].enabled != 0 ? kIkOnRadio : kIkOffRadio);
-    }
-    if (m->morphs != nullptr) {
-        char text[256];
-        for (int group = 0; group < 4; ++group) {
-            const std::int32_t selection = m->selectedMorphs[group];
-            if (selection < 0)
-                continue;
-            const float value = m->morphs[selection].value;
-            SendMessageA(GetDlgItem(window, kMorphSlider[group]), TBM_SETPOS, 1,
-                         static_cast<LPARAM>(static_cast<int>(value * 100.0f)));
-            sprintf_s(text, 0x100, "%5.4f", static_cast<double>(value));
-            SetWindowTextA(GetDlgItem(window, kMorphEdit[group]), text);
-        }
-    }
 }
 
 // ===========================================================================
@@ -402,97 +353,6 @@ void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043DAD0
 }
 
 // ===========================================================================
-// x64 0x7FF7CB4EEBD0 - bone undo registration (RegisterBoneUndoSnapshot)
-// ===========================================================================
-// Shared pre-loop helper of the bone frame-control apply (six code call
-// sites in the original): counts the model's allocated bone keys (600000
-// 60-byte records, gate = allocated byte +56) and, when at least one
-// exists, rolls the model's undo ring - enable undo (400) / disable redo
-// (401), cursor = (cursor+1) mod 30 mirrored into redoState, undoDirty = 1
-// with redoDirty = 0 (one WORD store at model+0x3558 in the original), slot
-// operation 2 at `frame`, a 36-byte BonePoseSnapshot per bone (bone-table
-// trans/rotQuat plus the bonePhysicsState byte), then one 64-byte
-// auxiliary record {int recordIndex, 60-byte BoneKey copy} per allocated
-// key, deduped through keyVisitMap (model+0x3CAC) exactly like the physics
-// apply's chain walk below.
-// =========================================================================//
-void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
-                              int frame) { // x64 0x7FF7CB4EEBD0
-    mdl::ModelRecord* model = mdl::Mdl(modelBytes);
-    mdl::BoneKey* keys = model->boneKeys;
-    if (keys == nullptr)
-        return;
-
-    std::size_t used = 0;
-    for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
-        if (keys[i].allocated != 0)
-            ++used;
-    }
-    if (used == 0)
-        return;
-
-    HWND window = static_cast<HWND>(model->hwnd);
-    EnableWindow(GetDlgItem(window, panel::kUndoButton), TRUE);
-    EnableWindow(GetDlgItem(window, panel::kRedoButton), FALSE);
-    std::uint32_t& cursor = model->UndoCursor();
-    if (++cursor >= mdl::kUndoHistoryDepth)
-        cursor = 0;
-    model->LatestUndoCursor() = cursor;
-    model->undoDirty = 1;
-    model->redoDirty = 0;
-    mdl::UndoRecord& undo = model->undoRings[0].slots[cursor];
-    undo.operation = mdl::UndoOperation::BoneKeys;
-    undo.recordCount = 0;
-    undo.frame = static_cast<std::uint32_t>(frame);
-
-    if (undo.bonePose != nullptr) {
-        ::operator delete(undo.bonePose);
-        undo.bonePose = nullptr;
-    }
-    const std::int32_t boneCount = model->boneCount;
-    auto* snapshot = static_cast<mdl::BonePoseSnapshot*>(
-        ::operator new(sizeof(mdl::BonePoseSnapshot) * boneCount));
-    undo.bonePose = snapshot;
-    std::memset(snapshot, 0, sizeof(mdl::BonePoseSnapshot) * static_cast<std::size_t>(boneCount));
-    mdl::BoneRecord* bones = model->boneTable;
-    for (int i = 0; i < boneCount; ++i) {
-        snapshot[i].boneIndex = i;
-        snapshot[i].position[0] = bones[i].trans[0];
-        snapshot[i].position[1] = bones[i].trans[1];
-        snapshot[i].position[2] = bones[i].trans[2];
-        snapshot[i].rotation[0] = bones[i].rotQuat[0];
-        snapshot[i].rotation[1] = bones[i].rotQuat[1];
-        snapshot[i].rotation[2] = bones[i].rotQuat[2];
-        snapshot[i].rotation[3] = bones[i].rotQuat[3];
-        snapshot[i].physicsDisabled =
-            model->bonePhysicsState != nullptr ? model->bonePhysicsState[i] : 0;
-    }
-
-    if (undo.auxiliaryPose != nullptr) {
-        ::operator delete(undo.auxiliaryPose);
-        undo.auxiliaryPose = nullptr;
-    }
-    undo.auxiliaryPose = ::operator new(used * 0x40);
-    std::memset(undo.auxiliaryPose, 0, used * 0x40);
-    std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
-
-    // 64-byte auxiliary record = {int recordIndex, 60-byte BoneKey copy};
-    // the append uses undo.recordCount as its counter like the physics apply.
-    for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
-        if (keys[i].allocated == 0 || model->keyVisitMap[i] != 0)
-            continue;
-        model->keyVisitMap[i] = 1;
-        auto* records = static_cast<unsigned char*>(undo.auxiliaryPose);
-        *reinterpret_cast<std::int32_t*>(records +
-                                         0x40 * static_cast<std::size_t>(undo.recordCount)) =
-            static_cast<std::int32_t>(i);
-        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.recordCount) + 4, &keys[i],
-                    0x3C);
-        ++undo.recordCount;
-    }
-}
-
-// ===========================================================================
 // 0x0043E000 - case-251 bone "frame control" apply (x64 sub_7FF7CB4BC9C0)
 // ===========================================================================
 // Reads the 12 edits 686..697 as six (scale, add) pairs and applies them to
@@ -508,7 +368,7 @@ void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
 //   5     696/697 euler Z angle (add enters as -deg * pi / 180)
 // A position pair is skipped when scale == 1.0 and add == 0.0.  Before the
 // loop the original registers the bone undo snapshot
-// (RegisterBoneUndoSnapshot above) unconditionally - even when every pair
+// (SnapshotSelectedKeysForUndo) unconditionally - even when every pair
 // is the identity.
 // The rotation block runs when any rotation scale != 1.0 or converted
 // add != 0.0: it builds the key quaternion's matrix (quat at +0x28) and
@@ -528,8 +388,8 @@ void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
 // PostViewRefresh (x64 sub_7FF7CB440DD0).
 // =========================================================================//
 void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E000
-    unsigned char* modelBytes = app->ModelSlot(app->state.slotIdx);
-    if (modelBytes == nullptr)
+    mdl::ModelRecord* model = app->ModelSlot(app->state.slotIdx);
+    if (model == nullptr)
         return;
 
     d3dx::Api& api = d3dx::Get();
@@ -548,9 +408,9 @@ void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E000
     add[4] = static_cast<float>(add[4] * -3.141592) / 180.0f;
     add[5] = static_cast<float>(add[5] * -3.141592) / 180.0f;
 
-    RegisterBoneUndoSnapshot(modelBytes, app->state.currentFrame);
+    SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
 
-    mdl::BoneKey* keys = mdl::BoneKeys(modelBytes);
+    mdl::BoneKey* keys = model->boneKeys;
     d3dx::D3DXMATRIXF quatMatrix{};
     d3dx::D3DXMATRIXF rotation{};
     d3dx::D3DXMATRIXF axis{};
@@ -584,7 +444,7 @@ void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E000
     }
     PanelPaint(app);        // 0x414610 (x64 sub_7FF7CB480EA0)
     CurvePanelRepaint(app); // x64 sub_7FF7CB482BB0
-    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
+    SeekModelFrame(*model, app->state.currentFrame,
                    app->state.playbackPhysicsMode); // 0x4B4260 (x64 0x4EBD90)
     app->SceneModified() = 1;                       // x64 0xA1B31 dirty byte
     PostViewRefresh(app);                           // 0x40D130 (x64 sub_7FF7CB440DD0)
@@ -602,8 +462,8 @@ void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E000
 // (x64 sub_7FF7CB4ED750), dirty 0xA0B0D = 1.
 // =========================================================================//
 void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E680
-    unsigned char* modelBytes = app->ModelSlot(app->state.slotIdx);
-    if (modelBytes == nullptr)
+    mdl::ModelRecord* model = app->ModelSlot(app->state.slotIdx);
+    if (model == nullptr)
         return;
 
     char buf[20];
@@ -613,7 +473,7 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E680
     const float add = static_cast<float>(atof(buf));
 
     if (scale != 1.0f || add != 0.0f) {
-        mdl::MorphKey* keys = mdl::MorphKeys(modelBytes);
+        mdl::MorphKey* keys = model->morphKeys;
         for (std::size_t i = 0; i < mdl::kMorphKeyCapacity; ++i) {
             if (keys[i].allocated != 0)
                 keys[i].value = static_cast<float>(scale * keys[i].value) + add;
@@ -621,9 +481,9 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E680
     }
     PanelPaint(app);        // 0x414610 (x64 sub_7FF7CB480EA0)
     CurvePanelRepaint(app); // x64 sub_7FF7CB482BB0
-    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
+    SeekModelFrame(*model, app->state.currentFrame,
                    app->state.playbackPhysicsMode); // 0x4B4260 (x64 0x4EBD90)
-    MorphPanelRefresh(modelBytes);                  // x64 sub_7FF7CB4ED750
+    SyncModelEditControls(model);                   // x64 sub_7FF7CB4ED750
     app->SceneModified() = 1;
 }
 
@@ -642,7 +502,7 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E680
 //     (undoDirty=1, redoDirty=0, cursor wrap at 30, redo cursor mirrors),
 //     register undo slot operation 2 at the current frame, snapshot every
 //     bone (36-byte BonePoseSnapshot: index, trans, rotQuat,
-//     physicsDisabled from bonePhysicsState[i]) and allocate the 64-byte
+//     poseEdited from bonePhysicsState[i]) and allocate the 64-byte
 //     auxiliary records,
 //   * clear keyVisitMap and re-register a physics key for every allocated
 //     key of the hasRigidBody bones, writing `on` into physicsDisabled,
@@ -651,10 +511,9 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) { // VA 0x0043E680
 // =========================================================================//
 void ApplyPhysicsOnOff(int on) { // VA 0x004403C0
     MMDApp* app = g_Block;
-    unsigned char* modelBytes = app->ModelSlot(app->state.slotIdx);
-    if (modelBytes == nullptr)
+    mdl::ModelRecord* model = app->ModelSlot(app->state.slotIdx);
+    if (model == nullptr)
         return;
-    mdl::ModelRecord* model = mdl::Mdl(modelBytes);
     const std::int32_t boneCount = model->boneCount;
     if (boneCount <= 0)
         return;
@@ -716,16 +575,18 @@ void ApplyPhysicsOnOff(int on) { // VA 0x004403C0
         snapshot[i].rotation[1] = bones[i].rotQuat[1];
         snapshot[i].rotation[2] = bones[i].rotQuat[2];
         snapshot[i].rotation[3] = bones[i].rotQuat[3];
-        snapshot[i].physicsDisabled =
+        snapshot[i].poseEdited =
             model->bonePhysicsState != nullptr ? model->bonePhysicsState[i] : 0;
     }
     undo.recordCount = 0;
-    if (undo.auxiliaryPose != nullptr) {
-        ::operator delete(undo.auxiliaryPose);
-        undo.auxiliaryPose = nullptr;
+    if (undo.keySnapshots != nullptr) {
+        ::operator delete(undo.keySnapshots);
+        undo.keySnapshots = nullptr;
     }
-    undo.auxiliaryPose = ::operator new(static_cast<std::size_t>(marked) * 0x40);
-    std::memset(undo.auxiliaryPose, 0, static_cast<std::size_t>(marked) * 0x40);
+    undo.keySnapshots = static_cast<mdl::BoneKeyUndoEntry*>(
+        ::operator new(static_cast<std::size_t>(marked) * sizeof(mdl::BoneKeyUndoEntry)));
+    std::memset(undo.keySnapshots, 0,
+                static_cast<std::size_t>(marked) * sizeof(mdl::BoneKeyUndoEntry));
     std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
 
     // ---- register the physics keys ---------------------------------------
@@ -735,11 +596,9 @@ void ApplyPhysicsOnOff(int on) { // VA 0x004403C0
         if (model->keyVisitMap[boneIndex] != 0)
             return;
         model->keyVisitMap[boneIndex] = 1;
-        auto* records = static_cast<unsigned char*>(undo.auxiliaryPose);
-        *reinterpret_cast<std::int32_t*>(
-            records + 0x40 * static_cast<std::size_t>(undo.recordCount)) = boneIndex;
-        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.recordCount) + 4,
-                    &model->boneKeys[boneIndex], 0x3C);
+        auto& entry = undo.keySnapshots[undo.recordCount];
+        entry.index = boneIndex;
+        std::memcpy(&entry.key, &model->boneKeys[boneIndex], sizeof(entry.key));
         ++undo.recordCount;
     };
     for (int i = 0; i < boneCount; ++i) {
@@ -763,7 +622,7 @@ void ApplyPhysicsOnOff(int on) { // VA 0x004403C0
         }
     }
     PanelPaint(app); // 0x414610 (x64 sub_7FF7CB480EA0)
-    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
+    SeekModelFrame(*model, app->state.currentFrame,
                    app->state.playbackPhysicsMode); // 0x4B4260 (x64 0x4EBD90)
 }
 

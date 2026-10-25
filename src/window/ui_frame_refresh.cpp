@@ -216,13 +216,15 @@ void SyncAccessoryEditPanel(MMDApp* app) {
     HWND modelCombo = GetDlgItem(main, panel::kMainComboGround);
     const LRESULT oldModel = SendMessageA(modelCombo, CB_GETCURSEL, 0, 0);
     const std::int32_t parentSlot = accessory->parentModel;
-    if (oldModel != parentSlot) {
+    const mdl::ModelRecord* parentModel = parentSlot >= 0 ? app->ModelSlot(parentSlot) : nullptr;
+    // The stored parent is a model slot; the control contains model order.
+    const int parentComboIndex = parentModel != nullptr ? parentModel->comboSelIndex : 0;
+    if (oldModel != parentComboIndex) {
         HWND boneCombo = GetDlgItem(main, panel::kAttachBoneCombo);
         SendMessageA(boneCombo, CB_RESETCONTENT, 0, 0);
         if (parentSlot >= 0) {
-            unsigned char* model = app->ModelSlot(parentSlot);
-            if (model != nullptr) {
-                const mdl::ModelRecord& record = *mdl::Mdl(model);
+            if (parentModel != nullptr) {
+                const mdl::ModelRecord& record = *parentModel;
                 const std::int32_t boneCount = record.boneCount;
                 mdl::BoneRecord* bones = record.boneTable;
                 for (std::int32_t i = 0; i < boneCount; ++i) {
@@ -241,9 +243,8 @@ void SyncAccessoryEditPanel(MMDApp* app) {
     }
 
     if (parentSlot >= 0) {
-        unsigned char* model = app->ModelSlot(parentSlot);
-        if (model != nullptr) {
-            mdl::BoneRecord* bones = mdl::Mdl(model)->boneTable;
+        if (parentModel != nullptr) {
+            const mdl::BoneRecord* bones = parentModel->boneTable;
             const std::int32_t boneIndex = accessory->parentBone;
             if (bones != nullptr && boneIndex >= 0) {
                 const char* wanted = bones[boneIndex].name;
@@ -278,8 +279,14 @@ void SyncAccessoryEditPanel(MMDApp* app) {
     for (int lane = 0; lane < 3; ++lane) {
         sprintf_s(text, sizeof(text), "%3.4f", static_cast<double>(accessory->position[lane]));
         ReplaceEditText(main, panel::kAccPosXEdit + lane, text);
-        sprintf_s(text, sizeof(text), "%3.4f",
-                  static_cast<double>(accessory->rotation[lane]) / 3.141592025756836 * 180.0);
+#if defined(_M_X64)
+        // Original x64: divss, mulss, then conversion for the printf argument.
+        const float degrees = accessory->rotation[lane] / 3.141592025756836f * 180.0f;
+#else
+        const double degrees =
+            static_cast<double>(accessory->rotation[lane]) / 3.141592025756836 * 180.0;
+#endif
+        sprintf_s(text, sizeof(text), "%3.4f", degrees);
         ReplaceEditText(main, panel::kAccRotXEdit + lane, text);
     }
     sprintf_s(text, sizeof(text), "%3.4f", static_cast<double>(accessory->scale));

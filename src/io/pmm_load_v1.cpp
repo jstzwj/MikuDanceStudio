@@ -253,7 +253,7 @@ struct PmmV1LoadContext {
     HWND main;
     PathResolutionWorkspace* paths;
     D3DRenderer* wrap;
-    unsigned char** slots;
+    mdl::ModelRecord** slots;
     mdl::AccessoryRecord** accs;
     mdl::AccessoryKey** accTracks;
     // shared scratch buffers (the 0x218/0x318/0x380/0xdb8 frame slots of
@@ -445,7 +445,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     HWND const main = ctx.main;
     PathResolutionWorkspace& paths = *ctx.paths;
     D3DRenderer* const wrap = ctx.wrap;
-    unsigned char** const slots = ctx.slots;
+    mdl::ModelRecord** const slots = ctx.slots;
     char* const box = ctx.box;
     char* const mbPath = ctx.mbPath;
     wchar_t* const widePath = ctx.widePath;
@@ -454,7 +454,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
 
     unsigned char slotByte = 0;
     Rd(fd, &slotByte, 1); // 0x459861
-    unsigned char* nm = static_cast<unsigned char*>(operator new(mdl::kSize));
+    mdl::ModelRecord* nm = static_cast<mdl::ModelRecord*>(operator new(mdl::kSize));
     if (nm != nullptr)
         IdentityCtor(nm);                        // 0x459888
     slots[slotByte] = nm;                        // 0x459897
@@ -464,11 +464,11 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     char name20[0x14];
     Rd(fd, name20, 0x14);  // 0x4598E4
     Rd(fd, mbPath, 0x100); // 0x4598FB
-    ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath, widePath, 0x100,
+    ResolveAnsiUserFile(wrap, mbPath, widePath, 0x100,
                         paths); // 0x459925
 
     LogV1Stage("model-resolved", _tell(fd), slotByte);
-    unsigned char* model = slots[slotByte];
+    mdl::ModelRecord* model = slots[slotByte];
     bool loaded = ModelLoadPMD( // 0x459965
         model, main, widePath, wrap,
         static_cast<int>(reinterpret_cast<std::uintptr_t>(s->state.exeDir)), 0, s->EnglishUI(),
@@ -521,7 +521,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
 
     LogV1Stage("model-loaded", _tell(fd), loaded ? 1 : 0);
     // ---- state load (direct indices, no remap records) ----------
-    mdl::ModelRecord* const record = mdl::Mdl(model);
+    mdl::ModelRecord* const record = model;
     // The two PMM display-order bytes are adjacent in the original
     // x86 allocation.  Keep that file layout while naming the
     // x64 members instead of indexing the model allocation.
@@ -531,10 +531,10 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     {
         unsigned char b = 0;
         Rd(fd, &b, 1); // 0x459C2D
-        mikudancestudio::mdl::Mdl(model)->loadComplete = (b == 1) ? 1 : 0;
+        model->loadComplete = (b == 1) ? 1 : 0;
     }
     Rd(fd, &record->selectedBone, sizeof(record->selectedBone));
-    for (std::int32_t& selectedMorph : mdl::Mdl(model)->selectedMorphs)
+    for (std::int32_t& selectedMorph : model->selectedMorphs)
         Rd(fd, &selectedMorph, sizeof(selectedMorph)); // 0x459CAB
     // The PMM stores one visibility byte per display group.  In the
     // original x86 object these lived at model+0x26D0/0x26D4.  Those
@@ -545,24 +545,23 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     // revision with a different display-group count.
     unsigned char serializedGroupCount = 0;
     Rd(fd, &serializedGroupCount, 1); // 0x459CD7
-    mdl::DisplayGroup* const displayGroups = mdl::DisplayGroups(model);
-    const unsigned char loadedGroupCount = mdl::Mdl(model)->groupCount;
+    mdl::DisplayGroup* const displayGroups = model->displayGroups;
+    const unsigned char loadedGroupCount = model->groupCount;
     for (unsigned char g = 0; g < serializedGroupCount; ++g) {
         unsigned char b = 0;
         Rd(fd, &b, 1); // 0x459D07
         if (displayGroups != nullptr && g < loadedGroupCount)
             displayGroups[g].flags = (b == 1) ? 1 : 0;
     }
-    LogV1Stage("misc-done", _tell(fd),
-               static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount),
-               static_cast<int>(mikudancestudio::mdl::Mdl(model)->morphCount));
+    LogV1Stage("misc-done", _tell(fd), static_cast<int>(model->boneCount),
+               static_cast<int>(model->morphCount));
     Rd(fd, &record->boneListPos, sizeof(record->boneListPos));
     Rd(fd, &record->maxFrame, sizeof(record->maxFrame));
 
     // dense bone keys (0x26E0 array, 0x3C stride)   0x459DF4..0x459EDE
     {
         const std::int32_t boneCnt = static_cast<std::int32_t>(record->boneCount);
-        mdl::BoneKey* keys = mdl::BoneKeys(model);
+        mdl::BoneKey* keys = model->boneKeys;
         for (std::int32_t i = 0; i < boneCnt; ++i) {
             ReadPmmBoneKey<PmmStream::V1>(fd, keys[i]);
         }
@@ -580,7 +579,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     // dense + sparse morph keys (0x26E4 array, 0x14 stride)
     {
         const std::int32_t morphCnt = static_cast<std::int32_t>(record->morphCount);
-        mdl::MorphKey* keys = mdl::MorphKeys(model);
+        mdl::MorphKey* keys = model->morphKeys;
         for (std::int32_t i = 0; i < morphCnt; ++i) // 0x45A0D7
             ReadPmmMorphKey(fd, keys[i]);
         std::int32_t cnt = 0;
@@ -596,7 +595,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     // physics key records (0x26E8 array, 0x1C stride; record 0
     // keeps the IK bool-array pointer at +0x10 and the flag at +0x14)
     {
-        mdl::DisplayKey* keys = mdl::DisplayKeys(model);
+        mdl::DisplayKey* keys = model->displayKeys;
         Rd(fd, &keys[0].frame, 4);
         Rd(fd, &keys[0].previous, 4);
         Rd(fd, &keys[0].next, 4);
@@ -640,7 +639,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
     // twice, matching the original stream consumption order.
     {
         const std::int32_t boneCnt = static_cast<std::int32_t>(record->boneCount);
-        mdl::BoneRecord* const bones = mdl::Bones(model);
+        mdl::BoneRecord* const bones = model->boneTable;
         for (std::int32_t i = 0; i < boneCnt; ++i) {
             mdl::BoneRecord& bone = bones[i];
             Rd(fd, &bone.trans[0], sizeof(bone.trans[0]));
@@ -659,11 +658,11 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
         }
     }
     // Current morph values.
-    mdl::MorphRecord* const morphs = mdl::Morphs(model);
+    mdl::MorphRecord* const morphs = model->morphs;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(record->morphCount); ++i)
         Rd(fd, &morphs[i].value, sizeof(morphs[i].value));
     // Current IK enabled flags.
-    mdl::IkChain* const ikChains = mdl::IkChains(model);
+    mdl::IkChain* const ikChains = model->ikChains;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(record->ikChainCount); ++i) {
         unsigned char b = 0;
         Rd(fd, &b, 1);
@@ -680,7 +679,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
 static void LoadSceneV1_RegisterCombo(PmmV1LoadContext& ctx) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
-    unsigned char** const slots = ctx.slots;
+    mdl::ModelRecord** const slots = ctx.slots;
 
     // ---- register-combo 0x1B1 (0x45A6D3..0x45AA89) -----------------------
     SendMessageA(GetDlgItem(main, panel::kInterpCurveCombo), CB_RESETCONTENT, 0, 0); // 0x45A6D3
@@ -710,7 +709,7 @@ static void LoadSceneV1_RegisterCombo(PmmV1LoadContext& ctx) {
                          reinterpret_cast<LPARAM>("all")); // 0x52D594
         }
         SendMessageA(GetDlgItem(main, panel::kMainComboModel), CB_SETCURSEL, // 0x45AA59
-                     mikudancestudio::mdl::Mdl(slots[s->SelectedModelSlot()])->comboSelIndex, 0);
+                     slots[s->SelectedModelSlot()]->comboSelIndex, 0);
         PostLoadInit(slots[s->SelectedModelSlot()]); // 0x45AA6F
     } else {
         // camera mode: 7 entries (distance + view angle included)
@@ -923,7 +922,7 @@ static bool LoadSceneV1_AccessoryBlock(PmmV1LoadContext& ctx, int fd) {
     D3DRenderer* const wrap = ctx.wrap;
     mdl::AccessoryRecord** const accs = ctx.accs;
     mdl::AccessoryKey** const accTracks = ctx.accTracks;
-    unsigned char** const slots = ctx.slots;
+    mdl::ModelRecord** const slots = ctx.slots;
     char* const text = ctx.text;
     char* const mbPath = ctx.mbPath;
     wchar_t* const wideTmp = ctx.wideTmp;
@@ -958,7 +957,7 @@ static bool LoadSceneV1_AccessoryBlock(PmmV1LoadContext& ctx, int fd) {
         InitAccessoryRecord(accs[accSlot]); // 0x45B8D6
         Rd(fd, accName, 100);               // 0x45B8EA
         Rd(fd, mbPath, 0x100);              // 0x45B901
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath, wideTmp, 0x100,
+        ResolveAnsiUserFile(wrap, mbPath, wideTmp, 0x100,
                             paths);                            // 0x45B92B
         if (!LoadAccessoryObject(s, accs[accSlot], wideTmp)) { // 0x45B961
             sprintf_s(text, 0x100,
@@ -1055,13 +1054,10 @@ static bool LoadSceneV1_AccessoryBlock(PmmV1LoadContext& ctx, int fd) {
             SendMessageA(GetDlgItem(main, panel::kAccessoryCombo), CB_SETCURSEL, // 0x45C390
                          accessory.order, 0);
             const std::int32_t parentSlot = accessory.parentModel;
-            unsigned char* pm = slots[parentSlot];
-            if (pm != nullptr &&
-                static_cast<std::int32_t>(mikudancestudio::mdl::Mdl(pm)->boneCount) > 0) {
-                for (std::int32_t b = 0;
-                     b < static_cast<std::int32_t>(mikudancestudio::mdl::Mdl(pm)->boneCount); ++b) {
-                    const mikudancestudio::mdl::BoneRecord& entry =
-                        mikudancestudio::mdl::Bones(pm)[b];
+            mdl::ModelRecord* pm = slots[parentSlot];
+            if (pm != nullptr && static_cast<std::int32_t>(pm->boneCount) > 0) {
+                for (std::int32_t b = 0; b < static_cast<std::int32_t>(pm->boneCount); ++b) {
+                    const mikudancestudio::mdl::BoneRecord& entry = pm->boneTable[b];
                     if (entry.type < mikudancestudio::mdl::BoneType::InertTip ||
                         entry.type == mikudancestudio::mdl::BoneType::FixedAxis)
                         SendMessageA(GetDlgItem(main, panel::kAttachBoneCombo), CB_ADDSTRING, 0,
@@ -1156,17 +1152,16 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
         Rd(fd, &b, 1);               // 0x45CA40
         s->state.waveEnabled = b ? 1 : 0;
         Rd(fd, mbPath, 0x100); // 0x45CA71
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath,
-                            reinterpret_cast<wchar_t*>(s->state.wavPath), 0x100, paths); // 0x45CA9A
+        ResolveAnsiUserFile(wrap, mbPath, reinterpret_cast<wchar_t*>(s->state.wavPath), 0x100,
+                            paths); // 0x45CA9A
         if (s->state.waveEnabled != 0)
             LoadWaveFile(s); // 0x45CAAA
         std::int32_t w1 = 0, w2 = 0, w3 = 0;
-        Rd(fd, &w1, 4);        // 0x45CABE
-        Rd(fd, &w2, 4);        // 0x45CACF
-        Rd(fd, &w3, 4);        // 0x45CAE3
-        Rd(fd, mbPath, 0x100); // 0x45CAFA
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath, s->AviBackgroundPath(),
-                            0x100, paths); // 0x45CB23
+        Rd(fd, &w1, 4);                                                          // 0x45CABE
+        Rd(fd, &w2, 4);                                                          // 0x45CACF
+        Rd(fd, &w3, 4);                                                          // 0x45CAE3
+        Rd(fd, mbPath, 0x100);                                                   // 0x45CAFA
+        ResolveAnsiUserFile(wrap, mbPath, s->AviBackgroundPath(), 0x100, paths); // 0x45CB23
         if (mbPath[0] != 0)
             LoadAviFile(s); // 0x45CB34
 
@@ -1205,12 +1200,11 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
         // picture block (0x45CC5F..0x45CD84); same local-slot caveat,
         // v2 field order p1/p2/p3 -> 9E434/9E438/9E43C.
         std::int32_t p1 = 0, p2 = 0, p3 = 0;
-        Rd(fd, &p1, 4);        // 0x45CC5F
-        Rd(fd, &p2, 4);        // 0x45CC70
-        Rd(fd, &p3, 4);        // 0x45CC84
-        Rd(fd, mbPath, 0x100); // 0x45CC9B
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath,
-                            s->PictureBackgroundPath(), 0x100, paths); // 0x45CCC4
+        Rd(fd, &p1, 4);                                                              // 0x45CC5F
+        Rd(fd, &p2, 4);                                                              // 0x45CC70
+        Rd(fd, &p3, 4);                                                              // 0x45CC84
+        Rd(fd, mbPath, 0x100);                                                       // 0x45CC9B
+        ResolveAnsiUserFile(wrap, mbPath, s->PictureBackgroundPath(), 0x100, paths); // 0x45CCC4
         s->PictureBackgroundEnabled() = 0;
         if (mbPath[0] != 0)
             LoadBackgroundPicture(s); // 0x45CCDC
@@ -1335,7 +1329,7 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
 static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
-    unsigned char** const slots = ctx.slots;
+    mdl::ModelRecord** const slots = ctx.slots;
     mdl::AccessoryRecord** const accs = ctx.accs;
     char* const lbText = ctx.lbText;
     mdl::CameraKey* const cameraKeys = ctx.cameraKeys;
@@ -1354,12 +1348,11 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
             if (slots[i] != nullptr) {
                 unsigned char b = 0;
                 Rd(fd, &b, 1); // 0x45D2EA
-                mikudancestudio::mdl::Mdl(slots[i])->postLoadFlag2 = (b == 1) ? 1 : 0;
+                slots[i]->postLoadFlag2 = (b == 1) ? 1 : 0;
             }
         }
         if (slots[s->SelectedModelSlot()] != nullptr &&
-            mikudancestudio::mdl::Mdl(slots[s->SelectedModelSlot()])->postLoadFlag2 != 0 &&
-            s->CameraMode() == 0)
+            slots[s->SelectedModelSlot()]->postLoadFlag2 != 0 && s->CameraMode() == 0)
             SendMessageA(GetDlgItem(main, panel::kAddBlendCheckbox), BM_SETCHECK, 1,
                          0); // 0x45D360
         for (int i = 0; i < 255; ++i) {
@@ -1382,7 +1375,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
             std::memcpy(&sharedEdgeScale, &sharedEdgeScaleBits, sizeof sharedEdgeScale);
             for (int i = 0; i < kModelSlotCount; ++i)
                 if (slots[i] != nullptr)
-                    mikudancestudio::mdl::Mdl(slots[i])->edgeScale = sharedEdgeScale;
+                    slots[i]->edgeScale = sharedEdgeScale;
             // Keep this shared byte: a short read carries the preceding value.
             unsigned char shadowBlendOrEdgeScaleFlag = 0;
             Rd(fd, &shadowBlendOrEdgeScaleFlag, 1); // 0x45D44E
@@ -1404,8 +1397,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                     if (slots[i] != nullptr) {
                         std::int32_t edge = 0;
                         Rd(fd, &edge, 4); // 0x45D4D3
-                        std::memcpy(&mikudancestudio::mdl::Mdl(slots[i])->edgeScale, &edge,
-                                    sizeof edge);
+                        std::memcpy(&slots[i]->edgeScale, &edge, sizeof edge);
                     }
                 }
                 unsigned char physicsSectionPresent = 0;
@@ -1468,8 +1460,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                 if (slots[i] != nullptr) {
                                     unsigned char b = 0;
                                     Rd(fd, &b, 1); // 0x45D7BB
-                                    mikudancestudio::mdl::Mdl(slots[i])->toonFlag =
-                                        (b == 1) ? 1 : 0;
+                                    slots[i]->toonFlag = (b == 1) ? 1 : 0;
                                 }
                             }
                             unsigned char selfShadowKeysPresent = 0;
@@ -1503,7 +1494,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                         s->state.modelOutlineColorBlue != 0) {
                                         for (int i = 0; i < kModelSlotCount; ++i)
                                             if (slots[i] != nullptr)
-                                                SetModelColor(reinterpret_cast<MMDApp*>(slots[i]),
+                                                SetModelColor(slots[i],
                                                               s->state.modelOutlineColorRed,
                                                               s->state.modelOutlineColorGreen,
                                                               s->state.modelOutlineColorBlue);
@@ -1559,9 +1550,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                     SendMessageA(
                                                         GetDlgItem(main, panel::kMainComboNormal),
                                                         CB_SETCURSEL,
-                                                        mikudancestudio::mdl::Mdl(
-                                                            slots[selectedParentModel])
-                                                            ->comboSelIndex,
+                                                        slots[selectedParentModel]->comboSelIndex,
                                                         0); // 0x45DC9D
                                                 }
                                                 RefillBoneRegisterCombo(
@@ -1579,7 +1568,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                             CB_GETLBTEXT, static_cast<WPARAM>(i),
                                                             reinterpret_cast<LPARAM>(lbText));
                                                         mdl::BoneRecord* entry =
-                                                            mdl::Bones(slots[selectedParentModel]) +
+                                                            slots[selectedParentModel]->boneTable +
                                                             static_cast<std::size_t>(
                                                                 selectedParentBone);
                                                         if (strcmp(lbText, entry->name) == 0)
@@ -1665,9 +1654,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                         modelOrderFlagBytesRead > 0) {
                                                         for (int i = 0; i < kModelSlotCount; ++i)
                                                             if (slots[i] != nullptr)
-                                                                Rd(fd,
-                                                                   &mdl::Mdl(slots[i])
-                                                                        ->comboSelIndex2,
+                                                                Rd(fd, &slots[i]->comboSelIndex2,
                                                                    1); // 0x45E0FE
                                                     }
                                                 }
@@ -1691,7 +1678,7 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
     D3DRenderer* const wrap = ctx.wrap;
-    unsigned char** const slots = ctx.slots;
+    mdl::ModelRecord** const slots = ctx.slots;
     char* const text = ctx.text;
     char* const lbText = ctx.lbText;
     wchar_t* const wndText = ctx.wndText;
@@ -1705,8 +1692,7 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
     }
     CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_SELF_SHADOW,
                   s->state.selfShadowEnabled != 0 ? 8 : 0);
-    if (slots[s->SelectedModelSlot()] != nullptr &&
-        mikudancestudio::mdl::Mdl(slots[s->SelectedModelSlot()])->toonFlag != 0 &&
+    if (slots[s->SelectedModelSlot()] != nullptr && slots[s->SelectedModelSlot()]->toonFlag != 0 &&
         s->CameraMode() == 0)
         SendMessageA(GetDlgItem(main, panel::kShadowCheckbox), BM_SETCHECK, 1, 0); // 0x45E1C1
     { // light direction into the physics scene (0x45E1EF..0x45E286)
@@ -1731,13 +1717,13 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
                reinterpret_cast<const wchar_t*>(s->state.envFileName));
     SetWindowTextW(main, wndText);
 
-    // physics key-chain integrity (0x26E8 array, 0x1C stride)
+    // Display/IK key-chain integrity (x86 model+0x26E8, 0x1C stride)
     // (0x45E2C2..0x45E3C0)
     for (int mi = 0; mi < kModelSlotCount; ++mi) {
-        unsigned char* m = slots[mi];
+        mdl::ModelRecord* m = slots[mi];
         if (m == nullptr)
             continue;
-        mdl::DisplayKey* keys = mdl::DisplayKeys(m);
+        mdl::DisplayKey* keys = m->displayKeys;
         keys[0].previous = 0;
         std::int32_t cur = keys[0].next;
         if (cur == 0)
@@ -1747,8 +1733,8 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
             if (static_cast<std::int32_t>(keys[cur].previous) != prev) {
                 // The original passes four varargs to a five-placeholder
                 // format; the fifth reads stack garbage.  Reproduced.
-                sprintf_s(text, 0x100, kJpChainFmtDisp, mdl::Mdl(m)->name, keys[prev].frame,
-                          keys[prev].frame, keys[prev].frame);
+                sprintf_s(text, 0x100, kJpChainFmtDisp, m->name, keys[prev].frame, keys[prev].frame,
+                          keys[prev].frame);
                 MessageBoxA(main, text, kJpChainCapPhys, 0);
                 keys[prev].next = 0;
                 break;
@@ -1765,14 +1751,13 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
     // value (0x45E52C reloads ECX from the loop counter before the
     // advance), so a root's first sparse key points back to b.
     for (int mi = 0; mi < kModelSlotCount; ++mi) {
-        unsigned char* m = slots[mi];
+        mdl::ModelRecord* m = slots[mi];
         if (m == nullptr)
             continue;
-        if (static_cast<std::int32_t>(mikudancestudio::mdl::Mdl(m)->boneCount) <= 0)
+        if (static_cast<std::int32_t>(m->boneCount) <= 0)
             continue;
-        mdl::BoneKey* keys = mdl::BoneKeys(m);
-        for (std::int32_t b = 0;
-             b < static_cast<std::int32_t>(mikudancestudio::mdl::Mdl(m)->boneCount); ++b) {
+        mdl::BoneKey* keys = m->boneKeys;
+        for (std::int32_t b = 0; b < static_cast<std::int32_t>(m->boneCount); ++b) {
             keys[b].previous = 0;
             std::int32_t cur = keys[b].next;
             if (cur == 0)
@@ -1780,11 +1765,9 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
             std::int32_t prev = b;
             for (;;) {
                 if (static_cast<std::int32_t>(keys[cur].previous) != prev) {
-                    unsigned char* frameEntry =
-                        mdl::BoneBytes(mdl::Bones(m), static_cast<std::size_t>(b));
-                    sprintf_s(text, 0x100, kJpChainFmtPhys, mdl::Mdl(m)->name,
-                              reinterpret_cast<char*>(frameEntry), keys[prev].frame,
-                              keys[prev].frame);
+                    const mdl::BoneRecord& frameEntry = m->boneTable[b];
+                    sprintf_s(text, 0x100, kJpChainFmtPhys, m->name, frameEntry.name,
+                              keys[prev].frame, keys[prev].frame);
                     MessageBoxA(main, text, kJpChainCapDisp, 0);
                     keys[prev].next = 0;
                     break;
@@ -1835,8 +1818,7 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
             int found = 0; // 0x45E794
             while (found < kModelSlotCount &&
                    (slots[found] == nullptr ||
-                    mikudancestudio::mdl::Mdl(slots[found])->comboSelIndex !=
-                        static_cast<unsigned char>(sel)))
+                    slots[found]->comboSelIndex != static_cast<unsigned char>(sel)))
                 ++found;
             if (found < kModelSlotCount) {
                 s->SetSelectedModelSlot(static_cast<unsigned char>(found));

@@ -53,10 +53,6 @@ struct BoneOverlayResult {
 
 static_assert(sizeof(BoneOverlayResult) == 20);
 
-template <typename T> T& At(void* base, std::size_t offset) {
-    return *reinterpret_cast<T*>(static_cast<unsigned char*>(base) + offset);
-}
-
 struct ClipPoint {
     float x;
     float y;
@@ -82,14 +78,12 @@ ClipPoint TransformPoint(const ClipPoint& p, const D3DMATRIX& m) {
     };
 }
 
-// pointOffset is a byte offset into the bone record (x64 original 0x7FF7CB4E4980:
-// [index*0x270 + boneTable + 0x13C] - record-scaled index, raw byte field offset).
-bool ProjectBonePoint(mikudancestudio::mdl::BoneRecord* bone, std::size_t pointOffset,
-                      const D3DMATRIX& world, const D3DMATRIX& view, const D3DMATRIX& projection,
-                      const RECT& viewport, int* screenX, int* screenY, float* clipW) {
-    const auto& boneMatrix = *reinterpret_cast<const D3DMATRIX*>(bone->matInit);
-    const float* point =
-        reinterpret_cast<const float*>(reinterpret_cast<const unsigned char*>(bone) + pointOffset);
+// Project the selected rest/tail member through the bone and frame matrices.
+// Original x64 sub_7FF7CB4E4980 uses the same order for both points.
+bool ProjectBonePoint(const mdl::BoneRecord& bone, const float (&point)[3], const D3DMATRIX& world,
+                      const D3DMATRIX& view, const D3DMATRIX& projection, const RECT& viewport,
+                      int* screenX, int* screenY, float* clipW) {
+    const auto& boneMatrix = *reinterpret_cast<const D3DMATRIX*>(bone.matInit);
     ClipPoint p = TransformPoint(point[0], point[1], point[2], boneMatrix);
     p = TransformPoint(p, world);
     p = TransformPoint(p, view);
@@ -213,13 +207,13 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
         if (model != nullptr && device != nullptr) {
             const std::uint32_t spriteCountBeforeBone = app->SpriteOverlayPrimitiveCount();
             BoneOverlayResult boneResult{393939, 393939, 0.0f, 0, app->LineOverlayPrimitiveCount()};
-            auto* bones = mikudancestudio::mdl::Bones(model);
-            const int boneCount = mdl::Mdl(model)->boneCount;
-            const int selected = mdl::Mdl(model)->selectedBone;
-            auto* active = mdl::Mdl(model)->boneSelection;
-            auto* secondary = mdl::Mdl(model)->bonePhysicsState;
-            const mdl::IkChain* relationships = mdl::IkChains(model);
-            const int relationshipCount = static_cast<int>(mdl::Mdl(model)->ikChainCount);
+            auto* bones = model->boneTable;
+            const int boneCount = model->boneCount;
+            const int selected = model->selectedBone;
+            auto* active = model->boneSelection;
+            auto* secondary = model->bonePhysicsState;
+            const mdl::IkChain* relationships = model->ikChains;
+            const int relationshipCount = static_cast<int>(model->ikChainCount);
             const int cursorKind = static_cast<int>(app->EditMode());
             // 658628 = playbackPhysicsMode (formerly misnamed boneFilter)
             const int physMode = app->PlaybackPhysicsMode();
@@ -233,19 +227,17 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
             for (int index = 0; bones != nullptr && index < boneCount; ++index) {
                 auto* bone = &bones[index];
                 float w = 0.0f;
-                ProjectBonePoint(bone, offsetof(mdl::BoneRecord, position), world, viewMatrix,
-                                 projection, view, &bone->selState, &bone->selState2, &w);
+                ProjectBonePoint(*bone, bone->position, world, viewMatrix, projection, view,
+                                 &bone->screenX, &bone->screenY, &w);
                 if (index == selected) {
-                    boneResult.selectedX = bone->selState;
-                    boneResult.selectedY = bone->selState2;
+                    boneResult.selectedX = bone->screenX;
+                    boneResult.selectedY = bone->screenY;
                     boneResult.selectedClipW = w;
                 }
-                if (mdl::Mdl(model)->physicsMode == 2 &&
-                    (bone->flags & mdl::kBoneFlagTailIsBone) == 0) {
+                if (model->physicsMode == 2 && (bone->flags & mdl::kBoneFlagTailIsBone) == 0) {
                     float secondaryW = 0.0f;
-                    ProjectBonePoint(bone, offsetof(mdl::BoneRecord, tailOffset), world, viewMatrix,
-                                     projection, view, &bone->tailScreenX, &bone->tailScreenY,
-                                     &secondaryW);
+                    ProjectBonePoint(*bone, bone->tailOffset, world, viewMatrix, projection, view,
+                                     &bone->tailScreenX, &bone->tailScreenY, &secondaryW);
                 }
             }
 
@@ -268,8 +260,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                     const auto endpoint = [&](mikudancestudio::mdl::BoneRecord* bone, int* x,
                                               int* y) -> bool {
                         const std::uint16_t flags = bone->flags;
-                        if (mdl::Mdl(model)->physicsMode == 2 &&
-                            (flags & mdl::kBoneFlagTailIsBone) == 0) {
+                        if (model->physicsMode == 2 && (flags & mdl::kBoneFlagTailIsBone) == 0) {
                             *x = bone->tailScreenX;
                             *y = bone->tailScreenY;
                             return true;
@@ -278,22 +269,22 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                         if (linked <= 0 || linked >= boneCount)
                             return false;
                         // The tail bone's projected screen coordinates (original x64 0x7FF7CB4E56xx reads
-                        // [linked]+460/+464 = selState/selState2); typed member access
+                        // [linked]+460/+464 = screenX/screenY); typed member access
                         // selects the correct offsets on both architectures. The previous hardcoded x86 byte offsets 452/456
                         // read ikWorkingQuat floating-point bit patterns on x64, scattering the bone lines.
-                        *x = bones[linked].selState;
-                        *y = bones[linked].selState2;
+                        *x = bones[linked].screenX;
+                        *y = bones[linked].screenY;
                         return true;
                     };
                     const auto emitBone = [&](mikudancestudio::mdl::BoneRecord* bone,
                                               D3DCOLOR color) -> bool {
                         int endX = 393939;
                         int endY = 393939;
-                        if (bone->selState == 393939 || bone->selState2 == 393939 ||
+                        if (bone->screenX == 393939 || bone->screenY == 393939 ||
                             !endpoint(bone, &endX, &endY) || endX == 393939 || endY == 393939)
                             return false;
-                        return AppendBoneV(lines, bone->selState, bone->selState2, endX, endY,
-                                           scale, color);
+                        return AppendBoneV(lines, bone->screenX, bone->screenY, endX, endY, scale,
+                                           color);
                     };
 
                     if (cursorKind < 2) {
@@ -303,7 +294,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                             const mdl::BoneType type = bone->type;
                             if ((flags & mdl::kBoneFlagVisible) == 0 ||
                                 type >= mdl::BoneType::FixedAxis || filtered(bone) ||
-                                (bone->tailBone <= 0 && !(mdl::Mdl(model)->physicsMode == 2 &&
+                                (bone->tailBone <= 0 && !(model->physicsMode == 2 &&
                                                           (flags & mdl::kBoneFlagTailIsBone) == 0)))
                                 continue;
 
@@ -357,11 +348,11 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                             auto* a = &bones[first];
                             auto* b = &bones[second];
                             if ((a->flags & mdl::kBoneFlagVisible) == 0 ||
-                                (b->flags & mdl::kBoneFlagVisible) == 0 || a->selState == 393939 ||
-                                a->selState2 == 393939 || b->selState == 393939 ||
-                                b->selState2 == 393939)
+                                (b->flags & mdl::kBoneFlagVisible) == 0 || a->screenX == 393939 ||
+                                a->screenY == 393939 || b->screenX == 393939 ||
+                                b->screenY == 393939)
                                 continue;
-                            AppendLine(lines, a->selState, a->selState2, b->selState, b->selState2,
+                            AppendLine(lines, a->screenX, a->screenY, b->screenX, b->screenY,
                                        0xFF000000u);
                             ++boneResult.linePrimitiveCount;
                         }
@@ -375,12 +366,11 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                         const int linked = bone->tailBone;
                         if ((flags & mdl::kBoneFlagVisible) != 0 &&
                             bone->type < mdl::BoneType::FixedAxis && !filtered(bone) &&
-                            linked > 0 && linked < boneCount && bone->selState != 393939 &&
-                            bone->selState2 != 393939 && bones[linked].selState != 393939 &&
-                            bones[linked].selState2 != 393939 &&
-                            AppendBoneV(lines, bone->selState, bone->selState2,
-                                        bones[linked].selState, bones[linked].selState2, scale,
-                                        0xFFFF3232u)) {
+                            linked > 0 && linked < boneCount && bone->screenX != 393939 &&
+                            bone->screenY != 393939 && bones[linked].screenX != 393939 &&
+                            bones[linked].screenY != 393939 &&
+                            AppendBoneV(lines, bone->screenX, bone->screenY, bones[linked].screenX,
+                                        bones[linked].screenY, scale, 0xFFFF3232u)) {
                             boneResult.linePrimitiveCount += 2;
                         }
                     }
@@ -473,8 +463,8 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                         float top = 0.0f;
                         float right = 0.0f;
                         float bottom = 0.0f;
-                        BoneMarkerBounds(bone->selState, bone->selState2, scale, &left, &top,
-                                         &right, &bottom);
+                        BoneMarkerBounds(bone->screenX, bone->screenY, scale, &left, &top, &right,
+                                         &bottom);
                         append(left, top, right, bottom, 0.46414399f, v0, 0.49874699f, v1);
                     }
                 }

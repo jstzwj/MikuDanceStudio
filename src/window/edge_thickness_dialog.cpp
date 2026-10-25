@@ -51,7 +51,7 @@ LRESULT CALLBACK EdgeThicknessEditSubclassProc( // VA 0x0042E270
 float GetEdgeThickness(MMDApp* app) { // VA 0x0041E950
     if (app->CameraMode() != 0)
         return 1.0f;
-    unsigned char* model = app->SelectedModel();
+    unsigned char* model = mdl::ModelBytes(app->SelectedModel());
     return mdl::Mdl(model)->edgeScale;
 }
 // Original x86 VA 0x41E980: only model mode changes thickness and flags.
@@ -60,7 +60,7 @@ void SetEdgeThickness(MMDApp* app, float thickness) { // VA 0x0041E980
         return;
     app->state.messageSeen = 1;
     app->SceneModified() = 1;
-    unsigned char* model = app->SelectedModel();
+    unsigned char* model = mdl::ModelBytes(app->SelectedModel());
     mdl::Mdl(model)->edgeScale = thickness;
 }
 } // namespace

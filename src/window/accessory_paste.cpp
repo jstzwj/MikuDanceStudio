@@ -199,8 +199,8 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) { // VA 0x00413120
 // the record's own slot byte.  Returns 0 when the table is full (the
 // replay loop in the 0xFA handler stops); 1 otherwise.
 //
-int PasteAccessoryKeyRecord(MMDApp* app, void* recData, int useSelectedSlot) {
-    const auto& src = *static_cast<const mdl::AccessoryClipboardKey*>(recData);
+int PasteAccessoryKeyRecord(MMDApp* app, const mdl::AccessoryClipboardKey& src,
+                            int useSelectedSlot) {
     const std::uint8_t slot = useSelectedSlot != 0 ? app->SelectedAccessorySlot() : src.slot;
 
     // No accessory loaded: the original returns through its epilogue

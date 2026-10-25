@@ -1,0 +1,10 @@
+EXPORTS
+    ?OpenNIInit@@YG_NPAUHWND__@@_NPAUIDirect3DDevice9@@PA_WPAD@Z=@ONI_PREFIX@FixtureInit@ONI_INIT_SUFFIX@
+    ?OpenNIClean@@YGXXZ=@ONI_PREFIX@FixtureClean@ONI_VOID_SUFFIX@
+    ?OpenNIDrawDepthMap@@YGX_N@Z=@ONI_PREFIX@FixtureDraw@ONI_ARG_SUFFIX@
+    ?OpenNIDepthTexture@@YGXPAPAUIDirect3DTexture9@@@Z=@ONI_PREFIX@FixtureTexture@ONI_ARG_SUFFIX@
+    ?OpenNIGetSkeltonJointPosition@@YGXHPAUD3DXVECTOR3@@@Z=@ONI_PREFIX@FixtureJoint@ONI_TWO_SUFFIX@
+    ?OpenNIIsTracking@@YGXPA_N@Z=@ONI_PREFIX@FixtureTracking@ONI_ARG_SUFFIX@
+    @ONI_VERSION_EXPORT@
+    FixtureConfigure=@ONI_PREFIX@FixtureConfigure@ONI_TWO_SUFFIX@
+    FixtureCalls=@ONI_PREFIX@FixtureCalls@ONI_ARG_SUFFIX@

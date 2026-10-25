@@ -29,6 +29,7 @@ struct BoneKey;
 struct MorphKey;
 struct DisplayKey;
 struct FrameGroup;
+struct DisplayGroup;
 struct RigidRecord;
 struct JointRecord;
 struct IkChain;
@@ -74,7 +75,7 @@ struct ModelRecord {
     StandardSkeletonPose standardPose;
     SkeletonHistory skeletonHistory;
     std::uint8_t poseTraceRecording;
-    void* poseTraceBuffer;
+    PoseTraceSample* poseTraceBuffer;
     std::uint8_t pmxTextEncoding;      // 8624  (0 UTF-16; x64 PMX loader)
     std::uint8_t pmxAdditionalUvCount; // 8625
     std::uint8_t pmxVertexIndexSize;   // 8626
@@ -115,21 +116,21 @@ struct ModelRecord {
     // +0x2528..+0x2540; the four-byte gap aligns the first qword.
     RawPad<4> pmxTextAlignment;
 #endif
-    wchar_t* pmxTextBuffers[4]; // JP name, EN name, JP comment, EN comment
-    wchar_t path[256];          // 9404  (resolved model path 0x24BC)
-    BoneRecord* boneTable;      // 9916  (604/624-byte bone records; x64 anchor 10056 verified)
-    IkChain* ikChains;          // 9920  (24/32-byte chain records)
-    MorphRecord* morphs;        // 9924  (136/192-byte morph records; x64 0x2758)
-    PmdVertex* rawVertices;     // 9928  (40-byte PMD vertex records; x64 same)
-    PmxVertex* pmxVertices;     // 9932  (188-byte PMX working vertices; x64 0x2768)
-    void* groupNames;           // 9936  (101-byte facial group names; x64 0x2770)
-    unsigned char groupCount;   // 9940  (pmd_load grpCountPtr)
-    RawPad<3> gap11;            // 9941..9944 (unrecovered)
-    void* rbGroups;             // 9944  (46-byte rigid group records)
-    FrameGroup* displayFrames;  // 9948  (46-byte display frame records; x64 0x2788)
-    BoneKey* boneKeys;          // 9952  (60-byte bone key records; x64 0x2790)
-    MorphKey* morphKeys;        // 9956  (20-byte morph key records; x64 0x2798)
-    DisplayKey* displayKeys;    // 9960  (28/40-byte display key records; x64 0x27A0)
+    wchar_t* pmxTextBuffers[4];  // JP name, EN name, JP comment, EN comment
+    wchar_t path[256];           // 9404  (resolved model path 0x24BC)
+    BoneRecord* boneTable;       // 9916  (604/624-byte bone records; x64 anchor 10056 verified)
+    IkChain* ikChains;           // 9920  (24/32-byte chain records)
+    MorphRecord* morphs;         // 9924  (136/192-byte morph records; x64 0x2758)
+    PmdVertex* rawVertices;      // 9928  (40-byte PMD vertex records; x64 same)
+    PmxVertex* pmxVertices;      // 9932  (188-byte PMX working vertices; x64 0x2768)
+    DisplayGroup* displayGroups; // 9936  (101-byte display group headers; x64 0x2770)
+    unsigned char groupCount;    // 9940  (pmd_load grpCountPtr)
+    RawPad<3> gap11;             // 9941..9944 (unrecovered)
+    FrameGroup* displayBones;    // 9944  (46-byte display bone entries)
+    FrameGroup* displayFrames;   // 9948  (46-byte display frame records; x64 0x2788)
+    BoneKey* boneKeys;           // 9952  (60-byte bone key records; x64 0x2790)
+    MorphKey* morphKeys;         // 9956  (20-byte morph key records; x64 0x2798)
+    DisplayKey* displayKeys;     // 9960  (28/40-byte display key records; x64 0x27A0)
     UndoRing undoRings[2]; // 9964  (two consecutive 30-slot rings; x64 slots grow 28 -> 40 bytes)
     unsigned char comboSelIndex;  // 11644: model combo / draw order (x64 +0x3108)
     unsigned char comboSelIndex2; // 11645: calculation order (x64 +0x3109)
@@ -142,15 +143,16 @@ struct ModelRecord {
     RawPad<2> gap13;            // 11662..11664 (unrecovered)
     std::int32_t selectedBone;  // 11664  (current bone index; -1 means none)
     unsigned char* boneSelection;    // 11668  (one byte per bone)
-    unsigned char* bonePhysicsState; // 11672  (one byte per bone)
+    unsigned char* bonePhysicsState; // 11672 (one pending-pose-edit flag per bone)
     std::int32_t selectedMorphs[4];  // 11676  (X/Y/Z/other morph selectors)
     unsigned char facialFrameCount;  // 11692  (display/facial frame groups)
     RawPad<3> gap14;                 // 11693..11696 (unrecovered)
-    std::uint32_t rigidBodyCount;    // 11696  (pmd/pmx/physics)
+    std::uint32_t displayBoneCount;  // 11696 (x64 0x3144), display bone entries
     // Post-load lookup tables, indexed respectively by bone and morph.
     // The x64 PMX loader allocates them at +0x3148 and +0x3150.
-    std::uint32_t* boneKeyIndices;  // 11700 (x64 0x3148)
-    std::uint32_t* morphKeyIndices; // 11704 (x64 0x3150)
+    // Timeline rows: 0 = not listed, positive = expanded row, negative = collapsed header.
+    std::int32_t* boneTimelineRows;  // 11700 (x64 0x3148)
+    std::int32_t* morphTimelineRows; // 11704 (x64 0x3150)
 #if defined(_M_X64)
     // The two pointer fields above grow by eight bytes on x64; preserve the
     // directly recovered offsets of the following timeline fields.
@@ -188,12 +190,11 @@ struct ModelRecord {
     char pmdToonFileNames[10][100]; // 13272..14272
     unsigned char toonFlag;         // 14272  (post_load_init)
     RawPad<3> gap19;                // 14273..14276 (unrecovered)
-    std::uint32_t toonShared;       // 14276  (model_renderers)
+    std::uint32_t currentMaterial;  // active material cursor; UINT32_MAX outside material draws
     SkeletonJoints currentJoints;
     RawPad<12> skeletonReserved;
-    float lightDir[3];    // 14568
-    float legIkXOffset;   // 14580 (height-normalized left/right leg IK X correction)
-    std::int32_t matMisc; // 14584
+    SkeletonCalibration skeletonCalibration; // x86 14568; x64 15504
+    std::int32_t poseTraceSampleCount;       // 14584
     // Set once the model owns a display/IK key track.  The original uses
     // this as the cheap gate before walking displayKeys; it is distinct from
     // the per-frame displayTrackActive cursor state near the record head.
@@ -264,9 +265,9 @@ static_assert(offsetof(ModelRecord, ikChains) == 9920, "ikChains x86");
 static_assert(offsetof(ModelRecord, morphs) == 9924, "morphs x86");
 static_assert(offsetof(ModelRecord, rawVertices) == 9928, "rawVertices x86");
 static_assert(offsetof(ModelRecord, pmxVertices) == 9932, "pmxVertices x86");
-static_assert(offsetof(ModelRecord, groupNames) == 9936, "groupNames x86");
+static_assert(offsetof(ModelRecord, displayGroups) == 9936, "displayGroups x86");
 static_assert(offsetof(ModelRecord, groupCount) == 9940, "groupCount x86");
-static_assert(offsetof(ModelRecord, rbGroups) == 9944, "rbGroups x86");
+static_assert(offsetof(ModelRecord, displayBones) == 9944, "displayBones x86");
 static_assert(offsetof(ModelRecord, displayFrames) == 9948, "displayFrames x86");
 static_assert(offsetof(ModelRecord, boneKeys) == 9952, "boneKeys x86");
 static_assert(offsetof(ModelRecord, morphKeys) == 9956, "morphKeys x86");
@@ -284,9 +285,9 @@ static_assert(offsetof(ModelRecord, boneSelection) == 11668, "boneSelection x86"
 static_assert(offsetof(ModelRecord, bonePhysicsState) == 11672, "bonePhysicsState x86");
 static_assert(offsetof(ModelRecord, selectedMorphs) == 11676, "selectedMorphs x86");
 static_assert(offsetof(ModelRecord, facialFrameCount) == 11692, "facialFrameCount x86");
-static_assert(offsetof(ModelRecord, rigidBodyCount) == 11696, "rigidBodyCount x86");
-static_assert(offsetof(ModelRecord, boneKeyIndices) == 11700, "boneKeyIndices x86");
-static_assert(offsetof(ModelRecord, morphKeyIndices) == 11704, "morphKeyIndices x86");
+static_assert(offsetof(ModelRecord, displayBoneCount) == 11696, "displayBoneCount x86");
+static_assert(offsetof(ModelRecord, boneTimelineRows) == 11700, "boneTimelineRows x86");
+static_assert(offsetof(ModelRecord, morphTimelineRows) == 11704, "morphTimelineRows x86");
 static_assert(offsetof(ModelRecord, boneListSelLine) == 11708, "boneListSelLine x86");
 static_assert(offsetof(ModelRecord, boneListRowType) == 11712, "boneListRowType x86");
 static_assert(offsetof(ModelRecord, boneListRowRecord) == 11912, "boneListRowRecord x86");
@@ -306,10 +307,13 @@ static_assert(offsetof(ModelRecord, jointCount) == 12756, "jointCount x86");
 static_assert(offsetof(ModelRecord, modelDirectory) == 12760, "modelDirectory x86");
 static_assert(offsetof(ModelRecord, pmdToonFileNames) == 13272, "pmdToonFileNames x86");
 static_assert(offsetof(ModelRecord, toonFlag) == 14272, "toonFlag x86");
-static_assert(offsetof(ModelRecord, toonShared) == 14276, "toonShared x86");
-static_assert(offsetof(ModelRecord, lightDir) == 14568, "lightDir x86");
-static_assert(offsetof(ModelRecord, legIkXOffset) == 14580, "legIkXOffset x86");
-static_assert(offsetof(ModelRecord, matMisc) == 14584, "matMisc x86");
+static_assert(offsetof(ModelRecord, currentMaterial) == 14276, "currentMaterial x86");
+static_assert(offsetof(ModelRecord, skeletonCalibration) == 14568, "skeletonCalibration x86");
+static_assert(offsetof(ModelRecord, skeletonCalibration) +
+                      offsetof(SkeletonCalibration, legIkXOffset) ==
+                  14580,
+              "legIkXOffset x86");
+static_assert(offsetof(ModelRecord, poseTraceSampleCount) == 14584, "poseTraceSampleCount x86");
 static_assert(offsetof(ModelRecord, openniVersion) == 14589, "openniVersion x86");
 static_assert(offsetof(ModelRecord, physicsMode) == 14590, "physicsMode x86");
 static_assert(offsetof(ModelRecord, displayRootBone) == 14592, "displayRootBone x86");
@@ -341,7 +345,8 @@ static_assert(offsetof(ModelRecord, boneTable) == 10056, "boneTable x64");
 static_assert(offsetof(ModelRecord, morphs) == 10072, "morphs x64");
 static_assert(offsetof(ModelRecord, rawVertices) == 10080, "rawVertices x64");
 static_assert(offsetof(ModelRecord, pmxVertices) == 10088, "pmxVertices x64");
-static_assert(offsetof(ModelRecord, groupNames) == 10096, "groupNames x64");
+static_assert(offsetof(ModelRecord, displayGroups) == 10096, "displayGroups x64");
+static_assert(offsetof(ModelRecord, displayBones) == 10112, "displayBones x64");
 static_assert(offsetof(ModelRecord, displayFrames) == 10120, "displayFrames x64");
 static_assert(offsetof(ModelRecord, boneKeys) == 10128, "boneKeys x64");
 static_assert(offsetof(ModelRecord, morphKeys) == 10136, "morphKeys x64");
@@ -350,13 +355,15 @@ static_assert(offsetof(ModelRecord, undoRings) == 10152, "undoRings x64");
 static_assert(offsetof(ModelRecord, morphCount) == 12556, "morphCount x64");
 static_assert(offsetof(ModelRecord, boneCount) == 12560, "boneCount x64");
 static_assert(offsetof(ModelRecord, facialFrameCount) == 12608, "facialFrameCount x64");
+static_assert(offsetof(ModelRecord, displayBoneCount) == 12612, "displayBoneCount x64");
 static_assert(offsetof(ModelRecord, displayRootBone) == 0x3CA8, "displayRootBone x64");
-static_assert(offsetof(ModelRecord, boneKeyIndices) == 0x3148, "boneKeyIndices x64");
-static_assert(offsetof(ModelRecord, morphKeyIndices) == 0x3150, "morphKeyIndices x64");
+static_assert(offsetof(ModelRecord, boneTimelineRows) == 0x3148, "boneTimelineRows x64");
+static_assert(offsetof(ModelRecord, morphTimelineRows) == 0x3150, "morphTimelineRows x64");
 static_assert(offsetof(ModelRecord, boneListSelLine) == 0x3158, "boneListSelLine x64");
 static_assert(offsetof(ModelRecord, boneListRowType) == 0x315C, "boneListRowType x64");
 static_assert(offsetof(ModelRecord, boneListRowRecord) == 0x3224, "boneListRowRecord x64");
 static_assert(offsetof(ModelRecord, boneListRows) == 0x3544, "boneListRows x64");
+static_assert(offsetof(ModelRecord, boneListPos) == 0x3548, "boneListPos x64");
 static_assert(offsetof(ModelRecord, physicsFlags) == 13664,
               "physicsFlags x64 (0x3560; per-model language-flag sweep "
               "store 0x7FF7CB43A4F5)");
@@ -366,6 +373,7 @@ static_assert(offsetof(ModelRecord, rigidCount) == 13688, "rigidCount x64");
 static_assert(offsetof(ModelRecord, jointCount) == 13692, "jointCount x64");
 static_assert(offsetof(ModelRecord, modelDirectory) == 13696, "modelDirectory x64");
 static_assert(offsetof(ModelRecord, pmdToonFileNames) == 14208, "pmdToonFileNames x64");
+static_assert(offsetof(ModelRecord, currentMaterial) == 15212, "currentMaterial x64");
 static_assert(offsetof(ModelRecord, undoState) == 13648,
               "undoState x64 (0x3550, ring depth 30, 0x7FF7CB4470A0)");
 static_assert(offsetof(ModelRecord, undoDirty) == 13656, "undoDirty x64 (0x3558, 0x7FF7CB447074)");
@@ -393,6 +401,8 @@ static_assert(offsetof(ModelRecord, reservedMorphTable) == 8816);
 static_assert(offsetof(ModelRecord, uvMorphTables) == 8824);
 static_assert(offsetof(ModelRecord, materialMorphPools) == 8864);
 static_assert(offsetof(ModelRecord, currentJoints) == 15216);
+static_assert(offsetof(ModelRecord, skeletonCalibration) == 15504);
+static_assert(offsetof(ModelRecord, poseTraceSampleCount) == 15520);
 #else
 static_assert(offsetof(ModelRecord, standardPose) == 64);
 static_assert(offsetof(ModelRecord, skeletonHistory) == 336);

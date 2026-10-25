@@ -44,10 +44,10 @@ void MMDApp::ReleaseTimelineSelectionRecords() noexcept {
     // Original x64 RVA 0x3D698..0x3D747 releases these seven bands in order.
     // Also release gravity, whose separately allocated array otherwise leaks.
     constexpr TimelineSelectionBand order[] = {
-        TimelineSelectionBand::Accessory,  TimelineSelectionBand::ModelIk,
-        TimelineSelectionBand::Camera,     TimelineSelectionBand::Light,
-        TimelineSelectionBand::ModelBone,  TimelineSelectionBand::SelfShadow,
-        TimelineSelectionBand::ModelMorph, TimelineSelectionBand::Gravity};
+        TimelineSelectionBand::Accessory,    TimelineSelectionBand::ModelBone,
+        TimelineSelectionBand::Camera,       TimelineSelectionBand::Light,
+        TimelineSelectionBand::ModelDisplay, TimelineSelectionBand::SelfShadow,
+        TimelineSelectionBand::ModelMorph,   TimelineSelectionBand::Gravity};
     for (auto band : order) {
         auto& selection = m_runtime.selection.timeline[static_cast<std::size_t>(band)];
         ::operator delete(selection.records);

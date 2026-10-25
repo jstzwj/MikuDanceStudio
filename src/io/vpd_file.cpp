@@ -13,7 +13,7 @@
 //   "%d;\t\t\t\t// <SJIS total pose bone count>" arg = count of selected bones
 //   per selected bone i (ModelRecord selection bitmap/count/BoneRecord table):
 //     "Bone%d{%s\n"      running selected index, bone name at record +0
-//     pose source pick (0x418860): bone->hasRigidBody != 0 && bone->physicsDisabled == 0 &&
+//     pose source pick (0x418860): (bone->hasRigidBody & 1) != 0 && bone->physicsDisabled == 0 &&
 //         physMode(app+0xA0CC4) >= 2  ->  physics pose
 //         (+0x188 trans / +0x194 quat), else raw pose
 //         (+0x140 trans / +0x14C quat)
@@ -47,6 +47,7 @@
 #include <cstring>
 
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/bone_axis.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -54,11 +55,6 @@
 
 namespace mikudancestudio {
 namespace {
-
-// Active model = slot array at this+0x780 indexed by byte this+0x910.
-unsigned char* ActiveModel(MMDApp* app) {
-    return app->SelectedModel();
-}
 
 // ---- byte-exact .rdata strings --------------------------------------------
 const char kHdr[] = "Vocaloid Pose Data file\n\n"; // 0x52BC6C
@@ -87,7 +83,7 @@ void SaveVpdFile(const wchar_t* path) {
     MMDApp* app = g_Block;
     if (app == nullptr)
         return;
-    unsigned char* const model = ActiveModel(app);
+    const mdl::ModelRecord* const model = app->SelectedModel();
     if (model == nullptr)
         return;
 
@@ -100,31 +96,31 @@ void SaveVpdFile(const wchar_t* path) {
         return;
 
     std::fprintf(fp, "%s", kHdr);
-    mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
+    const mdl::ModelRecord& modelRecord = *model;
     std::fprintf(fp, kModelFmt, modelRecord.name);
 
     const int boneCnt = modelRecord.boneCount;
-    unsigned char* const selBits = modelRecord.boneSelection;
+    const unsigned char* const selBits = modelRecord.boneSelection;
     int selected = 0;
     for (int i = 0; i < boneCnt; ++i)
         if (selBits[i] != 0)
             ++selected;
     std::fprintf(fp, kCountFmt, selected);
 
-    mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);
+    const mdl::BoneRecord* const bones = model->boneTable;
     const int physMode = app->PlaybackPhysicsMode();
     int running = 0;
     for (int i = 0; i < boneCnt; ++i) {
         if (selBits[i] == 0)
             continue;
-        mikudancestudio::mdl::BoneRecord* const bone = bones + i;
+        const mdl::BoneRecord* const bone = bones + i;
         std::fprintf(fp, kBoneFmt, running, bone->name);
         ++running;
         // 0x418860: physics-pose source only for flagged bones with the
         // physics mode >= 2; raw kinematic pose otherwise.
         const float* trans;
         const float* quat;
-        if (bone->hasRigidBody != 0 && bone->physicsDisabled == 0 && physMode >= 2) {
+        if ((bone->hasRigidBody & 1) != 0 && bone->physicsDisabled == 0 && physMode >= 2) {
             trans = bone->ikBackup;
             quat = bone->ikBackup + 3;
         } else {
@@ -143,7 +139,7 @@ void LoadVpdFile(const wchar_t* path) {
     MMDApp* app = g_Block;
     if (app == nullptr)
         return;
-    unsigned char* const model = ActiveModel(app);
+    mdl::ModelRecord* const model = app->SelectedModel();
     if (model == nullptr)
         return;
 
@@ -165,16 +161,16 @@ void LoadVpdFile(const wchar_t* path) {
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
 
     // ---- undo ring (model+0x31B4 wraps at 30; slots at model+0x26EC) ---
-    mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
+    mdl::ModelRecord& modelRecord = *model;
     modelRecord.undoDirty = 1; // 0x418AE9
     modelRecord.redoDirty = 0; // 0x418AF0
-    int ring = ++mdl::Mdl(model)->UndoCursor();
-    if (ring >= 30)
-        mdl::Mdl(model)->UndoCursor() = 0;
-    ring = mdl::Mdl(model)->UndoCursor();
-    mdl::Mdl(model)->LatestUndoCursor() = ring;
+    int ring = ++model->UndoCursor();
+    if (ring >= mdl::kUndoHistoryDepth)
+        model->UndoCursor() = 0;
+    ring = model->UndoCursor();
+    model->LatestUndoCursor() = ring;
 
-    mdl::UndoRecord& undo = mdl::Mdl(model)->undoRings[0].slots[ring];
+    mdl::UndoRecord& undo = model->undoRings[0].slots[ring];
     undo.operation = mdl::UndoOperation::BonePose;
     undo.recordCount = count;
     if (undo.bonePose != nullptr) {
@@ -188,7 +184,7 @@ void LoadVpdFile(const wchar_t* path) {
     undo.recordCount = count;
 
     const int boneCnt = modelRecord.boneCount;
-    mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);
+    mikudancestudio::mdl::BoneRecord* const bones = model->boneTable;
     unsigned char* const selBits = modelRecord.boneSelection;
     unsigned char* const regBits = modelRecord.bonePhysicsState;
     const bool pmx = modelRecord.physicsMode == 2; // 0x418FC4
@@ -226,7 +222,7 @@ void LoadVpdFile(const wchar_t* path) {
             rec.boneIndex = i;
             std::memcpy(rec.position, bone->trans, sizeof rec.position);
             std::memcpy(rec.rotation, bone->rotQuat, sizeof rec.rotation);
-            rec.physicsDisabled = regBits[i];
+            rec.poseEdited = regBits[i];
 
             // twist correction - same algorithm as registrar 0x49D880
             // (0x418F5C): ((u16@&bone->flags & 0x400) && type==4) || type==8
@@ -244,35 +240,7 @@ void LoadVpdFile(const wchar_t* path) {
                     auto* d3 = &d3dx::Get();
                     d3->vec3Normalize(boneAxis, boneAxis);
                 }
-                auto* d3 = &d3dx::Get();
-                if (d3->quatToAxisAngle != nullptr) {
-                    float axisOut[3], angle;
-                    d3->quatToAxisAngle(quat, axisOut, &angle);
-                    if (!_finite(quat[3]))
-                        quat[3] = 1.0f; // w (0x4190C4)
-                    float sinHalf;
-                    const float ww = quat[3] * quat[3];
-                    if (ww <= 1.0f) {
-                        sinHalf = sqrtf(1.0f - ww); // 0x4190FD sqrt
-                    } else {
-                        quat[3] = 1.0f;
-                        sinHalf = 0.0f;
-                    }
-                    const float dot = boneAxis[0] * axisOut[0] + boneAxis[1] * axisOut[1] +
-                                      boneAxis[2] * axisOut[2];
-                    const float nA = sqrtf(boneAxis[0] * boneAxis[0] + boneAxis[1] * boneAxis[1] +
-                                           boneAxis[2] * boneAxis[2]);
-                    const float nB = sqrtf(axisOut[0] * axisOut[0] + axisOut[1] * axisOut[1] +
-                                           axisOut[2] * axisOut[2]);
-                    const float cosT = dot / (nA * nB);
-                    if (cosT < 0.0f)
-                        sinHalf = -sinHalf; // 0x4191E2
-                    quat[0] = sinHalf * axisOut[0];
-                    quat[1] = sinHalf * axisOut[1];
-                    quat[2] = sinHalf * axisOut[2];
-                    if (d3->quatNormalize != nullptr)
-                        d3->quatNormalize(quat, quat);
-                }
+                mdl::ConstrainBoneRotationAxis(quat, boneAxis);
             }
 
             selBits[i] = 1; // 0x419226

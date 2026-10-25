@@ -45,8 +45,8 @@ void TestDialog(HMODULE resources, int templateId) {
     auto second = std::make_unique<mds::mdl::ModelRecord>();
     mds::g_Block = app.get();
     app->CameraMode() = 0;
-    app->ModelSlot(3) = reinterpret_cast<unsigned char*>(first.get());
-    app->ModelSlot(7) = reinterpret_cast<unsigned char*>(second.get());
+    app->ModelSlot(3) = first.get();
+    app->ModelSlot(7) = second.get();
     app->SetSelectedModelSlot(3);
     first->edgeScale = 0.57f;
     second->edgeScale = 1.25f;

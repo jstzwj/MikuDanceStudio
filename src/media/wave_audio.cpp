@@ -147,8 +147,7 @@ static const char kMsgWaveNotPcmJp[] =
 // VA 0x004C2660 - WaveCtxReset: zero the four read-context fields.
 // __thiscall(ctx); the tail (jmp) target of CloseDataFile (0x4C2680).
 // ---------------------------------------------------------------------------
-void WaveCtxReset(void* obj) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+void WaveCtxReset(WaveAudioContext* audio) {
     audio->parseStream = nullptr;     // 0x4C2662 (+0x2C)
     audio->feedThread = 0;            // 0x4C2665 (+0x234)
     audio->streamingBuffer = nullptr; // 0x4C266B (+0x14)
@@ -162,8 +161,7 @@ void WaveCtxReset(void* obj) {
 // (the data-chunk file offset) in ctx+0x240.  The original spins at EOF;
 // return false for missing or truncated chunks instead.
 // ---------------------------------------------------------------------------
-bool WaveFindDataChunk(void* obj, FILE* stream) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveFindDataChunk(WaveAudioContext* audio, FILE* stream) {
     if (!ScanWaveDataChunk(stream, audio->dataSize, audio->dataOffset))
         return false;
     audio->readCursor = 0; // 0x4C2742
@@ -176,8 +174,7 @@ bool WaveFindDataChunk(void* obj, FILE* stream) {
 // cursor and zero-fill the tail (0 for 16-bit, 0x80 for 8-bit silence).
 // Returns 1 on a full read.
 // ---------------------------------------------------------------------------
-bool WaveStreamRead(void* obj, void* buf, int bytes) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveStreamRead(WaveAudioContext* audio, void* buf, int bytes) {
     const std::int32_t cursor = audio->readCursor;
     const std::int32_t size = audio->dataSize;
     std::int32_t toRead; // 0x4C2975..0x4C2982
@@ -206,8 +203,7 @@ bool WaveStreamRead(void* obj, void* buf, int bytes) {
 // done by callers (load loop 0x7FF7CB4FA755/0x7FF7CB4FA770, streaming thread
 // 0x7FF7CB4FAE1A/0x7FF7CB4FAF35, at most +1 per iteration). Keep this function read-only.
 // ---------------------------------------------------------------------------
-bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2, int bytes2) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveStreamFeed(WaveAudioContext* audio, void* buf, int bytes, void* buf2, int bytes2) {
     if (!WaveStreamRead(audio, buf, bytes)) // 0x4C29C1
         return false;
     if (buf2 != nullptr) {                        // 0x4C2CBB
@@ -229,8 +225,7 @@ bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2, int bytes2) {
 //      buffer, one column per `colBytes` bytes.
 // Returns 1 on success (the message boxes report the failure paths).
 // ---------------------------------------------------------------------------
-bool WaveLoadFile(void* obj, const wchar_t* path, PathResolutionWorkspace& paths) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveLoadFile(WaveAudioContext* audio, const wchar_t* path, PathResolutionWorkspace& paths) {
     HWND hwnd = audio->mainWindow;
     const unsigned char english = audio->englishUI;
 
@@ -415,8 +410,7 @@ bool WaveLoadFile(void* obj, const wchar_t* path, PathResolutionWorkspace& paths
 // src/app/subsystem_init.cpp); neither the x86 original (ret at 0x4C2955)
 // nor the x64 twin 0x7FF7CB4FA930 spawns it from here.
 // ---------------------------------------------------------------------------
-bool WaveStartPlayback(void* obj) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveStartPlayback(WaveAudioContext* audio) {
     FILE*& stream = audio->parseStream;
     if (stream != nullptr) // 0x4C2779
         CloseDataFile(audio);
@@ -515,9 +509,8 @@ void LoadWaveFile(MMDApp* app) {
     }
 
     auto* audio = s.Audio(); // app+0xCC
-    unsigned char* ctx = reinterpret_cast<unsigned char*>(audio);
-    WaveCtxReset(ctx); // 0x4C2660
-    const bool ok = WaveLoadFile(ctx, s.WavePath(),
+    WaveCtxReset(audio);     // 0x4C2660
+    const bool ok = WaveLoadFile(audio, s.WavePath(),
                                  app->PathWorkspace()); // 0x4C2F70
 
     if (!ok) {                                // 0x41857F
@@ -546,7 +539,7 @@ void LoadWaveFile(MMDApp* app) {
     }
 
     wcscpy_s(s.WavePath(), 0x100, audio->path); // 0x4186B6
-    WaveStartPlayback(ctx);                     // 0x4C2760
+    WaveStartPlayback(audio);                   // 0x4C2760
     s.WaveEnabled() = 1;                        // 0x4186DD
     TimelineDrawTicks(s.TimelineStartFrame(), s.SidebarWidth());
     RECT rect{6, 0x5F, s.SidebarWidth() - 3, 0x92}; // 0x4186F5..

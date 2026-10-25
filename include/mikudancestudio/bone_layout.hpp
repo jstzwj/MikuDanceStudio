@@ -121,8 +121,8 @@ struct BoneRecord {
     std::int32_t rigidIdx;      // 420  (-296 sentinel = unlinked (x64 anchor 428))
     float ikWorkingPos[3];      // 424  (kfa working-copy position 424..435)
     float ikWorkingQuat[4];     // 436  (kfa working-copy quaternion 436..447)
-    std::int32_t selState;      // 452  (frame_modes / sprite_overlay)
-    std::int32_t selState2;     // 456
+    std::int32_t screenX;       // projected client X (picking, box selection and marker drawing)
+    std::int32_t screenY;       // projected client Y
     std::int32_t tailBone;      // 460  (tail-is-bone index)
     float tailOffset[3];        // 464  (tail-is-offset vector)
     std::int32_t tailScreenX;   // 476  projected screen X of the tail point
@@ -185,8 +185,8 @@ static_assert(offsetof(BoneRecord, ikBackup) == 392, "ikBackup x86");
 static_assert(offsetof(BoneRecord, rigidIdx) == 420, "rigidIdx x86");
 static_assert(offsetof(BoneRecord, ikWorkingPos) == 424, "ikWorkingPos x86");
 static_assert(offsetof(BoneRecord, ikWorkingQuat) == 436, "ikWorkingQuat x86");
-static_assert(offsetof(BoneRecord, selState) == 452, "selState x86");
-static_assert(offsetof(BoneRecord, selState2) == 456, "selState2 x86");
+static_assert(offsetof(BoneRecord, screenX) == 452, "screenX x86");
+static_assert(offsetof(BoneRecord, screenY) == 456, "screenY x86");
 static_assert(offsetof(BoneRecord, tailBone) == 460, "tailBone x86");
 static_assert(offsetof(BoneRecord, tailOffset) == 464, "tailOffset x86");
 static_assert(offsetof(BoneRecord, tailScreenX) == 476, "tailScreenX x86");

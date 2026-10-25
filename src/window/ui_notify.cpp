@@ -163,7 +163,7 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         if (app->CameraMode() != 0)         // this+0x2F8 (760)
             return DefWindowProcA(hwnd, message, wParam, lParam);
         const std::uint8_t idx = app->SelectedModelSlot();
-        const mdl::ModelRecord& model = *mdl::Mdl(app->ModelSlot(idx));
+        const mdl::ModelRecord& model = *app->ModelSlot(idx);
         // Blue iff the model's byte +0x37C0 (14272) is non-zero.
         if (model.toonFlag == 0)
             return DefWindowProcA(hwnd, message, wParam, lParam);
@@ -176,7 +176,7 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         if (app->CameraMode() != 0)           // this+0x2F8 (760)
             return DefWindowProcA(hwnd, message, wParam, lParam);
         const std::uint8_t idx = app->SelectedModelSlot();
-        const mdl::ModelRecord& model = *mdl::Mdl(app->ModelSlot(idx));
+        const mdl::ModelRecord& model = *app->ModelSlot(idx);
         // Blue iff the model's byte +0x31BE (12734) is non-zero.
         if (model.postLoadFlag2 == 0)
             return DefWindowProcA(hwnd, message, wParam, lParam);

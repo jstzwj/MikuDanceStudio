@@ -197,7 +197,7 @@ struct TempoEntry {
 struct VsqEvent {      // stride 0x24, calloc'd by the original
     char consonant[6]; // +0x00 canonical mouth shape (sprintf cap 6)
     char vowel;        // +0x06
-    char token[9];     // +0x07 raw L0 token (written via a cast with
+    char token[9];     // +0x07 raw L0 token (written with
                        //        sprintf cap 8 - x64 0x7FF7CB48F3D5
                        //        "mov edx, 8": 7 chars + NUL land in
                        //        +0x07..+0x0E, +0x0F keeps its memset
@@ -208,6 +208,8 @@ struct VsqEvent {      // stride 0x24, calloc'd by the original
     char tail[2];      // +0x22
 };
 static_assert(sizeof(VsqEvent) == 0x24, "event record stride");
+static_assert(offsetof(VsqEvent, token) == 7, "VSQ raw lyric token");
+static_assert(offsetof(VsqEvent, start) == 16, "VSQ start time");
 
 void VsqBox(MMDApp* app, const char* enText, const char* jpText, const char* enCaption,
             const char* jpCaption) {
@@ -226,15 +228,11 @@ void VsqAnalysisError(MMDApp* app, FILE* txt, int fd) {
     _close(fd);                    // 0x506B88
 }
 
-unsigned char* SlotModel(MMDApp* app) {
-    return app->SelectedModel();
-}
-
 // One mouth-shape keyframe: park the weight into the face slot, then let
 // RegisterMorphKeyCurrent (0x49EEE0) register it (exact original pairing).
-void VsqMorphKey(unsigned char* model, mdl::MorphRecord* morphs, int idx, int frame, float weight) {
-    morphs[idx].value = weight;
-    RegisterMorphKeyCurrent(model, idx, frame);
+void VsqMorphKey(mdl::ModelRecord& model, int idx, int frame, float weight) {
+    model.morphs[idx].value = weight;
+    RegisterMorphKeyCurrent(&model, idx, frame);
 }
 
 } // namespace
@@ -510,7 +508,7 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
         char* firstQuote = strstr(line, "\""); // 0x52D1DC
         // cap 8 as in the binary (0x7FF7CB48F3D5 mov edx,8;
         // 0x7FF7CB48F3DA lea rcx,[r15+7])
-        sprintf_s(reinterpret_cast<char*>(&ev) + 7, 8, firstQuote + 1);
+        sprintf_s(ev.token, 8, firstQuote + 1);
 
         const char* m1 = m + 1; // points at the ','
         if (m1[3] == '"') {     // 0x436A16: 1-char field
@@ -719,19 +717,17 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     _wfopen_s(&out, path, L"wt"); // 0x52BC88
     for (int i = 0; i < count; ++i) {
         VsqEvent& ev = events[i];
-        char* token = reinterpret_cast<char*>(&ev) + 7;
         sprintf_s(buf, 1000,
                   "%7.3f -%7.3f   %-4s %1s %c", // 0x52D040
-                  static_cast<double>(ev.start), static_cast<double>(ev.end), token, ev.consonant,
-                  static_cast<char>(ev.vowel));
+                  static_cast<double>(ev.start), static_cast<double>(ev.end), ev.token,
+                  ev.consonant, static_cast<char>(ev.vowel));
         fprintf(out, "%s\n", buf); // 0x52D274
     }
     fclose(out); // 0x437C41
 
     // ---- 0x437C46: face availability --------------------------------
-    unsigned char* model = SlotModel(app);
-    mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
-    const int faceCount = modelRecord.morphCount;
+    mdl::ModelRecord* model = app->SelectedModel();
+    const int faceCount = model->morphCount;
     int faceA = 0, faceI = 0, faceU = 0, faceO = 0;
     if (faceCount <= 0) {
         VsqBox(app,
@@ -740,7 +736,7 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
                kJpNoA, "lipsync", kJpVsqCaption); // 0x52D034
         return;
     }
-    mdl::MorphRecord* const morphs = mdl::Morphs(model);
+    mdl::MorphRecord* const morphs = model->morphs;
     {
         int i = 0;
         for (; i < faceCount; ++i) {
@@ -803,13 +799,13 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     }
 
     // ---- 0x437F50: clear the keyframe mark bytes --------------------
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(model);
+    mdl::BoneKey* const boneKeys = model->boneKeys;
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i)
         boneKeys[i].allocated = 0;
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
+    mdl::MorphKey* const morphKeys = model->morphKeys;
     for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
         morphKeys[i].allocated = 0;
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
     for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
         displayKeys[i].allocated = 0;
 
@@ -827,35 +823,35 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
         const int f2 = static_cast<int>(start * 30.0);       // 0x52BA68
         const int f3 = -2 - static_cast<int>(end * -30.0);
         const int f4 = static_cast<int>(end * 30.0);
-        if (ev.vowel == 'a') {                           // 0x43816D
-            VsqMorphKey(model, morphs, faceA, f1, 0.0f); // 0x52CE0C=.7
-            VsqMorphKey(model, morphs, faceA, f2, 0.7f);
-            VsqMorphKey(model, morphs, faceA, f3, 0.7f);
-            VsqMorphKey(model, morphs, faceA, f4, 0.0f);
-        } else if (ev.vowel == 'i') {                    // 0x438308
-            VsqMorphKey(model, morphs, faceI, f1, 0.0f); // 0x52CE08=.6
-            VsqMorphKey(model, morphs, faceI, f2, 0.6f);
-            VsqMorphKey(model, morphs, faceI, f3, 0.6f);
-            VsqMorphKey(model, morphs, faceI, f4, 0.0f);
+        if (ev.vowel == 'a') {                    // 0x43816D
+            VsqMorphKey(*model, faceA, f1, 0.0f); // 0x52CE0C=.7
+            VsqMorphKey(*model, faceA, f2, 0.7f);
+            VsqMorphKey(*model, faceA, f3, 0.7f);
+            VsqMorphKey(*model, faceA, f4, 0.0f);
+        } else if (ev.vowel == 'i') {             // 0x438308
+            VsqMorphKey(*model, faceI, f1, 0.0f); // 0x52CE08=.6
+            VsqMorphKey(*model, faceI, f2, 0.6f);
+            VsqMorphKey(*model, faceI, f3, 0.6f);
+            VsqMorphKey(*model, faceI, f4, 0.0f);
         } else if (ev.vowel == 'u') { // 0x43849B
-            VsqMorphKey(model, morphs, faceU, f1, 0.0f);
-            VsqMorphKey(model, morphs, faceU, f2, 1.0f);
-            VsqMorphKey(model, morphs, faceU, f3, 1.0f);
-            VsqMorphKey(model, morphs, faceU, f4, 0.0f);
+            VsqMorphKey(*model, faceU, f1, 0.0f);
+            VsqMorphKey(*model, faceU, f2, 1.0f);
+            VsqMorphKey(*model, faceU, f3, 1.0f);
+            VsqMorphKey(*model, faceU, f4, 0.0f);
         } else if (ev.vowel == 'e') { // 0x438636
-            VsqMorphKey(model, morphs, faceA, f1, 0.0f);
-            VsqMorphKey(model, morphs, faceI, f1, 0.0f);
-            VsqMorphKey(model, morphs, faceA, f2, 0.5f); // 0x52960C
-            VsqMorphKey(model, morphs, faceI, f2, 0.3f); // 0x52CE04
-            VsqMorphKey(model, morphs, faceA, f3, 0.5f);
-            VsqMorphKey(model, morphs, faceI, f3, 0.3f);
-            VsqMorphKey(model, morphs, faceA, f4, 0.0f);
-            VsqMorphKey(model, morphs, faceI, f4, 0.0f);
+            VsqMorphKey(*model, faceA, f1, 0.0f);
+            VsqMorphKey(*model, faceI, f1, 0.0f);
+            VsqMorphKey(*model, faceA, f2, 0.5f); // 0x52960C
+            VsqMorphKey(*model, faceI, f2, 0.3f); // 0x52CE04
+            VsqMorphKey(*model, faceA, f3, 0.5f);
+            VsqMorphKey(*model, faceI, f3, 0.3f);
+            VsqMorphKey(*model, faceA, f4, 0.0f);
+            VsqMorphKey(*model, faceI, f4, 0.0f);
         } else if (ev.vowel == 'o') { // 0x438975
-            VsqMorphKey(model, morphs, faceO, f1, 0.0f);
-            VsqMorphKey(model, morphs, faceO, f2, 1.0f);
-            VsqMorphKey(model, morphs, faceO, f3, 1.0f);
-            VsqMorphKey(model, morphs, faceO, f4, 0.0f);
+            VsqMorphKey(*model, faceO, f1, 0.0f);
+            VsqMorphKey(*model, faceO, f2, 1.0f);
+            VsqMorphKey(*model, faceO, f3, 1.0f);
+            VsqMorphKey(*model, faceO, f4, 0.0f);
         }
     }
 
@@ -866,7 +862,7 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
         s.state.currentFrame = static_cast<int>(lastEnd * 30.0);
     }
     const int frameNow = s.state.currentFrame;
-    const std::uint32_t modelMax = modelRecord.maxFrame;
+    const std::uint32_t modelMax = model->maxFrame;
     if (s.LastRegisteredFrame() < modelMax)
         s.LastRegisteredFrame() = modelMax;
 
@@ -878,7 +874,7 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     SendMessageA(frameEdit, EM_REPLACESEL, 0,
                  reinterpret_cast<LPARAM>(buf)); // 0x5292B4
 
-    SeekModelFrame(*mdl::Mdl(model), frameNow, s.PlaybackPhysicsMode()); // 0x4B4260
+    SeekModelFrame(*model, frameNow, s.PlaybackPhysicsMode()); // 0x4B4260
 
     s.state.timelineStartFrame = frameNow > 6 ? frameNow - 6 : 0;
     PanelPaint(app); // 0x414610

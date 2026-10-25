@@ -192,10 +192,6 @@ void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode);
 void PushBoneEditUndo(MMDApp* app);
 // VA 0x004C2080 - frame keyframe-register (thiscall on the model, frame,
 //                 3rd arg = app+0xA0CC4; ).
-void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode);
-// VA 0x0049EEE0 - bone-frame register (thiscall on the model: bone index,
-//                 frame).
-void RegisterMorphKeyCurrent(unsigned char* model, int idx, int frame);
 // VA 0x00432FA0 - frame-apply refresh chain (thiscall, this = app).
 void RefreshAfterFrameApply(MMDApp* app); //  (ui_frame_step.cpp)
 // VA 0x00411DF0 - frame-scroll apply (thiscall(app, frame 0x980)).
@@ -207,7 +203,7 @@ namespace {
 // Active model = slot array at app+0x780 indexed by byte app+0x910.
 // (sub_47E8A0 pattern; the original reloads the pointer at every use, kept.)
 static unsigned char* ActiveModel(MMDApp* app) {
-    return app->SelectedModel();
+    return mdl::ModelBytes(app->SelectedModel());
 }
 
 // Combo/spin/text echo shared by the morph prev/next handlers (tails at
@@ -384,7 +380,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             break;
         }
         app->SceneModified() = 1;
-        RegisterSelectedBoneKeys(ActiveModel(app), app->state.currentFrame,
+        RegisterSelectedBoneKeys(app->SelectedModel(), app->state.currentFrame,
                                  app->PlaybackPhysicsMode());
         // 0x9E16C = max(0x9E16C, model+0x31B0)
         const std::int32_t frames = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
@@ -534,7 +530,8 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
                 displayKeys[i].allocated = 0;
         }
         unsigned char* m = ActiveModel(app);
-        RegisterMorphKeyCurrent(m, mdl::Mdl(m)->selectedMorphs[lane], app->state.currentFrame);
+        RegisterMorphKeyCurrent(mdl::Mdl(m), mdl::Mdl(m)->selectedMorphs[lane],
+                                app->state.currentFrame);
         const std::int32_t frames = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
         if (app->state.lastRegisteredFrame < frames)
             app->state.lastRegisteredFrame = frames;
@@ -605,7 +602,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             RefreshLightPanel(app);
             RefreshSelfShadowPanel(app);
             ApplyGravityTrack(app);
-            for (int i = 0; i < 0xFF; ++i) {
+            for (int i = 0; i < mdl::kAccessorySlotCount; ++i) {
                 if (app->ObjectSlot(i) != nullptr)
                     ApplyAccessoryTrack(app, i);
             }
@@ -812,18 +809,17 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         // rigid 0x374 (+0x48, 0x54-step), joint 0x378 (+0x24, 0x28-step),
         // IK 0x37C (+0x14, 0x18-step), morph 0x380 (+0x21, 0x24-step),
         // 0x2710 records each
-        for (std::size_t key = 0; key < 10000; ++key) {
+        for (std::size_t key = 0; key < mdl::kTimelineKeyCapacity; ++key) {
             app->CameraKeys()[key].selected = 0;
             app->LightKeys()[key].selected = 0;
             app->ShadowKeys()[key].selected = 0;
             app->GravityKeys()[key].selected = 0;
         }
-        // 255 accessory slots at app+0x384: flag +0x18, 0x3C-step over
-        // 0x927C0 records
-        for (int s = 0; s < 0xFF; ++s) {
-            auto* rec = reinterpret_cast<unsigned char*>(app->AccessoryKeys(s));
-            for (std::size_t off = 0; off < 0x927C0; off += 0x3C)
-                rec[off + 0x18] = 0;
+        // Clear selection in every accessory timeline.
+        for (int s = 0; s < mdl::kAccessorySlotCount; ++s) {
+            mdl::AccessoryKey* keys = app->AccessoryKeys(s);
+            for (std::size_t i = 0; i < mdl::kTimelineKeyCapacity; ++i)
+                keys[i].selected = 0;
         }
         RegisterSelfShadowState(app, app->state.currentFrame);
         SelectTimelineTrack(GlobalTimelineTrack::SelfShadow);

@@ -129,7 +129,7 @@ const wchar_t* ResolveUserFilePath(PathResolutionWorkspace& workspace,
     return out;
 }
 
-bool ResolveAnsiUserFile(unsigned char* sub, const char* mbName, wchar_t* wideOut,
+bool ResolveAnsiUserFile(D3DRenderer* renderer, const char* mbName, wchar_t* wideOut,
                          rsize_t sizeWords,
                          PathResolutionWorkspace& paths) { // 0x407BA0
     wcscpy_s(wideOut, sizeWords, L"");
@@ -147,15 +147,14 @@ bool ResolveAnsiUserFile(unsigned char* sub, const char* mbName, wchar_t* wideOu
     if (resolve())
         return true;
     for (int i = 0; i < 4; ++i) {
-        _mbstowcs_s_l(nullptr, candidate, sizeWords, mbName, _TRUNCATE,
-                      reinterpret_cast<D3DRenderer*>(sub)->localeTable[i]);
+        _mbstowcs_s_l(nullptr, candidate, sizeWords, mbName, _TRUNCATE, renderer->localeTable[i]);
         if (resolve())
             return true;
     }
     return false;
 }
 
-errno_t ConvertMaterialName(unsigned char* sub, const char* mbName, wchar_t* wideOut,
+errno_t ConvertMaterialName(D3DRenderer* renderer, const char* mbName, wchar_t* wideOut,
                             rsize_t sizeWords,
                             const wchar_t* dirW) { // 0x407DA0
     wchar_t probe[512];
@@ -176,15 +175,15 @@ errno_t ConvertMaterialName(unsigned char* sub, const char* mbName, wchar_t* wid
             return 0;
         if (li < 4)
             _mbstowcs_s_l(nullptr, wideOut, sizeWords, mbName, _TRUNCATE,
-                          reinterpret_cast<D3DRenderer*>(sub)->localeTable[li]);
+                          renderer->localeTable[li]);
     }
     return result;
 }
 
-int LoadTextureShared(unsigned char* sub, wchar_t* path) { // 0x407490
+int LoadTextureShared(D3DRenderer* renderer, wchar_t* path) { // 0x407490
     if (path[0] == L'\0')
         return 0;
-    D3DRenderer* r = reinterpret_cast<D3DRenderer*>(sub);
+    D3DRenderer* r = renderer;
     IDirect3DDevice9* dev = r->device;
     // Cache = the wrapper's 10000-entry resourcePool (12-byte stride,
     // original write base sub+0 at 0x40750A): heapBuffer holds the name*,

@@ -74,8 +74,8 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
             if (app->DisplayObjectListScrollPosition() > upper)
                 app->DisplayObjectListScrollPosition() = upper;
         } else {
-            unsigned char* model = app->SelectedModel();
-            mikudancestudio::mdl::ModelRecord& record = *mikudancestudio::mdl::Mdl(model);
+            mdl::ModelRecord* model = app->SelectedModel();
+            mikudancestudio::mdl::ModelRecord& record = *model;
             switch (code) {
             case SB_LINEUP:
                 --record.boneListPos;

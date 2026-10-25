@@ -16,9 +16,9 @@
 //      frame apply (0x4B4260 / 0x4A02C0), mode branch on byte 0x2F8,
 //      scroll clamp, PanelPaint (0x414610), timeline strip redraw
 //      (0x4C2A00 + InvalidateRect), physics sync (0x4C2B80 / 0x4C3530)
-//   D. else: bone/morph name-row rect hit test (rects derived from bytes
+//   D. else: interpolation control-point hit test (rects derived from bytes
 //      0x9DA05/0x9DA06 and 0x9DA07/0x9DA08 + client bottom) -> keyframe
-//      insert + selection-row marker 0x9DA09 = 1 (bone) / 2 (morph)
+//      snapshot + dragged control point 0x9DA09 = 1 (first) / 2 (second)
 //
 // Every path funnels into the shared tail (dirty flag 0xA0189, click anchor
 // 0xA018C/0xA0190) and the selection-count re-evaluation (0xA03EC region,
@@ -32,7 +32,7 @@
 //   HandleLButtonDown_NameColumnHit        S3+S4 0x446BA1-0x44738F
 //   HandleLButtonDown_TimelineAreaHit      S5-S6 0x447390-0x448EEB
 //   HandleLButtonDown_FrameStripHit        S7    0x44A468-0x44A850
-//   HandleLButtonDown_NameRowRectHit       S7b   0x44A855-0x44A97D
+//   HandleLButtonDown_InterpolationControlPointHit       S7b   0x44A855-0x44A97D
 //
 // Reference: ../translated/MikuMikuDance/fcn_00446a70.cpp
 //   NOTE: the translated file is a register-tracking re-render that deviates
@@ -67,25 +67,17 @@ void RebuildTimelineTrackPanel(MMDApp* app);        // VA 0x0042F1E0
 void TimelineDrawTicks(int frameOffset, int width); // VA 0x004C2A00
 void SetFrameNormalized(int frame);                 // VA 0x004C2B80
 
-// Editor-panel refresh helpers still living in src/app/late_ports.cpp
-// (signatures below are the placeholder ones from stubs.cpp; where the
-// original passes a MODEL pointer or extra arguments the call site casts
-// and marks TODO(port) - see the individual call sites).
-void RefreshLightPanel(MMDApp* app);                                 // VA 0x00411070
-void RefreshSelfShadowPanel(MMDApp* app);                            // VA 0x00411B90
-void ApplyGravityTrack(MMDApp* app);                                 // VA 0x00412330
-void SyncAccessoryEditPanel(MMDApp* app);                            // VA 0x004134E0
-void ApplyAccessoryTrack(MMDApp* app, int idx);                      // VA 0x00413120
-void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame); // VA 0x004A0080
-void SyncModelEditControls(unsigned char* model);                    // VA 0x004A02C0
-void SnapshotSelectedKeysForUndo(unsigned char* model, int frame);   // VA 0x004A1510
-void WaveRestartAt(void* sub, double v);                             // VA 0x004C3530
-void AviBgOverlayRefresh(MMDApp* app);                               // VA 0x004168D0
-void AppendBoneKeyToUndo(unsigned char* model, int index);           // VA 0x0049D410
-void InvalidateSelectionReadouts(MMDApp* app); // VA 0x0040D070 (ui_view_refresh.cpp);
-                                               // was declared here as 0x40D070 - same
-                                               // function, the local twin was removed
-void SelectionReeval(MMDApp* app);             // VA 0x00430510 (stubs.cpp)
+// Shared panel and track refresh entry points.
+void RefreshLightPanel(MMDApp* app);            // VA 0x00411070
+void RefreshSelfShadowPanel(MMDApp* app);       // VA 0x00411B90
+void ApplyGravityTrack(MMDApp* app);            // VA 0x00412330
+void SyncAccessoryEditPanel(MMDApp* app);       // VA 0x004134E0
+void ApplyAccessoryTrack(MMDApp* app, int idx); // VA 0x00413120
+void AviBgOverlayRefresh(MMDApp* app);          // VA 0x004168D0
+void InvalidateSelectionReadouts(MMDApp* app);  // VA 0x0040D070 (ui_view_refresh.cpp);
+                                                // was declared here as 0x40D070 - same
+                                                // function, the local twin was removed
+void SelectionReeval(MMDApp* app);              // VA 0x00430510
 
 // ---- file-local helpers (extracted from sub_446A70, original VAs in the
 //      comments) -----------------------------------------------------------
@@ -106,11 +98,11 @@ static int TrackRowFromDelta(int v) {
 // Active model pointer = slot[byte this+0x910] of the 100-slot array at
 // this+0x780.  (sub_446A70 pattern @ 0x446B48, re-read every use like the
 // original reloads it in every loop iteration)
-static unsigned char* ActiveModel(MMDApp* app) {
+static mdl::ModelRecord* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-static unsigned char* ModelAtSlot(MMDApp* app, std::size_t slot) {
+static mdl::ModelRecord* ModelAtSlot(MMDApp* app, std::size_t slot) {
     return app->ModelSlot(static_cast<int>(slot));
 }
 
@@ -144,19 +136,20 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
             // ---- edit-mode stats (loc_4497A1-0x44A426) ------------------------
             // count the 6 bone display flags (model+0x26E0, 0x168-stride,
             // flags at +0x38+i*0x3C) into 0xA0414
-            std::int32_t& boneCnt = app->TimelineSelectionCount(TimelineSelectionBand::ModelIk);
-            boneCnt = 0;
-            unsigned char* m = ActiveModel(app);
+            std::int32_t& selectedBoneKeyCount =
+                app->TimelineSelectionCount(TimelineSelectionBand::ModelBone);
+            selectedBoneKeyCount = 0;
+            mdl::ModelRecord* m = ActiveModel(app);
             if (m != nullptr) {
-                mikudancestudio::mdl::BoneKey* bones = mikudancestudio::mdl::BoneKeys(m);
+                mikudancestudio::mdl::BoneKey* bones = m->boneKeys;
                 for (std::size_t i = 0; i < mikudancestudio::mdl::kBoneKeyCapacity; ++i)
                     if (bones[i].allocated != 0)
-                        ++boneCnt;
-                if (boneCnt > 0) {
+                        ++selectedBoneKeyCount;
+                if (selectedBoneKeyCount > 0) {
                     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);  // 400
                     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE); // 401
                     // keyframe-cluster append on the active model (0x449886-0x449A5A)
-                    auto* record = mikudancestudio::mdl::Mdl(m);
+                    auto* record = m;
                     record->undoDirty = 1;
                     record->redoDirty = 0;
                     std::uint32_t& kf = record->UndoCursor();
@@ -172,33 +165,34 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                         ::operator delete(bufSlot);
                         bufSlot = nullptr;
                     }
-                    const std::int32_t boneN = mikudancestudio::mdl::Mdl(m)->boneCount;
+                    const std::int32_t boneN = m->boneCount;
                     bufSlot = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
                         ::operator new(static_cast<std::size_t>(boneN) *
                                        sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
                     memset(bufSlot, 0,
                            static_cast<std::size_t>(boneN) *
                                sizeof(mikudancestudio::mdl::BonePoseSnapshot));
-                    mikudancestudio::mdl::BoneRecord* srcBase = mikudancestudio::mdl::Bones(m);
-                    unsigned char* flagMap = mikudancestudio::mdl::Mdl(m)->bonePhysicsState;
+                    mikudancestudio::mdl::BoneRecord* srcBase = m->boneTable;
+                    unsigned char* flagMap = m->bonePhysicsState;
                     for (int i = 0; i < boneN; ++i) {
                         auto& out = bufSlot[i];
-                        out.boneIndex = 0;
+                        out.boneIndex = i;
                         memcpy(out.position, srcBase[i].trans, sizeof out.position);
                         memcpy(out.rotation, srcBase[i].rotQuat, sizeof out.rotation);
-                        out.physicsDisabled = flagMap[i];
+                        out.poseEdited = flagMap[i];
                     }
                     // second keyframe cluster + data buffer (0x449BB5-0x449CC2)
                     undo.recordCount = 0;
-                    void*& dataSlot = undo.auxiliaryPose;
+                    auto*& dataSlot = undo.keySnapshots;
                     if (dataSlot != nullptr) {
                         ::operator delete(dataSlot);
                         dataSlot = nullptr;
                     }
-                    dataSlot = ::operator new(static_cast<std::size_t>(boneCnt) * 0x40);
-                    memset(dataSlot, 0, static_cast<std::size_t>(boneCnt) * 0x40);
-                    memset(mikudancestudio::mdl::Mdl(m)->keyVisitMap, 0,
-                           sizeof(mikudancestudio::mdl::Mdl(m)->keyVisitMap));
+                    dataSlot = static_cast<mdl::BoneKeyUndoEntry*>(::operator new(
+                        static_cast<std::size_t>(selectedBoneKeyCount) * sizeof(*dataSlot)));
+                    memset(dataSlot, 0,
+                           static_cast<std::size_t>(selectedBoneKeyCount) * sizeof(*dataSlot));
+                    memset(m->keyVisitMap, 0, sizeof(m->keyVisitMap));
                     // feed every set bone flag to 0x49D410 (0x449CF0-0x449D1C)
                     for (std::size_t i = 0; i < mikudancestudio::mdl::kBoneKeyCapacity; ++i)
                         if (bones[i].allocated != 0)
@@ -206,8 +200,8 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                     // bone-temp records (0x449D1E-0x449F53): 6 flags per 0x168-stride
                     // record -> 0xA0414/0xA0418, qsorted
                     std::int32_t* bout = static_cast<std::int32_t*>(
-                        ::operator new(static_cast<std::size_t>(boneCnt) * 0x10));
-                    app->TimelineSelectionRecords(TimelineSelectionBand::ModelIk) =
+                        ::operator new(static_cast<std::size_t>(selectedBoneKeyCount) * 0x10));
+                    app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone) =
                         reinterpret_cast<TimelineSelectionRecord*>(bout);
                     int idx = 2;
                     for (std::size_t i = 0; i < mikudancestudio::mdl::kBoneKeyCapacity / 6; ++i) {
@@ -221,23 +215,23 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                         }
                         idx += 6;
                     }
-                    qsort(app->TimelineSelectionRecords(TimelineSelectionBand::ModelIk),
-                          static_cast<std::size_t>(boneCnt), 0x10, CompareFunction);
+                    qsort(app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone),
+                          static_cast<std::size_t>(selectedBoneKeyCount), 0x10, CompareFunction);
                 }
                 // morph-temp records (0x449F56-0x44A1C2): 5 flags per 0x64-stride
                 // record -> 0xA041C/0xA0420, qsorted
-                std::int32_t& morphCnt =
+                std::int32_t& selectedMorphKeyCount =
                     app->TimelineSelectionCount(TimelineSelectionBand::ModelMorph);
-                morphCnt = 0;
+                selectedMorphKeyCount = 0;
                 {
-                    unsigned char* mm = ActiveModel(app);
-                    mikudancestudio::mdl::MorphKey* morphs = mikudancestudio::mdl::MorphKeys(mm);
+                    mdl::ModelRecord* mm = ActiveModel(app);
+                    mikudancestudio::mdl::MorphKey* morphs = mm->morphKeys;
                     for (std::size_t i = 0; i < mikudancestudio::mdl::kMorphKeyCapacity; ++i)
                         if (morphs[i].allocated != 0)
-                            ++morphCnt;
-                    if (morphCnt > 0) {
+                            ++selectedMorphKeyCount;
+                    if (selectedMorphKeyCount > 0) {
                         std::int32_t* mout = static_cast<std::int32_t*>(
-                            ::operator new(static_cast<std::size_t>(morphCnt) * 0x10));
+                            ::operator new(static_cast<std::size_t>(selectedMorphKeyCount) * 0x10));
                         app->TimelineSelectionRecords(TimelineSelectionBand::ModelMorph) =
                             reinterpret_cast<TimelineSelectionRecord*>(mout);
                         int idx = 2;
@@ -253,24 +247,25 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                             idx += 5;
                         }
                         qsort(app->TimelineSelectionRecords(TimelineSelectionBand::ModelMorph),
-                              static_cast<std::size_t>(morphCnt), 0x10, CompareFunction);
+                              static_cast<std::size_t>(selectedMorphKeyCount), 0x10,
+                              CompareFunction);
                     }
                 }
                 // IK-temp records (0x44A1C2-0x44A426): 5 flags per 0x8C-stride
                 // record -> 0xA0424/0xA0428, qsorted at loc_44A426
-                std::int32_t& ikCnt = app->TimelineSelectionCount(TimelineSelectionBand::ModelBone);
-                ikCnt = 0;
+                std::int32_t& selectedDisplayKeyCount =
+                    app->TimelineSelectionCount(TimelineSelectionBand::ModelDisplay);
+                selectedDisplayKeyCount = 0;
                 {
-                    unsigned char* mm = ActiveModel(app);
-                    mikudancestudio::mdl::DisplayKey* displayKeys =
-                        mikudancestudio::mdl::DisplayKeys(mm);
+                    mdl::ModelRecord* mm = ActiveModel(app);
+                    mikudancestudio::mdl::DisplayKey* displayKeys = mm->displayKeys;
                     for (std::size_t i = 0; i < mikudancestudio::mdl::kDisplayKeyCapacity; ++i)
                         if (displayKeys[i].allocated != 0)
-                            ++ikCnt;
-                    if (ikCnt > 0) {
-                        std::int32_t* iout = static_cast<std::int32_t*>(
-                            ::operator new(static_cast<std::size_t>(ikCnt) * 0x10));
-                        app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone) =
+                            ++selectedDisplayKeyCount;
+                    if (selectedDisplayKeyCount > 0) {
+                        std::int32_t* iout = static_cast<std::int32_t*>(::operator new(
+                            static_cast<std::size_t>(selectedDisplayKeyCount) * 0x10));
+                        app->TimelineSelectionRecords(TimelineSelectionBand::ModelDisplay) =
                             reinterpret_cast<TimelineSelectionRecord*>(iout);
                         int idx = 2;
                         for (int i = 0; i < 0xC8; ++i) { // 0x6D60/0x8C
@@ -287,9 +282,9 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                     }
                 }
                 // fall into the shared qsort site at loc_44A426 with the IK pair.
-                qsort(app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone),
+                qsort(app->TimelineSelectionRecords(TimelineSelectionBand::ModelDisplay),
                       static_cast<std::size_t>(
-                          app->TimelineSelectionCount(TimelineSelectionBand::ModelBone)),
+                          app->TimelineSelectionCount(TimelineSelectionBand::ModelDisplay)),
                       0x10, CompareFunction);
             }
         }
@@ -383,13 +378,13 @@ static void ToggleModelKeyAllocated(MMDApp* app, KeyT& key, bool shiftActive) {
 // whose flag at +0x64 is toggled.
 static void HandleLButtonDown_MarginColumnToggle(MMDApp* app, std::int32_t y) {
     if (app->CameraMode() == 0) { // 760 (0x2F8)
-        unsigned char* model = app->SelectedModel();
+        mdl::ModelRecord* model = app->SelectedModel();
         if (model == nullptr)
             return;
         const std::int32_t type =
-            static_cast<std::int8_t>(mdl::Mdl(model)->boneListRowType[TrackRowFromDelta(y - 0xA0)]);
+            static_cast<std::int8_t>(model->boneListRowType[TrackRowFromDelta(y - 0xA0)]);
         if (type > 0) {
-            mdl::DisplayGroup& frame = mdl::DisplayGroups(model)[type];
+            mdl::DisplayGroup& frame = model->displayGroups[type];
             frame.flags = (frame.flags == 0) ? 1 : 0; // cmp/setz toggle
             RebuildTimelineTrackPanel(app);           // 0x42F1E0
         }
@@ -399,8 +394,8 @@ static void HandleLButtonDown_MarginColumnToggle(MMDApp* app, std::int32_t y) {
 
 // ---- S3+S4 (VA 0x446BA1-0x44738F): name column (X in (20,95]) --------------
 // Bone/morph row selection; entered with the row gates already checked.
-// Edit mode selects the clicked row (row table model+0x2E88, special morph
-// rows encoded as -1-idx, -999 = "bottom" morph row) and dispatches the
+// Edit mode selects the clicked row (row table model+0x2E88, morph
+// rows encoded as -1-index, -999 = empty row) and dispatches the
 // row-type handlers (model+0x2DC0 byte); display mode goes to the S4
 // sub-branch below.
 static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t y) {
@@ -472,53 +467,52 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
     if (ActiveModel(app) == nullptr)
         return;
     if (!app->ShiftModifierActive()) {
-        unsigned char* m0 = ActiveModel(app);
-        const std::int32_t boneCount = mikudancestudio::mdl::Mdl(m0)->boneCount;
+        mdl::ModelRecord* m0 = ActiveModel(app);
+        const std::int32_t boneCount = m0->boneCount;
         for (int i = 0; i < boneCount; ++i) {
-            unsigned char* mm = ActiveModel(app);
-            mikudancestudio::mdl::Mdl(mm)->boneSelection[i] = 0;
+            mdl::ModelRecord* mm = ActiveModel(app);
+            mm->boneSelection[i] = 0;
         }
-        for (int i = 0; i < static_cast<int>(mdl::Mdl(m0)->facialFrameCount); ++i) {
-            unsigned char* mm = ActiveModel(app);
-            mdl::DisplayFrames(mm)[i].selected = 0;
+        for (int i = 0; i < static_cast<int>(m0->facialFrameCount); ++i) {
+            mdl::ModelRecord* mm = ActiveModel(app);
+            mm->displayFrames[i].selected = 0;
         }
-        mikudancestudio::mdl::Mdl(ActiveModel(app))->displayKeyframesPresent = 0;
+        ActiveModel(app)->displayKeyframesPresent = 0;
     }
 
     // loc_446C8A: row lookup + selection toggle
     {
-        unsigned char* m = ActiveModel(app);
+        mdl::ModelRecord* m = ActiveModel(app);
         const std::int32_t row = TrackRowFromDelta(y - 0xA0);
-        const std::int32_t idx = mikudancestudio::mdl::Mdl(m)->boneListRowRecord[row];
+        const std::int32_t idx = m->boneListRowRecord[row];
         if (idx >= 0) {
-            unsigned char* p = mikudancestudio::mdl::Mdl(m)->boneSelection + idx;
+            unsigned char* p = m->boneSelection + idx;
             if (*p != 0) {
                 *p = 0;
             } else {
                 *p = 1;
-                mikudancestudio::mdl::Mdl(m)->selectedBone = idx;
+                m->selectedBone = idx;
             }
             // via 0x44702D
-        } else if (idx == -999) { // 0xFFFFFC19
+        } else if (idx != -999) { // 0xFFFFFC19 is an empty row, not a morph.
             const std::int32_t want = -1 - idx;
-            const std::int32_t morphCount =
-                static_cast<std::int32_t>(mdl::Mdl(m)->facialFrameCount);
+            const std::int32_t morphCount = static_cast<std::int32_t>(m->facialFrameCount);
             int i = 0;
             for (; i < morphCount; ++i) {
-                if (mdl::DisplayFrames(m)[i].targetIndex == want)
+                if (m->displayFrames[i].targetIndex == want)
                     break;
             }
             if (i < morphCount) {
-                // morph row found: toggle its flag, then sync the bone
-                // name combo (controls 0x1F8..0x209 by bone row type)
-                mdl::FrameGroup& faceRec = mdl::DisplayFrames(m)[i];
+                // Morph row found: toggle its selection, then synchronize the
+                // matching morph panel by name and current value.
+                mdl::FrameGroup& faceRec = m->displayFrames[i];
                 if (faceRec.selected != 0) {
                     faceRec.selected = 0;
                     // via 0x44702D
                 } else {
                     faceRec.selected = 1;
                     const std::int32_t morphIndex = faceRec.targetIndex;
-                    auto& morph = mikudancestudio::mdl::Morphs(m)[morphIndex];
+                    auto& morph = m->morphs[morphIndex];
                     const auto panel = morph.panel;
                     HWND hCombo = nullptr, hSpin = nullptr, hText = nullptr;
                     switch (panel) { // 0x446D99-0x446E77
@@ -547,7 +541,7 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
                     }
                     // Preserve the active morph separately for each panel.
                     const auto panelIndex = static_cast<unsigned>(panel) - 1;
-                    mikudancestudio::mdl::Mdl(m)->selectedMorphs[panelIndex] = morphIndex;
+                    m->selectedMorphs[panelIndex] = morphIndex;
                     // sync the combo cursor with the morph name
                     // (CB_GETCOUNT 0x146 / CB_GETLBTEXT 0x148 / CB_SETCURSEL
                     // 0x14E, 0x446EC0-0x446FAE)
@@ -561,9 +555,7 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
                     }
                     // Morph value spin/text sync (0x446FB4-0x447027):
                     // spin gets (int)(value*100.0), text gets "%5.4f"
-                    const float v = mikudancestudio::mdl::Morphs(
-                                        m)[mikudancestudio::mdl::Mdl(m)->selectedMorphs[panelIndex]]
-                                        .value;
+                    const float v = m->morphs[m->selectedMorphs[panelIndex]].value;
                     SendMessageA(hSpin, TBM_SETPOS, 1,
                                  static_cast<LPARAM>(static_cast<std::int32_t>(v * 100.0)));
                     char valBuf[0x64];
@@ -577,19 +569,18 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
     // loc_447034: row-type dispatch after selection (entry point for
     // the selection paths above)
     {
-        unsigned char* m = ActiveModel(app);
-        const std::int32_t type = static_cast<std::int8_t>(
-            mikudancestudio::mdl::Mdl(m)->boneListRowType[TrackRowFromDelta(y - 0xA0)]);
+        mdl::ModelRecord* m = ActiveModel(app);
+        const std::int32_t type =
+            static_cast<std::int8_t>(m->boneListRowType[TrackRowFromDelta(y - 0xA0)]);
         if (type == 1) {
-            mdl::Mdl(m)->displayKeyframesPresent =
-                (mdl::Mdl(m)->displayKeyframesPresent == 0) ? 1 : 0; // setz
+            m->displayKeyframesPresent = (m->displayKeyframesPresent == 0) ? 1 : 0; // setz
             RebuildTimelineTrackPanel(app);
             InvalidateSelectionReadouts(app);
             return;
         }
         if (type == 2) {
-            for (int i = 0; i < static_cast<int>(mdl::Mdl(m)->facialFrameCount); ++i) {
-                mdl::FrameGroup& face = mdl::DisplayFrames(m)[i];
+            for (int i = 0; i < static_cast<int>(m->facialFrameCount); ++i) {
+                mdl::FrameGroup& face = m->displayFrames[i];
                 face.selected = (face.selected == 0) ? 1 : 0;
             }
             RebuildTimelineTrackPanel(app);
@@ -605,11 +596,11 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
         // for each record whose type byte (record+0x28, read signed like
         // the original movsx) matches the clicked row type, toggle the
         // selection flag of the bone named by the uint16 at record+0x2A.
-        for (int i = 0; i < static_cast<int>(mdl::Mdl(m)->rigidBodyCount); ++i) {
-            mdl::FrameGroup& rigid = mdl::RigidGroups(m)[i];
+        for (int i = 0; i < static_cast<int>(m->displayBoneCount); ++i) {
+            mdl::FrameGroup& rigid = m->displayBones[i];
             if (static_cast<std::int8_t>(rigid.groupIndex) == type) {
                 const std::int32_t boneIdx = rigid.targetIndex;
-                unsigned char* p = mikudancestudio::mdl::Mdl(m)->boneSelection + boneIdx;
+                unsigned char* p = m->boneSelection + boneIdx;
                 if (*p != 0)
                     *p = 0;
                 else
@@ -693,21 +684,17 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
         // records with flag at +0x14
         const std::int32_t ikType = app->state.rowHitIk[row2d];
         if (ikType > 0) {
-            ToggleModelKeyAllocated(
-                app, mikudancestudio::mdl::DisplayKeys(ActiveModel(app))[ikType], shiftActive);
+            ToggleModelKeyAllocated(app, ActiveModel(app)->displayKeys[ikType], shiftActive);
         } else if (ikType == -10) { // loc_447CD9 (row 0)
-            ToggleModelKeyAllocated(app, mikudancestudio::mdl::DisplayKeys(ActiveModel(app))[0],
-                                    shiftActive);
+            ToggleModelKeyAllocated(app, ActiveModel(app)->displayKeys[0], shiftActive);
         }
         // stage 2 (loc_447F03): morph-type flags, model+0x26E4
         // 0x14-stride records with flag at +0x10
         const std::int32_t morphType = app->state.rowHitMorph[row2d];
         if (morphType > 0) {
-            ToggleModelKeyAllocated(
-                app, mikudancestudio::mdl::MorphKeys(ActiveModel(app))[morphType], shiftActive);
+            ToggleModelKeyAllocated(app, ActiveModel(app)->morphKeys[morphType], shiftActive);
         } else if (morphType == -10) { // loc_448189 (row 0)
-            ToggleModelKeyAllocated(app, mikudancestudio::mdl::MorphKeys(ActiveModel(app))[0],
-                                    shiftActive);
+            ToggleModelKeyAllocated(app, ActiveModel(app)->morphKeys[0], shiftActive);
         } else if (morphType == -1) { // loc_4483B8
             StageModelTimelineRangeCell(*app, morphType, column, row, shiftActive);
         } else if (morphType == -2) { // loc_4483F1
@@ -717,11 +704,9 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
         // stride with flag at +0x38
         const std::int32_t boneType = app->state.rowHitBone[row2d];
         if (boneType > 0) {
-            ToggleModelKeyAllocated(app, mikudancestudio::mdl::BoneKeys(ActiveModel(app))[boneType],
-                                    shiftActive);
+            ToggleModelKeyAllocated(app, ActiveModel(app)->boneKeys[boneType], shiftActive);
         } else if (boneType == -10) { // loc_448889 (row 0)
-            ToggleModelKeyAllocated(app, mikudancestudio::mdl::BoneKeys(ActiveModel(app))[0],
-                                    shiftActive);
+            ToggleModelKeyAllocated(app, ActiveModel(app)->boneKeys[0], shiftActive);
         } else if (boneType == -1) { // loc_448AB8
             StageModelTimelineRangeCell(*app, boneType, column, row, shiftActive);
         } else if (boneType == -2) { // loc_448AF1
@@ -748,10 +733,10 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd, std::int32_t
     app->CameraAttachmentTransformSuppressed() = 0;
     // Snapshot every model with edited bones, then clear its edit flags.
     for (int i = 0; i < kModelSlotCount; ++i) {
-        unsigned char* model = ModelAtSlot(app, i);
+        mdl::ModelRecord* model = ModelAtSlot(app, i);
         if (model == nullptr)
             continue;
-        mdl::ModelRecord* modelRecord = mdl::Mdl(model);
+        mdl::ModelRecord* modelRecord = model;
         const std::int32_t n = static_cast<std::int32_t>(modelRecord->boneCount);
         if (n <= 0)
             continue;
@@ -763,7 +748,7 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd, std::int32_t
         if (j < n) {
             // original: sub_4A0080(ecx = model, frame = app+0x980)
             SnapshotPoseBeforeFrameChange(model, app->state.currentFrame);
-            modelRecord = mdl::Mdl(model);
+            modelRecord = model;
             flags = modelRecord->bonePhysicsState;
             for (j = 0; j < n; ++j)
                 flags[j] = 0;
@@ -782,12 +767,12 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd, std::int32_t
                  reinterpret_cast<LPARAM>(frameText));
     // per-slot frame apply + active-slot panel sync (0x44A5C8-0x44A606)
     for (int i = 0; i < kModelSlotCount; ++i) {
-        unsigned char* model = ModelAtSlot(app, i);
+        mdl::ModelRecord* model = ModelAtSlot(app, i);
         if (model == nullptr)
             continue;
         // original: sub_4B4260(ecx = model, frame = app+0x980,
         //            app+0xA0CC4)
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
         if (i == static_cast<int>(app->SelectedModelSlot())) {
             SyncModelEditControls(model);
         }
@@ -817,7 +802,7 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd, std::int32_t
         SyncAccessoryEditPanel(app);
         const std::int32_t sel = app->CameraParentModel();
         if (sel >= 0) {
-            unsigned char* selModel = ModelAtSlot(app, sel);
+            mdl::ModelRecord* selModel = app->ModelSlot(sel);
             // original: sub_4970B0(ecx = model at slot sel)
             ModelApplyMorphs(selModel); // 0x4970B0
             SetPhysicsMode(selModel, 0, app->ModelSlots(),
@@ -870,40 +855,40 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd, std::int32_t
     return;
 }
 
-// ---- S7b (VA 0x44A855-0x44A97D): bone/morph name-row rects ------------------
-// Bone rect: X in (9DA05+3, 9DA05+13), Y in (9DA06+bottom-0x8C,
+// ---- S7b (VA 0x44A855-0x44A97D): interpolation control-point hits ------------
+// First control point: X in (9DA05+3, 9DA05+13), Y in (9DA06+bottom-0x8C,
 // 9DA06+bottom-0x82), gated on byte 9DA04; keyframe insert (0x4A1510)
-// + row marker 0x9DA09 = 1.  Morph rect: same with 9DA07/9DA08, marker 2.
+// + row marker 0x9DA09 = 1.  Second control point: same with 9DA07/9DA08, marker 2.
 // A miss in both rects falls through to the caller's tail (loc_44A97E).
-static void HandleLButtonDown_NameRowRectHit(MMDApp* app, std::int32_t x, std::int32_t y,
-                                             std::int32_t bottom) {
-    const std::int32_t boneOff =
+static void HandleLButtonDown_InterpolationControlPointHit(MMDApp* app, std::int32_t x,
+                                                           std::int32_t y, std::int32_t bottom) {
+    const std::int32_t firstY =
         static_cast<std::int8_t>(app->state.interpCurveControlCache[1]) + bottom;
-    const std::int32_t boneTop = static_cast<std::int8_t>(app->state.interpCurveControlCache[0]);
-    if (x < boneTop + 0xD && x > boneTop + 3 && y > boneOff - 0x8C && y < boneOff - 0x82 &&
+    const std::int32_t firstX = static_cast<std::int8_t>(app->state.interpCurveControlCache[0]);
+    if (x < firstX + 0xD && x > firstX + 3 && y > firstY - 0x8C && y < firstY - 0x82 &&
         app->state.interpCurveUniformFound != 0) {
         if (app->PlaybackActive() != 0)
             return;
-        unsigned char* m = ActiveModel(app);
+        mdl::ModelRecord* m = ActiveModel(app);
         if (m != nullptr) {
             // original: sub_4A1510(ecx = model, frame = app+0x980)
             SnapshotSelectedKeysForUndo(m, app->state.currentFrame);
         }
-        app->PendingTimelineSelectionRow() = TimelineSelectionRow::Bone;
+        app->DraggedInterpolationPoint() = InterpolationControlPoint::First;
         return;
     }
-    const std::int32_t morphOff =
+    const std::int32_t secondY =
         static_cast<std::int8_t>(app->state.interpCurveControlCache[3]) + bottom;
-    const std::int32_t morphTop = static_cast<std::int8_t>(app->state.interpCurveControlCache[2]);
-    if (x < morphTop + 0xD && x > morphTop + 3 && y > morphOff - 0x8C && y < morphOff - 0x82 &&
+    const std::int32_t secondX = static_cast<std::int8_t>(app->state.interpCurveControlCache[2]);
+    if (x < secondX + 0xD && x > secondX + 3 && y > secondY - 0x8C && y < secondY - 0x82 &&
         app->state.interpCurveUniformFound != 0) {
         if (app->PlaybackActive() != 0)
             return;
-        unsigned char* m = ActiveModel(app);
+        mdl::ModelRecord* m = ActiveModel(app);
         if (m != nullptr) {
             SnapshotSelectedKeysForUndo(m, app->state.currentFrame);
         }
-        app->PendingTimelineSelectionRow() = TimelineSelectionRow::Morph;
+        app->DraggedInterpolationPoint() = InterpolationControlPoint::Second;
         return;
     }
 }
@@ -949,7 +934,7 @@ void HandleLButtonDown(MMDApp* app) {
     }
 
     // ---- S5: main area (X in (95, sidebar-18) && row gates) --------------
-    // (0x447390-0x447A4C) gate fail falls into S7 (name-row rects).
+    // (0x447390-0x447A4C) gate fail reaches the header/control-point tests.
     if (rowGateY && x > 0x5F && x < sidebar - 0x12) {
         HandleLButtonDown_TimelineAreaHit(app, hwnd, x, y);
         return;
@@ -961,8 +946,8 @@ void HandleLButtonDown(MMDApp* app) {
         return;
     }
 
-    // ---- S7b: bone/morph name-row rects
-    HandleLButtonDown_NameRowRectHit(app, x, y, rc.bottom);
+    // ---- S7b: interpolation control points
+    HandleLButtonDown_InterpolationControlPointHit(app, x, y, rc.bottom);
 }
 
 } // namespace mikudancestudio

@@ -21,35 +21,32 @@
 
 namespace mikudancestudio {
 
-void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame); // VA 0x004A0080
-void SyncModelEditControls(unsigned char* model);                    // VA 0x004A02C0
 void RefreshSelfShadowPanel(MMDApp* app);
 void ApplyGravityTrack(MMDApp* app);
 void ApplyAccessoryTrack(MMDApp* app, int index);
 void SyncAccessoryEditPanel(MMDApp* app);
 void AviBgOverlayRefresh(MMDApp* app);
-void WaveRestartAt(void* subsystem, double time); // VA 0x004C3530
 
 namespace {
 
-void SnapshotAndClearBoneSelection(MMDApp* app) {
+void SnapshotAndClearPoseEdits(MMDApp* app) {
     // x64 twins sub_7FF7CB4840E0 (0x430F20) / sub_7FF7CB484600 (0x4312E0)
     // sweep all 255 slots (count-down from 0xFF at 0x7FF7CB484121).
     for (int slot = 0; slot < kModelSlotCount; ++slot) {
-        unsigned char* model = app->ModelSlot(slot);
+        mdl::ModelRecord* model = app->ModelSlot(slot);
         if (model == nullptr)
             continue;
-        const mdl::ModelRecord& record = *mdl::Mdl(model);
+        const mdl::ModelRecord& record = *model;
         const std::int32_t count = record.boneCount;
-        unsigned char* selected = record.boneSelection;
+        unsigned char* editFlags = record.bonePhysicsState;
         int index = 0;
-        while (index < count && selected[index] == 0)
+        while (index < count && editFlags[index] == 0)
             ++index;
         if (index >= count)
             continue;
         SnapshotPoseBeforeFrameChange(model, app->state.currentFrame);
         for (index = 0; index < count; ++index)
-            selected[index] = 0;
+            editFlags[index] = 0;
     }
 }
 
@@ -66,10 +63,10 @@ void SetFrameEditText(MMDApp* app) {
 void ApplyFrameToModels(MMDApp* app) {
     // x64 twins run the apply walk as v16 < 255 (0x7FF7CB48424B..290).
     for (int slot = 0; slot < kModelSlotCount; ++slot) {
-        unsigned char* model = app->ModelSlot(slot);
+        mdl::ModelRecord* model = app->ModelSlot(slot);
         if (model == nullptr)
             continue;
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
         if (slot == app->SelectedModelSlot())
             SyncModelEditControls(model);
     }
@@ -104,7 +101,7 @@ void RefreshFrameContext(MMDApp* app) {
         SyncAccessoryEditPanel(app);
         const std::int32_t selected = app->CameraParentModel();
         if (selected >= 0) {
-            unsigned char* model = app->ModelSlot(selected);
+            mdl::ModelRecord* model = app->ModelSlot(selected);
             if (model != nullptr) {
                 ModelApplyMorphs(model);
                 SetPhysicsMode(model, 0, app->ModelSlots(), app->PlaybackPhysicsMode());
@@ -166,7 +163,7 @@ void RefreshTimeline(MMDApp* app, bool forward) {
 // pass the direction flag directly.
 void StepFrame(MMDApp* app, bool forward) {
     app->CameraAttachmentTransformSuppressed() = 0;
-    SnapshotAndClearBoneSelection(app);
+    SnapshotAndClearPoseEdits(app);
     std::int32_t& frame = app->state.currentFrame;
     if (forward)
         ++frame;
@@ -186,7 +183,7 @@ void RefreshAfterFrameApply(MMDApp* app) {
     if (app == nullptr)
         return;
     app->CameraAttachmentTransformSuppressed() = 0;
-    SnapshotAndClearBoneSelection(app);
+    SnapshotAndClearPoseEdits(app);
 
     const std::uint32_t frame = app->state.currentFrame;
     const std::uint32_t visible = static_cast<std::uint32_t>((app->SidebarWidth() - 84) / 26);

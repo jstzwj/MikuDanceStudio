@@ -55,10 +55,6 @@
 namespace mikudancestudio {
 namespace {
 
-unsigned char* ActiveModel(MMDApp* app) {
-    return app->SelectedModel();
-}
-
 const char kCameraLightName[] = // 0x52BCB8 JP "camera/lighting" (byte-exact)
     "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe";
 const char kJpCannotSave[] = // 0x52BCE4
@@ -79,7 +75,7 @@ void SaveVmdFile(const wchar_t* path) {
     auto& s = *app;
 
     const bool cameraMode = s.CameraMode() != 0;
-    unsigned char* const model = ActiveModel(app);
+    const mdl::ModelRecord* const model = app->SelectedModel();
 
     // ---- pass 1: counts + minimum frame ---------------------------------
     std::uint32_t minFrame = 0xFFFFFFFF;
@@ -87,7 +83,7 @@ void SaveVmdFile(const wchar_t* path) {
     unsigned int camCnt = 0, lightCnt = 0, shadowCnt = 0;
 
     if (!cameraMode) {
-        const mdl::BoneKey* keys = mdl::BoneKeys(model);
+        const mdl::BoneKey* keys = model->boneKeys;
         for (unsigned int i = 0; i < static_cast<unsigned int>(mdl::kBoneKeyCapacity); ++i) {
             if (keys[i].allocated != 0) {
                 ++boneCnt;
@@ -96,7 +92,7 @@ void SaveVmdFile(const wchar_t* path) {
                     minFrame = f;
             }
         }
-        const mdl::MorphKey* mkeys = mdl::MorphKeys(model);
+        const mdl::MorphKey* mkeys = model->morphKeys;
         for (unsigned int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
             if (mkeys[i].allocated != 0) {
                 ++morphCnt;
@@ -105,7 +101,7 @@ void SaveVmdFile(const wchar_t* path) {
                     minFrame = f;
             }
         }
-        const mdl::DisplayKey* ikeys = mdl::DisplayKeys(model);
+        const mdl::DisplayKey* ikeys = model->displayKeys;
         for (unsigned int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             if (ikeys[i].allocated != 0) {
                 ++ikCnt;
@@ -116,7 +112,7 @@ void SaveVmdFile(const wchar_t* path) {
         }
     } else {
         const mdl::CameraKey* cam = app->CameraKeys();
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned int i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
             if (cam[i].selected != 0) {
                 ++camCnt;
                 const std::uint32_t f = cam[i].frame;
@@ -125,7 +121,7 @@ void SaveVmdFile(const wchar_t* path) {
             }
         }
         const mdl::LightKey* light = app->LightKeys();
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned int i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
             if (light[i].selected != 0) {
                 ++lightCnt;
                 const std::uint32_t f = light[i].frame;
@@ -134,7 +130,7 @@ void SaveVmdFile(const wchar_t* path) {
             }
         }
         const mdl::SelfShadowKey* shadow = app->ShadowKeys();
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned int i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
             if (shadow[i].selected != 0) {
                 ++shadowCnt;
                 const std::uint32_t f = shadow[i].frame;
@@ -161,7 +157,7 @@ void SaveVmdFile(const wchar_t* path) {
     sprintf_s(buf, 0x100, "%s", "Vocaloid Motion Data 0002");
     Wr(fd, buf, 30); // 0x41981E
     if (!cameraMode) {
-        Wr(fd, mdl::Mdl(model)->name, 20); // 0x419875
+        Wr(fd, model->name, 20); // 0x419875
     } else {
         strcpy_s(buf, 0x100, kCameraLightName);
         Wr(fd, buf, 20); // 0x41984F
@@ -172,17 +168,16 @@ void SaveVmdFile(const wchar_t* path) {
     // and skip their loops (counts all come from global key tables app+976/984/992). These model-side
     // counts and table pointers are read only in model mode; model may be null in camera mode.
     int boneCount = 0, morphCount = 0, ikChainCount = 0;
-    mikudancestudio::mdl::BoneRecord* bones = nullptr;
-    mikudancestudio::mdl::MorphRecord* morphs = nullptr;
-    mikudancestudio::mdl::IkChain* ikChains = nullptr;
+    const mdl::BoneRecord* bones = nullptr;
+    const mdl::MorphRecord* morphs = nullptr;
+    const mdl::IkChain* ikChains = nullptr;
     if (!cameraMode) {
-        auto* const rec = mdl::Mdl(model);
-        boneCount = rec->boneCount;
-        morphCount = rec->morphCount;
-        ikChainCount = rec->ikChainCount;
-        bones = mikudancestudio::mdl::Bones(model);
-        morphs = mikudancestudio::mdl::Morphs(model);
-        ikChains = mikudancestudio::mdl::IkChains(model);
+        boneCount = model->boneCount;
+        morphCount = model->morphCount;
+        ikChainCount = model->ikChainCount;
+        bones = model->boneTable;
+        morphs = model->morphs;
+        ikChains = model->ikChains;
     }
 
     std::uint32_t outDword;
@@ -190,7 +185,7 @@ void SaveVmdFile(const wchar_t* path) {
     outDword = cameraMode ? 0 : boneCnt;
     Wr(fd, &outDword, 4); // 0x419889
     if (!cameraMode) {
-        const mdl::BoneKey* keys = mdl::BoneKeys(model);
+        const mdl::BoneKey* keys = model->boneKeys;
         for (unsigned int idx = 0; idx < static_cast<unsigned int>(mdl::kBoneKeyCapacity); ++idx) {
             const mdl::BoneKey& rec = keys[idx];
             if (rec.allocated == 0)
@@ -225,7 +220,7 @@ void SaveVmdFile(const wchar_t* path) {
     outDword = cameraMode ? 0 : morphCnt;
     Wr(fd, &outDword, 4); // 0x419B8F
     if (!cameraMode) {
-        const mdl::MorphKey* mkeys = mdl::MorphKeys(model);
+        const mdl::MorphKey* mkeys = model->morphKeys;
         for (unsigned int idx = 0; idx < static_cast<int>(mdl::kMorphKeyCapacity); ++idx) {
             const mdl::MorphKey& rec = mkeys[idx];
             if (rec.allocated == 0)
@@ -245,7 +240,7 @@ void SaveVmdFile(const wchar_t* path) {
     Wr(fd, &outDword, 4); // 0x419E60
     if (camCnt != 0) {
         const mdl::CameraKey* cam = app->CameraKeys();
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned int i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
             const mdl::CameraKey& rec = cam[i];
             if (rec.selected == 0)
                 continue;
@@ -272,7 +267,7 @@ void SaveVmdFile(const wchar_t* path) {
     Wr(fd, &outDword, 4); // 0x419F4D
     if (lightCnt != 0) {
         const mdl::LightKey* light = app->LightKeys();
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned int i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
             const mdl::LightKey& rec = light[i];
             if (rec.selected == 0)
                 continue;
@@ -288,7 +283,7 @@ void SaveVmdFile(const wchar_t* path) {
     Wr(fd, &outDword, 4); // 0x419FD6
     if (shadowCnt != 0) {
         const mdl::SelfShadowKey* shadow = app->ShadowKeys();
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned int i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
             const mdl::SelfShadowKey& rec = shadow[i];
             if (rec.selected == 0)
                 continue;
@@ -303,7 +298,7 @@ void SaveVmdFile(const wchar_t* path) {
     outDword = cameraMode ? 0 : ikCnt;
     Wr(fd, &outDword, 4); // 0x41A17B..
     if (!cameraMode && outDword != 0) {
-        const mdl::DisplayKey* ikeys = mdl::DisplayKeys(model);
+        const mdl::DisplayKey* ikeys = model->displayKeys;
         for (unsigned int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             const mdl::DisplayKey& rec = ikeys[i];
             if (rec.allocated == 0)

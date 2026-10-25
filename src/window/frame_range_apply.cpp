@@ -99,16 +99,16 @@ struct DisplayCopy {
     std::vector<mdl::SelectorClipboardState> relations;
 };
 
-void ScaleBoneKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t start,
+void ScaleBoneKeys(MMDApp* app, mdl::ModelRecord* model, HWND hDlg, std::uint32_t start,
                    std::uint32_t end, double scale) {
     if (IsDlgButtonChecked(hDlg, panel::kScaleBoneCheckbox) != BST_CHECKED)
         return;
 
-    mdl::BoneKey* const keys = mdl::BoneKeys(model);
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
-    mdl::BoneRecord* const bones = mdl::Bones(model);
-    const int boneCount = static_cast<int>(mdl::Mdl(model)->boneCount);
+    mdl::BoneKey* const keys = model->boneKeys;
+    mdl::MorphKey* const morphKeys = model->morphKeys;
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
+    mdl::BoneRecord* const bones = model->boneTable;
+    const int boneCount = static_cast<int>(model->boneCount);
 
     int count = 0;
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
@@ -158,16 +158,16 @@ void ScaleBoneKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t s
     TraceRange("bone.inserted");
 }
 
-void ScaleMorphKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t start,
+void ScaleMorphKeys(MMDApp* app, mdl::ModelRecord* model, HWND hDlg, std::uint32_t start,
                     std::uint32_t end, double scale) {
     if (IsDlgButtonChecked(hDlg, panel::kScaleMorphCheckbox) != BST_CHECKED)
         return;
 
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(model);
-    mdl::MorphKey* const keys = mdl::MorphKeys(model);
-    mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
-    mdl::MorphRecord* const morphs = mdl::Morphs(model);
-    const int morphCount = static_cast<int>(mdl::Mdl(model)->morphCount);
+    mdl::BoneKey* const boneKeys = model->boneKeys;
+    mdl::MorphKey* const keys = model->morphKeys;
+    mdl::DisplayKey* const displayKeys = model->displayKeys;
+    mdl::MorphRecord* const morphs = model->morphs;
+    const int morphCount = static_cast<int>(model->morphCount);
 
     int count = 0;
     for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
@@ -209,19 +209,19 @@ void ScaleMorphKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t 
     TraceRange("morph.inserted");
 }
 
-void ScaleDisplayKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t start,
+void ScaleDisplayKeys(MMDApp* app, mdl::ModelRecord* model, HWND hDlg, std::uint32_t start,
                       std::uint32_t end, double scale) {
     if (IsDlgButtonChecked(hDlg, panel::kScaleDispIkCheckbox) != BST_CHECKED)
         return;
 
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(model);
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
-    mdl::DisplayKey* const keys = mdl::DisplayKeys(model);
-    mdl::BoneRecord* const bones = mdl::Bones(model);
-    mdl::IkChain* const ikChains = mdl::IkChains(model);
-    const mdl::BoneOrderEntry* const selectors = mdl::BoneOrder(model);
-    const int ikCount = static_cast<int>(mdl::Mdl(model)->ikChainCount);
-    const int relationCount = static_cast<int>(mdl::Mdl(model)->boneOrderCount);
+    mdl::BoneKey* const boneKeys = model->boneKeys;
+    mdl::MorphKey* const morphKeys = model->morphKeys;
+    mdl::DisplayKey* const keys = model->displayKeys;
+    mdl::BoneRecord* const bones = model->boneTable;
+    mdl::IkChain* const ikChains = model->ikChains;
+    const mdl::BoneOrderEntry* const selectors = model->boneOrderTable;
+    const int ikCount = static_cast<int>(model->ikChainCount);
+    const int relationCount = static_cast<int>(model->boneOrderCount);
 
     int count = 0;
     for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
@@ -294,7 +294,7 @@ void ApplyFrameRangeScale(HWND hDlg) {
     MMDApp* const app = g_Block;
     if (app == nullptr)
         return;
-    unsigned char* const model = app->SelectedModel();
+    mdl::ModelRecord* const model = app->SelectedModel();
     if (model == nullptr)
         return;
 
@@ -324,10 +324,10 @@ void ApplyFrameRangeScale(HWND hDlg) {
     ScaleDisplayKeys(app, model, hDlg, start, end, scale);
     TraceRange("families_done");
 
-    const std::uint32_t modelMax = mdl::Mdl(model)->maxFrame;
+    const std::uint32_t modelMax = model->maxFrame;
     if (app->LastRegisteredFrame() < modelMax)
         app->LastRegisteredFrame() = modelMax;
-    SeekModelFrame(*mdl::Mdl(model), app->CurrentFrame(), app->PlaybackPhysicsMode());
+    SeekModelFrame(*model, app->CurrentFrame(), app->PlaybackPhysicsMode());
     PanelPaint(app);
     SelectionReeval(app);
     app->SceneModified() = 1;

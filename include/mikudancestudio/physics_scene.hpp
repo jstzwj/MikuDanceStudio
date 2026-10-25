@@ -35,6 +35,12 @@ namespace mikudancestudio {
 
 class D3DRenderer;
 
+// Runtime creation result: the first value is an integer ID, not a pointer.
+struct RigidBodyCreationResult {
+    std::intptr_t id;
+    btRigidBody* body;
+};
+
 class PhysicsScene {
 public:
     D3DRenderer* owner; // 0 / 0     set by SceneConstruct

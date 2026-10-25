@@ -56,7 +56,7 @@ constexpr UINT kD3dxDefault = 0xFFFFFFFFu;
 // ===========================================================================
 int CollectToonFileNames(HWND hDlg) { // VA 0x0041EA20
     MMDApp* app = g_Block;
-    mdl::ModelRecord& model = *mdl::Mdl(app->SelectedModel());
+    mdl::ModelRecord& model = *app->SelectedModel();
     D3DRenderer* renderer = app->Renderer();
     int allFound = 1;
     for (int i = 1; i <= 10; ++i) {
@@ -72,8 +72,7 @@ int CollectToonFileNames(HWND hDlg) { // VA 0x0041EA20
             ConvertAnsiToWide(renderer, name, rel, 0x100);
         wchar_t path[0x100];
         swprintf_s(path, 0x100, L"%s%s", model.modelDirectory, rel);
-        if (path[0] != L'\0' &&
-            LoadTextureShared(reinterpret_cast<unsigned char*>(renderer), path) != 0) {
+        if (path[0] != L'\0' && LoadTextureShared(renderer, path) != 0) {
             strcpy_s(model.pmdToonFileNames[i - 1], 0x64, name);
         } else {
             allFound = 0;
@@ -131,7 +130,7 @@ int CollectToonFileNames(HWND hDlg) { // VA 0x0041EA20
 // OVERWRITES (not adds to) the raw vertex position with its offset.
 // ===========================================================================
 void SaveEnhancedModel(MMDApp* app, const wchar_t* path) { // 0x41EC10
-    mdl::ModelRecord& model = *mdl::Mdl(app->SelectedModel());
+    mdl::ModelRecord& model = *app->SelectedModel();
     D3DRenderer* renderer = app->Renderer();
 
     int fh = -1;
@@ -289,10 +288,11 @@ void SaveEnhancedModel(MMDApp* app, const wchar_t* path) { // 0x41EC10
         _write(fh, groups[m].name, 0x32);
 
     // ---- rigid-body display list -------------------------------------------
-    _write(fh, &model.rigidBodyCount, 4);
-    mdl::FrameGroup* const rbGroups = mdl::RigidGroups(reinterpret_cast<unsigned char*>(&model));
-    for (std::uint32_t k = 0; k < model.rigidBodyCount; ++k) {
-        const mdl::FrameGroup& rb = rbGroups[k];
+    _write(fh, &model.displayBoneCount, 4);
+    mdl::FrameGroup* const displayBones =
+        mdl::DisplayBones(reinterpret_cast<unsigned char*>(&model));
+    for (std::uint32_t k = 0; k < model.displayBoneCount; ++k) {
+        const mdl::FrameGroup& rb = displayBones[k];
         _write(fh, &rb.targetIndex, 2);
         // reader adds 1 (+1 with the facial group) back
         const std::uint8_t groupIdx =
@@ -365,8 +365,8 @@ void SaveEnhancedModel(MMDApp* app, const wchar_t* path) { // 0x41EC10
 // position + diffuse) and fills every vertex's colour with opaque
 // ARGB(r, g, b).
 // ===========================================================================
-void SetModelColor(MMDApp* modelPtr, int r, int g, int b) {
-    mdl::ModelRecord& model = *mdl::Mdl(reinterpret_cast<unsigned char*>(modelPtr));
+void SetModelColor(mdl::ModelRecord* modelPtr, int r, int g, int b) {
+    mdl::ModelRecord& model = *modelPtr;
     if (model.physicsMode == 2)
         return;
     if (model.vertexCount == 0)
@@ -374,8 +374,8 @@ void SetModelColor(MMDApp* modelPtr, int r, int g, int b) {
     IDirect3DVertexBuffer9* vb = mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2);
     if (vb == nullptr)
         return;
-    void* bits = nullptr;
-    vb->Lock(0, 16 * model.vertexCount, &bits, 0);
+    mdl::EdgeVertex* bits = nullptr;
+    vb->Lock(0, sizeof(mdl::EdgeVertex) * model.vertexCount, reinterpret_cast<void**>(&bits), 0);
     if (bits == nullptr) {
         vb->Unlock();
         return;
@@ -385,7 +385,7 @@ void SetModelColor(MMDApp* modelPtr, int r, int g, int b) {
                                 (static_cast<std::uint32_t>(g & 0xFF) << 8) |
                                 static_cast<std::uint32_t>(b & 0xFF);
     for (std::uint32_t i = 0; i < model.vertexCount; ++i) {
-        *reinterpret_cast<std::uint32_t*>(static_cast<unsigned char*>(bits) + 16 * i + 12) = color;
+        bits[i].diffuse = color;
     }
     vb->Unlock();
 }
@@ -759,8 +759,8 @@ void RefreshMenuLanguage(MMDApp* app) { // VA 0x0040B5A0
 // bottom-left pixel colour into the entry's tag bytes; entries that fail
 // to reload keep a null texture with zeroed colour.
 // ===========================================================================
-void ReloadTextureCache(void* rendererArg) {
-    D3DRenderer* renderer = static_cast<D3DRenderer*>(rendererArg);
+void ReloadTextureCache(D3DRenderer* renderer) {
+
     IDirect3DDevice9* device = renderer->device;
     auto* d3dx = &d3dx::Get();
 

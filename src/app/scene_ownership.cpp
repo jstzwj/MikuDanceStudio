@@ -41,7 +41,7 @@ void ReleaseSceneModels(MMDApp& app) {
     // model slots (app+0xBE8), each entry through sub_7FF7CB4C8D50
     // (ModelDispose twin) then operator delete - kModelSlotCount wide.
     for (int slot = 0; slot < kModelSlotCount; ++slot) {
-        unsigned char*& model = app.ModelSlot(slot);
+        mdl::ModelRecord*& model = app.ModelSlot(slot);
         if (model == nullptr)
             continue;
         ModelDispose(model);

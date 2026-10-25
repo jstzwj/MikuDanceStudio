@@ -297,24 +297,20 @@ void SelectionReeval(MMDApp* app); // VA 0x00430510 (stubs.cpp)
 // real bodies as the corresponding functions are ported.  The dialog procs
 // are now implemented below ("Dialog proc implementations").
 // ---------------------------------------------------------------------------
-void RefreshMainWindowViewport(MMDApp* app); // VA 0x0042C810 viewport refresh
-void AviBgOverlayRefresh(MMDApp* app);       // VA 0x004168D0 (bg_overlay.cpp)
-void PicBgOverlayRefresh(MMDApp* app);       // VA 0x00417130 (bg_overlay.cpp)
-void PostDeviceReset(MMDApp* app);           // VA 0x00440DB0 (device_reset.cpp)
-void LayoutViewportPanels(MMDApp* app);      // VA 0x0040CAC0
-                                             // (ui_viewport_layout.cpp)
-void SnapshotSelectedKeysForUndo(unsigned char* model, int frame); // VA 0x004A1510
-void DeleteMarkedKeyframes(MMDApp* app);                           // VA 0x004316B0 frame
-                                                                   // cleanup (delete unused)
-void LoadVsqFile(MMDApp* app, const wchar_t* path);                // VA 0x00435FE0 VSQ load
-void CopyDirPathW(wchar_t* dest, const wchar_t* src);              // VA 0x0042AE20 path copy
+void RefreshMainWindowViewport(MMDApp* app);          // VA 0x0042C810 viewport refresh
+void AviBgOverlayRefresh(MMDApp* app);                // VA 0x004168D0 (bg_overlay.cpp)
+void PicBgOverlayRefresh(MMDApp* app);                // VA 0x00417130 (bg_overlay.cpp)
+void PostDeviceReset(MMDApp* app);                    // VA 0x00440DB0 (device_reset.cpp)
+void LayoutViewportPanels(MMDApp* app);               // VA 0x0040CAC0
+                                                      // (ui_viewport_layout.cpp)
+void DeleteMarkedKeyframes(MMDApp* app);              // VA 0x004316B0 frame
+                                                      // cleanup (delete unused)
+void LoadVsqFile(MMDApp* app, const wchar_t* path);   // VA 0x00435FE0 VSQ load
+void CopyDirPathW(wchar_t* dest, const wchar_t* src); // VA 0x0042AE20 path copy
 // 0x42AE40 path copy - real port in src/media/media_load.cpp as CopyPathW
 void CopyPathW(wchar_t* dest, const wchar_t* src);
-void StartAviRecordFullscreen(MMDApp* app); // VA 0x00464760 (avi_record_start.cpp)
-void StartAviRecordWindow(MMDApp* app);     // VA 0x0045E820 (avi_record_start.cpp)
-void RegisterMorphKeyCurrent(unsigned char* model, int morph,
-                             int frame);         // VA 0x0049EEE0 frame
-                                                 // register (blink keys)
+void StartAviRecordFullscreen(MMDApp* app);      // VA 0x00464760 (avi_record_start.cpp)
+void StartAviRecordWindow(MMDApp* app);          // VA 0x0045E820 (avi_record_start.cpp)
 void RefreshLightPanel(MMDApp* app);             // VA 0x00411070 undo chain
 void RefreshSelfShadowPanel(MMDApp* app);        // VA 0x00411B90 undo chain
 void ApplyGravityTrack(MMDApp* app);             // VA 0x00412330 undo chain
@@ -323,15 +319,7 @@ void ApplyAccessoryTrack(MMDApp* app, int slot); // VA 0x00413120 accessory
 void SyncAccessoryEditPanel(MMDApp* app);        // VA 0x004134E0 undo chain
 // 0x4337A0 picture load - real port in src/media/media_load.cpp
 void LoadBackgroundPicture(MMDApp* app);
-// load (0xE8)
-// accessary paste step (returns
-// int: 0 stops the replay loop)
-void ResetBoneKeyCursor(unsigned char* model); // VA 0x004A4940 frame
-                                               // paste helper (0xFA)
-bool RegisterBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec, int frameOffset,
-                     unsigned char useSelected); // VA 0x0049D880
-                                                 // paste step (0xFA)
-void IdentityCtor(void* obj);                    // VA 0x004C46F0 ctor
+void IdentityCtor(void* obj); // VA 0x004C46F0 ctor
 
 // 32-bit multiply with the original's overflow idiom (mul/seto/neg/or):
 // returns 0xFFFFFFFF when the product overflows (case 250 allocations).
@@ -346,7 +334,7 @@ std::uint32_t MulOrMax(std::uint32_t a, std::uint32_t b) {
 // Active model = slot array at this+0x780 indexed by byte this+0x910
 // (sub_47E8A0 pattern; the original re-derives it on every use).
 static unsigned char* ActiveModel(MMDApp* app) {
-    return app->SelectedModel();
+    return mdl::ModelBytes(app->SelectedModel());
 }
 
 HWND MainHwnd(MMDApp* app) {
@@ -1054,7 +1042,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             break;
         }
         unsigned char* model = ActiveModel(app);
-        SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
+        SnapshotSelectedKeysForUndo(mdl::Mdl(model), app->state.currentFrame);
         std::int32_t frameIdx = 0; // ebx: counts frames (incl. skipped)
         for (std::size_t frameIdx = 0; frameIdx < mdl::kBoneKeyCapacity; ++frameIdx) {
             model = ActiveModel(app);
@@ -1403,16 +1391,16 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             if (registerKeys) {
                 model = ActiveModel(app);
                 mdl::Morphs(model)[blinkMorph].value = 0.0f;
-                RegisterMorphKeyCurrent(model, blinkMorph, frame);
+                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame);
                 model = ActiveModel(app);
                 mdl::Morphs(model)[blinkMorph].value = 1.0f;
-                RegisterMorphKeyCurrent(model, blinkMorph, frame + 2);
+                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame + 2);
                 model = ActiveModel(app);
                 mdl::Morphs(model)[blinkMorph].value = 1.0f;
-                RegisterMorphKeyCurrent(model, blinkMorph, frame + 3);
+                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame + 3);
                 model = ActiveModel(app);
                 mdl::Morphs(model)[blinkMorph].value = 0.0f;
-                RegisterMorphKeyCurrent(model, blinkMorph, frame + 6);
+                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame + 6);
                 ++count;
             }
         }
@@ -1554,32 +1542,37 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
                 rec.boneIndex = i;
                 memcpy(rec.position, bones[i].trans, sizeof rec.position);
                 memcpy(rec.rotation, bones[i].rotQuat, sizeof rec.rotation);
-                rec.physicsDisabled = physicsState[i];
+                rec.poseEdited = physicsState[i];
             }
             model = ActiveModel(app);
             undo.recordCount = 0;
-            if (undo.auxiliaryPose != nullptr) {
-                ::operator delete(undo.auxiliaryPose);
-                undo.auxiliaryPose = nullptr;
+            if (undo.keySnapshots != nullptr) {
+                ::operator delete(undo.keySnapshots);
+                undo.keySnapshots = nullptr;
             }
             const std::int32_t recCount = static_cast<std::int32_t>(app->ClipboardCounts().bones);
-            unsigned char* blob2 = static_cast<unsigned char*>(
-                ::operator new(MulOrMax(static_cast<std::uint32_t>(3 * recCount), 0x40u)));
-            if (blob2 != nullptr) {
-                ConstructArrayElements(blob2, 0x40, static_cast<std::uint32_t>(3 * recCount),
-                                       &IdentityCtor);
+            auto* undoKeys = static_cast<mdl::BoneKeyUndoEntry*>(::operator new(
+                MulOrMax(static_cast<std::uint32_t>(mdl::kUndoKeysPerInsertion * recCount),
+                         sizeof(mdl::BoneKeyUndoEntry))));
+            if (undoKeys != nullptr) {
+                ConstructArrayElements(
+                    undoKeys, sizeof(*undoKeys),
+                    static_cast<std::uint32_t>(mdl::kUndoKeysPerInsertion * recCount),
+                    &IdentityCtor);
             }
             model = ActiveModel(app);
-            undo.auxiliaryPose = blob2;
-            memset(blob2, 0, static_cast<std::size_t>(3 * recCount) * 0x40u);
+            undo.keySnapshots = undoKeys;
+            memset(undoKeys, 0,
+                   static_cast<std::size_t>(recCount) * mdl::kUndoKeysPerInsertion *
+                       sizeof(mdl::BoneKeyUndoEntry));
             memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
-            ResetBoneKeyCursor(model);
+            ResetBoneKeyCursor(mdl::Mdl(model));
             if (recCount > 0) {
                 for (std::int32_t j = 0; j < recCount; ++j) {
                     const mdl::BoneClipboardRecord* src = app->BoneClipboard() + j;
                     mdl::BoneClipboardRecord stackRec = *src;
                     model = ActiveModel(app);
-                    if (!RegisterBoneKey(model, stackRec, app->state.currentFrame, 1)) {
+                    if (!RegisterBoneKey(mdl::Mdl(model), stackRec, app->state.currentFrame, 1)) {
                         break;
                     }
                 }
@@ -1601,24 +1594,23 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         }
         app->SceneModified() = 1;
         // clear the four frame-table selections (all 10000 records each)
-        for (std::size_t key = 0; key < 10000; ++key) {
+        for (std::size_t key = 0; key < mdl::kTimelineKeyCapacity; ++key) {
             app->CameraKeys()[key].selected = 0;
             app->LightKeys()[key].selected = 0;
             app->ShadowKeys()[key].selected = 0;
             app->GravityKeys()[key].selected = 0;
         }
-        for (int tbl = 0; tbl < 0xFF; ++tbl) {
-            unsigned char* t = reinterpret_cast<unsigned char*>(app->AccessoryKeys(tbl));
-            for (std::size_t off = 0; off < 0x927C0u; off += 0x3C) {
-                t[off + 0x18] = 0;
+        for (int tbl = 0; tbl < mdl::kAccessorySlotCount; ++tbl) {
+            mdl::AccessoryKey* keys = app->AccessoryKeys(tbl);
+            for (std::size_t i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
+                keys[i].selected = 0;
             }
         }
         const std::int32_t accCount = static_cast<std::int32_t>(app->ClipboardCounts().accessories);
         for (std::int32_t i = 0; i < accCount; ++i) {
             const mdl::AccessoryClipboardKey* src = app->AccessoryClipboard() + i;
-            unsigned char stackRec[0x34];
-            memcpy(stackRec, src, 0x34);
-            if (!PasteAccessoryKeyRecord(app, stackRec, 1)) {
+            const mdl::AccessoryClipboardKey record = *src;
+            if (!PasteAccessoryKeyRecord(app, record, 1)) {
                 break;
             }
         }
@@ -1628,7 +1620,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         RefreshLightPanel(app);
         RefreshSelfShadowPanel(app);
         ApplyGravityTrack(app);
-        for (std::int32_t i = 0; i < 0xFF; ++i) {
+        for (std::int32_t i = 0; i < mdl::kAccessorySlotCount; ++i) {
             if (app->AccessorySlot(i) != nullptr) {
                 ApplyAccessoryTrack(app, i);
             }
@@ -1678,7 +1670,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (morphCount > 0) {
             for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount; ++m) {
                 model = ActiveModel(app);
-                RegisterMorphKeyCurrent(model, m, app->state.currentFrame);
+                RegisterMorphKeyCurrent(mdl::Mdl(model), m, app->state.currentFrame);
                 model = ActiveModel(app);
                 const std::int32_t frameCount =
                     static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
@@ -1779,7 +1771,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             RefreshLightPanel(app);      // 0x411070
             RefreshSelfShadowPanel(app); // 0x411B90
             ApplyGravityTrack(app);      // 0x412330
-            for (std::int32_t i = 0; i < 0xFF; ++i) {
+            for (std::int32_t i = 0; i < mdl::kAccessorySlotCount; ++i) {
                 if (app->AccessorySlot(i) != nullptr) {
                     ApplyAccessoryTrack(app, i); // 0x413120
                 }
@@ -1964,7 +1956,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->LetterKeyState(LetterKey::C) = 1;
         std::int32_t esi = 0;
         auto* frames = app->CameraKeys();
-        for (std::size_t key = 0; key < 10000; ++key) {
+        for (std::size_t key = 0; key < mdl::kTimelineKeyCapacity; ++key) {
             frames[key].selected = 0;
             const bool used = frames[key].frame != 0;
             if (used || esi == 0) {
@@ -1981,7 +1973,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->LetterKeyState(LetterKey::L) = 1;
         std::int32_t esi = 0;
         auto* frames = app->LightKeys();
-        for (std::size_t key = 0; key < 10000; ++key) {
+        for (std::size_t key = 0; key < mdl::kTimelineKeyCapacity; ++key) {
             frames[key].selected = 0;
             const bool used = frames[key].frame != 0;
             if (used || esi == 0) {
@@ -1997,7 +1989,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->LetterKeyState(LetterKey::S) = 1;
         std::int32_t esi = 0;
         auto* frames = app->ShadowKeys();
-        for (std::size_t key = 0; key < 10000; ++key) {
+        for (std::size_t key = 0; key < mdl::kTimelineKeyCapacity; ++key) {
             frames[key].selected = 0;
             const bool used = frames[key].frame != 0;
             if (used || esi == 0) {
@@ -2013,7 +2005,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->LetterKeyState(LetterKey::V) = 1;
         std::int32_t esi = 0;
         auto* frames = app->GravityKeys();
-        for (std::size_t key = 0; key < 10000; ++key) {
+        for (std::size_t key = 0; key < mdl::kTimelineKeyCapacity; ++key) {
             frames[key].selected = 0;
             const bool used = frames[key].frame != 0;
             if (used || esi == 0) {
@@ -2027,14 +2019,14 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
 
     case MDS_CMD_SELECT_ALL_ACCESSORY_FRAMES: { // 0xF1: all 255 accessory frame tables
         app->LetterKeyState(LetterKey::A) = 1;
-        for (int tbl = 0; tbl < 0xFF; ++tbl) {
-            unsigned char* frames = reinterpret_cast<unsigned char*>(app->AccessoryKeys(tbl));
+        for (int tbl = 0; tbl < mdl::kAccessorySlotCount; ++tbl) {
+            mdl::AccessoryKey* frames = app->AccessoryKeys(tbl);
             std::int32_t esi = 0; // iVar18 resets PER TABLE (0x4834E4)
-            for (std::size_t off = 0; off < 0x927C0u; off += 0x3C) {
-                frames[off + 0x18] = 0;
-                const bool used = *reinterpret_cast<std::int32_t*>(frames + off) != 0;
+            for (std::size_t i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
+                frames[i].selected = 0;
+                const bool used = frames[i].frame != 0;
                 if (used || esi == 0) {
-                    frames[off + 0x18] = 1;
+                    frames[i].selected = 1;
                 }
                 ++esi;
             }

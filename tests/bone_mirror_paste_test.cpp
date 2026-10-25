@@ -16,20 +16,31 @@ namespace {
 int failures = 0;
 std::vector<char> refreshes;
 void Check(bool value, const char* message) {
-    if (!value) { std::fprintf(stderr, "%s\n", message); ++failures; }
+    if (!value) {
+        std::fprintf(stderr, "%s\n", message);
+        ++failures;
+    }
 }
 }
 
 namespace mikudancestudio {
-MMDApp::MMDApp() : state{} {}
+MMDApp::MMDApp() : state{} {
+}
 MMDApp* g_Block = nullptr;
 // Keep the pose/undo implementation real; observe only the UI boundaries.
-void RebuildTimelineTrackPanel(MMDApp*) { refreshes.push_back('T'); }
-void InvalidateSelectionReadouts(MMDApp*) { refreshes.push_back('R'); }
-void PostViewRefresh(MMDApp*) { refreshes.push_back('V'); }
+void RebuildTimelineTrackPanel(MMDApp*) {
+    refreshes.push_back('T');
+}
+void InvalidateSelectionReadouts(MMDApp*) {
+    refreshes.push_back('R');
+}
+void PostViewRefresh(MMDApp*) {
+    refreshes.push_back('V');
+}
 // The original element constructor is empty; the array constructor is real.
-void IdentityCtor(void*) {}
-void NotifyBonePhysicsMode(unsigned char*, int, unsigned char) {
+void IdentityCtor(void*) {
+}
+void NotifyBonePhysicsMode(mdl::ModelRecord*, int, unsigned char) {
     std::fputs("Unexpected physics mode change in pose undo\n", stderr);
     std::abort();
 }
@@ -48,7 +59,7 @@ struct Fixture {
     std::array<unsigned char, 8> selected{}, physics{};
     std::array<CopiedPose, 4> copies{};
     Fixture() {
-        app->ModelSlot(0) = reinterpret_cast<unsigned char*>(model.get());
+        app->ModelSlot(0) = model.get();
         model->boneCount = static_cast<int>(bones.size());
         model->boneTable = bones.data();
         model->boneSelection = selected.data();
@@ -74,7 +85,7 @@ struct Fixture {
         for (auto& ring : model->undoRings)
             for (auto& slot : ring.slots) {
                 ::operator delete(slot.bonePose);
-                ::operator delete(slot.auxiliaryPose);
+                ::operator delete(slot.keySnapshots);
             }
     }
     void Copy(int index, const char* name) {
@@ -106,7 +117,8 @@ void TestSidePair(const char* sourceName, const char* targetName) {
     Check(f.model->UndoCursor() == 0 && f.model->LatestUndoCursor() == 0,
           "Reverse paste must wrap both undo cursors at 30");
     Check(f.model->undoDirty == 1 && f.model->redoDirty == 0 &&
-          undo.operation == mdl::UndoOperation::BonePose && undo.recordCount == 1, "Reverse paste undo header");
+              undo.operation == mdl::UndoOperation::BonePose && undo.recordCount == 1,
+          "Reverse paste undo header");
     Check(f.model->selectedBone == 5 && f.selected[5] == 1 && f.selected[3] == 0,
           "Reverse paste must select the opposite-side target");
     Check(std::memcmp(f.bones[3].trans, oldSource.trans, sizeof oldSource.trans) == 0,
@@ -114,22 +126,26 @@ void TestSidePair(const char* sourceName, const char* targetName) {
     Check(f.bones[5].trans[0] == -2 && f.bones[5].trans[1] == 3 && f.bones[5].trans[2] == 4,
           "Mirror position X only");
     Check(f.bones[5].rotQuat[0] == 0.25f && f.bones[5].rotQuat[1] == -0.5f &&
-          f.bones[5].rotQuat[2] == -0.75f && f.bones[5].rotQuat[3] == 1,
+              f.bones[5].rotQuat[2] == -0.75f && f.bones[5].rotQuat[3] == 1,
           "Mirror quaternion Y and Z only");
-    Check(undo.bonePose[0].boneIndex == 5 && undo.bonePose[0].physicsDisabled == 7 &&
-          std::memcmp(undo.bonePose[0].position, oldTarget.trans, sizeof oldTarget.trans) == 0 &&
-          std::memcmp(undo.bonePose[0].rotation, oldTarget.rotQuat, sizeof oldTarget.rotQuat) == 0,
+    Check(undo.bonePose[0].boneIndex == 5 && undo.bonePose[0].poseEdited == 7 &&
+              std::memcmp(undo.bonePose[0].position, oldTarget.trans, sizeof oldTarget.trans) ==
+                  0 &&
+              std::memcmp(undo.bonePose[0].rotation, oldTarget.rotQuat, sizeof oldTarget.rotQuat) ==
+                  0,
           "Undo snapshot must contain the target pose and prior physics state");
     Check(f.physics[5] == 1 && f.app->PhysicsResetPending() == 1 &&
-          refreshes == std::vector<char>{'T', 'R'}, "Reverse paste refresh and physics flags");
+              refreshes == std::vector<char>{'T', 'R'},
+          "Reverse paste refresh and physics flags");
     int frame = 17;
-    mds::UndoModelEdit(reinterpret_cast<unsigned char*>(f.model.get()), frame);
+    mds::UndoModelEdit(f.model.get(), frame);
     Check(std::memcmp(f.bones[5].trans, oldTarget.trans, sizeof oldTarget.trans) == 0 &&
-          std::memcmp(f.bones[5].rotQuat, oldTarget.rotQuat, sizeof oldTarget.rotQuat) == 0 &&
-          f.physics[5] == 7 && frame == 17, "Undo must restore the old target pose");
-    mds::RedoModelEdit(reinterpret_cast<unsigned char*>(f.model.get()), frame);
-    Check(f.bones[5].trans[0] == -2 && f.bones[5].rotQuat[1] == -0.5f &&
-          f.physics[5] == 1, "Redo must restore the mirrored pose");
+              std::memcmp(f.bones[5].rotQuat, oldTarget.rotQuat, sizeof oldTarget.rotQuat) == 0 &&
+              f.physics[5] == 7 && frame == 17,
+          "Undo must restore the old target pose");
+    mds::RedoModelEdit(f.model.get(), frame);
+    Check(f.bones[5].trans[0] == -2 && f.bones[5].rotQuat[1] == -0.5f && f.physics[5] == 1,
+          "Redo must restore the mirrored pose");
 }
 
 void TestOrdinaryPaste() {
@@ -138,16 +154,16 @@ void TestOrdinaryPaste() {
     f.Copy(0, "bone4");
     f.app->BonePoseClipboardCount() = 1;
     mds::PasteCopiedBonePose(f.app.get(), nullptr);
-    Check(f.bones[4].trans[0] == 2 && f.bones[4].rotQuat[1] == 0.5f &&
-          f.selected[4] == 1 && f.selected[3] == 0 && f.physics[4] == 1 &&
-          refreshes == std::vector<char>{'T', 'R'},
+    Check(f.bones[4].trans[0] == 2 && f.bones[4].rotQuat[1] == 0.5f && f.selected[4] == 1 &&
+              f.selected[3] == 0 && f.physics[4] == 1 && refreshes == std::vector<char>{'T', 'R'},
           "Ordinary paste retains axes and selects only its exact-name target");
     int frame = 23;
-    mds::UndoModelEdit(reinterpret_cast<unsigned char*>(f.model.get()), frame);
+    mds::UndoModelEdit(f.model.get(), frame);
     Check(std::memcmp(f.bones[4].trans, before.trans, sizeof before.trans) == 0 &&
-          std::memcmp(f.bones[4].rotQuat, before.rotQuat, sizeof before.rotQuat) == 0 &&
-          f.physics[4] == 6 && frame == 23, "Ordinary-paste undo restores pose and physics state");
-    mds::RedoModelEdit(reinterpret_cast<unsigned char*>(f.model.get()), frame);
+              std::memcmp(f.bones[4].rotQuat, before.rotQuat, sizeof before.rotQuat) == 0 &&
+              f.physics[4] == 6 && frame == 23,
+          "Ordinary-paste undo restores pose and physics state");
+    mds::RedoModelEdit(f.model.get(), frame);
     Check(f.bones[4].trans[0] == 2 && f.bones[4].rotQuat[2] == 0.75f,
           "Ordinary-paste redo retains the copied axes");
 }
@@ -159,11 +175,13 @@ void TestCopy() {
     // Copy owns the clipboard; the fixture's normal input array is borrowed.
     f.app->BonePoseClipboard() = nullptr;
     mds::CopySelectedBonePose(f.app.get(), nullptr);
-    const auto* poses = static_cast<const mdl::BonePoseClipboardRecord*>(f.app->BonePoseClipboard());
+    const auto* poses =
+        static_cast<const mdl::BonePoseClipboardRecord*>(f.app->BonePoseClipboard());
     Check(f.app->BonePoseClipboardCount() == 2 && poses &&
-          std::strcmp(poses[0].name, "bone2") == 0 && std::strcmp(poses[1].name, "bone5") == 0 &&
-          std::memcmp(poses[1].position, f.bones[5].trans, sizeof poses[1].position) == 0 &&
-          std::memcmp(poses[1].rotation, f.bones[5].rotQuat, sizeof poses[1].rotation) == 0,
+              std::strcmp(poses[0].name, "bone2") == 0 &&
+              std::strcmp(poses[1].name, "bone5") == 0 &&
+              std::memcmp(poses[1].position, f.bones[5].trans, sizeof poses[1].position) == 0 &&
+              std::memcmp(poses[1].rotation, f.bones[5].rotQuat, sizeof poses[1].rotation) == 0,
           "Copy snapshots selected current poses in bone-table order");
     f.selected.fill(0);
     const void* previous = f.app->BonePoseClipboard();
@@ -182,40 +200,45 @@ void TestPoseReset() {
         const auto beforeRoot = f.bones[0];
         const auto beforeBone = f.bones[2];
         mds::ResetSelectedBonePose(f.app.get());
-        Check(f.bones[0].trans[0] == 10 && f.bones[0].trans[1] == 0 &&
-              f.bones[0].trans[2] == 30 && f.bones[0].rotQuat[3] == 1,
+        Check(f.bones[0].trans[0] == 10 && f.bones[0].trans[1] == 0 && f.bones[0].trans[2] == 30 &&
+                  f.bones[0].rotQuat[3] == 1,
               "Reset root clears only Y and resets its quaternion");
-        Check(f.bones[2].trans[0] == 0 && f.bones[2].trans[1] == 0 &&
-              f.bones[2].trans[2] == 0 && f.bones[2].rotQuat[0] == 0 &&
-              f.bones[2].rotQuat[1] == 0 && f.bones[2].rotQuat[2] == 0 &&
-              f.bones[2].rotQuat[3] == 1 && f.physics[2] == 1,
+        Check(f.bones[2].trans[0] == 0 && f.bones[2].trans[1] == 0 && f.bones[2].trans[2] == 0 &&
+                  f.bones[2].rotQuat[0] == 0 && f.bones[2].rotQuat[1] == 0 &&
+                  f.bones[2].rotQuat[2] == 0 && f.bones[2].rotQuat[3] == 1 && f.physics[2] == 1,
               "Parented reset clears translation and all quaternion axes");
         Check(f.bones[3].trans[0] == 13 && refreshes == std::vector<char>{'V'},
               "Reset leaves unselected bones alone and refreshes once");
         int frame = 9;
-        mds::UndoModelEdit(reinterpret_cast<unsigned char*>(f.model.get()), frame);
+        mds::UndoModelEdit(f.model.get(), frame);
         Check(std::memcmp(f.bones[0].trans, beforeRoot.trans, sizeof beforeRoot.trans) == 0 &&
-              std::memcmp(f.bones[2].rotQuat, beforeBone.rotQuat, sizeof beforeBone.rotQuat) == 0 &&
-              f.physics[2] == 4, "Reset undo captures the selected poses before mutation");
+                  std::memcmp(f.bones[2].rotQuat, beforeBone.rotQuat, sizeof beforeBone.rotQuat) ==
+                      0 &&
+                  f.physics[2] == 4,
+              "Reset undo captures the selected poses before mutation");
     }
     {
         Fixture f;
-        f.selected.fill(0); f.selected[1] = 1;
+        f.selected.fill(0);
+        f.selected[1] = 1;
         f.bones[0].rotQuat[0] = f.bones[0].rotQuat[1] = f.bones[0].rotQuat[2] = 0;
         f.bones[0].rotQuat[3] = 1;
         f.bones[1].parent = -1;
-        f.bones[1].position[0] = 2; f.bones[1].position[1] = 3; f.bones[1].position[2] = 4;
+        f.bones[1].position[0] = 2;
+        f.bones[1].position[1] = 3;
+        f.bones[1].position[2] = 4;
         f.bones[1].rotQuat[0] = f.bones[1].rotQuat[1] = f.bones[1].rotQuat[3] = 0;
-        f.bones[1].rotQuat[2] = 1;  // 180 degrees about Z.
+        f.bones[1].rotQuat[2] = 1; // 180 degrees about Z.
         mds::ResetSelectedBonePose(f.app.get());
         Check(f.bones[1].trans[0] == 6 && f.bones[1].trans[1] == 14 && f.bones[1].trans[2] == 30 &&
-              f.bones[1].rotQuat[2] == 0 && f.bones[1].rotQuat[3] == 1,
+                  f.bones[1].rotQuat[2] == 0 && f.bones[1].rotQuat[3] == 1,
               "Unparented reset applies the own quaternion and root translation");
     }
 #if defined(_M_X64) || defined(__x86_64__)
     {
         Fixture f;
-        f.selected.fill(0); f.selected[1] = 1;
+        f.selected.fill(0);
+        f.selected[1] = 1;
         f.bones[1].parent = -1;
         const float position[] = {0.1f, 0.2f, 0.3f};
         const float rotation[] = {0.1f, 0.2f, 0.3f, 0.9f};
@@ -242,17 +265,28 @@ int main() {
     TestPoseReset();
     // Expected side mappings come from x64 RVA 0x44580..0x446E9:
     // search the exact-name bone for SJIS left/right, then compare suffixes.
-    TestSidePair("\x8D\xB6" "arm", "\x89\x45" "arm");
-    TestSidePair("\x89\x45" "arm", "\x8D\xB6" "arm");
-    TestSidePair("A\x8D\xB6" "arm", "B\x89\x45" "arm");
+    TestSidePair("\x8D\xB6"
+                 "arm",
+                 "\x89\x45"
+                 "arm");
+    TestSidePair("\x89\x45"
+                 "arm",
+                 "\x8D\xB6"
+                 "arm");
+    TestSidePair("A\x8D\xB6"
+                 "arm",
+                 "B\x89\x45"
+                 "arm");
     {
         Fixture f;
-        strcpy_s(f.bones[3].name, "\x8D\xB6" "arm");
-        strcpy_s(f.bones[5].name, "\x89\x45" "leg");
+        strcpy_s(f.bones[3].name, "\x8D\xB6"
+                                  "arm");
+        strcpy_s(f.bones[5].name, "\x89\x45"
+                                  "leg");
         f.Copy(0, f.bones[3].name);
         f.Paste(1);
-        Check(f.model->selectedBone == 3 && f.bones[3].trans[0] == -2 &&
-              f.bones[5].trans[0] == 15, "Different suffix must fall back to exact-name bone");
+        Check(f.model->selectedBone == 3 && f.bones[3].trans[0] == -2 && f.bones[5].trans[0] == 15,
+              "Different suffix must fall back to exact-name bone");
     }
     {
         Fixture f;
@@ -260,7 +294,8 @@ int main() {
         f.Copy(1, "missing");
         f.Paste(2);
         Check(f.bones[4].trans[0] == -2 && f.model->selectedBone == 4 &&
-              refreshes == std::vector<char>{'T', 'R'}, "Center bone fallback and missing-name skip");
+                  refreshes == std::vector<char>{'T', 'R'},
+              "Center bone fallback and missing-name skip");
         const auto& slot = f.model->undoRings[0].slots[0];
         const mdl::BonePoseSnapshot zero{};
         Check(slot.recordCount == 2 && std::memcmp(&slot.bonePose[1], &zero, sizeof zero) == 0,
@@ -269,8 +304,8 @@ int main() {
     {
         Fixture f;
         f.Paste(0);
-        Check(f.model->UndoCursor() == 29 && f.model->redoDirty == 1 &&
-              f.selected[0] == 1 && refreshes.empty() && f.app->PhysicsResetPending() == 0,
+        Check(f.model->UndoCursor() == 29 && f.model->redoDirty == 1 && f.selected[0] == 1 &&
+                  refreshes.empty() && f.app->PhysicsResetPending() == 0,
               "Empty clipboard must leave selection, undo and refresh state unchanged");
     }
     return failures == 0 ? 0 : 1;

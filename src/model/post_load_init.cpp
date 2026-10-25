@@ -42,6 +42,7 @@
 #include <cstring>
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -64,17 +65,16 @@ const char kDummyBoneName[13] = {char(0x83), char(0x5F), char(0x83), char(0x7E),
                                                                 // previously misread as
                                                                 // ミクボーン - 0x835F is ダ)
 
-HWND Dlg(unsigned char* m, int id) {
-    return GetDlgItem(*reinterpret_cast<HWND*>(m), id);
+HWND Dlg(mdl::ModelRecord* model, int id) {
+    return GetDlgItem(static_cast<HWND>(model->hwnd), id);
 }
 
 // One morph-category group (see header comment).
-void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId, int sliderId,
+void RefreshMorphGroup(mdl::ModelRecord* model, mdl::MorphPanel panel, int comboId, int sliderId,
                        int editId, std::size_t selector) {
-    HWND main = *reinterpret_cast<HWND*>(m);
-    HWND combo = Dlg(m, comboId);
+    HWND main = static_cast<HWND>(model->hwnd);
+    HWND combo = Dlg(model, comboId);
     SendMessage(combo, CB_RESETCONTENT, 0, 0);
-    mdl::ModelRecord* model = mdl::Mdl(m);
     const int n = static_cast<int>(model->morphCount);
     mdl::MorphRecord* morphs = model->morphs;
     const bool useEnglishNames = model->physicsFlags != 0;
@@ -91,15 +91,15 @@ void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId, int
         char buf[256];
         const std::int32_t sel = model->selectedMorphs[selector];
         if (sel < 0) {
-            SendMessage(Dlg(m, sliderId), TBM_SETPOS, TRUE, 0);
+            SendMessage(Dlg(model, sliderId), TBM_SETPOS, TRUE, 0);
             text = "0.0000";
         } else {
             const float val = morphs[sel].value;
-            SendMessage(Dlg(m, sliderId), TBM_SETPOS, TRUE, static_cast<LPARAM>(val * 100.0f));
+            SendMessage(Dlg(model, sliderId), TBM_SETPOS, TRUE, static_cast<LPARAM>(val * 100.0f));
             sprintf_s(buf, 0x100, "%5.4f", val);
             text = buf;
         }
-        SetWindowTextA(Dlg(m, editId), text);
+        SetWindowTextA(Dlg(model, editId), text);
     }
     if (model->selectedMorphs[selector] != -1) {
         const std::int32_t sel = model->selectedMorphs[selector];
@@ -130,49 +130,48 @@ void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId, int
 
 } // namespace
 
-void PostLoadInit(unsigned char* m) {
-    HWND main = *reinterpret_cast<HWND*>(m);
+void PostLoadInit(mdl::ModelRecord* model) {
+    HWND main = static_cast<HWND>(model->hwnd);
 
     // ---- bone combo 443 (from IK chains) ----------------------------------
-    HWND boneCombo = Dlg(m, panel::kIkChainCombo);
+    HWND boneCombo = Dlg(model, panel::kIkChainCombo);
     SendMessage(boneCombo, CB_RESETCONTENT, 0, 0);
-    mdl::ModelRecord* model = mdl::Mdl(m);
     mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
     const bool useEnglishNames = model->physicsFlags != 0;
     const int chainCount = static_cast<int>(model->ikChainCount);
     if (chainCount > 0) {
         for (int i = 0; i < chainCount; ++i) {
-            const std::int32_t boneIdx = mdl::IkChains(m)[i].boneIndex;
+            const std::int32_t boneIdx = model->ikChains[i].boneIndex;
             SendMessageA(boneCombo, CB_ADDSTRING, 0,
                          reinterpret_cast<LPARAM>(useEnglishNames ? bones[boneIdx].nameEn
                                                                   : bones[boneIdx].name));
         }
     }
-    if (mdl::IkChains(m) != nullptr) {
+    if (model->ikChains != nullptr) {
         SendMessageA(boneCombo, CB_SETCURSEL, 0, 0);
         CheckRadioButton(main, panel::kIkOnRadio, panel::kIkOffRadio,
-                         mdl::IkChains(m)[0].enabled != 0 ? panel::kIkOnRadio : panel::kIkOffRadio);
+                         model->ikChains[0].enabled != 0 ? panel::kIkOnRadio : panel::kIkOffRadio);
     }
 
     // ---- three checkboxes ---------------------------------------------------
-    SendMessage(Dlg(m, panel::kModelVisibleCheckbox), BM_SETCHECK, model->loadComplete != 0 ? 1 : 0,
-                0);
-    SendMessage(Dlg(m, panel::kAddBlendCheckbox), BM_SETCHECK, model->postLoadFlag2 != 0 ? 1 : 0,
-                0);
-    SendMessage(Dlg(m, panel::kShadowCheckbox), BM_SETCHECK, model->toonFlag != 0 ? 1 : 0, 0);
+    SendMessage(Dlg(model, panel::kModelVisibleCheckbox), BM_SETCHECK,
+                model->loadComplete != 0 ? 1 : 0, 0);
+    SendMessage(Dlg(model, panel::kAddBlendCheckbox), BM_SETCHECK,
+                model->postLoadFlag2 != 0 ? 1 : 0, 0);
+    SendMessage(Dlg(model, panel::kShadowCheckbox), BM_SETCHECK, model->toonFlag != 0 ? 1 : 0, 0);
 
     // ---- four morph groups --------------------------------------------------
-    RefreshMorphGroup(m, mdl::MorphPanel::eyebrow, panel::kMorphCombo0, panel::kMorphSlider0,
+    RefreshMorphGroup(model, mdl::MorphPanel::eyebrow, panel::kMorphCombo0, panel::kMorphSlider0,
                       panel::kMorphEdit0, 0);
-    RefreshMorphGroup(m, mdl::MorphPanel::eye, panel::kMorphCombo1, panel::kMorphSlider1,
+    RefreshMorphGroup(model, mdl::MorphPanel::eye, panel::kMorphCombo1, panel::kMorphSlider1,
                       panel::kMorphEdit1, 1);
-    RefreshMorphGroup(m, mdl::MorphPanel::mouth, panel::kMorphCombo2, panel::kMorphSlider2,
+    RefreshMorphGroup(model, mdl::MorphPanel::mouth, panel::kMorphCombo2, panel::kMorphSlider2,
                       panel::kMorphEdit2, 2);
-    RefreshMorphGroup(m, mdl::MorphPanel::other, panel::kMorphCombo3, panel::kMorphSlider3,
+    RefreshMorphGroup(model, mdl::MorphPanel::other, panel::kMorphCombo3, panel::kMorphSlider3,
                       panel::kMorphEdit3, 3);
 
     // ---- frame-registration combo 434 ---------------------------------------
-    HWND frameCombo = Dlg(m, panel::kRegisterScopeCombo);
+    HWND frameCombo = Dlg(model, panel::kRegisterScopeCombo);
     SendMessage(frameCombo, CB_RESETCONTENT, 0, 0);
     char buf[256];
     if (std::memcmp(model->name, kDummyBoneName, 13) == 0) {
@@ -205,8 +204,8 @@ void PostLoadInit(unsigned char* m) {
         for (std::uint8_t g = 0; g < model->facialFrameCount; ++g)
             SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(groups[g].nameEn));
         SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All bone"));
-        const auto* frames = static_cast<const mdl::FrameGroup*>(model->rbGroups);
-        const std::int32_t frameCount = model->rigidBodyCount;
+        const auto* frames = model->displayBones;
+        const std::int32_t frameCount = model->displayBoneCount;
         for (int f = 0; f < frameCount; ++f)
             SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(frames[f].nameEn));
     } else {
@@ -221,8 +220,8 @@ void PostLoadInit(unsigned char* m) {
         for (std::uint8_t g = 0; g < model->facialFrameCount; ++g)
             SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(groups[g].name));
         SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpAllBone));
-        const auto* frames = static_cast<const mdl::FrameGroup*>(model->rbGroups);
-        const std::int32_t frameCount = model->rigidBodyCount;
+        const auto* frames = model->displayBones;
+        const std::int32_t frameCount = model->displayBoneCount;
         for (int f = 0; f < frameCount; ++f)
             SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(frames[f].name));
     }

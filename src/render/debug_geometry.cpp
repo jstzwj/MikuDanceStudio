@@ -185,12 +185,12 @@ void DrawAxisMesh(void* axis, MMDApp* app) {
     }
 }
 
-unsigned char* CurrentModel(MMDApp* app) {
+mdl::ModelRecord* CurrentModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-Matrix* BoneMatrix(mikudancestudio::mdl::BoneRecord* bone) {
-    return reinterpret_cast<Matrix*>(bone->matInit);
+const Matrix* BoneMatrix(const mdl::BoneRecord* bone) {
+    return reinterpret_cast<const Matrix*>(bone->matInit);
 }
 
 void BoneWorldPosition(const mdl::BoneRecord& bone, float position[3]) {
@@ -203,8 +203,8 @@ void BoneWorldPosition(const mdl::BoneRecord& bone, float position[3]) {
 
 void AttachToBone(MMDApp* app, Matrix* world, int boneIndex) {
     auto& api = d3dx::Get();
-    unsigned char* model = CurrentModel(app);
-    auto* bones = mikudancestudio::mdl::Bones(model);
+    mdl::ModelRecord* model = CurrentModel(app);
+    auto* bones = model->boneTable;
     mikudancestudio::mdl::BoneRecord* bone = &bones[(boneIndex < 0 ? 0 : boneIndex)];
     Matrix translation;
     api.translation(&translation, bone->position[0], bone->position[1], bone->position[2]);
@@ -313,13 +313,13 @@ void DrawAccessoryDebug(MMDApp* app) {
     // The physics-model editor's scratch arrays double as the draw source:
     // rigidScratchArray = rigid bodies (mdl::RigidRecord), jointScratchArray =
     // joints (mdl::JointRecord).  While the dialog is open the records'
-    // keyData / constraint slots hold the combo index (-1 = deleted slot).
+    // bodyId / constraint slots hold the combo index (-1 = deleted slot).
     auto* bodies = static_cast<mikudancestudio::mdl::RigidRecord*>(app->RigidScratchArray());
     auto* joints = static_cast<mikudancestudio::mdl::JointRecord*>(app->JointScratchArray());
     const bool dialogSelection = app->state.physicsEditorJointPage != 0;
     for (int index = 0; index < kDebugRecordCapacity; ++index) {
         mikudancestudio::mdl::RigidRecord* record = &bodies[index];
-        const int comboSlot = static_cast<int>(reinterpret_cast<std::intptr_t>(record->keyData));
+        const int comboSlot = static_cast<int>(record->bodyId);
         if (comboSlot >= 0) {
             Matrix world;
             Matrix temp;
@@ -389,13 +389,15 @@ void DrawAccessoryDebug(MMDApp* app) {
     }
 }
 
-void DrawBoneOperationAxis(MMDApp* app, const float frameMatrix[16]) {
-    unsigned char* model = CurrentModel(app);
-    const int selected = mikudancestudio::mdl::Mdl(model)->selectedBone;
+void DrawBoneOperationAxis(MMDApp* app, const mdl::ModelRecord* model,
+                           const float frameMatrix[16]) {
+    if (!model || !model->boneTable)
+        return;
+    const int selected = model->selectedBone;
     if (selected < 0)
         return;
-    auto* bones = mikudancestudio::mdl::Bones(model);
-    mikudancestudio::mdl::BoneRecord* bone = &bones[selected];
+    auto* bones = model->boneTable;
+    const mdl::BoneRecord* bone = &bones[selected];
     const mdl::BoneType type = bone->type;
     if (type == mdl::BoneType::FixedAxis ||
         (type == mdl::BoneType::UnderIk &&
@@ -422,7 +424,7 @@ void DrawBoneOperationAxis(MMDApp* app, const float frameMatrix[16]) {
         world.m[3][2] = z;
     } else {
         Matrix basis;
-        BoneLocalAxes(app, &basis.m[0][0]);
+        BoneLocalAxes(model, &basis.m[0][0]);
         api.multiply(&world, &basis, &translation);
         api.multiply(&world, &world, BoneMatrix(bone));
     }
@@ -482,7 +484,7 @@ void SetupFrameWorldTransform(MMDApp* app) {
             focus[1] = app->CameraPositionY();
             focus[2] = app->CameraPositionZ();
         } else {
-            const auto& bone = mdl::Bones(app->ModelSlot(targetModel))[targetBone];
+            const auto& bone = app->ModelSlot(targetModel)->boneTable[targetBone];
             BoneWorldPosition(bone, focus);
             app->ViewOffsetX() = app->CameraPositionX();
             app->ViewOffsetY() = app->CameraPositionY();
@@ -490,13 +492,13 @@ void SetupFrameWorldTransform(MMDApp* app) {
         }
     } else if (app->CameraReferenceMode() == CameraAttachmentReference::ModelRoot) {
         auto* model = app->SelectedModel();
-        const auto& bone = mdl::Bones(model)[mdl::Mdl(model)->centerBone];
+        const auto& bone = model->boneTable[model->centerBone];
         std::memcpy(focus, &bone.matInit[12], sizeof(focus));
     } else if (app->CameraReferenceMode() == CameraAttachmentReference::SelectedBone) {
         auto* model = app->SelectedModel();
-        const int selected = mdl::Mdl(model)->selectedBone;
+        const int selected = model->selectedBone;
         if (selected >= 0)
-            BoneWorldPosition(mdl::Bones(model)[selected], focus);
+            BoneWorldPosition(model->boneTable[selected], focus);
     }
     api.translation(&translation, -focus[0], -focus[1], -focus[2]);
 
@@ -510,7 +512,7 @@ void SetupFrameWorldTransform(MMDApp* app) {
         if (targetModel >= 0 && app->CameraAttachmentTransformSuppressed() == 0) {
             // x86 0x46B91F / x64 RVA 0x27A80: transpose the bone's
             // rotation only. The saved free-view basis is not overwritten.
-            const auto& bone = mdl::Bones(app->ModelSlot(targetModel))[targetBone];
+            const auto& bone = app->ModelSlot(targetModel)->boneTable[targetBone];
             for (int row = 0; row < 3; ++row)
                 for (int col = 0; col < 3; ++col)
                     attachment.m[row][col] = bone.matInit[col * 4 + row];

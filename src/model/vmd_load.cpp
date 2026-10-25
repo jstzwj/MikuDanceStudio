@@ -127,7 +127,7 @@ const char kJpModelMismatch[] = // 0x52CB48 "... %s ..."
 // ---- VA 0x00434B60 --------------------------------------------------------
 int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     auto& s = *app;
-    unsigned char* const model = app->SelectedModel();
+    mdl::ModelRecord* const model = app->SelectedModel();
 
     int fileHandle;
     unsigned int count = 0; // DstBuf - reused for every section count
@@ -233,7 +233,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
                 }
                 rec.fov = 45;        // fov default
                 rec.perspective = 0; // view flag
-                if (ok && !RegisterCameraKey(app, &rec))
+                if (ok && !RegisterCameraKey(app, rec))
                     ok = 0;
             }
         } else {
@@ -259,7 +259,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
                 _read(fileHandle, &rec.fov, 4); // fov
                 _read(fileHandle, &rec.perspective, 1);
                 rec.perspective = static_cast<unsigned char>(rec.perspective != 0);
-                if (ok && !RegisterCameraKey(app, &rec))
+                if (ok && !RegisterCameraKey(app, rec))
                     ok = 0;
             }
         }
@@ -275,7 +275,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
             _read(fileHandle, &rec.direction[0], 4); // position xyz
             _read(fileHandle, &rec.direction[1], 4);
             _read(fileHandle, &rec.direction[2], 4);
-            if (lightOk && !RegisterLightKey(app, &rec))
+            if (lightOk && !RegisterLightKey(app, rec))
                 lightOk = 0;
         }
         // self-shadow keys (ver 2 only)
@@ -286,7 +286,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
                 _read(fileHandle, &rec.frame, 4);
                 _read(fileHandle, &rec.mode, 1);
                 _read(fileHandle, &rec.distance, 4);
-                if (shadowOk && !RegisterSelfShadowKey(app, &rec))
+                if (shadowOk && !RegisterSelfShadowKey(app, rec))
                     shadowOk = 0;
             }
         }
@@ -306,7 +306,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     }
 
     // ==== model motion =====================================================
-    if (std::strcmp(text, mdl::Mdl(model)->name) != 0) {
+    if (std::strcmp(text, model->name) != 0) {
         if (std::memcmp(text, kCameraLightName, 13) == 0) {
             MessageBoxA(hwnd, english ? "This motion data if camera/light data !!" : kJpIsCamLight,
                         english ? "load motion data" : kJpTitleMotionLoad, 0);
@@ -331,9 +331,9 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     const unsigned int boneKeyCount = count;
 
     // clear the allocation marks of all three key arrays
-    mikudancestudio::mdl::BoneKey* const bkeys = mikudancestudio::mdl::BoneKeys(model);
-    mikudancestudio::mdl::MorphKey* const mkeys = mikudancestudio::mdl::MorphKeys(model);
-    mikudancestudio::mdl::DisplayKey* const ikeys = mikudancestudio::mdl::DisplayKeys(model);
+    mikudancestudio::mdl::BoneKey* const bkeys = model->boneKeys;
+    mikudancestudio::mdl::MorphKey* const mkeys = model->morphKeys;
+    mikudancestudio::mdl::DisplayKey* const ikeys = model->displayKeys;
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i)
         bkeys[i].allocated = 0;
     for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
@@ -343,7 +343,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
 
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
-    mdl::ModelRecord& record = *mdl::Mdl(model);
+    mdl::ModelRecord& record = *model;
     record.undoDirty = 1;
     record.redoDirty = 0;
     std::uint32_t& ringIdx = record.UndoCursor();
@@ -351,7 +351,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
         ringIdx = 0;
     record.LatestUndoCursor() = ringIdx;
 
-    auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[ringIdx];
+    auto& undo = model->undoRings[0].slots[ringIdx];
     undo.operation = mdl::UndoOperation::BoneKeys;
     undo.recordCount = 0;
     undo.frame = s.state.currentFrame;
@@ -368,22 +368,24 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     std::memset(snap, 0,
                 static_cast<std::size_t>(boneCnt) * sizeof(mikudancestudio::mdl::BonePoseSnapshot));
     if (boneCnt > 0) {
-        mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);
-        const unsigned char* const flags = mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
+        mikudancestudio::mdl::BoneRecord* const bones = model->boneTable;
+        const unsigned char* const flags = model->bonePhysicsState;
         for (int b = 0; b < boneCnt; ++b) {
             mikudancestudio::mdl::BonePoseSnapshot& slot = snap[b];
             slot.boneIndex = b;
             std::memcpy(slot.position, bones[b].trans, sizeof slot.position);
             std::memcpy(slot.rotation, bones[b].rotQuat, sizeof slot.rotation);
-            slot.physicsDisabled = flags[b];
+            slot.poseEdited = flags[b];
         }
     }
-    if (undo.auxiliaryPose != nullptr)
-        operator delete(undo.auxiliaryPose); // x64 @0x7FF7CB48E08F ??3
-    unsigned char* const rawKeys = static_cast<unsigned char*>(operator new(192 * boneKeyCount));
-    undo.auxiliaryPose = rawKeys;
-    std::memset(rawKeys, 0, 192 * boneKeyCount);
-    std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
+    if (undo.keySnapshots != nullptr)
+        operator delete(undo.keySnapshots); // x64 @0x7FF7CB48E08F ??3
+    auto* const rawKeys = static_cast<mdl::BoneKeyUndoEntry*>(operator new(
+        mdl::kUndoKeysPerInsertion * boneKeyCount * sizeof(mdl::BoneKeyUndoEntry)));
+    undo.keySnapshots = rawKeys;
+    std::memset(rawKeys, 0,
+                mdl::kUndoKeysPerInsertion * boneKeyCount * sizeof(mdl::BoneKeyUndoEntry));
+    std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
     ResetBoneKeyCursor(model);
     (void)rawKeys; // consumed by the registrar family (0x49D880 et al.)
 
@@ -496,7 +498,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     _close(fileHandle);
     PanelPaint(app);      // 0x414610
     SelectionReeval(app); // 0x430510
-    return SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame, s.PlaybackPhysicsMode());
+    return SeekModelFrame(*model, s.state.currentFrame, s.PlaybackPhysicsMode());
 }
 
 // Wide-path entry used by the ported file dialog (0x461300's GetOpenFileNameW

@@ -32,6 +32,8 @@
 #endif
 #endif
 
+class btRigidBody;
+
 namespace mikudancestudio::mdl {
 
 // PMD vertex and vertex-morph records contain no pointers. Their ABI is
@@ -302,12 +304,12 @@ struct RigidRecord {
     std::uint8_t kinematicFlag; // 81   set when mode == 2
     std::uint8_t staticFlag;    // 82   set when mode == 0
     unsigned char padMode;
-    void* keyData;          // 84   CreateRigidBody out[0]
-    float linearDamping;    // 88
-    float angularDamping;   // 92
-    float restitution;      // 96
-    float friction;         // 100
-    void* body;             // 104  CreateRigidBody out[1] (btRigidBody*)
+    std::intptr_t bodyId; // 84   Bullet debug ID; editor scratch copies reuse this as a combo index
+    float linearDamping;  // 88
+    float angularDamping; // 92
+    float restitution;    // 96
+    float friction;       // 100
+    btRigidBody* body;    // 104  owned Bullet body
     float invTransform[16]; // 108  0x40 inverse bone-relative matrix
 };
 
@@ -387,8 +389,8 @@ static_assert(offsetof(mikudancestudio::mdl::RigidRecord, rotation) == 64,
               "RigidRecord.rotation x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, mass) == 76, "RigidRecord.mass x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, mode) == 80, "RigidRecord.mode x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, keyData) == 84,
-              "RigidRecord.keyData x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, bodyId) == 84,
+              "RigidRecord.bodyId x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, linearDamping) == 88,
               "RigidRecord.linearDamping x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, body) == 104, "RigidRecord.body x86 ABI");
@@ -434,8 +436,8 @@ static_assert(offsetof(mikudancestudio::mdl::RigidRecord, enText) == 32,
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, size) == 52, "RigidRecord.size x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, rotation) == 0x4C,
               "RigidRecord.rotation x64 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, keyData) == 96,
-              "RigidRecord.keyData x64 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, bodyId) == 96,
+              "RigidRecord.bodyId x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, body) == 120, "RigidRecord.body x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, invTransform) == 128,
               "RigidRecord.invTransform x64 ABI");

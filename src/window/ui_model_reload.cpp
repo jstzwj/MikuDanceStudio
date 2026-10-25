@@ -37,7 +37,7 @@ void ShowControlRange(MMDApp* app, int first, int last, bool show) {
 }
 
 unsigned char* ModelAt(MMDApp* app, int slot) {
-    return app->ModelSlot(slot);
+    return mdl::ModelBytes(app->ModelSlot(slot));
 }
 
 int FindModelSlotByComboId(MMDApp* app, int comboId) {
@@ -129,7 +129,7 @@ void PostModelReload(MMDApp* app) { // 0x41A650
         float referencePoint[3]{};
         const auto referenceMode = app->CameraReferenceMode();
         if (referenceMode == CameraAttachmentReference::ModelRoot) {
-            unsigned char* model = app->SelectedModel();
+            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
             mikudancestudio::mdl::BoneRecord* bone =
                 BoneAt(model, mikudancestudio::mdl::Mdl(model)->centerBone);
             const float* matrix = reinterpret_cast<const float*>(bone->matInit);
@@ -137,7 +137,7 @@ void PostModelReload(MMDApp* app) { // 0x41A650
             referencePoint[1] = matrix[13];
             referencePoint[2] = matrix[14];
         } else if (referenceMode == CameraAttachmentReference::SelectedBone) {
-            unsigned char* model = app->SelectedModel();
+            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
             int selected = mikudancestudio::mdl::Mdl(model)->selectedBone;
             if (selected < 0)
                 selected = 0;
@@ -164,7 +164,7 @@ void PostModelReload(MMDApp* app) { // 0x41A650
     float referencePoint[3]{};
     const auto referenceMode = app->CameraReferenceMode();
     if (referenceMode == CameraAttachmentReference::ModelRoot) {
-        unsigned char* model = app->SelectedModel();
+        unsigned char* model = mdl::ModelBytes(app->SelectedModel());
         mikudancestudio::mdl::BoneRecord* bone =
             BoneAt(model, mikudancestudio::mdl::Mdl(model)->centerBone);
         const float* matrix = reinterpret_cast<const float*>(bone->matInit);
@@ -172,7 +172,7 @@ void PostModelReload(MMDApp* app) { // 0x41A650
         referencePoint[1] = -matrix[13];
         referencePoint[2] = -matrix[14];
     } else if (referenceMode == CameraAttachmentReference::SelectedBone) {
-        unsigned char* model = app->SelectedModel();
+        unsigned char* model = mdl::ModelBytes(app->SelectedModel());
         const int selected = mikudancestudio::mdl::Mdl(model)->selectedBone;
         if (selected >= 0) {
             BonePoint(BoneAt(model, selected), referencePoint);
@@ -273,7 +273,7 @@ void PostModelReload2(MMDApp* app) { // 0x40D940
         return;
     }
 
-    auto* model = app->SelectedModel();
+    auto* model = mdl::ModelBytes(app->SelectedModel());
     // undoDirty/redoDirty（x64 model+0x3558/+0x3559，0x7FF7CB447074/86）：
     // Flags enabling the undo/redo buttons.
     EnableWindow(MainControl(app, panel::kUndoButton), mdl::Mdl(model)->undoDirty != 0);
@@ -481,11 +481,11 @@ void ApplyModelComboSelection(MMDApp* app) { // 0x44D940
         if (selectedSlot >= 0) {
             app->SetSelectedModelSlot(static_cast<std::uint8_t>(selectedSlot));
             unsigned char* model = ModelAt(app, selectedSlot);
-            PostLoadInit(model);
-            mdl::Mdl(model)->lightDir[0] = -1.0f;
-            mdl::Mdl(model)->lightDir[1] = 90.0f;
-            mdl::Mdl(model)->lightDir[2] = 11.5f;
-            mdl::Mdl(model)->legIkXOffset = 1.0f;
+            PostLoadInit(mdl::Mdl(model));
+            mdl::Mdl(model)->skeletonCalibration.legLength = -1.0f;
+            mdl::Mdl(model)->skeletonCalibration.heightScale = 90.0f;
+            mdl::Mdl(model)->skeletonCalibration.heightOffset = 11.5f;
+            mdl::Mdl(model)->skeletonCalibration.legIkXOffset = 1.0f;
         }
 
         if (app->CameraMode() != 0) {
@@ -540,7 +540,7 @@ void ApplyModelComboSelection(MMDApp* app) { // 0x44D940
                      (hasOtherSelection || hasMainSelection) ? TRUE : FALSE);
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), hasMainSelection ? TRUE : FALSE);
 
-        unsigned char* model = app->SelectedModel();
+        unsigned char* model = mdl::ModelBytes(app->SelectedModel());
         HWND optionWindow = app->EdgeThicknessDialog();
         if (optionWindow != nullptr && model != nullptr) {
             char text[256]{};
@@ -560,7 +560,7 @@ void ApplyModelComboSelection(MMDApp* app) { // 0x44D940
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     } else {
-        unsigned char* model = app->SelectedModel();
+        unsigned char* model = mdl::ModelBytes(app->SelectedModel());
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton),
                      model != nullptr && mdl::Mdl(model)->undoDirty != 0);
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton),

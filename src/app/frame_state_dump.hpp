@@ -171,7 +171,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
 
     bool firstModel = true;
     for (unsigned slot = 0; slot < static_cast<unsigned>(kModelSlotCount); ++slot) {
-        unsigned char* model = app->ModelSlot(slot);
+        unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
         if (model == nullptr)
             continue;
         if (!firstModel)
