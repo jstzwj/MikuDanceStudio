@@ -5,6 +5,8 @@
 
 namespace mikudancestudio::mdl {
 
+inline constexpr int kAccessorySlotCount = 255;
+
 // Runtime accessory object.  Its first four fields are native pointers;
 // consequently the scalar/string tail starts 16 bytes later in the x64
 // executable.  The opaque block between the resource pointers and editable

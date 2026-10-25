@@ -78,6 +78,7 @@
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
+#include "mikudancestudio/timeline_selection_grid.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -85,10 +86,7 @@ namespace {
 // --- layout / draw constants from the original instruction stream --------
 constexpr int kListLeft = 91;    // 0x5B  list column x
 constexpr int kIconLeft = 95;    // 0x5F  marker x; centred on grid x=100
-constexpr int kRowH = 13;        // 0x0D  row pitch (grid lines, bands)
-constexpr int kBandH = 14;       // 0x0E  band pitch (icon rows)
 constexpr int kBandLastY = 2816; // 0xB00 band loops run while y < 2816
-constexpr int kGridX0 = 100;     // 0x64  first grid-line x
 constexpr int kGridTopY = 16;    // 0x10  grid lines start at y = 16
 constexpr int kIcon = 11;        // 0x0B  icon square
 constexpr int kAccY0 = 73;       // 0x49  first accessory band y
@@ -140,7 +138,7 @@ void DrawBandList(MMDApp* app, HDC panel, HDC icons, Key* keys, int bandY, std::
         const Key& key = keys[record];
         const int row = static_cast<std::int32_t>(key.frame) - scroll;
         if (row >= 0) {
-            const int x = kRowH * row + kIconLeft;
+            const int x = kTimelineFrameColumnWidth * row + kIconLeft;
             BitBlt(panel, x, bandY, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
             BitBlt(panel, x, bandY, kIcon, kIcon, icons, key.selected ? kSheetOnX : kSheetOffX, 0,
                    SRCPAINT);
@@ -183,9 +181,9 @@ void PanelPaint(MMDApp* app) {
     HGDIOBJ oldPen = SelectObject(panel, pen);
     HGDIOBJ oldBrush = SelectObject(panel, brush);
     unsigned char* flags = app->PanelRowFlags() + 1;
-    for (int y = 30; y < kBandLastY; y += kBandH * 2, flags += 2) {
+    for (int y = 30; y < kBandLastY; y += kTimelineTrackRowHeight * 2, flags += 2) {
         if (*flags)
-            Rectangle(panel, kListLeft, y, listW, y + kRowH);
+            Rectangle(panel, kListLeft, y, listW, y + kTimelineTrackRowHeight - 1);
     }
     SelectObject(panel, oldPen);
     DeleteObject(pen);
@@ -197,9 +195,9 @@ void PanelPaint(MMDApp* app) {
     SelectObject(panel, pen2);
     SelectObject(panel, brush2);
     flags = app->PanelRowFlags();
-    for (int y = 16; y < kBandLastY; y += kBandH * 2, flags += 2) {
+    for (int y = 16; y < kBandLastY; y += kTimelineTrackRowHeight * 2, flags += 2) {
         if (*flags)
-            Rectangle(panel, kListLeft, y, listW, y + kRowH);
+            Rectangle(panel, kListLeft, y, listW, y + kTimelineTrackRowHeight - 1);
     }
     SelectObject(panel, oldPen);
     DeleteObject(pen2);
@@ -207,13 +205,13 @@ void PanelPaint(MMDApp* app) {
     DeleteObject(brush2);
 
     // --- 3. row labels + grid lines (0x414812) -----------------------------
-    const int rows = (sidebar - 84) / kRowH; // signed, as the original
+    const int rows = (sidebar - 84) / kTimelineFrameColumnWidth; // signed, as the original
     if (rows < 0)
         return;
     if (rows > 0) {
         char label[0x100];
         char sel[0x100];
-        int x = kGridX0;
+        int x = kTimelineFirstFrameX;
         for (int idx = 0; idx < rows; ++idx) {
             const std::int32_t n = scroll + idx;
             COLORREF color;
@@ -244,7 +242,7 @@ void PanelPaint(MMDApp* app) {
             LineTo(panel, x, listH);
             SelectObject(panel, oldPen);
             DeleteObject(line);
-            x += kRowH;
+            x += kTimelineFrameColumnWidth;
         }
     }
 
@@ -396,7 +394,7 @@ void PanelPaint(MMDApp* app) {
                     const mdl::AccessoryKey& key = list[record];
                     const int row = static_cast<std::int32_t>(key.frame) - scroll;
                     if (row >= 0) {
-                        const int x = kRowH * row + kIconLeft;
+                        const int x = kTimelineFrameColumnWidth * row + kIconLeft;
                         BitBlt(panel, x, bandY, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
                         BitBlt(panel, x, bandY, kIcon, kIcon, icons,
                                key.selected ? kSheetOnX : kSheetOffX, 0, SRCPAINT);
@@ -414,7 +412,7 @@ void PanelPaint(MMDApp* app) {
                 }
             }
             ++band;
-            bandY += kBandH;
+            bandY += kTimelineTrackRowHeight;
         }
         const std::uint32_t len = static_cast<std::uint32_t>(app->LastRegisteredFrame()) + 20;
         FinishPanel(len, len);
@@ -433,8 +431,8 @@ void PanelPaint(MMDApp* app) {
                 if (row >= 0) {
                     const int link = mdl::Mdl(model)->boneListSelLine;
                     if (link != 0) {
-                        const int x = kRowH * row + kIconLeft;
-                        const int y = kBandH * link + 17;
+                        const int x = kTimelineFrameColumnWidth * row + kIconLeft;
+                        const int y = kTimelineTrackRowHeight * link + 17;
                         BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
                         BitBlt(panel, x, y, kIcon, kIcon, icons,
                                key.allocated ? kSheetOnX : kSheetOffX, 0, SRCPAINT);
@@ -480,16 +478,16 @@ void PanelPaint(MMDApp* app) {
                                 }
                             }
                             // row drawing (0x415231..0x4154B1)
-                            const int x = kRowH * row + kIconLeft;
+                            const int x = kTimelineFrameColumnWidth * row + kIconLeft;
                             if (key.allocated != 0) {
                                 if (link >= 0) {
-                                    const int y = kBandH * link + 17;
+                                    const int y = kTimelineTrackRowHeight * link + 17;
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0,
                                            SRCAND);
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetOnX, 0,
                                            SRCPAINT);
                                 } else {
-                                    const int y = 17 - kBandH * link;
+                                    const int y = 17 - kTimelineTrackRowHeight * link;
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0,
                                            SRCAND);
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetNegX, 0,
@@ -498,14 +496,14 @@ void PanelPaint(MMDApp* app) {
                                 }
                             } else if (link >= 0) {
                                 if (mapMorph[200 * row + link] >= 0) {
-                                    const int y = kBandH * link + 17;
+                                    const int y = kTimelineTrackRowHeight * link + 17;
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0,
                                            SRCAND);
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetOffX, 0,
                                            SRCPAINT);
                                 }
                             } else if (mapMorph[200 * row - link] >= 0) {
-                                const int y = 17 - kBandH * link;
+                                const int y = 17 - kTimelineTrackRowHeight * link;
                                 BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
                                 BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetAltX, 0, SRCPAINT);
                                 mapMorph[200 * row - link] = -2;
@@ -559,16 +557,16 @@ void PanelPaint(MMDApp* app) {
                             // row drawing (0x4156D1..0x415B98)
                             const bool mask =
                                 key.physicsDisabled == 0 && bones[head].hasRigidBody != 0;
-                            const int x = kRowH * row + kIconLeft;
+                            const int x = kTimelineFrameColumnWidth * row + kIconLeft;
                             if (key.allocated != 0) {
                                 if (link >= 0) {
-                                    const int y = kBandH * link + 17;
+                                    const int y = kTimelineTrackRowHeight * link + 17;
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX,
                                            mask ? kIcon : 0, SRCAND);
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetOnX,
                                            mask ? kIcon : 0, SRCPAINT);
                                 } else {
-                                    const int y = 17 - kBandH * link;
+                                    const int y = 17 - kTimelineTrackRowHeight * link;
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX,
                                            mask ? kIcon : 0, SRCAND);
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetNegX, 0,
@@ -577,20 +575,20 @@ void PanelPaint(MMDApp* app) {
                                 }
                             } else if (link >= 0) {
                                 if (mapIk[200 * row + link] >= 0) {
-                                    const int y = kBandH * link + 17;
+                                    const int y = kTimelineTrackRowHeight * link + 17;
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX,
                                            mask ? kIcon : 0, SRCAND);
                                     BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetOffX,
                                            mask ? kIcon : 0, SRCPAINT);
                                 }
                             } else if (mapIk[200 * row - link] == -1) {
-                                const int y = 17 - kBandH * link;
+                                const int y = 17 - kTimelineTrackRowHeight * link;
                                 BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX,
                                        mask ? kIcon : 0, SRCAND);
                                 BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetNegX,
                                        mask ? kIcon : 0, SRCPAINT);
                             } else {
-                                const int y = 17 - kBandH * link;
+                                const int y = 17 - kTimelineTrackRowHeight * link;
                                 BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX,
                                        mask ? kIcon : 0, SRCAND);
                                 // 0x415A35 and 0x415A5C feed the common BitBlt call

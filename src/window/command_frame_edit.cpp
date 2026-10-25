@@ -720,7 +720,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
                 unsigned char* model = ActiveModel(app);
                 const std::uint32_t morphCount = mdl::Mdl(model)->morphCount;
                 if (morphCount > 0) {
-                    SelectModelFrameRange(mdl::MorphKeys(model), 20000, morphCount,
+                    SelectModelFrameRange(mdl::MorphKeys(model), mdl::kMorphKeyCapacity, morphCount,
                                           static_cast<std::uint32_t>(from),
                                           static_cast<std::uint32_t>(to));
                 }
@@ -728,7 +728,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
             // camera sweep (loc_482E60..482ED8)
             {
                 unsigned char* model = ActiveModel(app);
-                SelectModelFrameRange(mdl::DisplayKeys(model), 1000, 1,
+                SelectModelFrameRange(mdl::DisplayKeys(model), mdl::kDisplayKeyCapacity, 1,
                                       static_cast<std::uint32_t>(from),
                                       static_cast<std::uint32_t>(to));
             }
@@ -737,7 +737,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
             unsigned char* model = ActiveModel(app);
             const std::uint32_t morphCount = mdl::Mdl(model)->morphCount;
             if (morphCount > 0) {
-                SelectModelFrameRange(mdl::MorphKeys(model), 20000, morphCount,
+                SelectModelFrameRange(mdl::MorphKeys(model), mdl::kMorphKeyCapacity, morphCount,
                                       static_cast<std::uint32_t>(from),
                                       static_cast<std::uint32_t>(to));
             }
@@ -868,7 +868,7 @@ static void SyncKeyframeSelection(MMDApp* app) {
             }
         }
         // loop B: morph marks -> bone/morph/camera
-        for (std::uint32_t keyIndex = 0; keyIndex < 20000; ++keyIndex) {
+        for (std::uint32_t keyIndex = 0; keyIndex < mdl::kMorphKeyCapacity; ++keyIndex) {
             if (morphKeys[keyIndex].allocated != 0) {
                 const std::uint32_t frame = morphKeys[keyIndex].frame;
                 if (modelRecord->boneCount > 0) {
@@ -885,7 +885,7 @@ static void SyncKeyframeSelection(MMDApp* app) {
             }
         }
         // loop C: camera marks -> bone/morph only
-        for (std::uint32_t keyIndex = 0; keyIndex < 1000; ++keyIndex) {
+        for (std::uint32_t keyIndex = 0; keyIndex < mdl::kDisplayKeyCapacity; ++keyIndex) {
             if (displayKeys[keyIndex].allocated != 0) {
                 const std::uint32_t frame = displayKeys[keyIndex].frame;
                 if (modelRecord->boneCount > 0) {
@@ -1283,7 +1283,8 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
         mdl::ModelRecord& record = *mdl::Mdl(m);
         mdl::DetachBoneBindings(record.boneOrderTable, record.boneOrderCount, found);
         mdl::DisplayKey* displayKeys = mdl::DisplayKeys(m);
-        for (std::int32_t keyIndex = 0; keyIndex < 1000; ++keyIndex) {
+        for (std::int32_t keyIndex = 0; keyIndex < static_cast<int>(mdl::kDisplayKeyCapacity);
+             ++keyIndex) {
             auto* states = mdl::SelectorStates(displayKeys[keyIndex]);
             const std::int32_t cnt = record.boneOrderCount;
             for (std::int32_t k = 0; k < cnt; ++k) {
@@ -1549,8 +1550,8 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
         app->SceneModified() = 1;
         unsigned char* model = ActiveModel(app);
         ClearModelKeyMarks(mdl::BoneKeys(model), mdl::kBoneKeyCapacity);
-        ClearModelKeyMarks(mdl::MorphKeys(model), 20000);
-        ClearModelKeyMarks(mdl::DisplayKeys(model), 1000);
+        ClearModelKeyMarks(mdl::MorphKeys(model), mdl::kMorphKeyCapacity);
+        ClearModelKeyMarks(mdl::DisplayKeys(model), mdl::kDisplayKeyCapacity);
         RegisterDisplayKeyCurrent(model, app->state.currentFrame);
         const std::int32_t v = static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
         if (app->state.lastRegisteredFrame < v) {

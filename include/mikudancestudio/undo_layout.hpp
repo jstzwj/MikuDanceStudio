@@ -6,6 +6,8 @@
 
 namespace mikudancestudio::mdl {
 
+inline constexpr int kUndoHistoryDepth = 30;
+
 struct BonePoseSnapshot {
     std::int32_t boneIndex;
     float position[3];
@@ -40,7 +42,7 @@ struct UndoRecord {
 };
 
 struct UndoRing {
-    UndoRecord slots[30];
+    UndoRecord slots[kUndoHistoryDepth];
 };
 
 static_assert(sizeof(UndoOperation) == 4, "undo operation ABI");

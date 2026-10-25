@@ -307,8 +307,8 @@ void ShutdownCleanup(MMDApp* app) {
     s.SelectNavRecords() = nullptr;
 
     // ---- 1/2: flag-gated callback + module unload ------------------------
-    if (s.state.depthDeviceEnabled != 0) {                  // 0x462C6F
-        reinterpret_cast<void (*)()>(s.OniExportSlot(1))(); // 0x462C81
+    if (s.state.depthDeviceEnabled != 0) {                                 // 0x462C6F
+        reinterpret_cast<void (*)()>(s.OniExportSlot(OniExport::Clean))(); // 0x462C81
         s.state.depthDeviceEnabled = 0;
     }
     if (HMODULE mod = s.state.oniModule) { // 0x462C89

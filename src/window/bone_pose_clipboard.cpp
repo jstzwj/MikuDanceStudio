@@ -102,7 +102,7 @@ void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
     modelRecord->undoDirty = 1;
     modelRecord->redoDirty = 0;
     ++modelRecord->UndoCursor();
-    if (modelRecord->UndoCursor() >= 0x1E) {
+    if (modelRecord->UndoCursor() >= mdl::kUndoHistoryDepth) {
         modelRecord->UndoCursor() = 0;
     }
     const std::int32_t undoCursor = modelRecord->UndoCursor();
@@ -188,7 +188,7 @@ void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
     modelRecord->undoDirty = 1;
     modelRecord->redoDirty = 0;
     ++modelRecord->UndoCursor();
-    if (modelRecord->UndoCursor() >= 0x1E) {
+    if (modelRecord->UndoCursor() >= mdl::kUndoHistoryDepth) {
         modelRecord->UndoCursor() = 0;
     }
     const std::int32_t undoCursor = modelRecord->UndoCursor();

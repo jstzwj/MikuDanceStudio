@@ -36,6 +36,11 @@ struct BoneClipboardRecord {
     std::uint8_t reserved1[3];
 };
 static_assert(sizeof(BoneClipboardRecord) == 84, "bone clipboard ABI");
+static_assert(offsetof(BoneClipboardRecord, frame) == 32);
+static_assert(offsetof(BoneClipboardRecord, rotation) == 36);
+static_assert(offsetof(BoneClipboardRecord, position) == 52);
+static_assert(offsetof(BoneClipboardRecord, physicsDisabled) == 64);
+static_assert(offsetof(BoneClipboardRecord, interpolation) == 65);
 
 struct MorphClipboardRecord {
     char name[30];
@@ -44,6 +49,8 @@ struct MorphClipboardRecord {
     float value;
 };
 static_assert(sizeof(MorphClipboardRecord) == 40, "morph clipboard ABI");
+static_assert(offsetof(MorphClipboardRecord, frame) == 32);
+static_assert(offsetof(MorphClipboardRecord, value) == 36);
 
 struct IkClipboardState {
     char boneName[20];

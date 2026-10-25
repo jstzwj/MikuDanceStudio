@@ -225,7 +225,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_VSCROLL:
         HandleVScroll(lParam, wParam); // 0x44BB30
         return 0;
-    case 0x138: // WM_CTLCOLORSTATIC
+    case WM_CTLCOLORSTATIC:
         return HandleCtlColor(reinterpret_cast<HWND>(lParam),
                               reinterpret_cast<HDC>(wParam)); // 0x40E0E0
     case WM_MOUSEMOVE:

@@ -29,6 +29,7 @@
 #include <cstring>
 #include <cwchar>
 
+#include "background_quad.hpp"
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -65,60 +66,6 @@ void ReleaseAviBackgroundHandles(MMDApp* app) {
 
 HWND OverlayHwnd(MMDApp* app) {
     return static_cast<HWND>(app->state.hwnd);
-}
-
-// Locked-buffer quad writer.  Byte offsets and float stores follow the
-// original instruction order exactly (vertices: v0=(r,t) v1=(r,b) v2/v3=(l,t)
-// v4=(r,b) v5=(l,b); fixed color 0xFFFFFFFF and 0..1 UVs).
-void WriteOverlayQuad(void* locked, double left, double top, double right, double bottom) {
-    auto* v = static_cast<float*>(locked);
-    // x: v5/v3/v2 = left (0x8C/0x54/0x38), v4/v1/v0 = right
-    v[0x8C / 4] = static_cast<float>(left);
-    v[0x54 / 4] = v[0x8C / 4];
-    v[0x38 / 4] = v[0x54 / 4];
-    v[0x70 / 4] = static_cast<float>(right);
-    v[0x1C / 4] = v[0x70 / 4];
-    v[0x00 / 4] = v[0x1C / 4];
-    // y: v3/v2/v0 = top (0x58/0x3C/0x04), v5/v4/v1 = bottom
-    v[0x58 / 4] = static_cast<float>(top);
-    v[0x3C / 4] = v[0x58 / 4];
-    v[0x04 / 4] = v[0x3C / 4];
-    v[0x90 / 4] = static_cast<float>(bottom);
-    v[0x74 / 4] = v[0x90 / 4];
-    v[0x20 / 4] = v[0x74 / 4];
-    // z = 0, rhw = 1
-    v[0x08 / 4] = 0.0f;
-    v[0x24 / 4] = 0.0f;
-    v[0x40 / 4] = 0.0f;
-    v[0x5C / 4] = 0.0f;
-    v[0x78 / 4] = 0.0f;
-    v[0x94 / 4] = 0.0f;
-    v[0x28 / 4] = 1.0f;
-    v[0x44 / 4] = 1.0f;
-    v[0x60 / 4] = 1.0f;
-    v[0x7C / 4] = 1.0f;
-    v[0x98 / 4] = 1.0f;
-    // diffuse = white
-    std::memset(reinterpret_cast<unsigned char*>(locked) + 0x10, 0xFF, 4);
-    std::memset(reinterpret_cast<unsigned char*>(locked) + 0x2C, 0xFF, 4);
-    std::memset(reinterpret_cast<unsigned char*>(locked) + 0x48, 0xFF, 4);
-    std::memset(reinterpret_cast<unsigned char*>(locked) + 0x64, 0xFF, 4);
-    std::memset(reinterpret_cast<unsigned char*>(locked) + 0x80, 0xFF, 4);
-    std::memset(reinterpret_cast<unsigned char*>(locked) + 0x9C, 0xFF, 4);
-    // u: 1 for right vertices (v0/v1/v4), 0 for left vertices (v2/v3/v5)
-    v[0x14 / 4] = 1.0f;
-    v[0x30 / 4] = 1.0f;
-    v[0x84 / 4] = 1.0f;
-    v[0x4C / 4] = 0.0f;
-    v[0x68 / 4] = 0.0f;
-    v[0xA0 / 4] = 0.0f;
-    // v: 1 for bottom vertices (v1/v4/v5), 0 for top vertices (v0/v2/v3)
-    v[0x18 / 4] = 0.0f;
-    v[0x50 / 4] = 0.0f;
-    v[0x6C / 4] = 0.0f;
-    v[0x34 / 4] = 1.0f;
-    v[0x88 / 4] = 1.0f;
-    v[0xA4 / 4] = 1.0f;
 }
 
 // Shared geometry tail of 0x4168D0 (fields 9E414/418/41C/420/424) and
@@ -198,11 +145,11 @@ void RefreshOverlayVertexBuffer(MMDApp* app, IDirect3DVertexBuffer9* vb,
     if (vb == nullptr)
         return;
     void* locked = nullptr;
-    if (FAILED(vb->Lock(0, 0xA8, &locked, 0)) || locked == nullptr) // 0x416CE9
+    if (FAILED(vb->Lock(0, kBackgroundQuadBytes, &locked, 0)) || locked == nullptr) // 0x416CE9
         return;
     double left, top, right, bottom;
     ComputeOverlayRect(app, placement, &left, &top, &right, &bottom);
-    WriteOverlayQuad(locked, left, top, right, bottom);
+    WriteBackgroundQuad(static_cast<TexturedScreenVertex*>(locked), left, top, right, bottom);
     vb->Unlock(); // 0x417123
 }
 

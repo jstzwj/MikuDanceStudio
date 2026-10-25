@@ -97,7 +97,7 @@ void SaveVmdFile(const wchar_t* path) {
             }
         }
         const mdl::MorphKey* mkeys = mdl::MorphKeys(model);
-        for (unsigned int i = 0; i < 20000; ++i) {
+        for (unsigned int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
             if (mkeys[i].allocated != 0) {
                 ++morphCnt;
                 const std::uint32_t f = mkeys[i].frame;
@@ -106,7 +106,7 @@ void SaveVmdFile(const wchar_t* path) {
             }
         }
         const mdl::DisplayKey* ikeys = mdl::DisplayKeys(model);
-        for (unsigned int i = 0; i < 1000; ++i) {
+        for (unsigned int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             if (ikeys[i].allocated != 0) {
                 ++ikCnt;
                 const std::uint32_t f = ikeys[i].frame;
@@ -226,7 +226,7 @@ void SaveVmdFile(const wchar_t* path) {
     Wr(fd, &outDword, 4); // 0x419B8F
     if (!cameraMode) {
         const mdl::MorphKey* mkeys = mdl::MorphKeys(model);
-        for (unsigned int idx = 0; idx < 20000; ++idx) {
+        for (unsigned int idx = 0; idx < static_cast<int>(mdl::kMorphKeyCapacity); ++idx) {
             const mdl::MorphKey& rec = mkeys[idx];
             if (rec.allocated == 0)
                 continue;
@@ -304,7 +304,7 @@ void SaveVmdFile(const wchar_t* path) {
     Wr(fd, &outDword, 4); // 0x41A17B..
     if (!cameraMode && outDword != 0) {
         const mdl::DisplayKey* ikeys = mdl::DisplayKeys(model);
-        for (unsigned int i = 0; i < 1000; ++i) {
+        for (unsigned int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             const mdl::DisplayKey& rec = ikeys[i];
             if (rec.allocated == 0)
                 continue;

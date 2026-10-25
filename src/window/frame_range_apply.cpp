@@ -13,7 +13,6 @@
 #define NOMINMAX
 #include <Windows.h>
 
-#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -54,10 +53,6 @@ inline void TraceRange(const char*, int = -1) {
 }
 #endif
 
-template <typename T> T& At(unsigned char* base, std::size_t offset) {
-    return *reinterpret_cast<T*>(base + offset);
-}
-
 // x64 sub_7FF7CB4BD470 computes both frame maps in SSE single precision:
 //   (int)(float)((float)(int)(frame - start) * (float)scale)
 // i.e. cvtsi2ss -> mulss (round-to-nearest float product) -> cvttss2si.
@@ -88,20 +83,20 @@ void ClearBoneMarks(mdl::BoneKey* keys) {
 }
 
 void ClearMorphMarks(mdl::MorphKey* keys) {
-    for (int i = 0; i < 20000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
         keys[i].allocated = 0;
 }
 
 void ClearDisplayMarks(mdl::DisplayKey* keys) {
-    for (int i = 0; i < 1000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
         keys[i].allocated = 0;
 }
 
 struct DisplayCopy {
     std::uint32_t frame{};
     unsigned char view{};
-    std::vector<unsigned char> ik;
-    std::vector<unsigned char> relations;
+    std::vector<mdl::IkClipboardState> ik;
+    std::vector<mdl::SelectorClipboardState> relations;
 };
 
 void ScaleBoneKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t start,
@@ -132,7 +127,7 @@ void ScaleBoneKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t s
     ClearMorphMarks(morphKeys);
     ClearDisplayMarks(displayKeys);
 
-    std::vector<std::array<unsigned char, 84>> copies(static_cast<std::size_t>(count));
+    std::vector<mdl::BoneClipboardRecord> copies(static_cast<std::size_t>(count));
     int outIndex = 0;
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
         const mdl::BoneKey& key = keys[i];
@@ -140,12 +135,12 @@ void ScaleBoneKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t s
             continue;
         auto& out = copies[static_cast<std::size_t>(outIndex++)];
         const int owner = TrackOwner(keys, i, boneCount);
-        strcpy_s(reinterpret_cast<char*>(out.data()), 30, bones[owner].name);
-        At<std::uint32_t>(out.data(), 32) = ScaledRelativeFrame(key.frame, start, end, scale);
-        std::memcpy(out.data() + 36, key.rotation, sizeof(key.rotation));
-        std::memcpy(out.data() + 52, key.position, sizeof(key.position));
-        out[64] = key.physicsDisabled;
-        std::memcpy(out.data() + 65, key.interpolation, sizeof(key.interpolation));
+        strcpy_s(out.name, bones[owner].name);
+        out.frame = ScaledRelativeFrame(key.frame, start, end, scale);
+        std::memcpy(out.rotation, key.rotation, sizeof(key.rotation));
+        std::memcpy(out.position, key.position, sizeof(key.position));
+        out.physicsDisabled = key.physicsDisabled;
+        std::memcpy(out.interpolation, key.interpolation, sizeof(key.interpolation));
     }
 
     // Deleting the marked originals creates the first type-2 snapshot.
@@ -157,7 +152,7 @@ void ScaleBoneKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t s
     TraceRange("bone.undo_open");
     ResetBoneKeyCursor(model);
     for (auto& copy : copies) {
-        if (!RegisterBoneKey(model, copy.data(), static_cast<int>(start), 0))
+        if (!RegisterBoneKey(model, copy, static_cast<int>(start), 0))
             break;
     }
     TraceRange("bone.inserted");
@@ -175,7 +170,7 @@ void ScaleMorphKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t 
     const int morphCount = static_cast<int>(mdl::Mdl(model)->morphCount);
 
     int count = 0;
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
         mdl::MorphKey& key = keys[i];
         key.allocated = 0;
         const std::uint32_t frame = key.frame;
@@ -191,24 +186,24 @@ void ScaleMorphKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_t 
     ClearBoneMarks(boneKeys);
     ClearDisplayMarks(displayKeys);
 
-    std::vector<std::array<unsigned char, 40>> copies(static_cast<std::size_t>(count));
+    std::vector<mdl::MorphClipboardRecord> copies(static_cast<std::size_t>(count));
     int outIndex = 0;
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
         const mdl::MorphKey& key = keys[i];
         if (key.allocated == 0)
             continue;
         auto& out = copies[static_cast<std::size_t>(outIndex++)];
         const int owner = TrackOwner(keys, i, morphCount);
-        strcpy_s(reinterpret_cast<char*>(out.data()), 30, morphs[owner].name);
-        At<std::uint32_t>(out.data(), 32) = ScaledRelativeFrame(key.frame, start, end, scale);
-        std::memcpy(out.data() + 36, &key.value, sizeof(key.value));
+        strcpy_s(out.name, morphs[owner].name);
+        out.frame = ScaledRelativeFrame(key.frame, start, end, scale);
+        std::memcpy(&out.value, &key.value, sizeof(out.value));
     }
 
     DeleteMarkedKeyframes(app);
     TraceRange("morph.deleted");
     ResetMorphKeyCursor(model);
     for (const auto& copy : copies) {
-        if (!RegisterMorphKeyFromRecord(model, copy.data(), static_cast<int>(start)))
+        if (!RegisterMorphKeyFromRecord(model, copy, static_cast<int>(start)))
             break;
     }
     TraceRange("morph.inserted");
@@ -229,7 +224,7 @@ void ScaleDisplayKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_
     const int relationCount = static_cast<int>(mdl::Mdl(model)->boneOrderCount);
 
     int count = 0;
-    for (int i = 0; i < 1000; ++i) {
+    for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
         mdl::DisplayKey& key = keys[i];
         key.allocated = 0;
         const std::uint32_t frame = key.frame;
@@ -247,7 +242,7 @@ void ScaleDisplayKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_
 
     std::vector<DisplayCopy> copies;
     copies.reserve(static_cast<std::size_t>(count));
-    for (int keyIndex = 0; keyIndex < 1000; ++keyIndex) {
+    for (int keyIndex = 0; keyIndex < static_cast<int>(mdl::kDisplayKeyCapacity); ++keyIndex) {
         const mdl::DisplayKey& key = keys[keyIndex];
         if (key.allocated == 0)
             continue;
@@ -255,25 +250,25 @@ void ScaleDisplayKeys(MMDApp* app, unsigned char* model, HWND hDlg, std::uint32_
         DisplayCopy copy;
         copy.frame = ScaledRelativeFrame(key.frame, start, end, scale);
         copy.view = key.visible;
-        copy.ik.resize(static_cast<std::size_t>(ikCount) * 21);
+        copy.ik.resize(static_cast<std::size_t>(ikCount));
         const unsigned char* const keyIk = mdl::IkStates(key);
         for (int i = 0; i < ikCount; ++i) {
-            unsigned char* const out = copy.ik.data() + 21 * i;
+            auto& out = copy.ik[i];
             const int bone = ikChains[i].boneIndex;
-            strcpy_s(reinterpret_cast<char*>(out), 20, bones[bone].name);
-            out[20] = keyIk[i];
+            strcpy_s(out.boneName, bones[bone].name);
+            out.enabled = keyIk[i];
         }
 
-        copy.relations.resize(static_cast<std::size_t>(relationCount) * 28);
+        copy.relations.resize(static_cast<std::size_t>(relationCount));
         const mdl::BoneReference* const keyRelations = mdl::SelectorStates(key);
         for (int i = 0; i < relationCount; ++i) {
-            unsigned char* const out = copy.relations.data() + 28 * i;
+            auto& out = copy.relations[i];
             if (i != 0) {
                 const int bone = selectors[i].boneIndex;
-                strcpy_s(reinterpret_cast<char*>(out), 20, bones[bone].name);
+                strcpy_s(out.boneName, bones[bone].name);
             }
-            At<std::int32_t>(out, 20) = keyRelations[i].modelIndex;
-            At<std::int32_t>(out, 24) = keyRelations[i].boneIndex;
+            out.modelIndex = keyRelations[i].modelIndex;
+            out.boneIndex = keyRelations[i].boneIndex;
         }
         copies.push_back(std::move(copy));
     }

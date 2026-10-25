@@ -435,7 +435,7 @@ void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
     EnableWindow(GetDlgItem(window, panel::kUndoButton), TRUE);
     EnableWindow(GetDlgItem(window, panel::kRedoButton), FALSE);
     std::uint32_t& cursor = model->UndoCursor();
-    if (++cursor >= 30)
+    if (++cursor >= mdl::kUndoHistoryDepth)
         cursor = 0;
     model->LatestUndoCursor() = cursor;
     model->undoDirty = 1;
@@ -692,7 +692,7 @@ void ApplyPhysicsOnOff(int on) { // VA 0x004403C0
     model->undoDirty = 1;
     model->redoDirty = 0;
     std::uint32_t& cursor = model->UndoCursor();
-    if (++cursor >= 30)
+    if (++cursor >= mdl::kUndoHistoryDepth)
         cursor = 0;
     model->LatestUndoCursor() = cursor;
     mdl::UndoRecord& undo = model->undoRings[0].slots[cursor];

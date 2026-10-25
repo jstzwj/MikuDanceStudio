@@ -66,8 +66,8 @@
 //   +0x5B4  const void* m_pFrameBits    (EXE push frame DIB bits)
 //
 //   x64 rebuild: pad +0x168, frame count +0x178, csRender +0x180 (40B),
-//   csDisplay +0x1A8, display block +0x1D0 (0x460 bytes — see the probe
-//   note below for the 0x464 memset quirk), push cfg +0x630, extra +0x640,
+//   csDisplay +0x1A8, display block +0x1D0 (0x464 bytes),
+//   push cfg +0x638, extra +0x640,
 //   avg-per-frame +0x648, flags +0x650..+0x653, frame bits +0x658.
 //
 //   The IPushSource methods that write the push-cfg triple (0x10001730 /
@@ -77,7 +77,7 @@
 //
 // PUSH CONFIGURATION (header members, offsets verified against the binary;
 // x64 offsets after the slash):
-//   m_pPushCfg    +0x5A0/+0x630  void* — operator new(0x2C) block from
+//   m_pPushCfg    +0x5A0/+0x638  void* — operator new(0x2C) block from
 //                          0x10001730, 0x28 bytes of EXE-pushed
 //                          BITMAPINFOHEADER copied into it (4 trailing
 //                          bytes never written)
@@ -280,22 +280,12 @@ int FixupDisplayVIH_100050E0(VIDEOINFOHEADER* pVIH) {
 // Struct at pin+0x120 in the binary:
 //   +0x120 CRITICAL_SECTION (m_csDisplay)
 //   +0x138 VIDEOINFOHEADER + color table, 0x464 bytes (m_displayBlock)
-// x64 rebuild (probe inlined at 0x180005360): critsec at +0x1A8, block at
-//   +0x1D0 — and the block is 4 bytes SHORTER (0x460, so the push-cfg
-//   pointer can sit at +0x630) while the memset STILL clears 0x464 bytes,
-//   clobbering m_pPushCfg's low half.  Harmless in the original (the ctor
-//   zeroes the slot right after the probe) and reproduced faithfully below.
+// x64 probe 0x180005360 clears the same 0x464 bytes at +0x1D0;
+// native alignment places the following push-config pointer at +0x638.
 HRESULT ProbeDisplayFormat_10005140(CPushPinDIBSq* pPin, LPCSTR pszDevice) {
     VIDEOINFOHEADER* pVIH = reinterpret_cast<VIDEOINFOHEADER*>(pPin->m_displayBlock);
-
     ::EnterCriticalSection(&pPin->m_csDisplay);
-#if defined(_M_X64)
-    // the VC10 rebuild's literal 0x464 overruns its 0x460-byte block by the
-    // 4 bytes the next member grew — keep the byte count, not sizeof()
-    memset(pPin->m_displayBlock, 0, 0x464);
-#else
     memset(pPin->m_displayBlock, 0, sizeof(pPin->m_displayBlock));
-#endif
     pVIH->bmiHeader.biSize = 40; // [pCS+72] = 40
 
     HDC hdc;
@@ -348,7 +338,7 @@ void InitDisplayState_10005220(CPushPinDIBSq* pPin) {
 //   pin+0x5A0 / +0x5A4 / +0x5A8(qword) = 0
 //   pin+0x5B0..+0x5B3 = 0
 // (x64 rebuild, ctor 0x180001870: pin+0x168..0x178 zeroes, critsecs at
-//  +0x180/+0x1A8, then the +0x630/+0x640/+0x648 triple and +0x650 dword.)
+//  +0x180/+0x1A8, then the +0x638/+0x640/+0x648 triple and +0x650 dword.)
 //
 // The name pushed as the 4th CSourceStream ctor argument is L"Out"
 // (.rdata 0x1000831C, x64 .rdata 0x180008748).  The binary's first
@@ -363,7 +353,7 @@ CPushPinDIBSq::CPushPinDIBSq(HRESULT* phr, CSource* pParent)
     m_frameCount = 0;                         // pin+0x100 / x64 +0x178
     ::InitializeCriticalSection(&m_csRender); // pin+0x104 / x64 +0x180
     InitDisplayState_10005220(this);          // pin+0x120 block / x64 +0x1A8
-    PushBIH(this) = NULL;                     // pin+0x5A0 / x64 +0x630
+    PushBIH(this) = NULL;                     // pin+0x5A0 / x64 +0x638
     m_nPushExtra = 0;                         // pin+0x5A4 / x64 +0x640
     m_rtAvgPerFrame = 0;                      // pin+0x5A8 (qword) / x64 +0x648
     m_bBitmapSet = 0;                         // pin+0x5B0 / x64 +0x650

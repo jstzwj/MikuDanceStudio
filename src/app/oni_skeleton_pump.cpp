@@ -20,7 +20,7 @@
 //   0x7FF7CB44C141..0x7FF7CB44C4E7  18..23 indirect calls through [app+0xA1358]
 //                  (stored by the DxOpenNI loader at 0x7FF7CB4C6CE1;
 //                  ?OpenNIGetSkeltonJointPosition@@YGXHPAUD3DXVECTOR3@@@Z，
-//                  namely OniExportSlot(4)): (ecx=joint index, rdx=model+joint slot),
+//                  namely OniExportSlot(OniExport::JointPosition)): (ecx=joint index, rdx=model+joint slot),
 //                  fetching Kinect joint positions into 23 vec3 "current slots" every frame.
 //                  The slots share ModelVertexHistoryPush's channel layout (x86 float
 //                  indices 3570..3636 = bytes 14280..14556, x64 0x3B70..0x3C84).
@@ -335,7 +335,7 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
 
         // 0x7FF7CB4F2FB2..0x7FF7CB4F2FD8: increment undo ring cursor, wrap at 30 slots, set dirty flags
         // (word write = undoDirty=1 and redoDirty=0).
-        if (++mdl::Mdl(model)->UndoCursor() >= 30u)
+        if (++mdl::Mdl(model)->UndoCursor() >= mdl::kUndoHistoryDepth)
             mdl::Mdl(model)->UndoCursor() = 0;
         const int cursor = mdl::Mdl(model)->UndoCursor();
         mdl::Mdl(model)->LatestUndoCursor() = cursor;
@@ -481,8 +481,8 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive) {
     // 1. Fetch joints (0x7FF7CB44C141..0x7FF7CB44C4E7): OpenNI joint index -> slot
     // float index (byte offset = 14280 + 12*slot ordinal, sharing ModelVertexHistoryPush's channel table).
     // The first 18 are unconditional; version 1.40 adds 2 and version 1.50 adds 5.
-    auto getJoint =
-        reinterpret_cast<void(__stdcall*)(int, float*)>(s.OniExportSlot(4)); // x64 [app+0xA1358]
+    auto getJoint = reinterpret_cast<void(__stdcall*)(int, float*)>(
+        s.OniExportSlot(OniExport::JointPosition)); // x64 [app+0xA1358]
     if (model == nullptr || getJoint == nullptr)
         return;
     mdl::CaptureSkeletonJoints(mdl::Mdl(model)->currentJoints, s.state.openniVersion, getJoint);
@@ -547,8 +547,8 @@ void ManageKinectRecordGate(MMDApp* app, unsigned char selActive) {
 
     // 1. Depth map: do not draw while idle (neither file-driven capture nor any recording
     // state-machine stage is active).
-    auto drawDepthMap =
-        reinterpret_cast<void(__stdcall*)(unsigned char)>(s.OniExportSlot(2)); // x64 [app+0xA1348]
+    auto drawDepthMap = reinterpret_cast<void(__stdcall*)(unsigned char)>(
+        s.OniExportSlot(OniExport::DrawDepthMap)); // x64 [app+0xA1348]
     if (drawDepthMap != nullptr)
         drawDepthMap((s.state.kinectCaptureActive == 0 && // x86 0xA03DF
                       s.state.autoRepeat == 0)            // x86 0xA0D68

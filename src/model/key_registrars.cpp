@@ -4,84 +4,28 @@
 // - key registrars + allocator resets for the VMD load path, plus the
 //   name-based key-track frame marker of the frame-range editor
 // ===========================================================================
-// The three registrars insert one key each into the per-track sorted
-// doubly-linked lists inside the shared record arrays, allocating fresh
-// records from the model+8768 cursor (advanced past frame==0 holes; the
-// cursor increments persist):
+// BoneClipboardRecord, MorphClipboardRecord and the display input entries are
+// runtime work records shared by VMD loading, clipboard paste and range edits.
+// Their field offsets are pinned in clipboard_layout.hpp; VMD disk records are
+// decoded field by field and have different sizes and ordering.
 //
-//   RegisterBoneKey(model, rec, frameOffset, useSelected)   bone keys
-//     - rec = the 0x434B60 parse buffer: name at +0, frame +32, position
-//       +52..60, quaternion +36..52 (quaternion w at +52 = v66[56]...
-//       note the DECOMPILE-SHIFTED naming below uses the byte offsets the
-//       loader wrote), control block +64..80 (the 3939-compare byte at
-//       +64 becomes the record's IK-off mode byte at +57; +65..80 copy
-//       linearly to the record's +12..27).
-//     - frame = frameOffset + rec.frame (VMD load passes the CURRENT
-//       frame, so a motion loads "starting at" the play position).
-//     - bone lookup: useSelected ? model+11664 selected index : strcmp
-//       over the typed BoneRecord table (name); miss -> 1.
-//     - twist correction for type 8 / type 4 with the 0x400 flag at
-//       bone+500: quaternion -> axis/angle, axis forced onto the bone's
-//       own axis (PMX: bone+508..516; PMD: normalize(tail rest position
-//       - bone rest position), tail index at bone+460); cos = dot of the
-//       normalized axes, negative -> negate sin(halfAngle); xyz rebuilt
-//       and normalized.
-//     - position is stored only for bone types 0/1/2.
-//     - insert: walk next-links from the bone index, exact frame =
-//       overwrite in place, else allocate + splice (prev/next), append
-//       when the chain ends; overflow at kBoneKeyCapacity records (the
-//       x64 E build's 600000; the x86 original's 300000) raises the
-//       "You cannot regist over %d point" box (EN/JP by model+12740) and
-//       returns 0; model+12720 max-frame bump (exact/insert paths bump
-//       the RAW frameOffset - an original quirk kept).
-//     - AppendBoneKeyToUndo (0x49D410;  - undo-slot
-//       bookkeeping, deduped by the model keyVisitMap) fires per touched
-//       record.
+// Registrars walk a sorted doubly linked track, overwrite exact frames, or
+// allocate and splice a free key. The model search cursor advances persistently.
+// Bone changes append undo entries before changing either key or link. Fixed-axis
+// correction can modify the input quaternion, so bone input is intentionally mutable.
+// Mirrored paste reflects position X and quaternion Y/Z, including name matching.
+// Morph lookup advances one native MorphRecord (x86 136 / x64 192 bytes).
+// Display input names resolve IK flags and external-parent selector pairs.
 //
-//   RegisterMorphKeyFromRecord (model, rec, frameOffset)
-//     morph keys - same walk/insert over the 20-byte records; value at
-//     rec+36, mark +16; cap 20000.
-//
-//   RegisterDisplayKeyFromRecord (model, frame, view, cnt,
-//             entries21, cnt2, entries28, frameOffset)   IK/display keys
-//     into the 28-byte master records (single chain from record 0): +12
-//     view byte, mark +20, cap 1000.  entries21 = {20-byte name, flag}
-//     matched per IK chain (chain bone indices are the first dwords of the
-//     model+9920 24-byte structs) filling the record+16 byte array;
-//     entries28 = {20-byte name, u32, u32} matched per selector bone
-//     (first dword of each 20-byte selector record) filling the record+24
-//     {frame, idx} pair array.  VMD load passes cnt2 = 0.
-//
-//   ResetBoneKeyCursor(model)  resets model+8768 to the bone count, then skips
-//     occupied (frame != 0) 60-byte records (cap kBoneKeyCapacity).
-//   ResetMorphKeyCursor(model)  reseeds model+8768 to the morph count and skips
-//     occupied 20-byte records (cap 20000).
-//
-//   MarkKeyTrackRangeByName (model, from, to, name)
-//     name-based key-track frame mark:
-//     resolves the scope text of the frame-range editor (command 415:
-//     the 0x1B2 text / the "Sel Bone" and "Sel facial" per-item loops)
-//     to ONE key track and sets the mark byte (+56 bone / +16 morph /
-//     +20 display) of every record with from <= frame <= to (unsigned).
-//     Resolution order (first match wins, misses fall through):
-//       1. facial display-frame group name (displayFrames, SJIS name
-//          ONLY - an English-mode group text never matches, original
-//          quirk) -> morph-key track rooted at targetIndex;
-//       2. Display/IK/external parent (13-byte memcmp) / "disp/IK/OP" -> display-key
-//          track (record 0);
-//       3. the root bone's own name, bones[0] SJIS or English (combo
-//          434's center-bone entry) -> bone-key record 0;
-//       4. ﾎﾞｰﾝ01 (7-byte memcmp) / "bone01" - the bundled ダミーボーン
-//          model's combo entries (0x531118/0x531110, x64 0x5524D8/
-//          0x5524E0) -> bone-key record 0;
-//       5. bone display-frame group name (rbGroups, SJIS or English) ->
-//          bone-key track rooted at targetIndex.
-//     Callers ignore the return value; it carries the last record index
-//     marked (0 = nothing), mirroring the original's leftover eax.
-//
-// Reference: IDA live disassembly of MikuMikuDance.exe v932 (sole source of
-// truth; ../translated/ reference files deviate).
-// =========================================================================//
+// Verified original entry points:
+//   bone:    x86 0x49D880 / x64 0x7FF7CB4E9390
+//   mirror:  x86 0x49E310
+//   morph:   x86 0x49F190 / x64 0x7FF7CB4EACF0
+//   display: x86 0x49F8C0 / x64 0x7FF7CB4EB3C0
+// Preserve the original raw-frameOffset max-frame update in the bone overwrite
+// and insert paths. MarkKeyTrackRangeByName retains its original name-resolution
+// priority and inclusive, unsigned frame bounds.
+// ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -94,17 +38,10 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
-
-#include "keyframe_common.hpp"
+#include "mikudancestudio/clipboard_layout.hpp"
 
 namespace mikudancestudio {
 namespace {
-
-using kfa::Rd32;
-using kfa::RdI32;
-using kfa::RdF32;
-using kfa::Wr32;
-using kfa::WrF32;
 
 // JP overflow strings (0x52B918 / 0x52B908, SJIS byte-exact)
 const char kJpOverflow[] = "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67\x90\x94\x82\xaa%d"
@@ -137,34 +74,34 @@ void OverflowBox(unsigned char* m, int limit) {
 
 // copy the parsed bone-key fields into a 60-byte record (the exact-
 // overwrite and fresh-record paths share this; dst frame/links excluded)
-void FillBoneRecord(mdl::BoneKey& dst, const unsigned char* rec, bool writePos) {
-    std::memcpy(dst.rotation, rec + 36, sizeof dst.rotation);
+void FillBoneRecord(mdl::BoneKey& dst, const mdl::BoneClipboardRecord& rec, bool writePos) {
+    std::memcpy(dst.rotation, rec.rotation, sizeof dst.rotation);
     if (writePos)
-        std::memcpy(dst.position, rec + 52, sizeof dst.position);
-    dst.physicsDisabled = rec[64];
-    std::memcpy(dst.interpolation, rec + 65, sizeof dst.interpolation);
+        std::memcpy(dst.position, rec.position, sizeof dst.position);
+    dst.physicsDisabled = rec.physicsDisabled;
+    std::memcpy(dst.interpolation, rec.interpolation, sizeof dst.interpolation);
     dst.allocated = 1;
 }
 
 // 0x49E310 stores the copied pose after reflecting it across the model's
 // YZ plane. Quaternion Y/Z and position X change sign.
-void FillMirroredBoneRecord(mdl::BoneKey& dst, const unsigned char* rec) {
-    std::memcpy(dst.rotation, rec + 36, sizeof dst.rotation);
+void FillMirroredBoneRecord(mdl::BoneKey& dst, const mdl::BoneClipboardRecord& rec) {
+    std::memcpy(dst.rotation, rec.rotation, sizeof dst.rotation);
     dst.rotation[1] = -dst.rotation[1];
     dst.rotation[2] = -dst.rotation[2];
-    std::memcpy(dst.position, rec + 52, sizeof dst.position);
+    std::memcpy(dst.position, rec.position, sizeof dst.position);
     dst.position[0] = -dst.position[0];
-    dst.physicsDisabled = rec[64];
-    std::memcpy(dst.interpolation, rec + 65, sizeof dst.interpolation);
+    dst.physicsDisabled = rec.physicsDisabled;
+    std::memcpy(dst.interpolation, rec.interpolation, sizeof dst.interpolation);
     dst.allocated = 1;
 }
 
-int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
+int FindMirroredBone(unsigned char* model, const mdl::BoneClipboardRecord& rec) {
     // Shift-JIS: 0x89 0x45 = right, 0x8D 0xB6 = left. MMD swaps the first
     // matching marker and compares the suffix after the two-byte character.
     static const char kRight[] = "\x89\x45";
     static const char kLeft[] = "\x8D\xB6";
-    const char* const name = reinterpret_cast<const char*>(rec);
+    const char* const name = rec.name;
     const mdl::ModelRecord& state = *mdl::Mdl(model);
     const mdl::BoneRecord* const bones = state.boneTable;
     const int boneCount = static_cast<int>(state.boneCount);
@@ -300,10 +237,10 @@ void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frameArg) {
     };
     const auto allocate = [&]() -> int {
         int index = static_cast<int>(mdl::Mdl(m)->morphCount);
-        while (index < 20000 && keys[index].frame != 0)
+        while (index < static_cast<int>(mdl::kMorphKeyCapacity) && keys[index].frame != 0)
             ++index;
-        if (index >= 20000) {
-            OverflowBox(m, 20000);
+        if (index >= static_cast<int>(mdl::kMorphKeyCapacity)) {
+            OverflowBox(m, mdl::kMorphKeyCapacity);
             return -1;
         }
         return index;
@@ -348,11 +285,11 @@ void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frameArg) {
 }
 
 // ---- VA 0x0049D880 -----------------------------------------
-bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
+bool RegisterBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec, int frameOffset,
                      unsigned char useSelected) {
     unsigned char* const m = model;
     mdl::BoneKey* const keys = mdl::BoneKeys(m);
-    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + rec.frame;
 
     // bone lookup by name (or the selected index)
     int boneIdx;
@@ -364,7 +301,7 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
         if (boneCnt <= 0)
             return true;
         const mdl::BoneRecord* bone = mdl::Bones(m);
-        while (std::strcmp(reinterpret_cast<const char*>(rec), bone->name) != 0) {
+        while (std::strcmp(rec.name, bone->name) != 0) {
             if (++boneIdx >= boneCnt)
                 return true;
             ++bone;
@@ -393,7 +330,7 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
             auto* d3 = &d3dx::Get();
             d3->vec3Normalize(boneAxis, boneAxis);
         }
-        float* const q = reinterpret_cast<float*>(rec + 36);
+        float* const q = rec.rotation;
         float axisOut[3], angle;
         {
             auto* d3 = &d3dx::Get();
@@ -506,10 +443,10 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
 // ---- VA 0x0049E310 -----------------------------------------
 // Register a left/right-reflected bone key. This is frame-edit command 422
 // ("reverse paste"), not a delete routine.
-bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec, int frameOffset) {
+bool RegisterMirroredBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec, int frameOffset) {
     unsigned char* const m = model;
     mdl::BoneKey* const keys = mdl::BoneKeys(m);
-    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + rec.frame;
     const int boneIdx = FindMirroredBone(m, rec);
     if (boneIdx < 0)
         return true;
@@ -532,7 +469,7 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec, int frame
                 d3->vec3Normalize(boneAxis, boneAxis);
         }
 
-        float* const q = reinterpret_cast<float*>(rec + 36);
+        float* const q = rec.rotation;
         float sourceAxis[3], angle;
         auto* d3 = &d3dx::Get();
         if (d3->quatToAxisAngle == nullptr)
@@ -636,21 +573,21 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec, int frame
 
 // ---- VA 0x0049F190 --------------------------------------------------------
 //  - name-matched morph registrar over a parsed 0x28 record.
-bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, int frameOffset) {
+bool RegisterMorphKeyFromRecord(unsigned char* model, const mdl::MorphClipboardRecord& rec,
+                                int frameOffset) {
     unsigned char* const m = model;
     mdl::MorphKey* const keys = mdl::MorphKeys(m);
-    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + rec.frame;
 
     int morphIdx = 0;
     const int morphCnt = static_cast<int>(mdl::Mdl(m)->morphCount);
     if (morphCnt <= 0)
         return true;
     const mikudancestudio::mdl::MorphRecord* mrec = mikudancestudio::mdl::Morphs(m);
-    while (std::strcmp(reinterpret_cast<const char*>(rec), reinterpret_cast<const char*>(mrec)) !=
-           0) {
+    while (std::strcmp(rec.name, mrec->name) != 0) {
         if (++morphIdx >= morphCnt)
             return true;
-        mrec += 136;
+        ++mrec; // One native MorphRecord (x86 136 / x64 192 bytes).
     }
     if (morphIdx == -1)
         return true;
@@ -672,8 +609,8 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, 
                 for (;;) {
                     ++mdl::Mdl(m)->searchCursor;
                     ++free_;
-                    if (20 * free_ >= 400000) {
-                        OverflowBox(m, 20000);
+                    if (free_ >= static_cast<int>(mdl::kMorphKeyCapacity)) {
+                        OverflowBox(m, mdl::kMorphKeyCapacity);
                         return false;
                     }
                     if (keys[free_].frame == 0)
@@ -683,7 +620,7 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, 
             keys[cur].next = static_cast<std::uint32_t>(free_);
             keys[free_].previous = static_cast<std::uint32_t>(cur);
             keys[free_].frame = frame;
-            keys[free_].value = RdF32(rec + 36);
+            keys[free_].value = rec.value;
             keys[free_].allocated = 1;
             if (frame > mdl::Mdl(m)->maxFrame)
                 mdl::Mdl(m)->maxFrame = frame;
@@ -692,7 +629,7 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, 
     }
 
     if (frame == keys[cur].frame) {
-        keys[cur].value = RdF32(rec + 36);
+        keys[cur].value = rec.value;
         keys[cur].allocated = 1;
         return true;
     }
@@ -702,8 +639,8 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, 
         for (;;) {
             ++mdl::Mdl(m)->searchCursor;
             ++free_;
-            if (20 * free_ >= 400000) {
-                OverflowBox(m, 20000);
+            if (free_ >= static_cast<int>(mdl::kMorphKeyCapacity)) {
+                OverflowBox(m, mdl::kMorphKeyCapacity);
                 return false;
             }
             if (keys[free_].frame == 0)
@@ -716,7 +653,7 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, 
     keys[cur].previous = static_cast<std::uint32_t>(free_);
     keys[free_].next = static_cast<std::uint32_t>(cur);
     keys[free_].frame = frame;
-    keys[free_].value = RdF32(rec + 36);
+    keys[free_].value = rec.value;
     keys[free_].allocated = 1;
     if (frame > mdl::Mdl(m)->maxFrame)
         mdl::Mdl(m)->maxFrame = frame;
@@ -726,8 +663,9 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, 
 // ---- VA 0x0049F8C0 --------------------------------------------------------
 //  - display/IK registrar over parsed 21-/28-byte entries.
 bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned char view, int cnt,
-                                  const unsigned char* entries21, int cnt2,
-                                  const unsigned char* entries28, int frameOffset) {
+                                  const mdl::IkClipboardState* ikEntries, int cnt2,
+                                  const mdl::SelectorClipboardState* selectorEntries,
+                                  int frameOffset) {
     unsigned char* const m = model;
     mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
     const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset + frameArg);
@@ -743,14 +681,12 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
         auto* const ikBase = mdl::IkStates(keys[index]);
         for (int i = 0; i < ikCnt; ++i) {
             if (cnt > 0) {
-                const unsigned char* e = entries21;
-                const unsigned char* const chainBone = reinterpret_cast<const unsigned char*>(
-                    mdl::Bones(m) + mdl::IkChains(m)[i].boneIndex);
+                const mdl::IkClipboardState* entry = ikEntries;
+                const char* chainBoneName = mdl::Bones(m)[mdl::IkChains(m)[i].boneIndex].name;
                 int k = 0;
-                while (std::strcmp(reinterpret_cast<const char*>(e),
-                                   reinterpret_cast<const char*>(chainBone)) != 0) {
+                while (std::strcmp(entry->boneName, chainBoneName) != 0) {
                     ++k;
-                    e += 21;
+                    ++entry;
                     if (k >= cnt)
                         break;
                 }
@@ -759,7 +695,7 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
                 // the unmodified a5 base (imul index, 0x15), not from the
                 // already-advanced cursor.
                 if (k < cnt)
-                    ikBase[i] = entries21[21 * k + 20];
+                    ikBase[i] = ikEntries[k].enabled;
             }
         }
         const int selCnt = static_cast<int>(mdl::Mdl(m)->boneOrderCount);
@@ -767,22 +703,20 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
         const mdl::BoneOrderEntry* const relationships = mdl::BoneOrder(m);
         for (int i = 0; i < selCnt; ++i) {
             if (cnt2 > 0) {
-                const unsigned char* e = entries28;
-                const unsigned char* const selBone = reinterpret_cast<const unsigned char*>(
-                    mdl::Bones(m) + relationships[i].boneIndex);
+                const mdl::SelectorClipboardState* entry = selectorEntries;
+                const char* selectorBoneName = mdl::Bones(m)[relationships[i].boneIndex].name;
                 int k = 0;
-                while (std::strcmp(reinterpret_cast<const char*>(e),
-                                   reinterpret_cast<const char*>(selBone)) != 0) {
+                while (std::strcmp(entry->boneName, selectorBoneName) != 0) {
                     ++k;
-                    e += 28;
+                    ++entry;
                     if (k >= cnt2)
                         break;
                 }
                 if (k < cnt2) {
                     // Likewise 0x49FD4D..0x49FD7F and its two sibling paths
                     // derive the payload address from the original a7 base.
-                    pairBase[i].modelIndex = RdI32(entries28 + 28 * k + 20);
-                    pairBase[i].boneIndex = RdI32(entries28 + 28 * k + 24);
+                    pairBase[i].modelIndex = selectorEntries[k].modelIndex;
+                    pairBase[i].boneIndex = selectorEntries[k].boneIndex;
                 }
             }
         }
@@ -805,8 +739,8 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
                 for (;;) {
                     ++mdl::Mdl(m)->searchCursor;
                     ++free_;
-                    if (free_ >= 1000) {
-                        OverflowBox(m, 1000);
+                    if (free_ >= static_cast<int>(mdl::kDisplayKeyCapacity)) {
+                        OverflowBox(m, mdl::kDisplayKeyCapacity);
                         return false;
                     }
                     if (keys[free_].frame == 0)
@@ -837,8 +771,8 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
         for (;;) {
             ++mdl::Mdl(m)->searchCursor;
             ++free_;
-            if (free_ >= 1000) {
-                OverflowBox(m, 1000);
+            if (free_ >= static_cast<int>(mdl::kDisplayKeyCapacity)) {
+                OverflowBox(m, mdl::kDisplayKeyCapacity);
                 return false;
             }
             if (keys[free_].frame == 0)
@@ -905,10 +839,10 @@ void RegisterDisplayKeyCurrent(unsigned char* model, int frameArg) {
     }
 
     int freeIndex = 1;
-    while (freeIndex < 1000 && keys[freeIndex].frame != 0)
+    while (freeIndex < static_cast<int>(mdl::kDisplayKeyCapacity) && keys[freeIndex].frame != 0)
         ++freeIndex;
-    if (freeIndex >= 1000) {
-        OverflowBox(m, 1000);
+    if (freeIndex >= static_cast<int>(mdl::kDisplayKeyCapacity)) {
+        OverflowBox(m, mdl::kDisplayKeyCapacity);
         return;
     }
 

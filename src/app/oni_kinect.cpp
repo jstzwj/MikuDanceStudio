@@ -81,7 +81,7 @@ static IDirect3DDevice9* OniRenderDevice(MMDApp* app) {
 namespace {
 
 // DxOpenNI.dll entry points, in GetProcAddress order (0x429dad..0x429e2b).
-const char* const kOniExports[7] = {
+const char* const kOniExports[static_cast<std::size_t>(OniExport::Count)] = {
     "?OpenNIInit@@YG_NPAUHWND__@@_NPAUIDirect3DDevice9@@PA_WPAD@Z",
     "?OpenNIClean@@YGXXZ",
     "?OpenNIDrawDepthMap@@YGX_N@Z",
@@ -167,13 +167,13 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     }
 
     // 0x429da6..0x429e86: seven GetProcAddress fills + any-null test.
-    // The slots are the 0xA03C0..0xA03DC pointer row (OniExportSlot maps
-    // the heterogeneous blob members behind one index).
-    for (int i = 0; i < 7; ++i)
-        s.OniExportSlot(i) = reinterpret_cast<void*>(GetProcAddress(module, kOniExports[i]));
+    // The named entries retain the DLL lookup order in native runtime storage.
+    for (int i = 0; i < static_cast<int>(OniExport::Count); ++i)
+        s.OniExportSlot(static_cast<OniExport>(i)) =
+            reinterpret_cast<void*>(GetProcAddress(module, kOniExports[i]));
     bool anyNull = false;
-    for (int i = 0; i < 7; ++i)
-        anyNull = anyNull || s.OniExportSlot(i) == nullptr;
+    for (int i = 0; i < static_cast<int>(OniExport::Count); ++i)
+        anyNull = anyNull || s.OniExportSlot(static_cast<OniExport>(i)) == nullptr;
     if (anyNull) {
         KinMessageBox(app,
                       "\"DxOpenNI.dll\" version is wrong.\n"
@@ -185,7 +185,8 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     }
 
     // 0x429ed4..0x429f2d: version gate (1.30 / 1.40 / 1.50 bit-exact).
-    auto getVersion = reinterpret_cast<void(__stdcall*)(float*)>(s.OniExportSlot(6));
+    auto getVersion =
+        reinterpret_cast<void(__stdcall*)(float*)>(s.OniExportSlot(OniExport::Version));
     float version = 0.0f;
     getVersion(&version);
     std::uint8_t versionCode;
@@ -207,7 +208,7 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     s.state.openniVersion = versionCode;
 
     // 0x429f2f..0x429f5b: OpenNIInit(hwnd, english, device, exedir, path).
-    auto init = reinterpret_cast<OpenNiInitFn>(s.OniExportSlot(0));
+    auto init = reinterpret_cast<OpenNiInitFn>(s.OniExportSlot(OniExport::Initialize));
     const unsigned char ok =
         init(hwnd, s.EnglishUI(), OniRenderDevice(app), s.state.exeDir, sjisPath);
     if (ok == 0) {
@@ -244,7 +245,7 @@ void DisableKinect(MMDApp* app) {
 
     // Unconditional call through the stored OpenNIClean pointer, exactly
     // like the original (reachable only after a successful OpenNiInit).
-    auto clean = reinterpret_cast<void(__stdcall*)()>(s.OniExportSlot(1));
+    auto clean = reinterpret_cast<void(__stdcall*)()>(s.OniExportSlot(OniExport::Clean));
     clean(); // 0x42a074
 
     s.state.depthDeviceEnabled = 0; // 0x42a084

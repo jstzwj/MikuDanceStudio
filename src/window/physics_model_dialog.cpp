@@ -1353,15 +1353,15 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     Joint* joints = EditJoints();
 
     switch (LOWORD(wParam)) {
-    case 0x2AD: // add body
+    case kBodyPageFirst: // add body
         CollectBodyEdits(app);
         AddRigidBody(hDlg);
         return 0;
-    case 0x2DF: // add joint
+    case kAddJointButton: // add joint
         CollectJointEdits(app);
         AddJoint(hDlg);
         return 0;
-    case 0x2C2: { // delete body (also deletes its joints)
+    case kDeleteBodyButton: { // delete body (also deletes its joints)
         const int sel =
             static_cast<int>(SendMessageA(GetDlgItem(hDlg, kBodyListCombo), CB_GETCURSEL, 0, 0));
         SendMessageA(GetDlgItem(hDlg, kBodyListCombo), CB_DELETESTRING, sel, 0);
@@ -1400,7 +1400,7 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         ApplyJointRecordToEdits(hDlg, app->state.selectedJointIndex);
         return 0;
     }
-    case 0x2E1: { // delete joint
+    case kDeleteJointButton: { // delete joint
         const int sel =
             static_cast<int>(SendMessageA(GetDlgItem(hDlg, kJointListCombo), CB_GETCURSEL, 0, 0));
         SendMessageA(GetDlgItem(hDlg, kJointListCombo), CB_DELETESTRING, sel, 0);
@@ -1418,12 +1418,12 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         ApplyJointRecordToEdits(hDlg, app->state.selectedJointIndex);
         return 0;
     }
-    case 0x2D4: // copy body
+    case kCopyBodyButton: // copy body
         CollectBodyEdits(app);
         std::memcpy(&s_bodyCopyScratch, &bodies[app->state.selectedRigidIndex], sizeof(Rigid));
         return 0;
-    case 0x2D5: { // paste body (restitution/friction stay untouched, as
-                  // in the original field list)
+    case kPasteBodyButton: { // paste body (restitution/friction stay untouched, as
+                             // in the original field list)
         Rigid& rb = bodies[app->state.selectedRigidIndex];
         const Rigid& src = s_bodyCopyScratch;
         rb.boneIndex = src.boneIndex;
@@ -1441,11 +1441,11 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         ApplyBodyRecordToEdits(hDlg, app->state.selectedRigidIndex);
         return 0;
     }
-    case 0x2E2: // copy joint
+    case kCopyJointButton: // copy joint
         CollectJointEdits(app);
         std::memcpy(&s_jointCopyScratch, &joints[app->state.selectedJointIndex], sizeof(Joint));
         return 0;
-    case 0x2E3: { // paste joint
+    case kPasteJointButton: { // paste joint
         Joint& jt = joints[app->state.selectedJointIndex];
         const Joint& src = s_jointCopyScratch;
         jt.rigidA = src.rigidA;
@@ -1463,19 +1463,19 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         ApplyJointRecordToEdits(hDlg, app->state.selectedJointIndex);
         return 0;
     }
-    case 0x2D6: // shape: sphere
+    case kShapeSphereRadio: // shape: sphere
         bodies[app->state.selectedRigidIndex].shape = 0;
         UpdateShapeControls(hDlg, 0, app->state.selectedRigidIndex);
         return 0;
-    case 0x2D7: // shape: box
+    case kShapeBoxRadio: // shape: box
         bodies[app->state.selectedRigidIndex].shape = 1;
         UpdateShapeControls(hDlg, 1, app->state.selectedRigidIndex);
         return 0;
-    case 0x2D8: // shape: capsule
+    case kShapeCapsuleRadio: // shape: capsule
         bodies[app->state.selectedRigidIndex].shape = 2;
         UpdateShapeControls(hDlg, 2, app->state.selectedRigidIndex);
         return 0;
-    case 0x2D9: // physical radio clicked
+    case kPhysicalRadio: // physical radio clicked
         EnableWindow(GetDlgItem(hDlg, kBoneAlignCheckbox), TRUE);
         if (IsDlgButtonChecked(hDlg, kBoneAlignCheckbox) == 1) {
             bodies[app->state.selectedRigidIndex].mode = 2;
@@ -1485,12 +1485,12 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             bodies[app->state.selectedRigidIndex].kinematicFlag = 0;
         }
         return 0;
-    case 0x2DA: // bone-follow radio clicked
+    case kBoneFollowRadio: // bone-follow radio clicked
         EnableWindow(GetDlgItem(hDlg, kBoneAlignCheckbox), FALSE);
         bodies[app->state.selectedRigidIndex].mode = 0;
         bodies[app->state.selectedRigidIndex].kinematicFlag = 0;
         return 0;
-    case 0x2DB: // bone-alignment checkbox toggled while physical
+    case kBoneAlignCheckbox: // bone-alignment checkbox toggled while physical
         if (bodies[app->state.selectedRigidIndex].mode == 2) {
             bodies[app->state.selectedRigidIndex].mode = 1;
             bodies[app->state.selectedRigidIndex].kinematicFlag = 0;
@@ -1499,11 +1499,11 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             bodies[app->state.selectedRigidIndex].kinematicFlag = 1;
         }
         return 0;
-    case 0x320: // body page radio: collect the joint edits being left
+    case kBodyPageRadio: // body page radio: collect the joint edits being left
         CollectJointEdits(app);
         FlipPhysicsDialogPage(hDlg, 1);
         return 0;
-    case 0x321: // joint page radio: collect the body edits being left
+    case kJointPageRadio: // joint page radio: collect the body edits being left
         CollectBodyEdits(app);
         FlipPhysicsDialogPage(hDlg, 0);
         return 0;
@@ -1511,8 +1511,8 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         break;
     }
 
-    if (HIWORD(wParam) != 1 /*CBN_SELCHANGE*/) {
-        if (LOWORD(wParam) == 1) {
+    if (HIWORD(wParam) != CBN_SELCHANGE) {
+        if (LOWORD(wParam) == IDOK) {
             // OK: seek, collect, commit, close, preserve-model notice
             SeekSelectedModelToCurrentFrame(app); // 0x4220C0 = x64 sub_7FF7CB4B3D00
             CollectBodyEdits(app);
@@ -1541,7 +1541,7 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             app->EnhancedModelDirty() = 1;
             return 1;
         }
-        if (LOWORD(wParam) == 2) {
+        if (LOWORD(wParam) == IDCANCEL) {
             // Cancel: seek, close (the editor arrays are simply dropped)
             SeekSelectedModelToCurrentFrame(app); // 0x4220C0 = x64 sub_7FF7CB4B3D00
             if (app->RigidScratchArray() != nullptr) {

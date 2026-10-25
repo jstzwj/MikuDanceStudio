@@ -320,7 +320,8 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
                                  keyIndex, key.frame, static_cast<int>(key.previous),
                                  static_cast<int>(key.next), valueBits, unsigned(key.allocated));
                     const int next = static_cast<int>(key.next);
-                    if (next == 0 || next < 0 || next >= 20000 || next == keyIndex)
+                    if (next == 0 || next < 0 || next >= static_cast<int>(mdl::kMorphKeyCapacity) ||
+                        next == keyIndex)
                         break;
                     keyIndex = next;
                 }
@@ -362,7 +363,8 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
                 }
                 std::fputs("]}", stream);
                 const int next = static_cast<int>(key.next);
-                if (next == 0 || next < 0 || next >= 1000 || next == keyIndex)
+                if (next == 0 || next < 0 || next >= static_cast<int>(mdl::kDisplayKeyCapacity) ||
+                    next == keyIndex)
                     break;
                 keyIndex = next;
             }
@@ -371,7 +373,8 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
         const mdl::MorphKey* morphKeys = mdl::MorphKeys(model);
         bool firstMorphKey = true;
         if (morphKeys != nullptr) {
-            for (int keyIndex = 0; keyIndex < 20000; ++keyIndex) {
+            for (int keyIndex = 0; keyIndex < static_cast<int>(mdl::kMorphKeyCapacity);
+                 ++keyIndex) {
                 const auto& key = morphKeys[keyIndex];
                 if (key.allocated == 0 && key.frame != 10)
                     continue;

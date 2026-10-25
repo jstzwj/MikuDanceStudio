@@ -156,7 +156,7 @@ void ModelDispose(unsigned char* m) {
 
     // ---- animation pools --------------------------------------------------
     if (mdl::DisplayKeys(m) != nullptr) {
-        for (int i = 0; i < 1000; ++i) {
+        for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             DeleteOwnedStorage(mdl::IkStates(mdl::DisplayKeys(m)[i]));
             DeleteOwnedStorage(mdl::SelectorStates(mdl::DisplayKeys(m)[i]));
         }

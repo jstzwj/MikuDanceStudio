@@ -386,10 +386,10 @@ void RegisterPhysicsPose(unsigned char* m, std::uint32_t frame) {
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i)
         boneKeys[i].allocated = 0;
     mdl::MorphKey* const morphKeys = mdl::MorphKeys(m);
-    for (int i = 0; i < 20000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
         morphKeys[i].allocated = 0;
     mdl::DisplayKey* const masterKeys = mdl::DisplayKeys(m);
-    for (int i = 0; i < 1000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
         masterKeys[i].allocated = 0;
 
     const auto cleanup = [&]() { // 0x4A60BF

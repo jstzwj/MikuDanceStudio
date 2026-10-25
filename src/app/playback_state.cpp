@@ -280,7 +280,7 @@ void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
     state.undoDirty = 1;
     state.redoDirty = 0;
     std::uint32_t& undoIndex = state.UndoCursor();
-    undoIndex = (undoIndex + 1) % 30;
+    undoIndex = (undoIndex + 1) % mdl::kUndoHistoryDepth;
     state.LatestUndoCursor() = undoIndex;
     auto& undo = state.undoRings[0].slots[undoIndex];
     undo.operation = mdl::UndoOperation::BonePoseWithFrame;

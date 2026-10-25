@@ -521,14 +521,15 @@ void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned c
         }
         { // 0x41BFFD
             std::int32_t cnt = 0;
-            if (morphCount < 20000) {
-                for (std::int32_t i = morphCount; i < 20000; ++i)
+            if (morphCount < static_cast<int>(mdl::kMorphKeyCapacity)) {
+                for (std::int32_t i = morphCount; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
                     if (morphKeys[i].frame != 0)
                         ++cnt;
             }
             W(fd, &cnt, 4);
-            if (morphCount < 20000) {
-                for (std::int32_t i = morphCount; i < 20000; ++i) {
+            if (morphCount < static_cast<int>(mdl::kMorphKeyCapacity)) {
+                for (std::int32_t i = morphCount; i < static_cast<int>(mdl::kMorphKeyCapacity);
+                     ++i) {
                     if (morphKeys[i].frame == 0)
                         continue;
                     W(fd, &i, 4); // 0x41C05E
@@ -539,13 +540,14 @@ void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned c
 
         // rigid/IK base record (0x41C173..)
         WritePmmDisplayKey(fd, physKeys[0], ikCount, rigidCount);
-        { // sparse rigid/IK scan, 1000 records of 0x1C (0x41C353..)
+        { // sparse rigid/IK scan, mdl::kDisplayKeyCapacity records of 0x1C (0x41C353..)
             std::int32_t cnt = 0;
-            for (std::int32_t i = 1; i < 1000; ++i)
+            for (std::int32_t i = 1; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
                 if (physKeys[i].frame != 0)
                     ++cnt;
             W(fd, &cnt, 4);
-            for (std::int32_t i = 1; i < 1000; ++i) { // 0x41C394
+            for (std::int32_t i = 1; i < static_cast<int>(mdl::kDisplayKeyCapacity);
+                 ++i) { // 0x41C394
                 if (physKeys[i].frame == 0)
                     continue;
                 W(fd, &i, 4);

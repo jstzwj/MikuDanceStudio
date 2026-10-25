@@ -5,6 +5,9 @@
 namespace mikudancestudio {
 
 inline constexpr std::size_t kTimelineHitGridStride = 200;
+inline constexpr int kTimelineFrameColumnWidth = 13;
+inline constexpr int kTimelineTrackRowHeight = 14;
+inline constexpr int kTimelineFirstFrameX = 100;
 
 // A frame row owns an independent column cursor. Advancing the cursor in
 // one row must not shift the selected columns in the following frame.

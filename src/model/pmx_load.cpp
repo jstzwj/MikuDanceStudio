@@ -1673,11 +1673,13 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo, std::uin
     model.boneKeys =
         static_cast<mdl::BoneKey*>(operator new(sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity));
     std::memset(model.boneKeys, 0, sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity);
-    model.morphKeys = static_cast<mdl::MorphKey*>(operator new(sizeof(mdl::MorphKey) * 20000));
-    std::memset(model.morphKeys, 0, sizeof(mdl::MorphKey) * 20000);
-    model.displayKeys = static_cast<mdl::DisplayKey*>(operator new(sizeof(mdl::DisplayKey) * 1000));
-    std::memset(model.displayKeys, 0, sizeof(mdl::DisplayKey) * 1000);
-    for (int frame = 0; frame < 1000; ++frame) {
+    model.morphKeys =
+        static_cast<mdl::MorphKey*>(operator new(sizeof(mdl::MorphKey) * mdl::kMorphKeyCapacity));
+    std::memset(model.morphKeys, 0, sizeof(mdl::MorphKey) * mdl::kMorphKeyCapacity);
+    model.displayKeys = static_cast<mdl::DisplayKey*>(operator new(sizeof(mdl::DisplayKey) *
+                                                                   mdl::kDisplayKeyCapacity));
+    std::memset(model.displayKeys, 0, sizeof(mdl::DisplayKey) * mdl::kDisplayKeyCapacity);
+    for (int frame = 0; frame < static_cast<int>(mdl::kDisplayKeyCapacity); ++frame) {
         mdl::DisplayKey& fr = model.displayKeys[frame];
         if (model.ikChainCount > 0) {
             unsigned char* ikFlags = static_cast<unsigned char*>(operator new(model.ikChainCount));

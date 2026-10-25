@@ -49,19 +49,19 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
         if (app->CameraMode() != 0) {
             // mode 0x2F8 set: operate on the app timeline frame counter
             switch (code) {
-            case 0: // SB_LINEUP
+            case SB_LINEUP:
                 --app->DisplayObjectListScrollPosition();
                 break;
-            case 1: // SB_LINEDOWN
+            case SB_LINEDOWN:
                 ++app->DisplayObjectListScrollPosition();
                 break;
-            case 2: // SB_PAGEUP
+            case SB_PAGEUP:
                 app->DisplayObjectListScrollPosition() -= app->state.scrollNPage;
                 break;
-            case 3: // SB_PAGEDOWN
+            case SB_PAGEDOWN:
                 app->DisplayObjectListScrollPosition() += app->state.scrollNPage;
                 break;
-            case 5: // SB_THUMBTRACK
+            case SB_THUMBTRACK:
                 app->DisplayObjectListScrollPosition() +=
                     static_cast<std::int32_t>(HIWORD(wParam)) - app->state.scrollNPos;
                 break;
@@ -77,19 +77,19 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
             unsigned char* model = app->SelectedModel();
             mikudancestudio::mdl::ModelRecord& record = *mikudancestudio::mdl::Mdl(model);
             switch (code) {
-            case 0: // SB_LINEUP
+            case SB_LINEUP:
                 --record.boneListPos;
                 break;
-            case 1: // SB_LINEDOWN
+            case SB_LINEDOWN:
                 ++record.boneListPos;
                 break;
-            case 2: // SB_PAGEUP
+            case SB_PAGEUP:
                 record.boneListPos -= app->state.scrollNPage;
                 break;
-            case 3: // SB_PAGEDOWN
+            case SB_PAGEDOWN:
                 record.boneListPos += app->state.scrollNPage;
                 break;
-            case 5: // SB_THUMBTRACK
+            case SB_THUMBTRACK:
                 record.boneListPos +=
                     static_cast<std::int32_t>(HIWORD(wParam)) - app->state.scrollNPos;
                 break;

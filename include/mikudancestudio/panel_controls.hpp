@@ -252,11 +252,12 @@ constexpr int kGroundShadowSlider = 625; // 0x271 brightness trackbar
 constexpr int kGroundShadowEdit = 626;   // 0x272 brightness edit
 
 // ---- dialogs 627/659, 804/805, 810/811: ordering / accessory settings ----------
-constexpr int kOrderListBox = 628;       // 0x274 accessory / model order list
-constexpr int kAccessoryNameEdit = 629;  // 0x275 accessory name (rename)
-constexpr int kOrderUpButton = 630;      // move up
-constexpr int kOrderDownButton = 631;    // move down
-constexpr int kDialogOkButton = 632;     // OK (confirm)
+constexpr int kOrderListBox = 628;      // 0x274 accessory / model order list
+constexpr int kAccessoryNameEdit = 629; // 0x275 accessory name (rename)
+constexpr int kOrderUpButton = 630;     // move up
+constexpr int kOrderDownButton = 631;   // move down
+constexpr int kDialogOkButton = 632;    // OK (confirm)
+constexpr int kAccessoryRenameButton = 633;
 constexpr int kAccessoryOrderEdit = 635; // 0x27B order-number edit
 
 // ---- dialogs 648/663, 649/664: numeric input (bone / camera) -------------------
@@ -279,10 +280,14 @@ constexpr int kBoneNameCombo = 669;      // bone list
 constexpr int kBonePrevButton = 671;     // <
 constexpr int kBoneNextButton = 670;     // >
 constexpr int kBoneNameEnEdit = 672;     // 0x2A0 bone English name
-constexpr int kMorphNameCombo = 673;     // facial/morph list
-constexpr int kMorphNameEnEdit = 676;    // 0x2A4 morph English name
-constexpr int kGroupNameCombo = 677;     // division (bone group) list
-constexpr int kGroupNameEnEdit = 680;    // 0x2A8 group English name
+constexpr int kMorphNextButton = 674;
+constexpr int kMorphPrevButton = 675;
+constexpr int kMorphNameCombo = 673;  // facial/morph list
+constexpr int kMorphNameEnEdit = 676; // 0x2A4 morph English name
+constexpr int kGroupNextButton = 678;
+constexpr int kGroupPrevButton = 679;
+constexpr int kGroupNameCombo = 677;  // division (bone group) list
+constexpr int kGroupNameEnEdit = 680; // 0x2A8 group English name
 
 // ---- physics dialogs (683/684 model, 802/803 gravity) ----------------------------
 // 704..767 body/joint editor IDs live in physics_model_dialog.cpp constants;

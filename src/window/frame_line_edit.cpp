@@ -68,7 +68,7 @@ void BeginUndoEdit(unsigned char* model, std::uint32_t frame) {
     mdl::Mdl(model)->undoDirty = 1;
     mdl::Mdl(model)->redoDirty = 0;
     std::int32_t cursor = mikudancestudio::mdl::Mdl(model)->UndoCursor() + 1;
-    if (cursor >= 0x1E)
+    if (cursor >= mdl::kUndoHistoryDepth)
         cursor = 0;
     mikudancestudio::mdl::Mdl(model)->UndoCursor() = cursor;
     mikudancestudio::mdl::Mdl(model)->LatestUndoCursor() = cursor;

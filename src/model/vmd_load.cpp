@@ -49,16 +49,9 @@
 // (0x430510), then SeekModelFrame(model, app+0x980 current frame, app+0xA0CC4
 // physics mode) - the frame-seek ported in model_frame_seek.cpp.
 //
-// The register chain now calls the real (app, rec) overloads of
-// 0x410AA0 / 0x411900 / 0x4120B0 defined in src/window/command_frame_edit.cpp
-// (the by-value stack records of the original are passed as pointers -
-// documented stub-era deviation absorbed by those ports).  The remaining
-// registrar family (0x49D880, 0x49F190, 0x49F8C0, 0x4A49A0, 0x4A4A00) is
-// ported in src/model/key_registrars.cpp.
-//
-// Reference: IDA live disassembly of MikuMikuDance.exe v932 (sole source of
-// truth; ../translated/ reference files deviate).
-// =========================================================================//
+// Runtime input records use clipboard_layout.hpp; disk lengths stay explicit.
+// Camera/light/shadow registration lives in model/global_key_registration.cpp.
+// ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -139,7 +132,6 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     int fileHandle;
     unsigned int count = 0; // DstBuf - reused for every section count
     char text[256], buffer[256];
-    unsigned char rec[96];
     unsigned int scratch; // k
     unsigned short word;  // v68
 
@@ -216,59 +208,58 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
         if (ver == 1) {
             unsigned char ok = 1;
             for (unsigned int k = 0; k < count; ++k) {
-                std::memset(rec, 0, sizeof rec);
-                *reinterpret_cast<int*>(rec + 64) = -1;
-                *reinterpret_cast<int*>(rec + 68) = 0;
-                _read(fileHandle, rec + 0, 4);  // frame
-                _read(fileHandle, rec + 60, 4); // distance
-                _read(fileHandle, rec + 4, 4);  // eye xyz
-                _read(fileHandle, rec + 8, 4);
-                _read(fileHandle, rec + 12, 4);
-                _read(fileHandle, rec + 16, 4); // target xyz
-                _read(fileHandle, rec + 20, 4);
-                _read(fileHandle, rec + 24, 4);
-                _read(fileHandle, rec + 33, 1); // shared 4-byte curve
-                _read(fileHandle, rec + 45, 1);
-                _read(fileHandle, rec + 39, 1);
-                _read(fileHandle, rec + 51, 1);
+                mdl::CameraClipboardRecord rec{};
+                rec.parentModel = -1;
+                rec.parentBone = 0;
+                _read(fileHandle, &rec.frame, 4);    // frame
+                _read(fileHandle, &rec.distance, 4); // distance
+                _read(fileHandle, &rec.eye[0], 4);   // eye xyz
+                _read(fileHandle, &rec.eye[1], 4);
+                _read(fileHandle, &rec.eye[2], 4);
+                _read(fileHandle, &rec.target[0], 4); // target xyz
+                _read(fileHandle, &rec.target[1], 4);
+                _read(fileHandle, &rec.target[2], 4);
+                _read(fileHandle, &rec.interpolation[0], 1); // shared 4-byte curve
+                _read(fileHandle, &rec.interpolation[12], 1);
+                _read(fileHandle, &rec.interpolation[6], 1);
+                _read(fileHandle, &rec.interpolation[18], 1);
                 // x64 at 0x7FF7CB48D5A5..0x7FF7CB48D5EF: fill only the five bytes after
-                // each shared byte (20 assignments; groups starting at rec+33/39/45/51 each form a
-                // uniform six-byte curve); rec[57] stays zero and untouched
+                // each shared byte: four uniform columns of six bytes. Reserved padding stays zero.
                 for (int c = 1; c <= 5; ++c) {
-                    rec[33 + c] = rec[33];
-                    rec[45 + c] = rec[45];
-                    rec[39 + c] = rec[39];
-                    rec[51 + c] = rec[51];
+                    rec.interpolation[c] = rec.interpolation[0];
+                    rec.interpolation[12 + c] = rec.interpolation[12];
+                    rec.interpolation[6 + c] = rec.interpolation[6];
+                    rec.interpolation[18 + c] = rec.interpolation[18];
                 }
-                *reinterpret_cast<int*>(rec + 28) = 45; // fov default
-                rec[32] = 0;                            // view flag
-                if (ok && !RegisterCameraKey(app, rec))
+                rec.fov = 45;        // fov default
+                rec.perspective = 0; // view flag
+                if (ok && !RegisterCameraKey(app, &rec))
                     ok = 0;
             }
         } else {
             unsigned char ok = 1;
             for (unsigned int k = 0; k < count; ++k) {
-                std::memset(rec, 0, sizeof rec);
-                *reinterpret_cast<int*>(rec + 64) = -1;
-                *reinterpret_cast<int*>(rec + 68) = 0;
-                _read(fileHandle, rec + 0, 4);
-                _read(fileHandle, rec + 60, 4);
-                _read(fileHandle, rec + 4, 4);
-                _read(fileHandle, rec + 8, 4);
-                _read(fileHandle, rec + 12, 4);
-                _read(fileHandle, rec + 16, 4);
-                _read(fileHandle, rec + 20, 4);
-                _read(fileHandle, rec + 24, 4);
+                mdl::CameraClipboardRecord rec{};
+                rec.parentModel = -1;
+                rec.parentBone = 0;
+                _read(fileHandle, &rec.frame, 4);
+                _read(fileHandle, &rec.distance, 4);
+                _read(fileHandle, &rec.eye[0], 4);
+                _read(fileHandle, &rec.eye[1], 4);
+                _read(fileHandle, &rec.eye[2], 4);
+                _read(fileHandle, &rec.target[0], 4);
+                _read(fileHandle, &rec.target[1], 4);
+                _read(fileHandle, &rec.target[2], 4);
                 for (int c = 0; c < 6; ++c) { // interleaved curve bytes
-                    _read(fileHandle, rec + c + 33, 1);
-                    _read(fileHandle, rec + c + 45, 1);
-                    _read(fileHandle, rec + c + 39, 1);
-                    _read(fileHandle, rec + c + 51, 1);
+                    _read(fileHandle, &rec.interpolation[c], 1);
+                    _read(fileHandle, &rec.interpolation[12 + c], 1);
+                    _read(fileHandle, &rec.interpolation[6 + c], 1);
+                    _read(fileHandle, &rec.interpolation[18 + c], 1);
                 }
-                _read(fileHandle, rec + 28, 4); // fov
-                _read(fileHandle, &word, 1);
-                rec[32] = static_cast<unsigned char>(word != 0);
-                if (ok && !RegisterCameraKey(app, rec))
+                _read(fileHandle, &rec.fov, 4); // fov
+                _read(fileHandle, &rec.perspective, 1);
+                rec.perspective = static_cast<unsigned char>(rec.perspective != 0);
+                if (ok && !RegisterCameraKey(app, &rec))
                     ok = 0;
             }
         }
@@ -276,26 +267,26 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
         _read(fileHandle, &count, 4);
         unsigned char lightOk = 1;
         for (unsigned int k = 0; k < count; ++k) {
-            std::memset(rec, 0, sizeof rec);
-            _read(fileHandle, rec + 0, 4);  // frame
-            _read(fileHandle, rec + 16, 4); // color rgb
-            _read(fileHandle, rec + 20, 4);
-            _read(fileHandle, rec + 24, 4);
-            _read(fileHandle, rec + 4, 4); // position xyz
-            _read(fileHandle, rec + 8, 4);
-            _read(fileHandle, rec + 12, 4);
-            if (lightOk && !RegisterLightKey(app, rec))
+            mdl::LightClipboardRecord rec{};
+            _read(fileHandle, &rec.frame, 4);    // frame
+            _read(fileHandle, &rec.color[0], 4); // color rgb
+            _read(fileHandle, &rec.color[1], 4);
+            _read(fileHandle, &rec.color[2], 4);
+            _read(fileHandle, &rec.direction[0], 4); // position xyz
+            _read(fileHandle, &rec.direction[1], 4);
+            _read(fileHandle, &rec.direction[2], 4);
+            if (lightOk && !RegisterLightKey(app, &rec))
                 lightOk = 0;
         }
         // self-shadow keys (ver 2 only)
         unsigned char shadowOk = 1;
         if (flavor == 2 && _read(fileHandle, &count, 4) > 0) {
             for (unsigned int m = 0; m < count; ++m) {
-                std::memset(rec, 0, sizeof rec);
-                _read(fileHandle, rec + 0, 4);
-                _read(fileHandle, rec + 4, 1);
-                _read(fileHandle, rec + 8, 4);
-                if (shadowOk && !RegisterSelfShadowKey(app, rec))
+                mdl::ShadowClipboardRecord rec{};
+                _read(fileHandle, &rec.frame, 4);
+                _read(fileHandle, &rec.mode, 1);
+                _read(fileHandle, &rec.distance, 4);
+                if (shadowOk && !RegisterSelfShadowKey(app, &rec))
                     shadowOk = 0;
             }
         }
@@ -345,9 +336,9 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     mikudancestudio::mdl::DisplayKey* const ikeys = mikudancestudio::mdl::DisplayKeys(model);
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i)
         bkeys[i].allocated = 0;
-    for (int i = 0; i < 20000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
         mkeys[i].allocated = 0;
-    for (int i = 0; i < 1000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
         ikeys[i].allocated = 0;
 
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
@@ -356,7 +347,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     record.undoDirty = 1;
     record.redoDirty = 0;
     std::uint32_t& ringIdx = record.UndoCursor();
-    if (++ringIdx >= 30)
+    if (++ringIdx >= mdl::kUndoHistoryDepth)
         ringIdx = 0;
     record.LatestUndoCursor() = ringIdx;
 
@@ -397,39 +388,40 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
     (void)rawKeys; // consumed by the registrar family (0x49D880 et al.)
 
     // bone keys
+    mdl::BoneClipboardRecord boneRecord{};
     unsigned char boneOk = 1;
     for (unsigned int k = 0; k < boneKeyCount; ++k) {
         _read(fileHandle, text, 15);
         if (char* nl = std::strchr(text, 10))
             *nl = 0;
-        strcpy_s(reinterpret_cast<char*>(rec), 30, text);
-        _read(fileHandle, rec + 32, 4); // frame
-        _read(fileHandle, rec + 52, 4); // position
-        _read(fileHandle, rec + 56, 4);
-        _read(fileHandle, rec + 60, 4);
-        _read(fileHandle, rec + 36, 4); // quaternion
-        _read(fileHandle, rec + 40, 4);
-        _read(fileHandle, rec + 44, 4);
-        _read(fileHandle, rec + 48, 4);
+        strcpy_s(boneRecord.name, text);
+        _read(fileHandle, &boneRecord.frame, 4);       // frame
+        _read(fileHandle, &boneRecord.position[0], 4); // position
+        _read(fileHandle, &boneRecord.position[1], 4);
+        _read(fileHandle, &boneRecord.position[2], 4);
+        _read(fileHandle, &boneRecord.rotation[0], 4); // quaternion
+        _read(fileHandle, &boneRecord.rotation[1], 4);
+        _read(fileHandle, &boneRecord.rotation[2], 4);
+        _read(fileHandle, &boneRecord.rotation[3], 4);
         for (int ch = 0; ch < 4; ++ch) {
             if (ch != 0) {
                 _read(fileHandle, &scratch, 4);
-                rec[ch + 65] = static_cast<unsigned char>(scratch);
+                boneRecord.interpolation[ch] = static_cast<unsigned char>(scratch);
             } else {
                 _read(fileHandle, &word, 2);
-                rec[65] = static_cast<unsigned char>(word);
+                boneRecord.interpolation[0] = static_cast<unsigned char>(word);
                 _read(fileHandle, &word, 2);
-                rec[64] = static_cast<unsigned char>(word == 3939);
+                boneRecord.physicsDisabled = static_cast<unsigned char>(word == 3939);
             }
             _read(fileHandle, &scratch, 4);
-            rec[ch + 69] = static_cast<unsigned char>(scratch);
+            boneRecord.interpolation[ch + 4] = static_cast<unsigned char>(scratch);
             _read(fileHandle, &scratch, 4);
-            rec[ch + 73] = static_cast<unsigned char>(scratch);
+            boneRecord.interpolation[ch + 8] = static_cast<unsigned char>(scratch);
             _read(fileHandle, &scratch, 4);
-            rec[ch + 77] = static_cast<unsigned char>(scratch);
+            boneRecord.interpolation[ch + 12] = static_cast<unsigned char>(scratch);
         }
         if (boneOk) {
-            if (!RegisterBoneKey(model, rec, s.state.currentFrame, 0))
+            if (!RegisterBoneKey(model, boneRecord, s.state.currentFrame, 0))
                 boneOk = 0;
         }
     }
@@ -437,17 +429,18 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
 
     // morph keys
     _read(fileHandle, &count, 4);
+    mdl::MorphClipboardRecord rec{};
     unsigned char morphOk = 1;
     for (unsigned int k = 0; k < count; ++k) {
         _read(fileHandle, text, 15);
         text[15] = 0;
         if (char* nl = std::strchr(text, 10))
             *nl = 0;
-        strcpy_s(reinterpret_cast<char*>(rec), 30, text);
-        _read(fileHandle, rec + 32, 4); // frame
-        _read(fileHandle, rec + 36, 4); // value
-        if (!_finite(*reinterpret_cast<float*>(rec + 36)))
-            *reinterpret_cast<float*>(rec + 36) = 0.0f;
+        strcpy_s(rec.name, text);
+        _read(fileHandle, &rec.frame, 4); // frame
+        _read(fileHandle, &rec.value, 4); // value
+        if (!_finite(rec.value))
+            rec.value = 0.0f;
         if (morphOk) {
             if (!RegisterMorphKeyFromRecord(model, rec, s.state.currentFrame))
                 morphOk = 0;
@@ -465,25 +458,27 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) { // VA 0x00434B60
         ResetDisplayKeyCursor(model);
         unsigned char ikOk = 1;
         for (unsigned int k = 0; k < count; ++k) {
-            _read(fileHandle, rec + 0, 4); // frame
-            _read(fileHandle, &word, 1);   // visible
-            rec[4] = static_cast<unsigned char>(word != 0);
-            _read(fileHandle, rec + 8, 4); // IK entry count
-            int n = *reinterpret_cast<int*>(rec + 8);
-            if (*reinterpret_cast<unsigned int*>(rec + 8) > 0x2710u)
+            std::uint32_t frame = 0;
+            std::uint32_t ikCount = 0;
+            std::uint8_t visible = 0;
+            _read(fileHandle, &frame, 4);   // frame
+            _read(fileHandle, &visible, 1); // visible
+            visible = static_cast<unsigned char>(visible != 0);
+            _read(fileHandle, &ikCount, 4); // IK entry count
+            int n = static_cast<int>(ikCount);
+            if (ikCount > 0x2710u)
                 break;
-            unsigned char* entries = nullptr;
+            mdl::IkClipboardState* entries = nullptr;
             if (n > 0)
-                entries =
-                    static_cast<unsigned char*>(operator new(21 * n)); // x64 @0x7FF7CB48E6AD ??2
+                entries = static_cast<mdl::IkClipboardState*>(operator new(
+                    sizeof(mdl::IkClipboardState) * n)); // x64 @0x7FF7CB48E6AD ??2
             for (int e = 0; e < n; ++e) {
-                _read(fileHandle, entries + 21 * e, 20);
-                _read(fileHandle, &word, 1);
-                entries[21 * e + 20] = static_cast<unsigned char>(word != 0);
+                _read(fileHandle, entries[e].boneName, 20);
+                _read(fileHandle, &entries[e].enabled, 1);
+                entries[e].enabled = static_cast<unsigned char>(entries[e].enabled != 0);
             }
-            *reinterpret_cast<int*>(rec + 16) = 0;
             if (ikOk) {
-                if (!RegisterDisplayKeyFromRecord(model, *reinterpret_cast<int*>(rec), rec[4], n,
+                if (!RegisterDisplayKeyFromRecord(model, static_cast<int>(frame), visible, n,
                                                   entries, 0, nullptr, s.state.currentFrame))
                     ikOk = 0;
             }

@@ -33,7 +33,8 @@ using mdl::ShadowClipboardRecord;
 // payload shape.
 template <typename Key, typename Source, typename Fill>
 static int InsertGlobalFrame(MMDApp* app, Key* table, std::uint32_t relativeFrame,
-                             const Source& source, Fill fill, int advertisedCapacity = 10000) {
+                             const Source& source, Fill fill,
+                             int advertisedCapacity = mdl::kTimelineKeyCapacity) {
     if (table == nullptr) {
         return 0;
     }
@@ -57,10 +58,10 @@ static int InsertGlobalFrame(MMDApp* app, Key* table, std::uint32_t relativeFram
     }
 
     std::uint32_t freeIndex = 1;
-    while (freeIndex < 10000 && table[freeIndex].frame != 0) {
+    while (freeIndex < static_cast<int>(mdl::kTimelineKeyCapacity) && table[freeIndex].frame != 0) {
         ++freeIndex;
     }
-    if (freeIndex >= 10000) {
+    if (freeIndex >= static_cast<int>(mdl::kTimelineKeyCapacity)) {
         char message[0x100];
         if (app->state.englishUI != 0) {
             sprintf_s(message, sizeof(message),

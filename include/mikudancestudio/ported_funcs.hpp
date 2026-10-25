@@ -24,6 +24,10 @@ class MMDApp;
 enum class GlobalTimelineTrack : std::uint8_t;
 namespace mdl {
 struct ModelRecord;
+struct BoneClipboardRecord;
+struct MorphClipboardRecord;
+struct IkClipboardState;
+struct SelectorClipboardState;
 }
 struct PathResolutionWorkspace;
 struct DShowRecorder;
@@ -319,10 +323,10 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName); // VA 0x00434B60 (wide
                                                          //  0x7FF7CB48D1B7)
 void PanelPaint(MMDApp* app);                            // VA 0x00414610 (ui_panel_paint.cpp)
 int ResetMorphKeyCursor(unsigned char* model);           // VA 0x004A49A0
-bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
+bool RegisterBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec, int frameOffset,
                      unsigned char useSelected); // 0x0049D880,
                                                  //  (VMD/paste buffer)
-bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
+bool RegisterMirroredBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec,
                              int frameOffset);             // 0x0049E310
 void ResetBoneKeyCursor(unsigned char* model);             // VA 0x004A4940
 void AppendBoneKeyToUndo(unsigned char* model, int index); // VA 0x0049D410, was
@@ -402,12 +406,12 @@ void SaveEnhancedModel(MMDApp* app, const wchar_t* path); // ,
                                                           // VA 0x0041EC10 (enhance_model_io.cpp)
 void ReloadTextureCache(void* renderer);                  // VA 0x004076E0
                                                           // (enhance_model_io.cpp)
-bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char rec[40],
+bool RegisterMorphKeyFromRecord(unsigned char* model, const mdl::MorphClipboardRecord& rec,
                                 int frameOffset);                         // VA 0x0049F190
 void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frame); // 0x0049EEE0
 bool RegisterDisplayKeyFromRecord(unsigned char* model, int frame, unsigned char view, int ikCount,
-                                  const unsigned char* ikEntries, int selCount,
-                                  const unsigned char* selEntries,
+                                  const mdl::IkClipboardState* ikEntries, int selCount,
+                                  const mdl::SelectorClipboardState* selEntries,
                                   int frameOffset);              // 0x0049F8C0
 void RegisterDisplayKeyCurrent(unsigned char* model, int frame); // 0x0049F480
 void RegisterAccessoryKey(MMDApp* app, int frame, int slot);     // 0x00413CB0

@@ -47,7 +47,7 @@ void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
     mikudancestudio::mdl::Mdl(model)->undoDirty = 1;
     mikudancestudio::mdl::Mdl(model)->redoDirty = 0;
     auto& ringIndex = mikudancestudio::mdl::Mdl(model)->UndoCursor();
-    if (++ringIndex >= 30)
+    if (++ringIndex >= mdl::kUndoHistoryDepth)
         ringIndex = 0;
     mikudancestudio::mdl::Mdl(model)->LatestUndoCursor() = ringIndex;
 

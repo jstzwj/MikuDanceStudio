@@ -190,11 +190,11 @@ void MMDApp::InitDefaults() {
     s.AviStereoWidthMultiplier() = 2;
     state.depthDeviceEnabled = 0;
     state.oniModule = nullptr;
-    OniExportSlot(0) = nullptr;
-    OniExportSlot(1) = nullptr;
-    OniExportSlot(2) = nullptr;
+    OniExportSlot(OniExport::Initialize) = nullptr;
+    OniExportSlot(OniExport::Clean) = nullptr;
+    OniExportSlot(OniExport::DrawDepthMap) = nullptr;
     DepthTextureCallback() = nullptr;
-    OniExportSlot(4) = nullptr;
+    OniExportSlot(OniExport::JointPosition) = nullptr;
     s.OpenniTrackingCallback() = nullptr;
     state.kinectMirrorEnabled = 1;
     state.kinectInitLostBone = 0;

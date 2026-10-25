@@ -328,7 +328,7 @@ void LoadBackgroundPicture(MMDApp* app);
 // int: 0 stops the replay loop)
 void ResetBoneKeyCursor(unsigned char* model); // VA 0x004A4940 frame
                                                // paste helper (0xFA)
-bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
+bool RegisterBoneKey(unsigned char* model, mdl::BoneClipboardRecord& rec, int frameOffset,
                      unsigned char useSelected); // VA 0x0049D880
                                                  // paste step (0xFA)
 void IdentityCtor(void* obj);                    // VA 0x004C46F0 ctor
@@ -603,7 +603,7 @@ INT_PTR __stdcall AviOutDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             }
         } else if (LOWORD(wParam) == IDCANCEL) { // IDCANCEL
             EndDialog(hDlg, IDCANCEL);
-        } else if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
+        } else if (HIWORD(wParam) == LBN_SELCHANGE) {
             if (reinterpret_cast<HWND>(lParam) == GetDlgItem(hDlg, panel::kAviCodecCombo)) {
                 const LRESULT sel =
                     SendMessageA(GetDlgItem(hDlg, panel::kAviCodecCombo), CB_GETCURSEL, 0, 0);
@@ -762,9 +762,9 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (msg != WM_COMMAND) {
         return 0;
     }
-    if (LOWORD(wParam) != 633) {
+    if (LOWORD(wParam) != panel::kAccessoryRenameButton) {
         switch (LOWORD(wParam)) {
-        case 0x276: { // move up
+        case panel::kOrderUpButton: { // move up
             const LRESULT sel =
                 SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0);
             if (sel >= 1) {
@@ -777,7 +777,7 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             }
             return 0;
         }
-        case 0x277: { // move down
+        case panel::kOrderDownButton: { // move down
             const LRESULT sel =
                 SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0);
             if (sel != -1 && sel < g_accOrderCount - 1) {
@@ -790,7 +790,7 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             }
             return 0;
         }
-        case 0x278: { // OK: commit the new order
+        case panel::kDialogOkButton: { // OK: commit the new order
             app->state.accessoryRenderSplitOrder =
                 ReadIntFromEdit(hDlg, panel::kAccessoryOrderEdit, 256);
             ApplyAccessorySettingsDialog(app, g_accOrderCount, hDlg);
@@ -841,7 +841,7 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             app->DialogOrders().accessoryIndices.reset();
             return 0;
         }
-        if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
+        if (HIWORD(wParam) == LBN_SELCHANGE) {
             const LRESULT sel =
                 SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0);
             if (sel >= 0) {
@@ -854,7 +854,7 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             return 0;
         }
         if (reinterpret_cast<HWND>(lParam) != GetDlgItem(hDlg, panel::kAccessoryOrderEdit) ||
-            HIWORD(wParam) != 0x300 /*EN_CHANGE*/) {
+            HIWORD(wParam) != EN_CHANGE) {
             return 0;
         }
         {
@@ -1524,7 +1524,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             mdl::Mdl(model)->redoDirty = 0;
             std::int32_t idx = static_cast<std::int32_t>(mdl::Mdl(model)->UndoCursor());
             ++idx;
-            if (idx >= 0x1E) {
+            if (idx >= mdl::kUndoHistoryDepth) {
                 idx = 0;
             }
             mdl::Mdl(model)->UndoCursor() = static_cast<std::uint32_t>(idx);
@@ -1577,8 +1577,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             if (recCount > 0) {
                 for (std::int32_t j = 0; j < recCount; ++j) {
                     const mdl::BoneClipboardRecord* src = app->BoneClipboard() + j;
-                    unsigned char stackRec[0x54];
-                    memcpy(stackRec, src, 0x54);
+                    mdl::BoneClipboardRecord stackRec = *src;
                     model = ActiveModel(app);
                     if (!RegisterBoneKey(model, stackRec, app->state.currentFrame, 1)) {
                         break;

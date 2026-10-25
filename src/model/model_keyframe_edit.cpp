@@ -90,7 +90,7 @@ void AdvanceUndo(unsigned char* model) {
     record.UndoCursor() += 1;
     record.undoDirty = 1;
     record.redoDirty = 0;
-    if (record.UndoCursor() >= 0x1E)
+    if (record.UndoCursor() >= mdl::kUndoHistoryDepth)
         record.UndoCursor() = 0;
     record.LatestUndoCursor() = record.UndoCursor();
 }
@@ -643,7 +643,7 @@ void RedoModelEdit(unsigned char* model, std::int32_t& frame) { // VA 0x004A2490
     if (model == nullptr)
         return;
     int cursor = static_cast<int>(mdl::Mdl(model)->UndoCursor()) + 1;
-    if (cursor >= 30)
+    if (cursor >= mdl::kUndoHistoryDepth)
         cursor = 0;
     mdl::Mdl(model)->UndoCursor() = cursor;
     auto& redo = RedoAt(model, cursor);
@@ -679,7 +679,8 @@ void ResetDisplayKeyCursor(unsigned char* model) { // VA 0x004A4A00
     freeIndex = 1;
     if (displayKeys == nullptr)
         return;
-    while (freeIndex < 1000 && displayKeys[freeIndex].frame != 0) {
+    while (freeIndex < static_cast<int>(mdl::kDisplayKeyCapacity) &&
+           displayKeys[freeIndex].frame != 0) {
         ++freeIndex;
     }
 }

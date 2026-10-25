@@ -36,6 +36,8 @@
 
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/screen_vertex.hpp"
+#include "mikudancestudio/image_resources.hpp"
 #include <cstdio>
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -57,8 +59,9 @@ static int EvalPos(const ui::PosExpr& e, int sidebar) {
 
 // j_??2@YAPAXI@Z - the VC9 throwing operator new(uint) used for the track
 // key arrays, followed by the original's immediate memset-zero.
-static unsigned char* NewZeroed(std::size_t bytes) {
-    unsigned char* p = static_cast<unsigned char*>(::operator new(bytes));
+template <typename Key> static Key* NewZeroedTrack() {
+    constexpr std::size_t bytes = mdl::kTimelineKeyCapacity * sizeof(Key);
+    auto* p = static_cast<Key*>(::operator new(bytes));
     std::memset(p, 0, bytes);
     return p;
 }
@@ -359,24 +362,31 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     // post-process quads. RefreshMainWindowViewport rewrites the latter after every resize.
     IDirect3DDevice9* device = wrap->device;
     if (device != nullptr) {
-        if (FAILED(device->CreateVertexBuffer(0x6D60, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
-                                              &s.OverlayVertices(), nullptr)))
+        if (FAILED(device->CreateVertexBuffer(
+                kTextOverlayVertexCapacity * sizeof(TexturedScreenVertex), D3DUSAGE_WRITEONLY,
+                kTexturedScreenVertexFvf, D3DPOOL_MANAGED, &s.OverlayVertices(), nullptr)))
             return false;
-        device->CreateVertexBuffer(6 * 28, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(kBackgroundQuadBytes, D3DUSAGE_WRITEONLY,
+                                   kTexturedScreenVertexFvf, D3DPOOL_MANAGED,
                                    &s.LeftViewportVertices(), nullptr);
-        device->CreateVertexBuffer(6 * 28, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(kBackgroundQuadBytes, D3DUSAGE_WRITEONLY,
+                                   kTexturedScreenVertexFvf, D3DPOOL_MANAGED,
                                    &s.RightViewportVertices(), nullptr);
         // PMM picture/AVI background refreshes write one 6-vertex textured
         // quad per layer.  These are distinct scene resources (and are
         // released independently at shutdown), not aliases of the viewport
         // post-process quads.
-        device->CreateVertexBuffer(0xA8, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(kBackgroundQuadBytes, D3DUSAGE_WRITEONLY,
+                                   kTexturedScreenVertexFvf, D3DPOOL_MANAGED,
                                    &s.AviOverlayVertices(), nullptr);
-        device->CreateVertexBuffer(0xA8, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(kBackgroundQuadBytes, D3DUSAGE_WRITEONLY,
+                                   kTexturedScreenVertexFvf, D3DPOOL_MANAGED,
                                    &s.PictureOverlayVertices(), nullptr);
-        device->CreateVertexBuffer(0x445C0, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(kSpriteOverlayVertexCapacity * sizeof(TexturedScreenVertex),
+                                   D3DUSAGE_WRITEONLY, kTexturedScreenVertexFvf, D3DPOOL_MANAGED,
                                    &s.SpriteOverlayVertices(), nullptr);
-        device->CreateVertexBuffer(0x30D40, D3DUSAGE_WRITEONLY, 0x44, D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(kLineOverlayVertexCapacity * sizeof(ColoredScreenVertex),
+                                   D3DUSAGE_WRITEONLY, kColoredScreenVertexFvf, D3DPOOL_MANAGED,
                                    &wrap->lineVertexBuffer, nullptr);
 
         // 0x467509 and 0x46759E: the HUD sprite sheet and accessory helper
@@ -388,14 +398,14 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         // though the embedded sheet is maintained as hud_sprites.png.
         // Non-fatal: the original shows the box and falls through to
         // PNG 114 (only 102 has a failure box).
-        if (!LoadPngTexture(app, device, 0x66, &s.OverlayTexture())) {
+        if (!LoadPngTexture(app, device, image::kHudSprites, &s.OverlayTexture())) {
             static const char kJpHudSheetLoadFailed[] =
                 "splite.tga\x93\xC7\x8D\x9E\x8E\xB8\x94\x73";
             MessageBoxA(hwnd,
                         app->EnglishUI() != 0 ? "cannot load splite.tga" : kJpHudSheetLoadFailed,
                         "InitFont", MB_OK);
         }
-        LoadPngTexture(app, device, 0x72, &s.ProjectedShadowRestoreTexture());
+        LoadPngTexture(app, device, image::kAccessoryHelper, &s.ProjectedShadowRestoreTexture());
     }
 
     // ---- 0x467637..0x467674: default-checked menu items -------------------
@@ -413,22 +423,22 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     // slot at app+0x780 is deliberately left unallocated by the original -
     // it reads the first model-slot pointer there, gated off by its zero
     // active flag in a fresh app).
-    unsigned char* cam = NewZeroed(0xCD140);       // 840000
-    s.state.cameraKeyTrack = cam;                  // 0x374
-    unsigned char* trkLight = NewZeroed(0x61A80);  // 400000
-    s.state.lightKeyTrack = trkLight;              // 0x378
-    unsigned char* trkShadow = NewZeroed(0x3A980); // 240000
-    s.state.selfShadowKeyTrack = trkShadow;        // 0x37C
-    unsigned char* trkPhys = NewZeroed(0x57E40);   // 360000
-    s.state.gravityKeyTrack = trkPhys;             // 0x380
-    for (int i = 0; i < 255; ++i) {                // 0x467705
-        unsigned char* acc = NewZeroed(0x927C0);   // 600000
-        s.AccessoryKeys(i) = reinterpret_cast<mdl::AccessoryKey*>(acc);
-        acc[12] = 1; // mode byte
-        *reinterpret_cast<std::int32_t*>(acc + 16) = -1;
-        *reinterpret_cast<float*>(acc + 52) = 1.0f; // scale x
-        *reinterpret_cast<float*>(acc + 56) = 1.0f; // scale y
-        s.ObjectSlot(i) = nullptr;                  // 0x9DD70[i]
+    auto* cam = NewZeroedTrack<mdl::CameraKey>();
+    s.CameraKeys() = cam;
+    auto* trkLight = NewZeroedTrack<mdl::LightKey>();
+    s.LightKeys() = trkLight;
+    auto* trkShadow = NewZeroedTrack<mdl::SelfShadowKey>();
+    s.ShadowKeys() = trkShadow;
+    auto* trkPhys = NewZeroedTrack<mdl::GravityKey>();
+    s.GravityKeys() = trkPhys;
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i) { // 0x467705
+        auto* acc = NewZeroedTrack<mdl::AccessoryKey>();
+        s.AccessoryKeys(i) = acc;
+        acc[0].visible = 1;
+        acc[0].parentModel = -1;
+        acc[0].scale = 1.0f;
+        acc[0].opacity = 1.0f;
+        s.AccessorySlot(i) = nullptr;
     }
     TraceInitialAccessoryTrack(s);
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -446,17 +456,18 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 #endif
 
     // ---- 0x467749..0x46787B: camera work record + per-key defaults --------
-    *reinterpret_cast<float*>(cam + 12) = -45.0f;            // flt_52A1E8 (angle)
-    *reinterpret_cast<float*>(cam + 20) = 10.0f;             // flt_52A1E4 (distance)
-    cam[64] = 0;                                             // perspective flag
-    *reinterpret_cast<std::int32_t*>(cam + 68) = 30;         // fov 30deg
-    for (int k = 0; k < 840000; k += 84) {                   // 0x467780
-        *reinterpret_cast<std::int32_t*>(cam + k + 76) = -1; // 0xA0430 src
+    cam[0].distance = -45.0f; // flt_52A1E8
+    cam[0].eye[1] = 10.0f;    // flt_52A1E4
+    cam[0].perspective = 0;
+    cam[0].fov = 30;
+    for (std::size_t k = 0; k < mdl::kTimelineKeyCapacity; ++k) { // 0x467780
+        cam[k].parentModel = -1;
         for (int j = 0; j < 6; ++j) {
-            cam[k + 40 + j] = 20; // x1 column, 6 channels
-            cam[k + 46 + j] = 20; // y1 column
+            cam[k].interpolation[0][j] = 20; // x1 column, 6 channels
+            cam[k].interpolation[1][j] = 20; // y1 column
+            cam[k].interpolation[2][j] = 107;
+            cam[k].interpolation[3][j] = 107;
         }
-        std::memset(cam + k + 52, 107, 12); // x2/y2 columns 0x6B
     }
 
     // ---- 0x46787E..0x467967: light cluster + device light 0 ---------------
@@ -470,17 +481,17 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     dev->LightEnable(0, TRUE); // vtable 0xD4
 
     // ---- 0x467984..0x467A2E: track work records ---------------------------
-    *reinterpret_cast<float*>(trkLight + 24) = 0.602f; // rgb
-    *reinterpret_cast<float*>(trkLight + 28) = 0.602f;
-    *reinterpret_cast<float*>(trkLight + 32) = 0.602f;
-    *reinterpret_cast<float*>(trkLight + 12) = -0.5f; // dir xyz
-    *reinterpret_cast<float*>(trkLight + 16) = -1.0f;
-    *reinterpret_cast<float*>(trkLight + 20) = 0.5f;
-    trkShadow[12] = w->postProcessEnabled != 0 ? 1 : 0;   // +0x1D544 caps byte
-    *reinterpret_cast<float*>(trkShadow + 16) = 0.01125f; // flt_52A1D8
-    *reinterpret_cast<std::int32_t*>(trkPhys + 28) = 10;  // 0x9EDC8 nof
-    *reinterpret_cast<float*>(trkPhys + 12) = 9.8000002f; // flt_52A1DC
-    *reinterpret_cast<float*>(trkPhys + 20) = -1.0f;      // gravity y
+    trkLight[0].color[0] = 0.602f;
+    trkLight[0].color[1] = 0.602f;
+    trkLight[0].color[2] = 0.602f;
+    trkLight[0].direction[0] = -0.5f;
+    trkLight[0].direction[1] = -1.0f;
+    trkLight[0].direction[2] = 0.5f;
+    trkShadow[0].mode = w->postProcessEnabled != 0 ? 1 : 0;
+    trkShadow[0].distance = 0.01125f; // flt_52A1D8
+    trkPhys[0].noise = 10;
+    trkPhys[0].acceleration = 9.8000002f; // flt_52A1DC
+    trkPhys[0].direction[1] = -1.0f;
 
     const int sidebar = app->SidebarWidth();                    // 657096
     HINSTANCE hInst = static_cast<HINSTANCE>(app->HInstance()); // this+0

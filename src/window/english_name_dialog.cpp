@@ -543,7 +543,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             app->EnhancedModelDirty() = 1;
         }
         return 1;
-    case 0x29E: { // combo 669 next button
+    case panel::kBoneNextButton: { // combo 669 next button
         const int cur = app->EnglishNameComboCursor(0);
         const int count = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCOUNT, 0, 0));
@@ -552,7 +552,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SelectEnglishNameBone(hDlg); // 0x45F050
         return 0;
     }
-    case 0x29F: { // combo 669 prev button
+    case panel::kBonePrevButton: { // combo 669 prev button
         int sel = app->EnglishNameComboCursor(0) - 1;
         if (sel < 0) {
             sel = static_cast<int>(
@@ -563,7 +563,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SelectEnglishNameBone(hDlg); // 0x45F050 (LABEL_16)
         return 0;
     }
-    case 0x2A2: { // combo 673 next button
+    case panel::kMorphNextButton: { // combo 673 next button
         const int cur = app->EnglishNameComboCursor(1);
         const int count = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCOUNT, 0, 0));
@@ -572,7 +572,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SelectEnglishNameMorph(hDlg); // 0x45EF10
         return 0;
     }
-    case 0x2A3: { // combo 673 prev button
+    case panel::kMorphPrevButton: { // combo 673 prev button
         int sel = app->EnglishNameComboCursor(1) - 1;
         if (sel < 0) {
             sel = static_cast<int>(
@@ -583,7 +583,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SelectEnglishNameMorph(hDlg); // 0x45EF10 (LABEL_23)
         return 0;
     }
-    case 0x2A6: { // combo 677 next button
+    case panel::kGroupNextButton: { // combo 677 next button
         const int cur = app->EnglishNameComboCursor(2);
         const int count = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCOUNT, 0, 0));
@@ -592,7 +592,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         SelectEnglishNameGroup(hDlg); // 0x45EDC0
         return 0;
     }
-    case 679: { // combo 677 prev button
+    case panel::kGroupPrevButton: { // combo 677 prev button
         int sel = app->EnglishNameComboCursor(2) - 1;
         if (sel < 0) {
             sel = static_cast<int>(
@@ -606,7 +606,7 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     default:
         break;
     }
-    if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
+    if (HIWORD(wParam) == CBN_SELCHANGE) {
         if (hCtrl == GetDlgItem(hDlg, panel::kBoneNameCombo)) {
             SelectEnglishNameBone(hDlg); // 0x45F050 (LABEL_16)
             return 0;

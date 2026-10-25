@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <d3d9.h>
 
+#include <cstddef>
 #include <cstdint>
 
 #include "mikudancestudio/clipboard_layout.hpp"
@@ -95,9 +96,20 @@ struct RenderRuntimeState {
     IDirect3DVertexBuffer9* pictureOverlayVertices = nullptr;
 };
 
+enum class OniExport : std::size_t {
+    Initialize,
+    Clean,
+    DrawDepthMap,
+    DepthTexture,
+    JointPosition,
+    IsTracking,
+    Version,
+    Count,
+};
+
 struct PlatformRuntimeState {
     void* instance = nullptr;
-    void* oniExports[7]{};
+    void* oniExports[static_cast<std::size_t>(OniExport::Count)]{};
     WINDOWPLACEMENT savedPlacement{};
 };
 

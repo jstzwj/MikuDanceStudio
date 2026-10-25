@@ -46,8 +46,6 @@ inline unsigned char* SlotModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-constexpr int kAccessorySlotCount = 255;
-
 inline HWND AppHwnd(MMDApp* app) {
     return app->state.hwnd;
 }
@@ -465,7 +463,7 @@ void ScrollAccessoryTimelineRowIntoView(MMDApp* app, unsigned char slotIdx) {
 }
 
 inline void ClearAccessoryTimelineRows(MMDApp* app) {
-    for (int slot = 0; slot < kAccessorySlotCount; ++slot) {
+    for (int slot = 0; slot < mdl::kAccessorySlotCount; ++slot) {
         auto* accessory = app->AccessorySlot(slot);
         if (accessory != nullptr)
             accessory->rowSelected = 0; // 0x4391EF
@@ -547,7 +545,7 @@ void SelectPrevEditTarget(MMDApp* app) {
         while (app->AccessorySlot(i) == nullptr ||
                app->AccessorySlot(i)->order != target) { // 0x43945F
             ++i;
-            if (i >= kAccessorySlotCount) {
+            if (i >= mdl::kAccessorySlotCount) {
                 RebuildTimelineTrackPanel(app); // 0x439486
                 InvalidateSelectionReadouts(app);
                 return;
@@ -599,7 +597,7 @@ void SelectNextEditTarget(MMDApp* app) {
         int i = 0;
         while (app->AccessorySlot(i) == nullptr || app->AccessorySlot(i)->order != 0) { // 0x439734
             ++i;
-            if (i >= kAccessorySlotCount) {
+            if (i >= mdl::kAccessorySlotCount) {
                 app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
                 RebuildTimelineTrackPanel(app); // 0x4396A3
                 InvalidateSelectionReadouts(app);
@@ -627,7 +625,7 @@ void SelectNextEditTarget(MMDApp* app) {
     int i = 0;
     while (app->AccessorySlot(i) == nullptr || app->AccessorySlot(i)->order != target) { // 0x439832
         ++i;
-        if (i >= kAccessorySlotCount) {
+        if (i >= mdl::kAccessorySlotCount) {
             current->rowSelected = 1; // 0x43985A
             ScrollAccessoryTimelineRowIntoView(app, curSlot);
             RebuildTimelineTrackPanel(app); // 0x439872

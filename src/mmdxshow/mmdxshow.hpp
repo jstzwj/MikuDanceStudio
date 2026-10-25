@@ -23,15 +23,9 @@
 //   * function bodies -> Hex-Rays decompilation via IDA (ground truth; the
 //     corpus under translated/MMDxShow/*.cpp was used as a cross-check only).
 //
-// PHASING
-//   Phase A (this file + dll_main.cpp + enumerators.cpp):
-//     - CClassFactory, CEnumPins, CEnumMediaTypes are FULLY implemented.
-//     - module state, exports, registration plumbing.
-//   Phase B (later agents, in their own .cpp files):
-//     - CBaseFilter / CSource / CPushSourceDIBSq
-//     - CAMThread / CBasePin / CBaseOutputPin / CSourceStream / CPushPinDIBSq
-//     All of their virtuals are DECLARED here but NOT defined; Phase B must
-//     provide the out-of-line definitions.
+// Implementations: dll_main.cpp and enumerators.cpp handle COM construction;
+// source_base.cpp, push_source.cpp and push_pin.cpp implement the filter.
+// Native class layouts remain pinned independently for both original ABIs.
 //
 // =============================================================================
 
@@ -407,7 +401,7 @@ public:
     IReferenceClock* m_pClock;      // +0x18 / x64 +0x30
     REFERENCE_TIME m_tStart;        // +0x20 (8 bytes; compiler pads +0x1C) / x64 +0x38
     CLSID m_clsid;                  // +0x28 (16 bytes, by value) / x64 +0x40
-    void* m_pLockSlot;              // +0x38 (ctor stores &m_CritSec here) / x64 +0x50
+    CRITICAL_SECTION* m_pLockSlot;  // +0x38 (ctor stores &m_CritSec here) / x64 +0x50
     WCHAR* m_pName;                 // +0x3C / x64 +0x58
     IFilterGraph* m_pGraph;         // +0x40 / x64 +0x60
     IUnknown* m_pEventSink;         // +0x44 / x64 +0x68
@@ -573,6 +567,8 @@ static_assert(sizeof(CPushSourceDIBSq) == 0x78, "filter layout must match operat
 //   +0x20 hThread, +0x28/+0x50 critsecs (40B each) => 0x78.
 // -----------------------------------------------------------------------------
 class CAMThread {
+    friend struct MMDxShowStateAccess;
+
 public:
     virtual DWORD ThreadProc();                            // +0x00 0x10002570
     virtual ~CAMThread();                                  // +0x04 per-class
@@ -660,6 +656,8 @@ static_assert(sizeof(CAMThread) == 0x48, "CAMThread layout must match the binary
 //     (0x10001920/0x10001900/0x10002740), SetSink 0x100011E0, Notify 0x10003050.
 // -----------------------------------------------------------------------------
 class CBasePin : public CUnknown, public IPin, public IQualityControl {
+    friend struct MMDxShowStateAccess;
+
 public:
     // --- primary (INonDelegatingUnknown) vtable, continued ---
     virtual LONG GetMediaTypeVersion(); // +0x10 0x10003030
@@ -752,20 +750,19 @@ protected:
     WCHAR* m_pName;      // +0x14 strmbase m_pName: the wide pin name (was m_pinPad14)
     IPin* m_Connected;   // +0x18
     PIN_DIRECTION m_dir; // +0x1C (this slot was mislabeled "m_pName" before; PINDIR_OUTPUT here)
-    void* m_pinPad20
-        [2]; // +0x20..0x27 (m_pLock at +0x20 and the +0x24..0x26 byte flags — see the P_pLock/P_flag24..26 accessors in source_base.cpp)
+    CRITICAL_SECTION* m_pLock;
+    unsigned char m_bRun;
+    unsigned char m_bConnectWhileActive;
+    unsigned char m_bEnumPeerTypesFirst;
     CBaseFilter*
         m_pFilterOwner; // +0x28 owner filter: NonDelegating AddRef/Release and QueryPinInfo go through it (slot was mislabeled "m_pQSinkOwner" before)
     void*
         m_pQSink; // +0x2C IQualityControl::Notify stores its pSender here (old-baseclasses shape; never read back — was m_pinPad2C)
     LONG m_TypeVersion; // +0x30
-#if defined(_M_X64)
-    // x64: the same region carries the widened AM_MEDIA_TYPE (0x58 bytes at
-    // +0x68) plus the 8-byte-spaced NewSegment cache; 14 pointers wide.
-    void* m_pinPad34[14]; // +0x68..0xD8 (media type / lock state)
-#else
-    void* m_pinPad34[25]; // +0x34..0x98 (media type / lock state)
-#endif
+    AM_MEDIA_TYPE m_mediaType;
+    REFERENCE_TIME m_tStart;
+    REFERENCE_TIME m_tStop;
+    double m_dRate;
     IMemAllocator* m_pAllocator; // +0x98 / x64 +0xD8
     IMemInputPin* m_pInputPin;   // +0x9C / x64 +0xE0
     CBaseFilter* m_pFilter;      // +0xA0 / x64 +0xE8
@@ -825,7 +822,7 @@ public:
     //      0xA8 CBasePin subobject ends at 0xF0) ----
     //      x64 (VC10 rebuild, operator new(0x660) at 0x1800019D2): the same
     //      members at +0x168 pad, +0x178 frame count, +0x180/+0x1A8 critsecs
-    //      (40B each), +0x1D0 display block, +0x630 push cfg, +0x640 extra,
+    //      (40B each), +0x1D0 display block, +0x638 push cfg, +0x640 extra,
     //      +0x648 avg-per-frame, +0x650..0x653 flags, +0x658 frame bits.
 #if defined(_M_X64)
     void* m_padF0[2]; // x64 +0x168..+0x178 (ctor zeroes two qwords)
@@ -839,22 +836,14 @@ public:
                     //  is 40B and meets m_csDisplay directly)
 #endif
     CRITICAL_SECTION m_csDisplay; // +0x120 (24B) / x64 +0x1A8 (40B)
-#if defined(_M_X64)
-    // x64 quirk: the VC10 rebuild shrank this block by 4 bytes (m_pPushCfg
-    // sits at +0x630, 0x460 bytes from the +0x1D0 base) yet its display probe
-    // still clears 0x464 bytes — a faithful 4-byte overrun into m_pPushCfg's
-    // low half, which the ctor zeroes right after (see push_pin.cpp).
-    unsigned char m_displayBlock[0x460]; // +0x1D0 (VIH/display state)
-#else
-    unsigned char m_displayBlock[0x464]; // +0x138 (VIH/display state)
-    void* m_pad59C;                      // +0x59C (pad to 0x5A0)
+    // Both original display probes clear 0x464 bytes. Native alignment places
+    // the x64 push-config pointer at +0x638 (ctor 0x180001913, setter
+    // 0x180001695, dtor 0x180001070); x86 retains +0x5A0.
+    unsigned char m_displayBlock[0x464];
+#if !defined(_M_X64)
+    void* m_pad59C;
 #endif
-    void*
-        m_pPushCfg; // +0x5A0 (heap 0x2C block, EXE-pushed BIH; SetBitmapInfo 0x10001730) / x64 +0x630
-#if defined(_M_X64)
-    void* m_pinPad638; // x64 +0x638..+0x640 (unidentified gap
-                       //  ahead of the push-extras)
-#endif
+    void* m_pPushCfg;             // Heap block: 0x2C allocated, 0x28-byte bitmap header copied.
     int m_nPushExtra;             // +0x5A4 (SetBitmapInfo's n, pin-direct) / x64 +0x640
     LONGLONG m_rtAvgPerFrame;     // +0x5A8 (10000000/(i64)(u64)fps, pin-direct) / x64 +0x648
     unsigned char m_bBitmapSet;   // +0x5B0 / x64 +0x650
@@ -869,7 +858,7 @@ static_assert(offsetof(CPushPinDIBSq, m_frameCount) == 0x178, "x64 m_frameCount"
 static_assert(offsetof(CPushPinDIBSq, m_csRender) == 0x180, "x64 m_csRender");
 static_assert(offsetof(CPushPinDIBSq, m_csDisplay) == 0x1A8, "x64 m_csDisplay");
 static_assert(offsetof(CPushPinDIBSq, m_displayBlock) == 0x1D0, "x64 m_displayBlock");
-static_assert(offsetof(CPushPinDIBSq, m_pPushCfg) == 0x630, "x64 m_pPushCfg");
+static_assert(offsetof(CPushPinDIBSq, m_pPushCfg) == 0x638, "x64 m_pPushCfg");
 static_assert(offsetof(CPushPinDIBSq, m_nPushExtra) == 0x640, "x64 m_nPushExtra");
 static_assert(offsetof(CPushPinDIBSq, m_rtAvgPerFrame) == 0x648, "x64 m_rtAvgPerFrame");
 static_assert(offsetof(CPushPinDIBSq, m_bStreamEnded) == 0x653, "x64 m_bStreamEnded");

@@ -138,12 +138,12 @@ enum class ViewportToolAction : std::int32_t {
     None = 0,
     CameraOrbit = 1,
     CameraPan = 2,
-    CameraGizmoHorizontal = 3,
-    CameraGizmoVertical = 4,
-    CameraGizmoRing = 5,
-    LightGizmoHorizontal = 6,
-    LightGizmoVertical = 7,
-    LightGizmoCenter = 8,
+    BoneRotateHorizontal = 3,
+    BoneRotateVertical = 4,
+    BoneRotateRing = 5,
+    BoneScaleHandle = 6,
+    BoneMoveVerticalHandle = 7,
+    BoneMovePlaneHandle = 8,
     TransformAxisX = 9,
     TransformAxisY = 10,
     TransformAxisZ = 11,
@@ -583,7 +583,7 @@ public:
     std::uint8_t& DepthTextureCompositionEnabled() { return state.depthTextureCompositionEnabled; }
     std::uint8_t& DepthDeviceEnabled() { return state.depthDeviceEnabled; }
     DepthTextureProvider& DepthTextureCallback() {
-        return reinterpret_cast<DepthTextureProvider&>(m_runtime.platform.oniExports[3]);
+        return reinterpret_cast<DepthTextureProvider&>(OniExportSlot(OniExport::DepthTexture));
     }
     HDC& PanelDC() { return state.hdcMainPanel; }
     HDC& TimelineDC() { return state.hdcTimeline; }
@@ -780,7 +780,7 @@ public:
     // Main window (0x0047A5B0)
     void*& Hwnd() { return reinterpret_cast<void*&>(state.hwnd); } // 657080
     void*& HInstance() { return m_runtime.platform.instance; }
-    void*& OpenniTrackingCallback() { return m_runtime.platform.oniExports[5]; }
+    void*& OpenniTrackingCallback() { return OniExportSlot(OniExport::IsTracking); }
     // Kinect capture-stage byte (x64 0xA1E14 / x86 0xA0D68; verified to be
     // state.autoRepeat itself: menu 0x124/WM_COMMAND 292 sets it to 1; WM_TIMER 0x65
     // increments it every 1.5s until 4, then stops; pump block 0x7FF7CB44C560 tests ==4 for recording;
@@ -790,7 +790,9 @@ public:
     std::uint8_t KinectCaptureStage() const { return state.autoRepeat; }
     // Seven native pointer slots for DxOpenNI.dll exports on both builds.
     // Slots 3 and 5 are shared by the named depth/tracking callback accessors.
-    void*& OniExportSlot(int index) { return m_runtime.platform.oniExports[index]; }
+    void*& OniExportSlot(OniExport entry) {
+        return m_runtime.platform.oniExports[static_cast<std::size_t>(entry)];
+    }
     std::int32_t& FrameRangeStartFrame() { return m_runtime.dialogs.frameRangeStartFrame; }
     WINDOWPLACEMENT& SavedPlacement() { return m_runtime.platform.savedPlacement; }
     // Render/locale subsystem ("0x1D574 object"), allocated in

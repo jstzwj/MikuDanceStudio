@@ -807,10 +807,10 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i)
         boneKeys[i].allocated = 0;
     mdl::MorphKey* const morphKeys = mdl::MorphKeys(model);
-    for (int i = 0; i < 20000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i)
         morphKeys[i].allocated = 0;
     mdl::DisplayKey* const displayKeys = mdl::DisplayKeys(model);
-    for (int i = 0; i < 1000; ++i)
+    for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i)
         displayKeys[i].allocated = 0;
 
     // ---- 0x43813B: per-event morph keyframes ------------------------

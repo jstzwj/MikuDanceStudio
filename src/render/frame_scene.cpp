@@ -15,36 +15,13 @@
 #include <cstdint>
 #include <cstring>
 
+#include "mikudancestudio/screen_vertex.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
 namespace {
-
-struct TexturedScreenVertex {
-    float x;
-    float y;
-    float z;
-    float reciprocalW;
-    D3DCOLOR color;
-    float u;
-    float v;
-};
-
-struct ColoredScreenVertex {
-    float x;
-    float y;
-    float z;
-    float reciprocalW;
-    D3DCOLOR color;
-};
-
-constexpr DWORD kTexturedScreenVertexFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-constexpr DWORD kColoredScreenVertexFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
-
-static_assert(sizeof(TexturedScreenVertex) == 28);
-static_assert(sizeof(ColoredScreenVertex) == 20);
 
 void DrawTextOverlay(MMDApp* app, IDirect3DDevice9* device) {
     const UINT count = app->TextOverlayPrimitiveCount();
@@ -90,8 +67,8 @@ void DrawSpriteOverlay(MMDApp* app, IDirect3DDevice9* device) {
 void DrawFullscreenQuad(IDirect3DDevice9* device, IDirect3DBaseTexture9* texture,
                         IDirect3DVertexBuffer9* vertices) {
     device->SetTexture(0, texture);
-    device->SetStreamSource(0, vertices, 0, 28);
-    device->SetFVF(0x144);
+    device->SetStreamSource(0, vertices, 0, sizeof(TexturedScreenVertex));
+    device->SetFVF(kTexturedScreenVertexFvf);
     mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
 }
 

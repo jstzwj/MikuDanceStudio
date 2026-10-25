@@ -52,6 +52,7 @@
 
 #include "timeline_selection.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/timeline_selection_grid.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
@@ -91,15 +92,15 @@ void SelectionReeval(MMDApp* app);             // VA 0x00430510 (stubs.cpp)
 
 // Signed division by 13 (original magic 0x4EC4EC4F, sar 2) - used for the
 // (coord - 100) / 13 row indexing.  (sub_446A70 @ 0x4473F8 etc.)
-static int Div13(int v) {
-    return v / 13;
+static int FrameColumnFromDelta(int v) {
+    return v / kTimelineFrameColumnWidth;
 }
 
 // Signed division by 14 (original magic 0x92492493, sar 3) - used for the
 // (coord - 160) / 14 and (coord - 216) / 14 row indexing.  (sub_446A70 @
 // 0x446B5C, 0x446CA2, 0x4472E7)
-static int Div14(int v) {
-    return v / 14;
+static int TrackRowFromDelta(int v) {
+    return v / kTimelineTrackRowHeight;
 }
 
 // Active model pointer = slot[byte this+0x910] of the 100-slot array at
@@ -160,7 +161,7 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                     record->redoDirty = 0;
                     std::uint32_t& kf = record->UndoCursor();
                     kf = kf + 1;
-                    if (kf >= 0x1E)
+                    if (kf >= mdl::kUndoHistoryDepth)
                         kf = 0;
                     record->LatestUndoCursor() = kf;
                     auto& undo = record->undoRings[0].slots[kf];
@@ -386,7 +387,7 @@ static void HandleLButtonDown_MarginColumnToggle(MMDApp* app, std::int32_t y) {
         if (model == nullptr)
             return;
         const std::int32_t type =
-            static_cast<std::int8_t>(mdl::Mdl(model)->boneListRowType[Div14(y - 0xA0)]);
+            static_cast<std::int8_t>(mdl::Mdl(model)->boneListRowType[TrackRowFromDelta(y - 0xA0)]);
         if (type > 0) {
             mdl::DisplayGroup& frame = mdl::DisplayGroups(model)[type];
             frame.flags = (frame.flags == 0) ? 1 : 0; // cmp/setz toggle
@@ -441,7 +442,7 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
             }
         }
         { // accessory rows (y >= 0xD8)
-            const std::int32_t jrow = Div14(y - 0xD8);
+            const std::int32_t jrow = TrackRowFromDelta(y - 0xD8);
             const std::int32_t jidx = app->state.jointLineMap[jrow];
             if (jidx >= 0) {
                 mdl::AccessoryRecord* accessory =
@@ -487,7 +488,7 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
     // loc_446C8A: row lookup + selection toggle
     {
         unsigned char* m = ActiveModel(app);
-        const std::int32_t row = Div14(y - 0xA0);
+        const std::int32_t row = TrackRowFromDelta(y - 0xA0);
         const std::int32_t idx = mikudancestudio::mdl::Mdl(m)->boneListRowRecord[row];
         if (idx >= 0) {
             unsigned char* p = mikudancestudio::mdl::Mdl(m)->boneSelection + idx;
@@ -578,7 +579,7 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
     {
         unsigned char* m = ActiveModel(app);
         const std::int32_t type = static_cast<std::int8_t>(
-            mikudancestudio::mdl::Mdl(m)->boneListRowType[Div14(y - 0xA0)]);
+            mikudancestudio::mdl::Mdl(m)->boneListRowType[TrackRowFromDelta(y - 0xA0)]);
         if (type == 1) {
             mdl::Mdl(m)->displayKeyframesPresent =
                 (mdl::Mdl(m)->displayKeyframesPresent == 0) ? 1 : 0; // setz
@@ -638,7 +639,7 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
         // latched into locals (rigid/joint/ik/morph); when none of the
         // five bands hit and mode != 3 the four selection bitmaps are
         // cleared wholesale (0x447990-0x447A48).
-        const std::int32_t rowD = Div13(x - 0x64);
+        const std::int32_t rowD = FrameColumnFromDelta(x - kTimelineFirstFrameX);
         std::int32_t bandIdx = -1;    // var_194 / hWnd var / var_198 / wParam var
         std::int32_t joint2dIdx = -1; // var_18C
         const bool shiftActive = app->ShiftModifierActive();
@@ -660,9 +661,9 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
                 ToggleTimelineCell(app, shiftActive, band.keySelected(app, bandIdx));
         }
         if (y >= 0xD8) { // joint 2D band
-            const std::int32_t jrow = Div14(y - 0xD8);
+            const std::int32_t jrow = TrackRowFromDelta(y - 0xD8);
             const std::int32_t slotIdx = app->state.jointLineMap[jrow];
-            const std::int32_t col = Div13(x - 0x64);
+            const std::int32_t col = FrameColumnFromDelta(x - kTimelineFirstFrameX);
             joint2dIdx = app->state.rowHitAcc[col * 0xC8 + jrow];
             if (joint2dIdx >= 0) {
                 ToggleTimelineCell(app, shiftActive,
@@ -685,8 +686,8 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd, std::int32
         if (ActiveModel(app) == nullptr)
             return;
         const bool shiftActive = app->ShiftModifierActive();
-        const std::int32_t column = Div13(x - 0x64);
-        const std::int32_t row = Div14(y - 0xA0);
+        const std::int32_t column = FrameColumnFromDelta(x - kTimelineFirstFrameX);
+        const std::int32_t row = TrackRowFromDelta(y - 0xA0);
         const std::int32_t row2d = column * 0xC8 + row;
         // stage 1 (loc_447A4D): IK-type flags, model+0x26E8 0x1C-stride
         // records with flag at +0x14
@@ -771,7 +772,8 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd, std::int32_t
     // scrollbar 0x1A1 sync (0x44A520-0x44A5BA): frame =
     // (x-100)/13 + scroll offset; EM_SETSEL (0xB1) to the end of the old
     // text, then WM_SETTEXT (0xC2) with the new frame
-    app->state.currentFrame = Div13(x - 0x64) + app->state.timelineStartFrame;
+    app->state.currentFrame =
+        FrameColumnFromDelta(x - kTimelineFirstFrameX) + app->state.timelineStartFrame;
     const LRESULT textLen = GetWindowTextLengthA(GetDlgItem(hwnd, panel::kCurrentFrameEdit));
     SendMessageA(GetDlgItem(hwnd, panel::kCurrentFrameEdit), EM_SETSEL, 0, textLen);
     char frameText[0x100];
