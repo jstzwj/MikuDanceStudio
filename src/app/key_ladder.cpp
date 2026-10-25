@@ -1,4 +1,4 @@
-// Keyboard command order follows the MMD 9.32 x64 pump (0x44DEF6..0x450Bxx).
+// Keyboard command order follows the MMD 9.32 pump: x64 0x7FF7CB44DEF6..0x7FF7CB450Bxx.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "mikudancestudio/menu_commands.h"
@@ -85,9 +85,9 @@ void PumpDisplayShortcuts(MMDApp* app, const KeyboardInputContext& input) {
             CheckMenuItem(menu, MDS_CMD_TOGGLE_MODEL_TRANSPARENCY,
                           state.characterTransparentMode != 0 ? MF_CHECKED : MF_UNCHECKED);
             for (int slot = 0; slot < kModelSlotCount; ++slot) {
-                unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
+                mdl::ModelRecord* model = app->ModelSlot(slot);
                 if (model != nullptr)
-                    mdl::Mdl(model)->displayState = state.characterTransparentMode;
+                    model->displayState = state.characterTransparentMode;
             }
         }
     }
@@ -229,26 +229,25 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     if (focusOK() && modelMode() && !playing() && !focusInEdit) {
         // ---- 'X' (0x472D5C): redo / rotate mode ------------------------------
         if (pressed(LetterKey::X)) {
-            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
-            if (ctrl() && model != nullptr && mdl::Mdl(model)->redoDirty != 0) {
+            mdl::ModelRecord* model = app->SelectedModel();
+            if (ctrl() && model != nullptr && model->redoDirty != 0) {
                 // Redo one ring entry (0x4A2490), then enable the undo button
                 // / disable redo exactly like the pump tail, and re-seek the
                 // frame when the new ring head is not a pose-only record.
                 // The original passes &app+0x980 so the redo can move the
                 // current frame itself.
-                RedoModelEdit(mdl::Mdl(model), app->CurrentFrame());
-                auto* record = mdl::Mdl(model);
-                if (record->UndoCursor() == record->LatestUndoCursor()) {
+                RedoModelEdit(model, app->CurrentFrame());
+                if (model->UndoCursor() == model->LatestUndoCursor()) {
                     EnableWindow(GetDlgItem(main, panel::kRedoButton), FALSE);
-                    record->redoDirty = 0;
+                    model->redoDirty = 0;
                 }
                 EnableWindow(GetDlgItem(main, panel::kUndoButton), TRUE);
-                record->undoDirty = 1;
+                model->undoDirty = 1;
                 PanelPaint(app);      // 0x414610
                 SelectionReeval(app); // 0x430510
-                if (record->undoRings[0].slots[record->UndoCursor()].operation !=
+                if (model->undoRings[0].slots[model->UndoCursor()].operation !=
                     mdl::UndoOperation::BonePose) {
-                    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(app->CurrentFrame()),
+                    SeekModelFrame(*model, static_cast<int>(app->CurrentFrame()),
                                    app->PlaybackPhysicsMode());
                 }
             } else if (!ctrl()) {
@@ -262,24 +261,23 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
 
         // ---- 'Z' (0x472ED7): undo / move mode -------------------------------
         if (pressed(LetterKey::Z)) {
-            unsigned char* model = mdl::ModelBytes(app->SelectedModel());
-            if (ctrl() && model != nullptr && mdl::Mdl(model)->undoDirty != 0) {
+            mdl::ModelRecord* model = app->SelectedModel();
+            if (ctrl() && model != nullptr && model->undoDirty != 0) {
                 // Undo one ring entry (0x4A1870), then the mirror-image button
                 // tail of the X branch.  Like the redo, the frame pointer aims
                 // straight at app+0x980.
-                UndoModelEdit(mdl::Mdl(model), app->CurrentFrame());
-                auto* record = mdl::Mdl(model);
-                if (record->undoRings[0].slots[record->UndoCursor()].operation ==
+                UndoModelEdit(model, app->CurrentFrame());
+                if (model->undoRings[0].slots[model->UndoCursor()].operation ==
                     mdl::UndoOperation::Empty) {
                     EnableWindow(GetDlgItem(main, panel::kUndoButton), FALSE);
-                    record->undoDirty = 0;
+                    model->undoDirty = 0;
                 }
-                if (record->UndoCursor() == record->LatestUndoCursor()) {
+                if (model->UndoCursor() == model->LatestUndoCursor()) {
                     EnableWindow(GetDlgItem(main, panel::kUndoButton), FALSE);
-                    record->undoDirty = 0;
+                    model->undoDirty = 0;
                 }
                 EnableWindow(GetDlgItem(main, panel::kRedoButton), TRUE);
-                record->redoDirty = 1;
+                model->redoDirty = 1;
                 PanelPaint(app);      // 0x414610
                 SelectionReeval(app); // 0x430510
             } else if (!ctrl()) {

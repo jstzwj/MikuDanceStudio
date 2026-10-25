@@ -55,24 +55,12 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
 
 namespace {
 
-// Model combo-order byte (model+0x2D7C): the value matched against the
-// cursor of the parent-model combos 0x1B4/0x1C1/0x1DA (case 437's lookup;
-// same constant as the 400 family).
-constexpr std::size_t kModelComboOrder2D7C = 0x2D7C;
-
-// Accessory timeline-row selection flag (x86 acc+0x4AC, x64 acc+0x4BC): set
-// on the accessory chosen in combo 0x1D7, cleared on all others, and read by
-// the (not yet ported) pump Enter-registration block.  No promoted accessor
-// exists yet - the byte lives in the record's reserved tail.
-// rowSelected lives on AccessoryRecord (accessory_layout.hpp).
-
 // Shared body of the 0x1C1/0x1DA model-found branches (0x48e439..0x48e4ed /
 // 0x48e7f5..0x48e8db): repopulate a bone combo with the model's selectable
 // bones (type byte +0x1E4 == 8 or < 7; EN name +0x14 when the english-UI
 // byte 0xA0B4C is set, JP name +0x0 otherwise) and set the cursor to 0.
 void RepopulateBoneCombo(MMDApp* app, HWND combo, std::int32_t modelSlot) {
-    unsigned char* model = mdl::ModelBytes(app->ModelSlot(modelSlot));
-    const mdl::ModelRecord* record = mdl::Mdl(model);
+    const mdl::ModelRecord* record = app->ModelSlot(modelSlot);
     const mdl::BoneRecord* bones = record->boneTable;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(record->boneCount); ++i) {
         const mdl::BoneType type = bones[i].type;
@@ -87,8 +75,7 @@ void RepopulateBoneCombo(MMDApp* app, HWND combo, std::int32_t modelSlot) {
 // Shared body of the 0x1C2/0x1DB bone combos (0x48e6b3..0x48e745 /
 // 0x48e98d..0x48ea43): the first bone whose EN (+0x14) or JP (+0x0) name
 // equals the combo text (the original's inline two-byte-step compare).
-std::int32_t FindBoneByName(unsigned char* model, const char* text) {
-    const mdl::ModelRecord* record = mdl::Mdl(model);
+std::int32_t FindBoneByName(const mdl::ModelRecord* record, const char* text) {
     const mdl::BoneRecord* bones = record->boneTable;
     for (std::int32_t i = 0; i < static_cast<std::int32_t>(record->boneCount); ++i) {
         if (strcmp(bones[i].nameEn, text) == 0 || strcmp(bones[i].name, text) == 0) {
@@ -218,8 +205,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
             // Slot scan bound 255: x64 0x7FF7CB472E70 loads mov r13d,0FFh and scans the slot array in 8-byte
             // steps (only the x86 original uses 0x64)
             for (; slot < kModelSlotCount; ++slot) {
-                unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
-                if (model != nullptr && mdl::Mdl(model)->comboSelIndex == static_cast<int>(sel)) {
+                mdl::ModelRecord* model = app->ModelSlot(slot);
+                if (model != nullptr && model->comboSelIndex == static_cast<int>(sel)) {
                     found = true;
                     break;
                 }
@@ -282,8 +269,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                      reinterpret_cast<LPARAM>(text));
         const std::int32_t parent = app->CameraParentModel();
         if (parent >= 0) {
-            const std::int32_t index =
-                FindBoneByName(mdl::ModelBytes(app->ModelSlot(parent)), text);
+            const std::int32_t index = FindBoneByName(app->ModelSlot(parent), text);
             if (index >= 0) {
                 app->CameraParentBone() = index;
                 SelectTimelineTrack(GlobalTimelineTrack::Camera);
@@ -312,8 +298,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
             bool found = false;
             // Slot scan bound 255: x64 0x7FF7CB4732F7 loads mov r13d,0FFh (same as 0x1C1)
             for (; slot < kModelSlotCount; ++slot) {
-                unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
-                if (model != nullptr && mdl::Mdl(model)->comboSelIndex == static_cast<int>(sel)) {
+                mdl::ModelRecord* model = app->ModelSlot(slot);
+                if (model != nullptr && model->comboSelIndex == static_cast<int>(sel)) {
                     found = true;
                     break;
                 }
@@ -342,8 +328,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                      reinterpret_cast<LPARAM>(text));
         mdl::AccessoryRecord* acc = app->AccessorySlot(app->SelectedAccessorySlot());
         if (acc != nullptr && acc->parentModel >= 0) {
-            const std::int32_t index =
-                FindBoneByName(mdl::ModelBytes(app->ModelSlot(acc->parentModel)), text);
+            const std::int32_t index = FindBoneByName(app->ModelSlot(acc->parentModel), text);
             if (index >= 0) {
                 acc->parentBone = index;
                 SelectAccessoryTimelineTrack(static_cast<int>(app->SelectedAccessorySlot()));
@@ -389,11 +374,11 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
     // on the active model (0x4CCF0, restored when the model is re-selected;
     // cleared to 3 on scene load).
     if (ctrl == GetDlgItem(hwnd, panel::kRegisterScopeCombo)) {
-        unsigned char* model = mdl::ModelBytes(app->SelectedModel());
+        mdl::ModelRecord* model = app->SelectedModel();
         if (model != nullptr) {
             const LRESULT sel =
                 SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_GETCURSEL, 0, 0);
-            mdl::Mdl(model)->frameRegistrationSelection = static_cast<std::int32_t>(sel);
+            model->frameRegistrationSelection = static_cast<std::int32_t>(sel);
         }
         SetFocus(hwnd);
         return true;
@@ -521,9 +506,9 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         // 0x487FF5..0x48803C: push the new flag into every loaded model's
         // displayState (+0x2D8C)
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
-            unsigned char* model = mdl::ModelBytes(s.ModelSlot(slot));
+            mdl::ModelRecord* model = s.ModelSlot(slot);
             if (model != nullptr)
-                mdl::Mdl(model)->displayState = flag;
+                model->displayState = flag;
         }
         break;
     }

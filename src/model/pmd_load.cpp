@@ -252,9 +252,9 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
             _close(fh);
             return false;
         }
-        std::uint16_t*& idx = mdl::ResourceAs<std::uint16_t>(model.indices);
-        idx = static_cast<std::uint16_t*>(operator new(4 * idxCount));
-        std::memset(idx, 0, 4 * idxCount);
+        std::int32_t*& idx = model.indices;
+        idx = static_cast<std::int32_t*>(operator new(sizeof(*idx) * idxCount));
+        std::memset(idx, 0, sizeof(*idx) * idxCount);
         void* ib = nullptr;
         if (FAILED(mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer)->Lock(0, 0, &ib, 0))) {
             FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
@@ -263,8 +263,10 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
             return false;
         }
         for (std::uint32_t j = 0; j < idxCount; ++j) {
-            _read(fh, idx + 2 * j, 2);
-            static_cast<std::uint16_t*>(ib)[j] = idx[2 * j];
+            std::uint16_t index = 0;
+            _read(fh, &index, 2);
+            idx[j] = index;
+            static_cast<std::uint16_t*>(ib)[j] = index;
         }
         mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer)->Unlock();
     }

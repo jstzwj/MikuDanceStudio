@@ -147,9 +147,9 @@ void CollectEnglishNameEdit(MMDApp* app, HWND hEdit, int idx) { // VA 0x0043BED0
                 // first model slot carrying this combo-order byte
                 mdl::ModelRecord* ordered = nullptr;
                 for (int slot = 0; slot < kModelSlotCount; ++slot) {
-                    unsigned char* other = mdl::ModelBytes(app->ModelSlot(slot));
-                    if (other != nullptr && mdl::Mdl(other)->comboSelIndex == order) {
-                        ordered = mdl::Mdl(other);
+                    mdl::ModelRecord* other = app->ModelSlot(slot);
+                    if (other != nullptr && other->comboSelIndex == order) {
+                        ordered = other;
                         break;
                     }
                 }
@@ -195,7 +195,7 @@ void CollectEnglishNameEdit(MMDApp* app, HWND hEdit, int idx) { // VA 0x0043BED0
         GetWindowTextA(hEdit, text, 256);
         if (std::strlen(text) >= 0x32)
             text[49] = '\0';
-        mdl::DisplayGroup* groups = mdl::DisplayGroups(mdl::ModelBytes(app->SelectedModel()));
+        mdl::DisplayGroup* groups = (app->SelectedModel())->displayGroups;
         strcpy_s(groups[GroupNameSlot(app, model)].nameEn, 0x32, text);
         break;
     }
@@ -279,7 +279,7 @@ void InitEnglishNameDialog(HWND hDlg) { // VA 0x0043C430
     // display-group combo + edit (starts after the fixed slots)
     HWND groupCombo = GetDlgItem(hDlg, kComboGroupName);
     SendMessageA(groupCombo, CB_RESETCONTENT, 0, 0);
-    mdl::DisplayGroup* groups = mdl::DisplayGroups(mdl::ModelBytes(app->SelectedModel()));
+    mdl::DisplayGroup* groups = (app->SelectedModel())->displayGroups;
     const std::uint8_t firstGroup = model->facialFrameCount != 0 ? 3 : 2;
     for (std::uint8_t g = firstGroup; g < model->groupCount; ++g)
         SendMessageA(groupCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(groups[g].nameEn));
@@ -349,7 +349,7 @@ void ApplyEnglishNameDialog(HWND hDlg) { // VA 0x0045F240
     GetWindowTextA(GetDlgItem(hDlg, kEditGroupNameEn), text, 256);
     if (std::strlen(text) >= 0x32)
         text[49] = '\0';
-    mdl::DisplayGroup* groups = mdl::DisplayGroups(mdl::ModelBytes(app->SelectedModel()));
+    mdl::DisplayGroup* groups = (app->SelectedModel())->displayGroups;
     strcpy_s(groups[GroupNameSlot(app, model)].nameEn, 0x32, text);
 
     // frame rows mirror the English names (repeat of the collector loops)
@@ -442,7 +442,7 @@ void SelectEnglishNameGroup(HWND hDlg) { // VA 0x0045EDC0
     GetWindowTextA(GetDlgItem(hDlg, kEditGroupNameEn), text, 256);
     if (std::strlen(text) >= 0x32)
         text[49] = '\0';
-    mdl::DisplayGroup* groups = mdl::DisplayGroups(mdl::ModelBytes(app->SelectedModel()));
+    mdl::DisplayGroup* groups = (app->SelectedModel())->displayGroups;
     strcpy_s(groups[GroupNameSlot(app, model)].nameEn, 0x32, text);
 
     app->EnglishNameComboCursor(2) =

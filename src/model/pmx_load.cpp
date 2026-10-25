@@ -72,7 +72,6 @@ namespace {
 // Preserve the original encoded bytes when editing; no generator is shipped.
 #include "model_labels.inc"
 
-using mdl::At;
 using d3dx::D3DXMATRIXF;
 
 // ---- JP header-error texts (byte-exact Shift-JIS as in the x64 .rdata) ----
@@ -503,7 +502,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         }
         mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer) = ib;
         auto* indices = static_cast<std::int32_t*>(operator new(sizeof(std::int32_t) * faceCount));
-        mdl::ResourceAs<std::int32_t>(model.indices) = indices;
+        model.indices = indices;
         std::memset(indices, 0, sizeof(std::int32_t) * faceCount);
         const auto readVertexIndex = [&]() -> std::int32_t {
             const int idxSize = model.pmxVertexIndexSize;
@@ -683,7 +682,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             const mdl::ModelMaterialRecord& mat = materials[mi];
             const std::int32_t faces = mat.faceVertexCount;
             for (std::int32_t f = 0; f < faces; ++f) {
-                const std::int32_t vi = mdl::ResourceAs<std::int32_t>(model.indices)[faceCursor++];
+                const std::int32_t vi = model.indices[faceCursor++];
                 if (mat.edgeSize < edgeKey[vi]) {
                     edgeKey[vi] = mat.edgeSize;
                     vertMat[vi] = mi;

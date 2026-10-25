@@ -1,6 +1,6 @@
 #include <cstdio>
 #include <cstring>
-#include <vector>
+#include <memory>
 
 #include "mikudancestudio/model.hpp"
 
@@ -10,9 +10,9 @@ void ModelInitDefaults(mdl::ModelRecord*);
 
 int main() {
     using namespace mikudancestudio;
-    std::vector<unsigned char> storage(mdl::kSize, 0);
-    auto* bytes = storage.data();
-    auto& model = *mdl::Mdl(bytes);
+    auto storage = std::make_unique<mdl::ModelRecord>();
+    auto* bytes = reinterpret_cast<const unsigned char*>(storage.get());
+    auto& model = *storage;
     ModelInitDefaults(&model);
     int failures = 0;
     const auto check = [&](bool condition, const char* message) {

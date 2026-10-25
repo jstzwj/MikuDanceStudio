@@ -473,12 +473,12 @@ void JumpNextKeyframe(MMDApp* app) { // 0x441070
     }
 
     // ---- model branch (byte @+760 == 0) --------------------------------
-    unsigned char* model = mdl::ModelBytes(s.SelectedModel()); // 0x441285
+    mdl::ModelRecord* model = s.SelectedModel(); // 0x441285
     std::uint32_t best = 0xFFFFFFFAu;
 
     // Display/IK key track (the named gate keeps its x64 layout correct).
-    if (mdl::Mdl(model)->displayKeyframesPresent != 0) { // 0x44128c
-        mdl::DisplayKey* n = mdl::DisplayKeys(model);
+    if (model->displayKeyframesPresent != 0) { // 0x44128c
+        mdl::DisplayKey* n = model->displayKeys;
         std::uint32_t last = 0;
         if (n[0].frame <= cur) {
             std::uint32_t idx = 0;
@@ -497,8 +497,8 @@ void JumpNextKeyframe(MMDApp* app) { // 0x441070
             best = f;
     }
     // Selected facial display rows refer to the roots of the morph tracks.
-    if (mikudancestudio::mdl::Mdl(model)->facialFrameCount != 0) { // 0x441300
-        const auto& record = *mdl::Mdl(model);
+    if (model->facialFrameCount != 0) { // 0x441300
+        const auto& record = *model;
         const mdl::MorphKey* base = record.morphKeys;
         for (int i = 0; i < record.facialFrameCount; ++i) {
             const mdl::FrameGroup& row = record.displayFrames[i];
@@ -523,10 +523,10 @@ void JumpNextKeyframe(MMDApp* app) { // 0x441070
     // key tree @model+9952 (count dword @model+11652, flag array
     // *(model+11668), node 60 bytes)
     {
-        const int count = static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount); // 0x4413a0
+        const int count = static_cast<int>(model->boneCount); // 0x4413a0
         if (count > 0) {
-            mdl::BoneKey* base = mdl::BoneKeys(model);
-            const unsigned char* flags = mikudancestudio::mdl::Mdl(model)->boneSelection;
+            mdl::BoneKey* base = model->boneKeys;
+            const unsigned char* flags = model->boneSelection;
             for (int k = 0; k < count; ++k) {
                 if (flags[k] != 0) { // 0x4413dc
                     std::uint32_t node = k;
@@ -716,12 +716,12 @@ void JumpPrevKeyframe(MMDApp* app) { // 0x4414C0
     }
 
     // ---- model branch (byte @+760 == 0) --------------------------------
-    unsigned char* model = mdl::ModelBytes(s.SelectedModel()); // 0x44177e
-    std::uint32_t best = 0;                                    // 0x441787
+    mdl::ModelRecord* model = s.SelectedModel(); // 0x44177e
+    std::uint32_t best = 0;                      // 0x441787
 
     // Display/IK key track.
-    if (mdl::Mdl(model)->displayKeyframesPresent != 0) { // 0x441789
-        mdl::DisplayKey* n = mdl::DisplayKeys(model);
+    if (model->displayKeyframesPresent != 0) { // 0x441789
+        mdl::DisplayKey* n = model->displayKeys;
         std::uint32_t last = 0;
         if (n[0].frame < cur) {
             std::uint32_t idx = 0;
@@ -745,8 +745,8 @@ void JumpPrevKeyframe(MMDApp* app) { // 0x4414C0
         }
     }
     // Selected facial display rows refer to the roots of the morph tracks.
-    if (mikudancestudio::mdl::Mdl(model)->facialFrameCount != 0) { // 0x441858
-        const auto& record = *mdl::Mdl(model);
+    if (model->facialFrameCount != 0) { // 0x441858
+        const auto& record = *model;
         const mdl::MorphKey* base = record.morphKeys;
         for (int i = 0; i < record.facialFrameCount; ++i) {
             const mdl::FrameGroup& row = record.displayFrames[i];
@@ -775,10 +775,10 @@ void JumpPrevKeyframe(MMDApp* app) { // 0x4414C0
     }
     // key tree @model+9952 (count dword @model+11652, node 60 bytes)
     {
-        const int count = static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount); // 0x441954
+        const int count = static_cast<int>(model->boneCount); // 0x441954
         if (count > 0) {
-            mdl::BoneKey* base = mdl::BoneKeys(model);
-            const unsigned char* flags = mikudancestudio::mdl::Mdl(model)->boneSelection;
+            mdl::BoneKey* base = model->boneKeys;
+            const unsigned char* flags = model->boneSelection;
             for (int k = 0; k < count; ++k) {
                 if (flags[k] != 0) { // 0x441994
                     std::uint32_t node = k;

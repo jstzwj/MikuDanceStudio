@@ -171,17 +171,17 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
 
     bool firstModel = true;
     for (unsigned slot = 0; slot < static_cast<unsigned>(kModelSlotCount); ++slot) {
-        unsigned char* model = mdl::ModelBytes(app->ModelSlot(slot));
+        mdl::ModelRecord* model = app->ModelSlot(slot);
         if (model == nullptr)
             continue;
         if (!firstModel)
             std::fputc(',', stream);
         firstModel = false;
-        const mdl::ModelRecord& state = *mdl::Mdl(model);
+        const mdl::ModelRecord& state = *model;
         const int boneCount = static_cast<int>(state.boneCount);
-        const auto* bones = mdl::Bones(model);
-        auto* active = mikudancestudio::mdl::Mdl(model)->boneSelection;
-        auto* secondary = mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
+        const auto* bones = model->boneTable;
+        auto* active = model->boneSelection;
+        auto* secondary = model->bonePhysicsState;
         int activeCount = 0;
         int secondaryCount = 0;
         if (boneCount >= 0 && boneCount <= 100000) {
@@ -192,11 +192,10 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
                     ++secondaryCount;
             }
         }
-        const int undoCursor = mdl::Mdl(model)->UndoCursor();
-        const int undoCurrent = mdl::Mdl(model)->LatestUndoCursor();
-        const mdl::UndoRecord* undo = undoCursor >= 0 && undoCursor < 30
-                                          ? &mdl::Mdl(model)->undoRings[0].slots[undoCursor]
-                                          : nullptr;
+        const int undoCursor = model->UndoCursor();
+        const int undoCurrent = model->LatestUndoCursor();
+        const mdl::UndoRecord* undo =
+            undoCursor >= 0 && undoCursor < 30 ? &model->undoRings[0].slots[undoCursor] : nullptr;
         std::fprintf(stream,
                      "\n    {\"slot\": %u, \"order\": %u, \"order_copy\": %u, "
                      "\"visible\": %u, \"morph_count\": %d, \"bone_count\": %d, "
@@ -220,7 +219,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
         for (int undoIndex = 0; undoIndex < 30; ++undoIndex) {
             if (undoIndex != 0)
                 std::fputs(", ", stream);
-            const auto& entry = mdl::Mdl(model)->undoRings[0].slots[undoIndex];
+            const auto& entry = model->undoRings[0].slots[undoIndex];
             std::fprintf(stream,
                          "{\"index\":%d,\"type\":%d,\"count\":%d,"
                          "\"frame\":%d}",
@@ -252,7 +251,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
             }
         }
         std::fputs("], \"selected_key_bits\": [", stream);
-        const mdl::BoneKey* boneKeys = mdl::BoneKeys(model);
+        const mdl::BoneKey* boneKeys = model->boneKeys;
         if (boneKeys != nullptr && selected >= 0 && selected < boneCount) {
             const auto* key = reinterpret_cast<const unsigned char*>(&boneKeys[selected]);
             for (int i = 0; i < 15; ++i) {
@@ -294,7 +293,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
             std::fprintf(stream, "%d", state.selectedMorphs[i]);
         }
         std::fputs("], \"selected_morph_key_chains\": [", stream);
-        const mdl::MorphKey* morphKeysForChains = mdl::MorphKeys(model);
+        const mdl::MorphKey* morphKeysForChains = model->morphKeys;
         const int morphCountForChains = static_cast<int>(state.morphCount);
         bool firstMorphChain = true;
         if (morphKeysForChains != nullptr) {
@@ -329,7 +328,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
             }
         }
         std::fputs("], \"display_key_chain\": [", stream);
-        const mdl::DisplayKey* displayKeys = mdl::DisplayKeys(model);
+        const mdl::DisplayKey* displayKeys = model->displayKeys;
         if (displayKeys != nullptr) {
             int keyIndex = 0;
             for (int chainIndex = 0; chainIndex < 64; ++chainIndex) {
@@ -351,7 +350,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
                 }
                 std::fputs("\",\"relation_bits\":[", stream);
                 const auto* relations = mdl::SelectorStates(key);
-                const int relationCount = static_cast<int>(mdl::Mdl(model)->boneOrderCount);
+                const int relationCount = static_cast<int>(model->boneOrderCount);
                 if (relations != nullptr && relationCount >= 0 && relationCount <= 10000) {
                     for (int i = 0; i < relationCount; ++i) {
                         if (i != 0)
@@ -370,7 +369,7 @@ inline void DumpFrameEntryState(MMDApp* app, const char* fileName = "frame_state
             }
         }
         std::fputs("], \"marked_morph_keys\": [", stream);
-        const mdl::MorphKey* morphKeys = mdl::MorphKeys(model);
+        const mdl::MorphKey* morphKeys = model->morphKeys;
         bool firstMorphKey = true;
         if (morphKeys != nullptr) {
             for (int keyIndex = 0; keyIndex < static_cast<int>(mdl::kMorphKeyCapacity);

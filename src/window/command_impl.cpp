@@ -194,10 +194,10 @@ void CmdSavePose(MMDApp* app) {
     // Bone-selection scan: the active model's selection bitmap (x64 app+0xBE8 slot table, index at +0x13E0);
     // any nonzero byte means a bone is selected.
     bool anySelected = false;
-    unsigned char* const model = mdl::ModelBytes(app->SelectedModel());
+    mdl::ModelRecord* const model = app->SelectedModel();
     if (model != nullptr) {
-        const int count = static_cast<int>(mdl::Mdl(model)->boneCount);
-        unsigned char* const selBits = mdl::Mdl(model)->boneSelection;
+        const int count = static_cast<int>(model->boneCount);
+        unsigned char* const selBits = model->boneSelection;
         if (selBits != nullptr) {
             for (int b = 0; b < count; ++b) {
                 if (selBits[b] != 0) {
@@ -485,11 +485,11 @@ void CmdSaveMotion(MMDApp* app) {
     } else {
         // Model mode: three model frame tables for bones/morphs/display (x64 model +0x2790/+0x2798/+0x27A0).
         any = false;
-        unsigned char* const model = mdl::ModelBytes(app->SelectedModel());
+        mdl::ModelRecord* const model = app->SelectedModel();
         if (model != nullptr) {
-            any = anyAllocatedKey(mdl::BoneKeys(model), mdl::kBoneKeyCapacity) ||
-                  anyAllocatedKey(mdl::MorphKeys(model), mdl::kMorphKeyCapacity) ||
-                  anyAllocatedKey(mdl::DisplayKeys(model), mdl::kDisplayKeyCapacity);
+            any = anyAllocatedKey(model->boneKeys, mdl::kBoneKeyCapacity) ||
+                  anyAllocatedKey(model->morphKeys, mdl::kMorphKeyCapacity) ||
+                  anyAllocatedKey(model->displayKeys, mdl::kDisplayKeyCapacity);
         }
     }
     if (!any) {

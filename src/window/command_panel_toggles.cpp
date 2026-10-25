@@ -126,8 +126,8 @@ namespace mikudancestudio {
 
 // Active model = slot array at this+0x780 indexed by byte this+0x910.
 // (sub_47E8A0 pattern; the original re-derives it on every use.)
-static unsigned char* ActiveModel(MMDApp* app) {
-    return mdl::ModelBytes(app->SelectedModel());
+static mdl::ModelRecord* ActiveModel(MMDApp* app) {
+    return app->SelectedModel();
 }
 
 // Clear selections in the four global tracks and all accessory tracks.
@@ -637,7 +637,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t 
     // WM_COMMAND(0x1EA) and run RebuildTimelineTrackPanel + InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
     case panel::kSelectAllBonesButton: {
-        unsigned char* model = ActiveModel(app);
+        mdl::ModelRecord* model = ActiveModel(app);
         if (model == nullptr) {
             // Selected slot empty: walking the null record here is fatal;
             // keep the radio bookkeeping below and skip the scan.
@@ -647,10 +647,9 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t 
             InvalidateSelectionReadouts(app);
             break;
         }
-        auto* const modelRecord = mikudancestudio::mdl::Mdl(model);
-        const std::int32_t boneCount = modelRecord->boneCount;
-        mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
-        unsigned char* const sel = modelRecord->boneSelection;
+        const std::int32_t boneCount = model->boneCount;
+        mikudancestudio::mdl::BoneRecord* const bones = model->boneTable;
+        unsigned char* const sel = model->boneSelection;
         for (std::int32_t i = 0; i < boneCount; ++i) {
             const mdl::BoneType type = bones[i].type;
             const std::uint16_t flag = bones[i].flags;

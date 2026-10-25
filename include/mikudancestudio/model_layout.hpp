@@ -61,7 +61,7 @@ struct ModelRecord {
     void* vertexBuffer2;                       // 12  (FVF 0x042, 16 B/vtx)
     void* indexBuffer;                         // 16
     std::uint32_t indexCount;                  // 20  (this[5])
-    void* indices;                             // 24  (WORD*)
+    std::int32_t* indices;                     // 24 (PMD/PMX CPU indices, 32-bit stride)
     std::uint32_t materialCount;               // 28  (this[7])
     ModelMaterialRecord* materials;            // 32 (runtime material table)
     std::uint32_t* boneKeyCursors;             // 36  (one cursor per bone)
@@ -340,6 +340,7 @@ static_assert(offsetof(ModelRecord, searchCursor) == 8888,
               "0x7FF7CB4EA46F, morph pool 0x7FF7CB48E416, display pool "
               "0x7FF7CB48E5EA)");
 static_assert(offsetof(ModelRecord, materialCount) == 56, "materialCount x64");
+static_assert(offsetof(ModelRecord, indices) == 48, "indices x64");
 static_assert(offsetof(ModelRecord, materials) == 64, "materials x64");
 static_assert(offsetof(ModelRecord, boneTable) == 10056, "boneTable x64");
 static_assert(offsetof(ModelRecord, morphs) == 10072, "morphs x64");

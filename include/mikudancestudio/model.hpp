@@ -1,11 +1,10 @@
-// Model-facing API and compatibility boundary.
+// Model-facing records, capacities and operations.
 //
 // The reverse-engineered executable stores one model in a flat allocation.
 // The actual field map lives in model_layout.hpp; that runtime record is
-// the only place where ABI offsets and unknown padding belong.  Code below
-// exposes typed views for the portions whose ownership and element type are
-// established.  New call sites should use those views instead of inventing
-// another numeric offset.
+// the only place where ABI offsets and unknown padding belong. Callers pass
+// ModelRecord directly and access its named members. ResourceAs is retained
+// for opaque D3D resource slots whose storage is fixed by that layout.
 #pragma once
 
 #include <cstddef>
@@ -188,102 +187,8 @@ enum class PmxTextBufferSlot : std::size_t {
     englishComment,
 };
 
-template <typename T> inline T& At(unsigned char* m, std::size_t off) {
-    return *reinterpret_cast<T*>(m + off);
-}
-
-template <typename T> inline const T& At(const unsigned char* m, std::size_t off) {
-    return *reinterpret_cast<const T*>(m + off);
-}
-
-// Typed view of the model object: routes table pointers through
-// ModelRecord so the field offset is correct on both architectures
-// The typed record owns architecture-correct field placement.
-inline ModelRecord* Mdl(unsigned char* m) {
-    return reinterpret_cast<ModelRecord*>(m);
-}
-
-inline const ModelRecord* Mdl(const unsigned char* m) {
-    return reinterpret_cast<const ModelRecord*>(m);
-}
-
-// Temporary boundary for remaining editing, UI and rendering routines whose model
-// parameters still use byte views. Never reinterpret an array of model pointers.
-inline unsigned char* ModelBytes(ModelRecord* model) {
-    return reinterpret_cast<unsigned char*>(model);
-}
-
-inline const unsigned char* ModelBytes(const ModelRecord* model) {
-    return reinterpret_cast<const unsigned char*>(model);
-}
-
-inline IkChain*& IkChains(unsigned char* m) {
-    return Mdl(m)->ikChains;
-}
-
-inline PmdVertex*& PmdVertices(unsigned char* m) {
-    return Mdl(m)->rawVertices;
-}
-
 template <typename T> inline T*& ResourceAs(void*& storage) {
     return reinterpret_cast<T*&>(storage);
-}
-
-inline ModelMaterialRecord*& Materials(unsigned char* m) {
-    return Mdl(m)->materials;
-}
-
-inline FrameGroup*& DisplayBones(unsigned char* m) {
-    return Mdl(m)->displayBones;
-}
-
-inline DisplayGroup*& DisplayGroups(unsigned char* m) {
-    return Mdl(m)->displayGroups;
-}
-
-inline char (*PmdToonFileNames(unsigned char* m))[100] {
-    return Mdl(m)->pmdToonFileNames;
-}
-
-inline std::uint16_t*& Indices(unsigned char* m) {
-    return ResourceAs<std::uint16_t>(Mdl(m)->indices);
-}
-
-// PMX retains normalized 32-bit indices even when its GPU index buffer uses
-// 16-bit elements. PMD owns the same storage through Indices().
-inline std::int32_t*& PmxIndices(unsigned char* m) {
-    return ResourceAs<std::int32_t>(Mdl(m)->indices);
-}
-
-// Compatibility views for remaining byte-based UI callers. Strides are the natural
-// sizeof() of each record - 604/624 bones, 136/192 morphs,
-// 172/192 rigids, 140/152 joints (x86/x64).
-inline BoneRecord*& Bones(unsigned char* m) {
-    return Mdl(m)->boneTable;
-}
-
-inline MorphRecord*& Morphs(unsigned char* m) {
-    return Mdl(m)->morphs;
-}
-
-inline BoneKey*& BoneKeys(unsigned char* m) {
-    return Mdl(m)->boneKeys;
-}
-
-inline MorphKey*& MorphKeys(unsigned char* m) {
-    return Mdl(m)->morphKeys;
-}
-
-inline RigidRecord*& Rigids(unsigned char* m) {
-    return Mdl(m)->rigidTable;
-}
-
-inline JointRecord*& Joints(unsigned char* m) {
-    return Mdl(m)->jointTable;
-}
-
-inline DisplayKey*& DisplayKeys(unsigned char* m) {
-    return Mdl(m)->displayKeys;
 }
 
 } // namespace mikudancestudio::mdl

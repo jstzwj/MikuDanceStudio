@@ -435,6 +435,7 @@ void RelayoutSidebarControls(MMDApp* app);                        // VA 0x00442E
 void SetModelColor(mdl::ModelRecord* model, int r, int g, int b); // VA 0x004A4850
 void SeekSelectedModelToCurrentFrame(MMDApp* app);                // ,
 // VA 0x004220C0 (model_frame_seek.cpp)
+int SavePmdFile(mdl::ModelRecord& model, const wchar_t* path, D3DRenderer* renderer);
 void SaveEnhancedModel(MMDApp* app, const wchar_t* path); // ,
                                                           // VA 0x0041EC10 (enhance_model_io.cpp)
 void ReloadTextureCache(D3DRenderer* renderer);           // VA 0x004076E0

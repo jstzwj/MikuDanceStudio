@@ -136,6 +136,7 @@ add_library(mikudancestudio_core STATIC
     src/window/dialog_procs.cpp
     src/window/frame_range_apply.cpp
     src/io/pmm_save.cpp
+    src/io/pmd_save.cpp
     src/io/io_device_helpers.cpp
     src/io/vpd_file.cpp
     src/io/vmd_save.cpp
@@ -458,6 +459,9 @@ if(BUILD_TESTING)
     target_include_directories(model_file_io_test PRIVATE src/io)
     target_link_libraries(model_file_io_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_file_io COMMAND model_file_io_test)
+    add_executable(pmd_save_test tests/pmd_save_test.cpp)
+    target_link_libraries(pmd_save_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmd_save COMMAND pmd_save_test)
     add_executable(kinect_tracking_test tests/kinect_tracking_test.cpp)
     target_link_libraries(kinect_tracking_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME kinect_tracking COMMAND kinect_tracking_test)

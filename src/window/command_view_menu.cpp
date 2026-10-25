@@ -308,8 +308,8 @@ static_assert(__builtin_bit_cast(std::uint32_t, kPiFloat) == 0x40490FD8u, "flt_5
 // command_panel_toggles.cpp case 472).
 
 // Active model = slot array at app+0x780 indexed by byte app+0x910.
-static unsigned char* ActiveModel(MMDApp* app) {
-    return mdl::ModelBytes(app->SelectedModel());
+static mdl::ModelRecord* ActiveModel(MMDApp* app) {
+    return app->SelectedModel();
 }
 
 // 0x40A680 / 0x40A690 / 0x40A6B0 / 0x40A6D0 - the D3DX angle helpers of the
@@ -344,13 +344,13 @@ void SetMultisampleAntialias(MMDApp* app, int on) {
 // the current bone's quaternion from `m`, frameFlag[curBone] = 1,
 // dirty = 1, PostViewRefresh.
 void BoneRotationWriteback(MMDApp* app, const d3dx::D3DXMATRIXF& m) {
-    unsigned char* model = ActiveModel(app);
-    const std::int32_t cur = mdl::Mdl(model)->selectedBone;
-    mdl::BoneRecord* const bones = mdl::Bones(model);
+    mdl::ModelRecord* model = ActiveModel(app);
+    const std::int32_t cur = model->selectedBone;
+    mdl::BoneRecord* const bones = model->boneTable;
     float quat[4];
     d3dx::Get().quatFromMatrix(quat, &m);
     std::memcpy(bones[cur].rotQuat, quat, sizeof(quat));
-    mdl::Mdl(model)->bonePhysicsState[cur] = 1;
+    model->bonePhysicsState[cur] = 1;
     app->SceneModified() = 1;
     PostViewRefresh(app);
 }
@@ -399,10 +399,10 @@ static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x30
 // VA 0x0041E9C0 - enhance-model dialog init: mirrors the ten 100-byte SJIS
 // toon texture file-name slots of the active model (+0x33D8) into edits 709..718.
 void FillToonTextureEdits(MMDApp* app, HWND hDlg) { // VA 0x0041E9C0
-    unsigned char* model = mdl::ModelBytes(app->SelectedModel());
+    mdl::ModelRecord* model = app->SelectedModel();
     for (int i = 0; i < 10; ++i)
         SendMessageA(GetDlgItem(hDlg, panel::kToon01Edit + i), EM_REPLACESEL, 0,
-                     reinterpret_cast<LPARAM>(mdl::Mdl(model)->pmdToonFileNames[i]));
+                     reinterpret_cast<LPARAM>(model->pmdToonFileNames[i]));
 }
 
 // ---- JP strings of the dialogs, byte-exact -------------------------------
@@ -1082,15 +1082,15 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             return;
         }
         app->LetterKeyState(LetterKey::B) = 1;
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t boneCount = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t boneCount = static_cast<std::int32_t>(model->boneCount);
         if (boneCount > 0) {
-            mdl::BoneRecord* const bones = mdl::Bones(model);
-            unsigned char* sel = mdl::Mdl(model)->boneSelection;
+            mdl::BoneRecord* const bones = model->boneTable;
+            unsigned char* sel = model->boneSelection;
             for (std::int32_t i = 0; i < boneCount; ++i) {
                 if (bones[i].hasRigidBody != 0) {
                     sel[i] = 1;
-                    mdl::Mdl(model)->selectedBone = i;
+                    model->selectedBone = i;
                 } else {
                     sel[i] = 0;
                 }
@@ -1110,7 +1110,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             return;
         }
         app->LetterKeyState(LetterKey::X) = 1;
-        mdl::SelectPhysicsOnBoneKeys(*mdl::Mdl(ActiveModel(app)));
+        mdl::SelectPhysicsOnBoneKeys(*ActiveModel(app));
         PanelPaint(app); // 0x414610
         return;
     }
@@ -1670,12 +1670,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             return;
         }
         // ---- bone path (0x48A40C..0x48A85D) -----------------------------
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t curBone = mdl::Mdl(model)->selectedBone;
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t curBone = model->selectedBone;
         if (curBone == -1) {
             return;
         }
-        mikudancestudio::mdl::BoneRecord* bone = mdl::Bones(model) + curBone;
+        mikudancestudio::mdl::BoneRecord* bone = model->boneTable + curBone;
         const float t0 = bone->trans[0];
         const float t1 = bone->trans[1];
         const float t2 = bone->trans[2];
@@ -1719,7 +1719,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         PushBoneEditUndo(app); // 0x42D6E0 (bone-edit keyframe register)
         // write back position and angles
         model = ActiveModel(app);
-        bone = mdl::Bones(model) + curBone;
+        bone = model->boneTable + curBone;
         bone->trans[0] = t0;
         bone->trans[1] = t1;
         bone->trans[2] = t2;
@@ -1768,8 +1768,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             PostViewRefresh(app);
             return;
         }
-        unsigned char* model = ActiveModel(app);
-        if (mdl::Mdl(model)->selectedBone == -1) {
+        mdl::ModelRecord* model = ActiveModel(app);
+        if (model->selectedBone == -1) {
             return;
         }
         PushBoneEditUndo(app); // 0x42D6E0

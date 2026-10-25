@@ -98,11 +98,11 @@ void TraceOperationInput(MMDApp* app, const char* phase) {
         return;
     std::uint32_t quaternion[4]{};
     const unsigned slot = app->state.slotIdx;
-    auto* model = mdl::ModelBytes(app->ModelSlot(slot));
+    auto* model = app->ModelSlot(slot);
     if (model != nullptr) {
-        const int selected = mikudancestudio::mdl::Mdl(model)->selectedBone;
-        auto* bones = mikudancestudio::mdl::Bones(model);
-        const int count = static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount);
+        const int selected = model->selectedBone;
+        auto* bones = model->boneTable;
+        const int count = static_cast<int>(model->boneCount);
         if (bones != nullptr && selected >= 0 && selected < count)
             std::memcpy(quaternion, &bones[selected].rotQuat[0], sizeof(quaternion));
     }

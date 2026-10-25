@@ -1,4 +1,5 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
@@ -240,6 +241,101 @@ void TestCurves() {
               !IsWindowEnabled(GetDlgItem(f.window, mds::panel::kCurvePasteButton)),
           "empty curve selection disables linear and preset application");
     f.app->CameraKeys() = nullptr;
+}
+
+void TestCommandModelBoundary() {
+    Fixture f;
+    f.app->ModelSlot(7) = nullptr;
+    f.app->SetSelectedModelSlot(mds::kModelSlotCount - 1);
+    f.app->SelectedModel() = f.model.get();
+    f.model->physicsMode = 2;
+    f.model->morphCount = 5;
+    f.model->selectedMorphs[0] = 1;
+    f.morphs[1].value = .625f;
+    f.app->CurrentFrame() = 37;
+    f.keys.front().allocated = f.keys.back().allocated = 2;
+    f.morphKeys.front().allocated = f.morphKeys.back().allocated = 2;
+    f.displayKeys.front().allocated = f.displayKeys.back().allocated = 2;
+    mds::CommandDispatch(nullptr, MAKEWPARAM(mds::panel::kRegisterMorphButton0, BN_CLICKED));
+    const unsigned key = f.morphKeys[1].next;
+    Check(
+        key == 5 && f.morphKeys[key].frame == 37 && f.morphKeys[key].value == .625f &&
+            f.morphKeys[key].allocated == 1 && f.keys.front().allocated == 0 &&
+            f.keys.back().allocated == 0 && f.morphKeys.front().allocated == 0 &&
+            f.morphKeys.back().allocated == 0 && f.displayKeys.front().allocated == 0 &&
+            f.displayKeys.back().allocated == 0 && f.app->SceneModified() == 1 &&
+            f.app->LastRegisteredFrame() == 37 && paints == 1,
+        "morph command clears all three full pools, registers the sparse selected model, then paints");
+
+    HWND scope = Child(f.window, mds::panel::kRegisterScopeCombo, "COMBOBOX", CBS_DROPDOWNLIST);
+    for (int i = 0; i < 4; ++i)
+        Add(scope, "scope");
+    Pick(f.window, mds::panel::kRegisterScopeCombo, 3);
+    mds::CommandDispatch(scope, MAKEWPARAM(mds::panel::kRegisterScopeCombo, CBN_SELCHANGE));
+    Check(f.model->frameRegistrationSelection == 3,
+          "scope notification updates the model selected by slot rather than combo ordinal");
+
+    f.bones[2].trans[0] = 14;
+    f.edited[2] = 7;
+    f.selected[2] = 3;
+    mds::CommandDispatch(nullptr, MAKEWPARAM(mds::panel::kResetPositionXButton, BN_CLICKED));
+    const auto& undo = f.Undo();
+    Check(f.bones[2].trans[0] == 0 && f.edited[2] == 1 && f.selected[2] == 3 &&
+              undo.operation == mdl::UndoOperation::BonePose && undo.bonePose[0].boneIndex == 2 &&
+              undo.bonePose[0].position[0] == 14 && undo.bonePose[0].poseEdited == 7,
+          "position reset snapshots the pre-edit pose flag before zeroing and marking the bone");
+}
+
+void TestModelSwitchBoundary() {
+    Fixture f;
+    auto oldModel = std::make_unique<mdl::ModelRecord>();
+    auto renderer = std::make_unique<mds::D3DRenderer>();
+    std::array<std::int32_t, 5> morphRows{};
+    renderer->screenHeight = 900;
+    f.app->Renderer() = renderer.get();
+    f.app->ModelSlot(7) = nullptr;
+    f.app->ModelSlot(mds::kModelSlotCount - 1) = f.model.get();
+    f.app->ModelSlot(0) = oldModel.get();
+    f.app->SetSelectedModelSlot(0);
+    f.model->comboSelIndex = 1;
+    f.model->morphTimelineRows = morphRows.data();
+    std::fill(std::begin(f.model->selectedMorphs), std::end(f.model->selectedMorphs), -1);
+    f.model->skeletonCalibration = {7, 8, 9, 10};
+    f.model->edgeScale = 1.25f;
+    f.model->undoDirty = 1;
+    oldModel->skeletonCalibration = {3, 4, 5, 6};
+    f.app->state.coordinateSystem = 2;
+    HWND combo = Child(f.window, mds::panel::kMainComboModel, "COMBOBOX", CBS_DROPDOWNLIST);
+    Add(combo, "camera/light/accessory");
+    Add(combo, "model in last slot");
+    Pick(f.window, mds::panel::kMainComboModel, 1);
+    HWND option = CreateWindowExA(0, "STATIC", "", WS_POPUP, 0, 0, 1, 1, f.window, nullptr,
+                                  GetModuleHandleA(nullptr), nullptr);
+    if (!option)
+        std::abort();
+    f.app->EdgeThicknessDialog() = option;
+    Child(option, mds::panel::kEdgeThicknessEdit, "EDIT", ES_AUTOHSCROLL);
+    HWND slider = Child(option, mds::panel::kEdgeThicknessSlider, TRACKBAR_CLASSA);
+    SendMessageA(slider, TBM_SETRANGEMAX, FALSE, 200);
+    mds::ApplyModelComboSelection(f.app.get());
+    Check(f.app->SelectedModel() == f.model.get() &&
+              f.app->SelectedModelSlot() == mds::kModelSlotCount - 1 &&
+              f.model->skeletonCalibration.legLength == -1 &&
+              f.model->skeletonCalibration.heightScale == 90 &&
+              f.model->skeletonCalibration.heightOffset == 11.5f &&
+              f.model->skeletonCalibration.legIkXOffset == 1 &&
+              oldModel->skeletonCalibration.heightOffset == 5 &&
+              f.app->state.coordinateSystem == 0 &&
+              f.app->EditMode() == mds::ViewportEditMode::Bone,
+          "model switch maps combo order to sparse slot and resets only the selected calibration");
+    Check(TextIs(option, mds::panel::kEdgeThicknessEdit, "1.25") &&
+              SendMessageA(slider, TBM_GETPOS, 0, 0) == 125 &&
+              IsWindowEnabled(GetDlgItem(f.window, mds::panel::kUndoButton)) &&
+              !IsWindowEnabled(GetDlgItem(f.window, mds::panel::kRedoButton)),
+          "model switch refreshes the open edge dialog and undo buttons from the new model");
+    DestroyWindow(option);
+    f.app->EdgeThicknessDialog() = nullptr;
+    f.app->Renderer() = nullptr;
 }
 
 void TestTimelineUndo() {
@@ -639,6 +735,8 @@ int main() {
     if (!InitCommonControlsEx(&controls))
         return 1;
     TestCurves();
+    TestCommandModelBoundary();
+    TestModelSwitchBoundary();
     TestTimelineUndo();
     TestMorphRows();
     TestNumericCommitAndReadout();

@@ -333,8 +333,8 @@ std::uint32_t MulOrMax(std::uint32_t a, std::uint32_t b) {
 // ---------------------------------------------------------------------------
 // Active model = slot array at this+0x780 indexed by byte this+0x910
 // (sub_47E8A0 pattern; the original re-derives it on every use).
-static unsigned char* ActiveModel(MMDApp* app) {
-    return mdl::ModelBytes(app->SelectedModel());
+static mdl::ModelRecord* ActiveModel(MMDApp* app) {
+    return app->SelectedModel();
 }
 
 HWND MainHwnd(MMDApp* app) {
@@ -344,8 +344,8 @@ HWND MainHwnd(MMDApp* app) {
 // Shared tail of the morph-frame purge cases 226/228/231 (and the 225
 // variant): undo record, panel repaint, selection re-eval, dirty flag.
 void FramePurgeTail(MMDApp* app) {
-    unsigned char* model = ActiveModel(app);
-    SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+    mdl::ModelRecord* model = ActiveModel(app);
+    SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
     PanelPaint(app);      // 0x414610
     SelectionReeval(app); // 0x430510
     app->SceneModified() = 1;
@@ -358,15 +358,15 @@ void FramePurgeTail(MMDApp* app) {
 // original quirk).  The frame records live at model+0x26E4 (0x14 stride);
 // +8 is the chain successor index, +4/+0/+0xC/+0x10 the cleared fields.
 void PurgeMorphFrames(MMDApp* app, std::uint8_t type) {
-    unsigned char* model = ActiveModel(app);
-    const std::int32_t morphCount = static_cast<std::int32_t>(mdl::Mdl(model)->morphCount);
+    mdl::ModelRecord* model = ActiveModel(app);
+    const std::int32_t morphCount = static_cast<std::int32_t>(model->morphCount);
     for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount; ++m) {
         model = ActiveModel(app);
-        const mdl::MorphRecord* const morphs = mdl::Morphs(model);
+        const mdl::MorphRecord* const morphs = model->morphs;
         if (morphs[m].type != type) {
             continue;
         }
-        mdl::MorphKey* frames = mdl::MorphKeys(model);
+        mdl::MorphKey* frames = model->morphKeys;
         std::int32_t cur = m; // chain cursor, starts at the morph itself
         if (frames[m].next != 0) {
             for (;;) {
@@ -378,7 +378,7 @@ void PurgeMorphFrames(MMDApp* app, std::uint8_t type) {
                 frames[m].next = 0;
                 cur = next;
                 model = ActiveModel(app); // original re-derives per step
-                frames = mdl::MorphKeys(model);
+                frames = model->morphKeys;
                 if (frames[cur].next == 0) {
                     break;
                 }
@@ -1041,23 +1041,22 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (result == IDCANCEL) { // IDCANCEL
             break;
         }
-        unsigned char* model = ActiveModel(app);
-        SnapshotSelectedKeysForUndo(mdl::Mdl(model), app->state.currentFrame);
+        mdl::ModelRecord* model = ActiveModel(app);
+        SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
         std::int32_t frameIdx = 0; // ebx: counts frames (incl. skipped)
         for (std::size_t frameIdx = 0; frameIdx < mdl::kBoneKeyCapacity; ++frameIdx) {
             model = ActiveModel(app);
-            mdl::BoneKey* const keys = mdl::BoneKeys(model);
+            mdl::BoneKey* const keys = model->boneKeys;
             mdl::BoneKey& key = keys[frameIdx];
             if (key.allocated != 0) {
-                const std::int32_t boneCount =
-                    static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+                const std::int32_t boneCount = static_cast<std::int32_t>(model->boneCount);
                 std::int32_t bone = static_cast<std::int32_t>(frameIdx);
                 if (bone >= boneCount) {
                     do {
                         bone = static_cast<std::int32_t>(keys[bone].previous);
                     } while (bone >= boneCount);
                 }
-                const mdl::BoneRecord* const bones = mdl::Bones(model);
+                const mdl::BoneRecord* const bones = model->boneTable;
                 // root bone only (parent == -1); 0x48824B tests the
                 // RESOLVED bone (uVar22 after the previous-chain walk)
                 if (bones[bone].parent == -1) {
@@ -1070,7 +1069,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         PanelPaint(app);      // 0x414610
         SelectionReeval(app); // 0x430510
         model = ActiveModel(app);
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
         app->SceneModified() = 1;
         app->PhysicsResetPending() = 1;
         break;
@@ -1108,7 +1107,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             break;
         }
         app->LetterKeyState(LetterKey::D) = 1;
-        const std::int32_t deleted = mdl::MarkRedundantModelKeys(*mdl::Mdl(ActiveModel(app)));
+        const std::int32_t deleted = mdl::MarkRedundantModelKeys(*ActiveModel(app));
 
         // ---- purge marked frames and report --------------------------
         DeleteMarkedKeyframes(app); // 0x4316B0
@@ -1240,22 +1239,22 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (r == IDCANCEL) { // IDCANCEL
             break;
         }
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t morphCount = static_cast<std::int32_t>(mdl::Mdl(model)->morphCount);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t morphCount = static_cast<std::int32_t>(model->morphCount);
         for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount; ++m) {
             model = ActiveModel(app);
-            const mdl::MorphRecord* const morphs = mdl::Morphs(model);
+            const mdl::MorphRecord* const morphs = model->morphs;
             if (morphs[m].type != 3) {
                 continue;
             }
-            mdl::MorphKey* frames = mdl::MorphKeys(model);
+            mdl::MorphKey* frames = model->morphKeys;
             std::int32_t cur = frames[m].next; // chain head
             if (cur == 0) {
                 continue;
             }
             for (;;) {
                 model = ActiveModel(app);
-                frames = mdl::MorphKeys(model);
+                frames = model->morphKeys;
                 const std::int32_t next = frames[cur].next;
                 if (next != 0) {
                     if (cur == m) { // self-loop edge (original 0x488F61)
@@ -1341,11 +1340,11 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (app->CameraMode() != 0) { // 0x2F8
             break;
         }
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t morphCount = static_cast<std::int32_t>(mdl::Mdl(model)->morphCount);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t morphCount = static_cast<std::int32_t>(model->morphCount);
         std::int32_t blinkMorph = -1; // ebx = (uint16) search index
         if (morphCount > 0) {
-            const mdl::MorphRecord* const morphs = mdl::Morphs(model);
+            const mdl::MorphRecord* const morphs = model->morphs;
             for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount; ++m) {
                 if (memcmp(morphs[m].name, kNameMabataki, 9) == 0) {
                     blinkMorph = m;
@@ -1390,22 +1389,22 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             }
             if (registerKeys) {
                 model = ActiveModel(app);
-                mdl::Morphs(model)[blinkMorph].value = 0.0f;
-                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame);
+                model->morphs[blinkMorph].value = 0.0f;
+                RegisterMorphKeyCurrent(model, blinkMorph, frame);
                 model = ActiveModel(app);
-                mdl::Morphs(model)[blinkMorph].value = 1.0f;
-                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame + 2);
+                model->morphs[blinkMorph].value = 1.0f;
+                RegisterMorphKeyCurrent(model, blinkMorph, frame + 2);
                 model = ActiveModel(app);
-                mdl::Morphs(model)[blinkMorph].value = 1.0f;
-                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame + 3);
+                model->morphs[blinkMorph].value = 1.0f;
+                RegisterMorphKeyCurrent(model, blinkMorph, frame + 3);
                 model = ActiveModel(app);
-                mdl::Morphs(model)[blinkMorph].value = 0.0f;
-                RegisterMorphKeyCurrent(mdl::Mdl(model), blinkMorph, frame + 6);
+                model->morphs[blinkMorph].value = 0.0f;
+                RegisterMorphKeyCurrent(model, blinkMorph, frame + 6);
                 ++count;
             }
         }
         model = ActiveModel(app);
-        const std::int32_t frameCount = static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
+        const std::int32_t frameCount = static_cast<std::int32_t>(model->maxFrame);
         if (app->state.lastRegisteredFrame < frameCount) {
             app->state.lastRegisteredFrame = frameCount;
         }
@@ -1479,8 +1478,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         }
         if (!isAcc) {
             // ---------------- bone paste (0x485677) ----------------
-            unsigned char* model = ActiveModel(app);
-            if (mdl::Mdl(model)->selectedBone == -1) {
+            mdl::ModelRecord* model = ActiveModel(app);
+            if (model->selectedBone == -1) {
                 MessageBoxA(MainHwnd(app),
                             app->EnglishUI() != 0 ? "Please select bone." : kMsgSelectBoneJp, cap,
                             app->state.floatingWindow != 0 ? MB_TOPMOST : MB_OK);
@@ -1489,42 +1488,42 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             app->SceneModified() = 1;
             {
                 model = ActiveModel(app);
-                mdl::BoneKey* f = mdl::BoneKeys(model);
+                mdl::BoneKey* f = model->boneKeys;
                 for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i)
                     f[i].allocated = 0;
             }
             {
                 model = ActiveModel(app);
-                mdl::MorphKey* f = mdl::MorphKeys(model);
+                mdl::MorphKey* f = model->morphKeys;
                 for (std::size_t i = 0; i < mdl::kMorphKeyCapacity; ++i)
                     f[i].allocated = 0;
             }
             {
                 model = ActiveModel(app);
-                mdl::DisplayKey* f = mdl::DisplayKeys(model);
+                mdl::DisplayKey* f = model->displayKeys;
                 for (std::size_t i = 0; i < mdl::kDisplayKeyCapacity; ++i)
                     f[i].allocated = 0;
             }
             EnableWindow(GetDlgItem(MainHwnd(app), panel::kUndoButton), TRUE);
             EnableWindow(GetDlgItem(MainHwnd(app), panel::kRedoButton), FALSE);
             model = ActiveModel(app);
-            mdl::Mdl(model)->undoDirty = 1;
-            mdl::Mdl(model)->redoDirty = 0;
-            std::int32_t idx = static_cast<std::int32_t>(mdl::Mdl(model)->UndoCursor());
+            model->undoDirty = 1;
+            model->redoDirty = 0;
+            std::int32_t idx = static_cast<std::int32_t>(model->UndoCursor());
             ++idx;
             if (idx >= mdl::kUndoHistoryDepth) {
                 idx = 0;
             }
-            mdl::Mdl(model)->UndoCursor() = static_cast<std::uint32_t>(idx);
-            mdl::Mdl(model)->LatestUndoCursor() = static_cast<std::uint32_t>(idx);
-            mdl::UndoRecord& undo = mdl::Mdl(model)->undoRings[0].slots[idx];
+            model->UndoCursor() = static_cast<std::uint32_t>(idx);
+            model->LatestUndoCursor() = static_cast<std::uint32_t>(idx);
+            mdl::UndoRecord& undo = model->undoRings[0].slots[idx];
             undo.operation = mdl::UndoOperation::BoneKeys;
             undo.frame = app->state.currentFrame;
             if (undo.bonePose != nullptr) {
                 ::operator delete(undo.bonePose);
                 undo.bonePose = nullptr;
             }
-            const std::int32_t boneCount = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+            const std::int32_t boneCount = static_cast<std::int32_t>(model->boneCount);
             auto* blob = static_cast<mdl::BonePoseSnapshot*>(::operator new(
                 MulOrMax(static_cast<std::uint32_t>(boneCount), sizeof(mdl::BonePoseSnapshot))));
             if (blob != nullptr) {
@@ -1534,9 +1533,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             undo.bonePose = blob;
             memset(blob, 0, static_cast<std::size_t>(boneCount) * sizeof(mdl::BonePoseSnapshot));
             model = ActiveModel(app);
-            const mdl::ModelRecord* const record = mdl::Mdl(model);
+            const mdl::ModelRecord* const record = model;
             const unsigned char* const physicsState = record->bonePhysicsState;
-            const mdl::BoneRecord* const bones = mdl::Bones(model);
+            const mdl::BoneRecord* const bones = model->boneTable;
             for (std::int32_t i = 0; i < boneCount; ++i) {
                 mdl::BonePoseSnapshot& rec = blob[i];
                 rec.boneIndex = i;
@@ -1565,14 +1564,14 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             memset(undoKeys, 0,
                    static_cast<std::size_t>(recCount) * mdl::kUndoKeysPerInsertion *
                        sizeof(mdl::BoneKeyUndoEntry));
-            memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
-            ResetBoneKeyCursor(mdl::Mdl(model));
+            memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
+            ResetBoneKeyCursor(model);
             if (recCount > 0) {
                 for (std::int32_t j = 0; j < recCount; ++j) {
                     const mdl::BoneClipboardRecord* src = app->BoneClipboard() + j;
                     mdl::BoneClipboardRecord stackRec = *src;
                     model = ActiveModel(app);
-                    if (!RegisterBoneKey(mdl::Mdl(model), stackRec, app->state.currentFrame, 1)) {
+                    if (!RegisterBoneKey(model, stackRec, app->state.currentFrame, 1)) {
                         break;
                     }
                 }
@@ -1580,7 +1579,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             PanelPaint(app);
             SelectionReeval(app);
             model = ActiveModel(app);
-            SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+            SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
             app->PhysicsResetPending() = 1;
             break;
         }
@@ -1648,39 +1647,38 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         }
         app->SceneModified() = 1;
         {
-            unsigned char* m = ActiveModel(app);
-            mdl::BoneKey* f = mdl::BoneKeys(m);
+            mdl::ModelRecord* m = ActiveModel(app);
+            mdl::BoneKey* f = m->boneKeys;
             for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i)
                 f[i].allocated = 0;
         }
         {
-            unsigned char* m = ActiveModel(app);
-            mdl::MorphKey* f = mdl::MorphKeys(m);
+            mdl::ModelRecord* m = ActiveModel(app);
+            mdl::MorphKey* f = m->morphKeys;
             for (std::size_t i = 0; i < mdl::kMorphKeyCapacity; ++i)
                 f[i].allocated = 0;
         }
         {
-            unsigned char* m = ActiveModel(app);
-            mdl::DisplayKey* f = mdl::DisplayKeys(m);
+            mdl::ModelRecord* m = ActiveModel(app);
+            mdl::DisplayKey* f = m->displayKeys;
             for (std::size_t i = 0; i < mdl::kDisplayKeyCapacity; ++i)
                 f[i].allocated = 0;
         }
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t morphCount = static_cast<std::int32_t>(mdl::Mdl(model)->morphCount);
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t morphCount = static_cast<std::int32_t>(model->morphCount);
         if (morphCount > 0) {
             for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount; ++m) {
                 model = ActiveModel(app);
-                RegisterMorphKeyCurrent(mdl::Mdl(model), m, app->state.currentFrame);
+                RegisterMorphKeyCurrent(model, m, app->state.currentFrame);
                 model = ActiveModel(app);
-                const std::int32_t frameCount =
-                    static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
+                const std::int32_t frameCount = static_cast<std::int32_t>(model->maxFrame);
                 if (app->state.lastRegisteredFrame < frameCount) {
                     app->state.lastRegisteredFrame = frameCount;
                 }
             }
         }
         model = ActiveModel(app);
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
+        SeekModelFrame(*model, app->state.currentFrame, app->PlaybackPhysicsMode());
         PanelPaint(app);      // 0x414610
         SelectionReeval(app); // 0x430510
         app->SceneModified() = 1;
@@ -1701,12 +1699,12 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (app->CameraMode() != 0) { // 0x2F8
             break;
         }
-        unsigned char* model = ActiveModel(app);
-        const std::int32_t morphCount = static_cast<std::int32_t>(mdl::Mdl(model)->morphCount);
-        if (mdl::Morphs(model) != nullptr && morphCount > 0) {
+        mdl::ModelRecord* model = ActiveModel(app);
+        const std::int32_t morphCount = static_cast<std::int32_t>(model->morphCount);
+        if (model->morphs != nullptr && morphCount > 0) {
             for (std::int32_t i = 0; i < morphCount; ++i) {
                 model = ActiveModel(app);
-                mdl::Morphs(model)[i].value = 0.0f;
+                model->morphs[i].value = 0.0f;
             }
         }
         const HWND main = MainHwnd(app);

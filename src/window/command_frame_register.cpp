@@ -202,8 +202,8 @@ namespace {
 
 // Active model = slot array at app+0x780 indexed by byte app+0x910.
 // (sub_47E8A0 pattern; the original reloads the pointer at every use, kept.)
-static unsigned char* ActiveModel(MMDApp* app) {
-    return mdl::ModelBytes(app->SelectedModel());
+static mdl::ModelRecord* ActiveModel(MMDApp* app) {
+    return app->SelectedModel();
 }
 
 // Combo/spin/text echo shared by the morph prev/next handlers (tails at
@@ -222,7 +222,7 @@ void SyncMorphRow(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spi
     } else {
         SendMessageA(GetDlgItem(hwnd, comboId), CB_SETCURSEL, (cur == count - 1) ? 0 : cur + 1, 0);
     }
-    const mdl::ModelRecord* model = mdl::Mdl(ActiveModel(app));
+    const mdl::ModelRecord* model = ActiveModel(app);
     const std::int32_t idx = model->selectedMorphs[lane];
     const float v = model->morphs[idx].value;
     SendMessageA(GetDlgItem(hwnd, spinId), TBM_SETPOS, 1,
@@ -238,8 +238,7 @@ void SyncMorphRow(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spi
 // circle, matching the original saved-index comparison.
 void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spinId, int textId,
                bool next) {
-    unsigned char* model = ActiveModel(app);
-    mdl::ModelRecord* modelRecord = mdl::Mdl(model);
+    mdl::ModelRecord* modelRecord = ActiveModel(app);
     std::int32_t idx = modelRecord->selectedMorphs[lane];
     if (idx < 0)
         return;
@@ -251,20 +250,20 @@ void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spinId
     for (;;) {
         if (next) {
             ++idx;
-            if (idx >= static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->morphCount))
+            if (idx >= static_cast<std::int32_t>(ActiveModel(app)->morphCount))
                 idx = 0;
         } else {
             --idx;
             if (idx < 0)
-                idx = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->morphCount) - 1;
+                idx = static_cast<std::int32_t>(ActiveModel(app)->morphCount) - 1;
         }
-        unsigned char* m = ActiveModel(app);
-        mdl::Mdl(m)->selectedMorphs[lane] = idx;
+        mdl::ModelRecord* m = ActiveModel(app);
+        m->selectedMorphs[lane] = idx;
         m = ActiveModel(app);
-        idx = mdl::Mdl(m)->selectedMorphs[lane];
+        idx = m->selectedMorphs[lane];
         if (idx == orig)
             return;
-        if (mdl::Mdl(m)->morphs[idx].panel == mdl::MorphPanel::eyebrow)
+        if (m->morphs[idx].panel == mdl::MorphPanel::eyebrow)
             break;
     }
     SyncMorphRow(app, hwnd, lane, comboId, spinId, textId, next);
@@ -281,13 +280,13 @@ void BonePosEdit(MMDApp* app, float* vec, std::size_t axis) {
         PostViewRefresh(app);
         return;
     }
-    const std::int32_t sel = mdl::Mdl(ActiveModel(app))->selectedBone;
+    const std::int32_t sel = ActiveModel(app)->selectedBone;
     if (sel >= 0) {
         PushBoneEditUndo(app); // 0x42D6E0 bone-edit keyframe register
-        unsigned char* m = ActiveModel(app);
-        mikudancestudio::mdl::Bones(m)[sel].trans[axis] = 0.0f;
+        mdl::ModelRecord* m = ActiveModel(app);
+        m->boneTable[sel].trans[axis] = 0.0f;
         m = ActiveModel(app);
-        mdl::Mdl(m)->bonePhysicsState[sel] = 1;
+        m->bonePhysicsState[sel] = 1;
     }
     PostViewRefresh(app);
 }
@@ -307,7 +306,7 @@ void BoneRotEdit(MMDApp* app, float* vec, int axis) {
         PostViewRefresh(app);
         return;
     }
-    const std::int32_t sel = mdl::Mdl(ActiveModel(app))->selectedBone;
+    const std::int32_t sel = ActiveModel(app)->selectedBone;
     if (sel < 0) {
         PostViewRefresh(app);
         return;
@@ -345,11 +344,11 @@ void BoneRotEdit(MMDApp* app, float* vec, int axis) {
         d3dx->multiply(&m, &m, &m2);
         d3dx->rotY(&m2, app->BoneRotationEditDegreesY());
         d3dx->multiply(&m, &m, &m2);
-        unsigned char* model = ActiveModel(app);
-        d3dx->quatFromMatrix(mdl::Mdl(model)->boneTable[sel].rotQuat, &m);
+        mdl::ModelRecord* model = ActiveModel(app);
+        d3dx->quatFromMatrix(model->boneTable[sel].rotQuat, &m);
     }
-    unsigned char* model = ActiveModel(app);
-    mdl::Mdl(model)->bonePhysicsState[sel] = 1;
+    mdl::ModelRecord* model = ActiveModel(app);
+    model->bonePhysicsState[sel] = 1;
     PostViewRefresh(app);
 }
 
@@ -383,7 +382,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         RegisterSelectedBoneKeys(app->SelectedModel(), app->state.currentFrame,
                                  app->PlaybackPhysicsMode());
         // 0x9E16C = max(0x9E16C, model+0x31B0)
-        const std::int32_t frames = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
+        const std::int32_t frames = static_cast<std::int32_t>(ActiveModel(app)->maxFrame);
         if (app->state.lastRegisteredFrame < frames)
             app->state.lastRegisteredFrame = frames;
         PanelPaint(app);      // 0x414610
@@ -402,12 +401,12 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         }
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
         SendMessageA(hwnd, WM_COMMAND, panel::kBoneSelectRadio, 0);
-        mdl::Mdl(ActiveModel(app))->selectedBone = -1;
-        const std::int32_t boneCount = mdl::Mdl(ActiveModel(app))->boneCount;
+        ActiveModel(app)->selectedBone = -1;
+        const std::int32_t boneCount = ActiveModel(app)->boneCount;
         for (int i = 0; i < boneCount; ++i) {
-            unsigned char* m = ActiveModel(app);
-            unsigned char* flags = mdl::Mdl(m)->bonePhysicsState;
-            unsigned char* sel = mdl::Mdl(m)->boneSelection;
+            mdl::ModelRecord* m = ActiveModel(app);
+            unsigned char* flags = m->bonePhysicsState;
+            unsigned char* sel = m->boneSelection;
             sel[i] = (flags[i] != 0) ? 1 : 0;
         }
         RebuildTimelineTrackPanel(app);   // 0x42F1E0
@@ -512,27 +511,26 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         }
         app->SceneModified() = 1;
         {
-            unsigned char* m = ActiveModel(app);
-            mdl::BoneKey* boneKeys = mdl::BoneKeys(m);
+            mdl::ModelRecord* m = ActiveModel(app);
+            mdl::BoneKey* boneKeys = m->boneKeys;
             for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i)
                 boneKeys[i].allocated = 0;
         }
         {
-            unsigned char* m = ActiveModel(app);
-            mdl::MorphKey* morphKeys = mdl::MorphKeys(m);
+            mdl::ModelRecord* m = ActiveModel(app);
+            mdl::MorphKey* morphKeys = m->morphKeys;
             for (std::size_t i = 0; i < mdl::kMorphKeyCapacity; ++i)
                 morphKeys[i].allocated = 0;
         }
         {
-            unsigned char* m = ActiveModel(app);
-            mdl::DisplayKey* displayKeys = mdl::DisplayKeys(m);
+            mdl::ModelRecord* m = ActiveModel(app);
+            mdl::DisplayKey* displayKeys = m->displayKeys;
             for (std::size_t i = 0; i < mdl::kDisplayKeyCapacity; ++i)
                 displayKeys[i].allocated = 0;
         }
-        unsigned char* m = ActiveModel(app);
-        RegisterMorphKeyCurrent(mdl::Mdl(m), mdl::Mdl(m)->selectedMorphs[lane],
-                                app->state.currentFrame);
-        const std::int32_t frames = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
+        mdl::ModelRecord* m = ActiveModel(app);
+        RegisterMorphKeyCurrent(m, m->selectedMorphs[lane], app->state.currentFrame);
+        const std::int32_t frames = static_cast<std::int32_t>(ActiveModel(app)->maxFrame);
         if (app->state.lastRegisteredFrame < frames)
             app->state.lastRegisteredFrame = frames;
         PanelPaint(app);
