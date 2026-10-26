@@ -810,6 +810,9 @@ void RenderAccessoriesShadow(MMDApp* app) { // 0x4C52D0
         fx::BeginPass(effect);
         auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
         const DWORD count = mdl::Accessory(accessory)->materialCount;
+        // Original shadow-map slot walk sets the accessory identity before
+        // DrawSubset so MMHack/MMEffect can resolve its subset and pass.
+        app->ActiveRenderObject() = accessory;
         mdl::Accessory(accessory)->currentMaterial = -1;
         for (DWORD i = 0; i < count; ++i) {
             ++mdl::Accessory(accessory)->currentMaterial;
@@ -818,6 +821,7 @@ void RenderAccessoriesShadow(MMDApp* app) { // 0x4C52D0
         }
         fx::EndPass(effect);
         mdl::Accessory(accessory)->currentMaterial = -1;
+        app->ActiveRenderObject() = nullptr;
     }
 }
 

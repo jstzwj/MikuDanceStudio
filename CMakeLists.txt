@@ -473,6 +473,28 @@ if(BUILD_TESTING)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         target_link_options(native_host_render_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
     endif()
+    add_executable(native_scene_render_test tests/native_scene_render_test.cpp tests/mme_native_oracle.cpp)
+    target_include_directories(native_scene_render_test PRIVATE third_party/mmeffect/include third_party/mmeffect/src third_party/mmeffect/src/mmhack third_party/mmeffect/src/mmeffect)
+    target_link_libraries(native_scene_render_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(native_scene_render_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_link_options(native_scene_render_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    set(MDS_ORIGINAL_MMD_EXE "" CACHE FILEPATH "Optional original MMD executable for native rendering comparisons")
+    set(MDS_ORIGINAL_MME_DIR "" CACHE PATH "Optional directory containing original MMHack.dll and MMEffect.dll")
+    if(MDS_ORIGINAL_MMD_EXE AND MDS_ORIGINAL_MME_DIR)
+        set(native_scene_launcher)
+        if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+            list(APPEND native_scene_launcher ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_native_render.py)
+        endif()
+        add_test(NAME native_scene_render
+            COMMAND ${native_scene_launcher} $<TARGET_FILE:native_scene_render_test>
+                --original ${MDS_ORIGINAL_MMD_EXE}
+                --mmhack ${MDS_ORIGINAL_MME_DIR}/MMHack.dll
+                --mme ${MDS_ORIGINAL_MME_DIR}/MMEffect.dll
+                --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene)
+        set_tests_properties(native_scene_render PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
     add_executable(model_render_test tests/model_render_test.cpp)
     target_link_libraries(model_render_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_render COMMAND model_render_test)

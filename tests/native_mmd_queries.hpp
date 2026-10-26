@@ -37,6 +37,7 @@ public:
 #endif
         // The x86 static CRT releases its private heap with the mapped module.
     }
+    void Bind(MMDAppState* originalState) { *global = originalState ? originalState : state.get(); }
     void Sync(MMDApp& app) {
         *state = app.state;
         if (app.Renderer()) {

@@ -148,6 +148,13 @@ public:
         return wrapper;
     }
     void RegisterModel(mdl::ModelRecord& model) { RegisterObject(&model.indexBuffer, model.path); }
+    HRESULT LoadMesh(const wchar_t* path, DWORD options, IDirect3DDevice9* device,
+                     ID3DXBuffer** materials, DWORD* count, ID3DXMesh** mesh) {
+        using Load = HRESULT(WINAPI*)(const wchar_t*, DWORD, IDirect3DDevice9*, ID3DXBuffer**,
+                                      ID3DXBuffer**, ID3DXBuffer**, DWORD*, ID3DXMesh**);
+        return At<Load>(sizeof(void*) == 8 ? 0x43B0 : 0x4050)(path, options, device, nullptr,
+                                                              materials, nullptr, count, mesh);
+    }
     void RegisterObject(void* field, const wchar_t* path) {
 #if defined(_M_X64)
         At<void (*)(void*, const wchar_t*)>(0xF150)(field, path);

@@ -109,6 +109,9 @@
 //   stricmp on the raw path, then on both paths made absolute (the record
 //   path joined with the EMM's directory), then a tail/suffix comparison;
 //   pass 2 falls back to comparing just the file name+ext (FUN_18002E6F0).
+//   Each record is consumed once, and the complete exact-path walk precedes
+//   the fallback walk (x64 2E8D0, x86 2B970). Repeated instances of the same
+//   file therefore retain distinct mapping rows.
 //   Live objects with no matching record are reported via
 //   MessageBoxA(0x40): "<emm path>\n" + "Failed to load effect mapping for
 //   the following objects:\n" (0x1800B4D30) + one "\n  <name>" per object.

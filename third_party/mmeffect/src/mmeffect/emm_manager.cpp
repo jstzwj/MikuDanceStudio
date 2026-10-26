@@ -1129,36 +1129,36 @@ bool MmeEmmLoad(const char* path)
     // --- two-pass type+path identity matching (NOT slot based) -------------
     std::map<std::string, ModelData*> byKey;
     std::vector<const LiveObject*> unmatched;
-    for (size_t i = 0; i < live.size(); ++i) {
-        const LiveObject& obj = live[i];
-        int matched = -1;
-        for (size_t r = 0; r < records.size(); ++r) {
-            if (records[r].isModel != obj.isModel) {
+    // Original 2E8D0 / x86 2B970 consumes each record once. Finish the
+    // exact-path walk for all objects before trying file-name-only matches;
+    // otherwise duplicate files overwrite one key or steal a later exact match.
+    std::vector<int> matches(live.size(), -1);
+    std::vector<bool> claimed(records.size(), false);
+    for (int pass = 0; pass < 2; ++pass) {
+        for (size_t i = 0; i < live.size(); ++i) {
+            if (matches[i] >= 0 || live[i].model == nullptr)
                 continue;
-            }
-            if (ObjectPathMatches(records[r].objectPath, obj.path, emmDir)) {
-                matched = static_cast<int>(r);
-                break;
-            }
-        }
-        if (matched < 0) {
-            // pass 2: file name + extension only (FUN_18002E6F0 compare).
-            const std::string objName = FileNameOf(obj.path);
             for (size_t r = 0; r < records.size(); ++r) {
-                if (records[r].isModel != obj.isModel) {
+                if (claimed[r] || records[r].isModel != live[i].isModel)
                     continue;
-                }
-                if (_stricmp(FileNameOf(records[r].objectPath).c_str(),
-                             objName.c_str()) == 0) {
-                    matched = static_cast<int>(r);
+                const bool same = pass == 0
+                    ? ObjectPathMatches(records[r].objectPath, live[i].path, emmDir)
+                    : _stricmp(FileNameOf(records[r].objectPath).c_str(),
+                               FileNameOf(live[i].path).c_str()) == 0;
+                if (same) {
+                    matches[i] = static_cast<int>(r);
+                    claimed[r] = true;
                     break;
                 }
             }
         }
-        if (matched >= 0 && obj.model != nullptr) {
-            byKey[KeyName(records[matched].isModel, records[matched].slot)] = obj.model;
+    }
+    for (size_t i = 0; i < live.size(); ++i) {
+        if (matches[i] >= 0) {
+            const EmmObjectRecord& record = records[matches[i]];
+            byKey[KeyName(record.isModel, record.slot)] = live[i].model;
         } else {
-            unmatched.push_back(&obj);
+            unmatched.push_back(&live[i]);
         }
     }
 

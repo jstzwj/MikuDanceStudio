@@ -14,6 +14,7 @@
 #include "sas_exec.h"
 
 #include <set>
+#include <functional>
 
 namespace {
 struct StandardEffect {
@@ -92,6 +93,9 @@ public:
         Put(0xA1158, source.LightViewProjection());
         Put(0xA1198, source.WorldViewProjection());
         Put(0xA1680, source.ViewRotationTransform());
+        Put(0xA11D8, DWORD(0));
+        Put(0xA11DC, 0);
+        Put(0xA11E0, 1);
 #else
         Put(0x9E180, source.SceneLight());
         Put(0xA01E8, source.LightViewProjection());
@@ -99,6 +103,7 @@ public:
         Put(0xA0674, source.ViewRotationTransform());
 #endif
     }
+    MMDAppState* State() { return state.get(); }
     void Shadow(OriginalModel& model, const D3DXMATRIX& view, const D3DXMATRIX& world) {
 #if defined(_M_X64)
         using Call = void (*)(MMDAppState*, const D3DXMATRIX*, const D3DXMATRIX*);
@@ -176,7 +181,8 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
            const D3DXMATRIX& projection, const D3DXMATRIX& world,
            const std::filesystem::path& output, const std::string& name,
            OriginalModel* original = nullptr, UINT dimension = kSize,
-           RenderNumericTrace* trace = nullptr) {
+           RenderNumericTrace* trace = nullptr,
+           const std::function<void(MMDAppState*)>& bind = {}) {
     if (trace)
         trace->Begin();
     auto& app = *f.app;
@@ -184,6 +190,18 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
     RenderTarget target(f.device, dimension);
     r.backbufferSurface = target.color.p;
     r.depthStencilSurface = target.depth.p;
+    std::unique_ptr<OriginalRenderApp> originalState;
+    if (original && bind) {
+        originalState = std::make_unique<OriginalRenderApp>(app, *original);
+        bind(originalState->State());
+    }
+    struct RestoreBinding {
+        const std::function<void(MMDAppState*)>& bind;
+        ~RestoreBinding() {
+            if (bind)
+                bind(nullptr);
+        }
+    } restoreBinding{bind};
     InitRenderStates(&app);
     Hr(f.device->SetVertexShader(nullptr), "clear vertex shader");
     Hr(f.device->SetPixelShader(nullptr), "clear pixel shader");
@@ -203,10 +221,11 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
        "tracked frame clear");
     Image image;
     if (original) {
-        OriginalRenderApp state(app, *original);
-        state.Shadow(*original, camera, world);
-        image.light = state.LightMatrix();
-        state.Frame(*original, world);
+        if (!originalState)
+            originalState = std::make_unique<OriginalRenderApp>(app, *original);
+        originalState->Shadow(*original, camera, world);
+        image.light = originalState->LightMatrix();
+        originalState->Frame(*original, world);
     } else {
         RenderShadowMap(&app, &world._11);
         image.light = app.LightViewProjection();

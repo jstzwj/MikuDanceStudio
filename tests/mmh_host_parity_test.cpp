@@ -4,6 +4,7 @@
 #include "mme_host_api.h"
 #include "mmhack_api.h"
 #include "mmhack_state.h"
+#include "mikudancestudio/mme_bridge.hpp"
 #include <sstream>
 #include <iomanip>
 
@@ -15,6 +16,7 @@ using NativeId = std::conditional_t<sizeof(void*) == 8, unsigned long long, unsi
 NativeMmhOracle* oracle = nullptr;
 bool native = false;
 bool pmxScene = false;
+constexpr DWORD kManagedMesh = 0x220; // D3DXMESH_VB_MANAGED | D3DXMESH_IB_MANAGED
 std::vector<std::string> events;
 ID3DXEffect* suppliedEffect = nullptr;
 IDirect3DBaseTexture9* stableTextures[2]{};
@@ -112,8 +114,12 @@ void WINAPI NCreate(IDirect3DDevice9*, NativeId id, const char* filename, int ki
 void WINAPI NDelete(IDirect3DDevice9*, NativeId id) {
     Deleted(id);
 }
-HRESULT WINAPI NIndexed(IDirect3DDevice9*, D3DPRIMITIVETYPE, int, UINT, UINT, UINT, UINT) {
+HRESULT WINAPI NIndexed(IDirect3DDevice9*, D3DPRIMITIVETYPE type, int base, UINT min, UINT vertices,
+                        UINT start, UINT count) {
     Snapshot("indexed");
+    events.back() += " geometry=" + std::to_string(type) + "," + std::to_string(base) + "," +
+                     std::to_string(min) + "," + std::to_string(vertices) + "," +
+                     std::to_string(start) + "," + std::to_string(count);
     return E_FAIL;
 }
 HRESULT WINAPI NPrimitive(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT) {
@@ -134,15 +140,19 @@ HRESULT WINAPI SupplyEffect(IDirect3DDevice9*, HMODULE, const char*, const D3DXM
     return S_OK;
 }
 
-// Only the mesh identity header is needed by native BeginScene's discovery.
-// Geometry drawing is intercepted at the terminal engine callback in this test.
-struct MeshIdentity : IUnknown {
-    DWORD magic = 0xD83FA34B;
-    ULONG references = 1;
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void**) override { return E_NOINTERFACE; }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
-    ULONG STDMETHODCALLTYPE Release() override { return --references; }
-};
+void WriteMesh(const std::filesystem::path& path) {
+    std::ofstream(path) << R"X(xof 0303txt 0032
+Mesh {6;
+ 0.0;0.0;0.0;,1.0;0.0;0.0;,0.0;1.0;0.0;,
+ 1.0;0.0;0.0;,2.0;0.0;0.0;,1.0;1.0;0.0;;
+ 2;3;0,2,1;,3;3,5,4;;
+ MeshTextureCoords {6;0.0;0.0;,1.0;0.0;,0.0;1.0;,0.0;0.0;,1.0;0.0;,0.0;1.0;;}
+ MeshMaterialList {2;2;0,1;;
+  Material {1.0;0.3;0.1;1.0;;4.0;0.0;0.0;0.0;;0.1;0.1;0.1;;}
+  Material {0.2;0.7;0.5;0.4;;8.0;0.1;0.2;0.3;;0.1;0.1;0.1;;}
+ }
+})X";
+}
 const wchar_t* ModelPath(int index) {
     return MmdModelPathW(index);
 }
@@ -298,6 +308,24 @@ void Exercise(Fixture& f, mdl::ModelRecord& model, mdl::AccessoryRecord& accesso
             Hr(effect.End(), "standard effect end");
         }
     }
+    // Real D3DX mesh dispatch, including the original CloneMeshFVF wrapper.
+    Hr(f.device->SetVertexShader(nullptr), "mesh fixed function path");
+    app.ActiveRenderObject() = &accessory;
+    for (int pass : {5, 1, 2, 4, 3})
+        for (unsigned subset = 0; subset < 2; ++subset) {
+            app.state.activeRenderPass = pass;
+            accessory.currentMaterial = subset;
+            expectedObject = 2;
+            expectedSubset = subset;
+            expectedPass = pass;
+            if (queries)
+                queries->Sync(app);
+            const auto before = events.size();
+            Hr(native ? static_cast<ID3DXMesh*>(accessory.mesh)->DrawSubset(subset)
+                      : mikudancestudio::mme::DrawAccessorySubset(&app, &accessory, subset),
+               "real mesh subset draw");
+            Check(events.size() == before + 1, "real subset reaches engine exactly once");
+        }
     end();
     for (int cycle = 0; cycle < 3; ++cycle) {
         app.ModelSlot(0) = cycle == 0 ? nullptr : &model;
@@ -364,14 +392,22 @@ int Run(const std::filesystem::path& original, const std::filesystem::path& mmha
     auto& model = f.LoadModel(0, 0);
     modelIdentity = static_cast<DWORD>(reinterpret_cast<std::uintptr_t>(&model));
     f.renderer->device = f.device;
-    MeshIdentity mesh;
+    const auto meshPath = f.directory / "fixture.x";
+    WriteMesh(meshPath);
+    Com<ID3DXMesh> mesh;
+    Com<ID3DXBuffer> materials;
+    DWORD count = 0;
+    Hr(D3DXLoadMeshFromXW(meshPath.c_str(), kManagedMesh, f.device, nullptr, materials.Out(),
+                          nullptr, &count, mesh.Out()),
+       "real accessory mesh");
+    Check(count == 2, "real mesh has two materials");
     mdl::AccessoryRecord accessory{};
     accessoryIdentity = static_cast<DWORD>(reinterpret_cast<std::uintptr_t>(&accessory));
-    accessory.mesh = reinterpret_cast<ID3DXMesh*>(&mesh);
+    accessory.mesh = mesh.p;
     accessory.order = 0;
     accessory.parentModel = -1;
     accessory.scale = 1;
-    accessory.materialCount = 1;
+    accessory.materialCount = 2;
     wcscpy_s(accessory.sourcePath, (f.directory / "fixture.x").c_str());
     app.AccessorySlot(0) = &accessory;
     struct ClearSlot {
@@ -438,13 +474,26 @@ int Run(const std::filesystem::path& original, const std::filesystem::path& mmha
     MmeHostSetMainWindow(f.window);
     MmeHostSetPathProviders(ModelPath, AccessoryPath);
     MmeHostSetStandardEffect(effect.p);
+    f.renderer->effect = effect.p;
+    mikudancestudio::mme::OnDeviceCreated(&app, f.window);
     suppliedEffect = effect.p;
     native = false;
     Exercise(f, model, accessory, *effect.p, nullptr, nullptr);
-    MmeHostDestroyDevice(f.device);
+    mikudancestudio::mme::OnDeviceDestroyed(&app);
     const auto port = std::move(events);
     events.clear();
     if (mmh) {
+        Com<ID3DXMesh> nativeMesh;
+        Hr(mmh->LoadMesh(meshPath.c_str(), kManagedMesh, wrapped, nullptr, &count,
+                         nativeMesh.Out()),
+           "original MMHack .x loader");
+        Check(count == 2 && nativeMesh->GetNumFaces() == 2, "native real mesh geometry");
+        Com<ID3DXMesh> clone;
+        Hr(nativeMesh->CloneMeshFVF(nativeMesh->GetOptions(),
+                                    D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1, wrapped, clone.Out()),
+           "native mesh clone wrapper");
+        accessory.mesh = clone.p;
+        mmh->RegisterObject(&accessory.mesh, accessory.sourcePath);
         suppliedEffect = effect.p;
         mmh->ReplaceImport("D3DXCreateEffectFromResourceA",
                            reinterpret_cast<FARPROC>(SupplyEffect));
@@ -457,6 +506,11 @@ int Run(const std::filesystem::path& original, const std::filesystem::path& mmha
            "native effect registration");
         native = true;
         Exercise(f, model, accessory, *effect.p, queries.get(), wrapped);
+        accessory.mesh = mesh.p;
+        clone.p->Release();
+        clone.p = nullptr;
+        nativeMesh.p->Release();
+        nativeMesh.p = nullptr;
         mmh.reset();
         Check(port.size() == events.size(), "native host event count");
         for (std::size_t i = 0; i < port.size(); ++i)
@@ -471,6 +525,7 @@ int Run(const std::filesystem::path& original, const std::filesystem::path& mmha
         std::printf("Host interception: %zu callback snapshots\n", port.size());
     }
     g_mmh = MmhState{};
+    f.renderer->effect = nullptr;
     return 0;
 }
 } // namespace

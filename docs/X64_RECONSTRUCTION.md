@@ -697,6 +697,44 @@ $engine = 'C:/path/to/MMEffect.dll'
 
 最终两架构 Release 完整构建通过；全量 CTest 为 x64 83/83（98.19 秒）、x86 81/81（161.88 秒），无失败、无跳过。另行执行的 8 次原版二进制对照全部返回零，命令和输出保存于本机 `out/native-host-oracles.json`；新增夹具格式检查与 `git diff --check` 通过。
 
+## 2026-10-26：真实附件包装器与原版绘制链路
+
+本轮将上一节由端口提供的绘制行为进一步替换为原版机器码。[`native_scene_render_test`](../tests/native_scene_render_test.cpp) 在同一真实 HAL 设备上执行原版 MMD 的模型加载、姿态求值、蒙皮、主体、描边、地面阴影、自阴影和附件绘制，再通过原版 MMHack、MMEffect，与端口的相同输入比较。原版公开查询绑定到正在绘制的原版应用状态，绘制期间不再由适配器注入当前对象、pass 或重复次数。窗口、设备和场景输入仍由测试装配；这不是完整原版 GUI 主循环。
+
+### 真实网格与场景
+
+`mmh_host_parity_test` 已移除仅保留 COM 身份头的附件替身，改为加载真实 `.x` 文件，经原版 `D3DXLoadMeshFromXW` hook 和 `CloneMeshFVF` 得到真实网格包装器，直接调用其 `DrawSubset`。原版加载 hook 的 RVA 为 x64 `0x43B0`、x86 `0x4050`。两个材质子集在五类绘制中各触发一次回调，同时核对对象身份、子集、纹理及绘制参数；端口一侧通过生产 `DrawAccessorySubset` 提交。
+
+完整图像夹具另用原版 MMD 附件加载器（RVA：x64 `0xDC560`、x86 `0xC5F40`）读取同一个 `.x` 的两个实例，每个实例均有两个材质。输入包含基础纹理、乘算 `.sph`、加算 `.spa`、材质及对象透明度，以及绑定到模型 0／骨骼 1 的附件。网格及纹理加载 hook 仅安装在映射原版 EXE 的对应 IAT 项，退出前恢复；不安装全进程 hooks。原版分配的材质／路径缓冲由其自身 CRT 释放，网格包装器先于原版 DLL 销毁。
+
+每架构逐项比较以下 10 个阶段：未分配、分配、替换效果、骨骼绑定、卸载、重新载入但尚未分配、重新分配、512→384 尺寸变化、解除效果、真实 `IDirect3DDevice9::Reset` 后重建资源。EMM 映射由两种引擎各自的解析器读取；断言分配效果确实改变像素，并检查重新载入产生新的附件身份。
+
+### 差异与修复依据
+
+| 差异 | 首次复现 | IDA 依据与修复 |
+|---|---|---|
+| 附件自阴影未设置当前绘制对象 | 原版提交 17 次绘制，端口仅 13 次，少了四个附件深度子集；19 个阴影 texel 不同 | 原版自阴影槽位遍历在调用附件绘制前设置对象、返回后清空。MMD RVA：x64 `0xA1030` → `0xDDCB0`，x86 `0x26CD0` → `0xC52D0`。端口在附件自阴影子集遍历期间设置并清空 `ActiveRenderObject` |
+| EMM 的同路径对象重复占用同一记录，后一个实例覆盖前一个的映射 | 同一个 `.x` 的两个实例仅有一个正确分配效果，126,494 个颜色像素不同 | MMEffect RVA：x64 `0x2E8D0`、x86 `0x2B970`。原版用已匹配记录集合，先对全部对象完成完整路径匹配，再对剩余对象执行文件名回退。端口按此顺序消费每条记录一次 |
+
+两处均先在原版链路复现差异、核对对应架构机器码，再做生产路径的最小修复。没有为了跨架构图像相同而修改数值算法；两种架构分别与自己的原版比较。
+
+### 结果与复现
+
+两架构各 10 对场景的颜色、R32F 阴影及光照矩阵逐位相等；逐次绘制参数、材质／变换、渲染与纹理状态、实际被 shader 读取的常量亦相等。未被读取的常量寄存器可能保留不同残值，不纳入有效常量比较。`report.json` 记录各阶段绘制次数和比较结果，配套保存 PNG、阴影、光照矩阵、绘制记录、状态及着色器反汇编；本机产物在 `out/native-scene-x64`、`out/native-scene-x86`，CTest 产物则在各构建目录的 `native-scene`。
+
+最终 x64／x86 Release 完整构建及全量 CTest 分别为 84/84（102.65 秒）、82/82（165.58 秒），无失败、无跳过，均包含新增原版链路测试。两架构的真实网格 PMD／PMX 回调各匹配 361 条，即每架构 722 条；另行复查旧的 8 阶段宿主生命周期和组合标准效果原版绘制，8 次原版程序对照全部通过，命令结果见本机 `out/native-final-oracles.json`。新夹具及相关源码的 clang-format 检查、`git diff --check` 通过。
+
+配置本地原版路径后，新增比较自动加入 CTest；默认不要求下载或分发原版二进制。x86 的固定地址映射由现有 Python 启动器处理。
+
+```powershell
+cmake -S . -B build-x64/build -DMDS_ORIGINAL_MMD_EXE=C:/path/to/MikuMikuDance.exe -DMDS_ORIGINAL_MME_DIR=C:/path/to/MMEffect_v037x64_English
+cmake --build build-x64/build --config Release
+ctest --test-dir build-x64/build -C Release -R '^native_scene_render$' --output-on-failure
+# Repeat with build-x86/build and the matching x86 original files.
+```
+
+原版文件继续执行夹具中的版本校验。设备不可用返回 77，仅计跳过，不计通过。此前确认的原版 MMHack x86 附件绑定查询布局缺陷仍单独保留为兼容边界；完整 GUI 操作、真实社区效果包在这条完整原版绘制链路中的组合，以及所有驱动的设备丢失过程，尚未由本轮生成场景证明。
+
 ## 构建与验证记录
 
 构建以 `profiles/x64` 为基准，先创建仓库中的 Bullet 配方，再安装应用依赖。完整命令统一维护在 [发布说明](RELEASES.md#reproduce-the-release-build)，避免使用旧的工作站锁文件或上游 Bullet 替代本地修改版。输出路径以实际生成结果为准。
