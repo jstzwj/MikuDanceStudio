@@ -324,28 +324,13 @@ void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
     }
 }
 
-// One [n] subset row from an EMM section: "" (or "none") clears the subset
-// and rebuilds the bindings from the remaining assignments, mirroring the
-// MmeAssignEffect subset path.
+// An explicit [n]=none selects the standard shader for that material. It is
+// distinct from an absent row, which inherits the whole-object assignment.
 void ApplySubsetEffectToModel(ModelData* model, int subsetIndex, const std::string& rawPath)
 {
     const std::string effectPath = rawPath == kNone ? std::string() : rawPath;
     model->setSubsetEffect(subsetIndex, effectPath);
-    if (!effectPath.empty()) {
-        MmeResolveSubsetEffectBinding(model, subsetIndex, effectPath);
-        return;
-    }
-    const std::string whole = model->effectFile();
-    MmeDropMaterialBindings(model);
-    if (!whole.empty()) {
-        ApplyEffectToModel(model, whole);
-    }
-    for (std::map<int, std::string>::const_iterator it = model->subsetEffects().begin();
-         it != model->subsetEffects().end(); ++it) {
-        if (!it->second.empty()) {
-            MmeResolveSubsetEffectBinding(model, it->first, it->second);
-        }
-    }
+    MmeResolveSubsetEffectBinding(model, subsetIndex, effectPath);
 }
 
 // --- EmmFile parse state (the EmmFile virtuals, file-local) -----------------
@@ -1074,6 +1059,19 @@ bool MmeEmmLoad(const char* path)
         return true;
     }
 
+    // RVA 2E8D0 commits a replacement working map through 2DF80, which
+    // clears manager+0x30 before copying the parsed assignments. Rows absent
+    // from the new file must not retain old subset effects or visibility.
+    for (ModelData* model : ctx->models) {
+        if (model == nullptr) {
+            continue;
+        }
+        model->clearSubsetEffects();
+        MmeEmmClearSubsetShows(model);
+        model->setShown(true);
+        ApplyEffectToModel(model, std::string());
+    }
+
     // --- live objects (the host enumeration FUN_18002E8D0 walks) -----------
     struct LiveObject {
         bool isModel;
@@ -1506,23 +1504,7 @@ bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::st
     ModelData* model = it->second;
     if (subsetIndex >= 0) {
         model->setSubsetEffect(subsetIndex, path);
-        if (path.empty()) {
-            // Rebuild all bindings so this subset falls back to the current
-            // whole-object assignment.
-            const std::string whole = model->effectFile();
-            MmeDropMaterialBindings(model);
-            if (!whole.empty()) {
-                ApplyEffectToModel(model, whole);
-            }
-            for (const auto& entry : model->subsetEffects()) {
-                if (!entry.second.empty()) {
-                    MmeResolveSubsetEffectBinding(model, entry.first,
-                                                  entry.second);
-                }
-            }
-        } else {
-            MmeResolveSubsetEffectBinding(model, subsetIndex, path);
-        }
+        MmeResolveSubsetEffectBinding(model, subsetIndex, path);
         return true;
     } else {
         model->clearSubsetEffects();

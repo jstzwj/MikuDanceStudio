@@ -173,7 +173,7 @@ int MmhTecCacheIndex(const char* tecName)
     return it == g_mmh.tecCache.end() ? -1 : it->second;
 }
 
-// --- 12 MME 技术描述符 [0x18005bdf0 静态表] ---------------------------------
+// --- 12 MME technique descriptors [0x18005bdf0 static table] ----------------
 const MmhTecDesc g_tecTable[MMH_TEC_COUNT] = {
     { "ColorRenderTec",            0x00000000u },
     { "ZValuePlotTec",             0x00000000u },
@@ -186,5 +186,5 @@ const MmhTecDesc g_tecTable[MMH_TEC_COUNT] = {
     { "DiffuseBufferShadowTec",    0x01000000u },
     { "DiffuseBSTextureTec",       0x01000001u },
     { "DiffuseBSSphiaTec",         0x01000100u },
-    { "DiffuseBSSphiaTexCd2Tec",   0x01000101u },
+    { "DiffuseBSSphiaTexTec",      0x01000101u },
 };

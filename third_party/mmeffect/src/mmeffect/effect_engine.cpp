@@ -351,15 +351,19 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     //   0xC0 is included only in debug mode (cmovnz), byte_1800D99DE = g_debugMode
     //   (latched once by Initialize at 0x1800564f3 via MMHack import IsDebugMode(),
     //   meaning MMEffect.debug exists in the host EXE directory).
-    unsigned long loadFlags = kD3dxShaderEnableBackwardsCompatibility;   // 0x1000
+    // The x86 0.37 DLL (RVA 0xC970, call at 0xCD10) passes zero outside
+    // debug mode. Enabling the x64 compatibility bit changes shader bytecode.
+#if defined(_M_X64)
+    unsigned long loadFlags = kD3dxShaderEnableBackwardsCompatibility; // 0x1000
+#else
+    unsigned long loadFlags = 0;
+#endif
     if (g_debugMode != 0) {
-        loadFlags |= kD3dxShaderForceVsSoftwareNoOpt |
-                     kD3dxShaderForcePsSoftwareNoOpt;                    // 0xC0
+        loadFlags |= kD3dxShaderForceVsSoftwareNoOpt | kD3dxShaderForcePsSoftwareNoOpt; // 0xC0
     }
 
     ID3DXBuffer* errors = nullptr;
-    HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines,
-                                           nullptr, loadFlags,
+    HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines, nullptr, loadFlags,
                                            g_effectPool, &entry->effect, &errors);
     // [0x18000c1ab-0x18000c376] on failure exactly ONE segment is appended to
     // the error text: the compiler text when the error buffer carries bytes,

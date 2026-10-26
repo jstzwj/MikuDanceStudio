@@ -1386,6 +1386,9 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     float place[4] = {};
     d3dx::Get().inverse(&inverse, nullptr, &frame);
     d3dx::Get().vec3Transform(place, target, &inverse);
+    // x86 427B3C..427B71 and x64 4C226C..4C228E copy XYZ into the
+    // preceding LightDir vector, retaining its exact homogeneous W = 1.
+    place[3] = 1.0f;
     fx::SetFloatArray(effect, "LightDir", light, 4);
     fx::SetFloatArray(effect, "Place", place, 4);
     fx::SetMatrix(effect, "matWorldViewProj",

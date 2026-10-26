@@ -738,8 +738,14 @@ bool MmeInOffscreenRenderTurn()
 MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex,
                                                 const std::string& effectPath)
 {
-    if (model == nullptr || subsetIndex < 0 || effectPath.empty()) {
+    if (model == nullptr || subsetIndex < 0) {
         return nullptr;
+    }
+    // FUN_18002CA80 retains an explicit subset record for "none". A null
+    // effect draws with the standard shader and blocks whole-object fallback.
+    if (effectPath.empty()) {
+        return MmeEnsureMaterialBinding(0, model, subsetIndex, nullptr,
+                                        std::string(), nullptr);
     }
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = ctx != nullptr ? ctx->device : nullptr;

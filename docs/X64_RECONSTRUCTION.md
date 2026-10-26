@@ -484,6 +484,219 @@ $model = 'C:/path/to/miku.pmx'
 
 输出目录保存每个视角／描边倍率的端口、原版（仅 x64 显式指定 EXE 时）及 Reset 后 PNG，以及非背景像素数、差异像素数和最大通道误差的 `report.json`。顶点缓冲或像素不一致、设备 Reset／图像读回失败均返回非零；D3D9 不可用返回 77，由 CTest 明确记为跳过。原版 EXE 与本机模型不随仓库分发。
 
+## 2026-10-26：自阴影、附件颜色与设备恢复
+
+新增 [scene_effect_gpu](../tests/scene_effect_gpu_test.cpp)，与固定功能图像测试共用 [渲染夹具](../tests/scene_render_fixture.hpp)。使用真实 D3D9 HAL、原版相同的共享 Toon 纹理和独立编译的标准效果对象；指定原版 EXE 时，先逐字节核对资源 117／118 与仓库 SM2／SM3 效果源码，再分别执行原版和端口的阴影、整场景绘制入口。原版模型、场景和效果资源独立分配，共享设备与相同输入。附件复用同一份经生产加载器构造的记录、材质和网格，绘制游标在每次提交结束后复位；这里对照附件的绘制行为，不是独立对照两边的附件解析器。
+
+SM2、SM3 各覆盖两种自阴影模式、朝向正负 Z 的极端光照，以及地面网格／投影阴影、模型透明材质、在模型前后绘制的两个附件，合计 10 组场景。另以关闭模型和地面的独立图像确认附件实际产生像素。阴影比较使用直接读回的 R32F 浮点位值，PNG 仅作预览；历史 `hdrTexture` 字段在此路径保存阴影深度，并非浮点彩色 HDR 画面。每组同时检查重复绘制的最终像素、阴影和光照矩阵；原版对照要求三者逐位相等。
+
+| 原版 x64 RVA | 核验与修正 |
+|---|---|
+| `0xA1030` | 原版显式接收视图矩阵，端口从设备读取；夹具统一两者的视图、世界矩阵与阴影配置 |
+| `0xA1E60` | 整场景标准效果绘制，包括地面、附件分段、模型、描边及投影阴影 |
+| `0xDDFC0`，`0xDE222..0xDE244` | 附件先计算投影，再清除照明矩阵的平移；端口原先将平移带入 `matWorld`／`matWRotate` |
+| `0xDE337..0xDE34F` | 设备接收未经透明度缩放的原始材质，透明度只在 `EgColor.a` 相乘；修正提前缩放设备材质的行为 |
+| `0xDE474..0xDE4B8` | `DifColor` 使用灯光的 Diffuse RGB，修正误读 Ambient RGB，并改为 `D3DLIGHT9` 具名成员访问 |
+| `0xA6160` | 核对释放资源、D3DX Lost、设备 Reset、初始化渲染状态、抗锯齿菜单状态、D3DX Reset、视口及路径清理的顺序；嵌入 MME 回调仍在真实 Reset 前后执行 |
+
+附件颜色差异由实际图像对照发现：生成 PMD 场景修正前有 75,677 个像素不同，最大通道差为 101。修正后三条规则由 `model_render` 独立检查；逐项恢复错误实现的三次负向验证均失败，恢复正确实现后通过。附件图像夹具为 `.x` 的 FLOAT 字段写入小数点，并检查解析后的材质 alpha，避免整数位模式构成退化几何、导致“图像相同”却没有实际绘制附件。
+
+生成 PMD 与真实 Sour Miku PMX 的 x64 原版／端口对照各 10 组，颜色像素、原始阴影位值和光照矩阵全部相等。真实模型的 x86／x64 比较中，SM2、SM3 各自前四组最终颜色相等；第五组组合场景各有 77 个像素不同，最大通道差为 1。模式 1 阴影有 19 个像素不同、最大 2 ULP；模式 2 及组合场景有 168 个像素不同、最大 4 ULP（绝对差 `2.9802322387695312e-8`）。极端光照的阴影图相等，但此时模型落在阴影投影范围外，不作为有效阴影精度证据。保留两架构现有数值路径，这些差异尚不能据此认定符合原版 x86，也不能表述为所有场景逐位相等。
+
+MME 部分通过真实宿主桥接初始化、EMM 效果分配和重复绘制入口运行。未分配效果时要求图像与直接绘制相等；分配的测试效果通过 `DefaultEffect` 子效果绘制一个 64×64 离屏目标，读回确认存在场景几何，且主画面确实改变。资源声明明确设置 `ClearDepth=1`，同时提供 `object`／`object_ss` 技术，覆盖自阴影场景的实际技术选择。重复绘制及 Reset 后要求结果相等。
+
+设备恢复调用生产 `PostDeviceReset`，预先创建应用捕获、背景、读回资源及阴影目标，检查真实 Reset 前全部对应槽位已释放，Reset 成功后阴影资源按需重建，抗锯齿状态随菜单恢复、三个近期路径清空。随后通过真实 `FrameDriver` 注入一次 Present 的 `D3DERR_DEVICELOST`，两次合作级别查询返回 LOST、第三次返回 NOTRESET，要求恰好执行一次真实 Reset，并在恢复后获得相同像素、阴影及 MME 离屏目标原始像素。只有驱动状态通知由夹具注入，资源、效果、Reset、绘制和读回均使用真实设备；没有人为触发驱动重启或 RDP 断开。
+
+复现：
+
+```powershell
+ctest --test-dir build-x64/build -C Release -R 'scene_effect_gpu|model_render' --output-on-failure
+ctest --test-dir build-x86/build -C Release -R 'scene_effect_gpu|model_render' --output-on-failure
+./build-x64/build/Release/scene_effect_gpu_test.exe --model $model --original $original --output out/effect-complete-real-x64
+./build-x86/build/Release/scene_effect_gpu_test.exe --model $model --output out/effect-complete-real-x86
+```
+
+输出包括 PNG、原始 `.r32f`、逐组像素／阴影差异、光照矩阵及摘要的 `report.json`。模型和原版 EXE 沿用前述本机资产，不随仓库分发。MME 的新增结果是端口宿主集成及离屏／恢复回归，并非原版 MMHack／MMEffect DLL 的图像 A/B；仍未覆盖任意社区效果包、真实驱动故障、完整 GUI、动态物理图像或所有设备。
+
+## 2026-10-26：原版 MMEffect 效果图像对照
+
+新增 [scene_mme_gpu](../tests/scene_mme_gpu_test.cpp) 与 [对照脚本](../scripts/compare_mme_render.py)。原版基准实际执行上表 SHA-256 对应的 MMEffect v0.37 x64 English DLL：映射 PE、解析系统依赖和宿主导入，再执行 DLL 自带的 CRT／DllMain 初始化与清理。EMM 通过原版 RVA `0x2E8D0` 的完整解析及分配入口加载，不跨运行库传递 STL 对象，也不改写原版效果算法。设备通知、对象注册、场景和绘制回调均通过同一份生产宿主代码转发；测试包装仅选择原版或静态端口的引擎回调。
+
+这里的 MMD 场景绘制及 MMD／MMHack 查询来自端口。边界适配将宿主对象 ID 统一转换为原版 MMHack 所用的零扩展 32 位值，查询实际对象时再映射回宿主 ID。此前独立验证过的原版 MMD 绘制结果可支持这些输入，但本批不等于启动完整原版 MMD＋MMHack GUI 的端到端验证。该边界不能省略。
+
+相同模型、固定第 0 帧、关闭物理、相机、灯光、Toon、附件与设备条件下，按顺序覆盖：
+
+- 无宿主／初始化但未分配效果，要求图像相等。
+- 整模型、材质子集、显式 `none`、附件分配及多 pass 混合。
+- 使用 WORLD／VIEW／PROJECTION、几何 Diffuse、灯光颜色和方向的效果；改变相机与灯光，并实际降低模型材质透明度，对透明附件同时分配效果。
+- 带 `DefaultEffect` 子效果的 64×64 离屏目标，以及 `ViewportRatio={0.5,0.5}` 目标随视口在 256→128→256 间重建。
+- 两类目标分别执行生产 Reset 和 FrameDriver 的 Present 丢失恢复，比较恢复图像与离屏原始像素；移除模型、加载替代对象，再显式重载同一 EMM，确认几何和效果恢复。
+
+每次独立运行保存主画面、阴影与离屏 PNG，R32F 阴影原始位值、光照矩阵，以及实际 D3D9 绘制记录。记录包括几何参数、视口、混合／深度／剔除状态和 VS／PS 各 32 个 float4 常量寄存器；按提交顺序比较，不比较引擎内存地址。生成 PMD、真实 Sour Miku PMX 各自的最终原版／端口 x64 对照共 58 张 PNG、25 份原始阴影、19 份矩阵及 19 份绘制记录，全部相等。报告及预览保存在本机 `out/mme-generated-final`、`out/mme-real-final`。真实 PMX 两架构另通过完整生命周期断言；基准画面的跨架构差异仍为 77 个像素、单通道最大 1，168 个阴影 texel 最大 4 ULP，改变相机后的画面则为 73 个像素。生成 PMD 组合场景另有 2,460 个单色阶像素差异，阴影逐位相等；这些新输入独立记录，不能套用旧的 77 像素结论。跨架构全寄存器记录还包含标准效果未使用寄存器的残值差异（如 VS c15），不应将其直接认定为有效效果参数错误。
+
+本批先复现差异，再通过原版 IDA 核验并修正三处产品行为：
+
+| 差异 | 原版依据 | 修正 |
+|---|---|---|
+| 重载 EMM 后保留旧材质子集效果 | `0x2E8D0` 经 `0x2DF80` 清空工作分配表再提交新表 | 加载有效 EMM 时替换整份分配，清除旧子集及显示覆盖 |
+| 子集 `none` 错误继承整个模型的效果 | `0x2CA80` 创建显式子集记录，`0x2D910` 仅在记录缺失时向整对象回退；原版实际图像确认 | 保留空效果绑定，以标准着色器绘制该材质；缺省条目才继承 |
+| 离屏尺寸固定为加载时交换链大小 | `0xB880` 每次检查视口宽高；尺寸变化调用 `0x14270`，`0x143D0` 重算比例后重建默认池资源 | 保存尺寸策略，按视口刷新比例资源；Reset 共用重建路径，保留固定尺寸与托管纹理 |
+
+逐项临时关闭这三处修正后，生成 PMD 回归分别因 EMM 残留导致材质透明度调整失效、`none` 未覆盖整对象效果、离屏目标仍为 450 而非 256 像素而失败；恢复源码并重新构建后通过。负向验证结果保存在本机 `out/mme-negative-controls.json`。
+
+夹具另纠正模型显示顺序为运行时使用的 1 起始值，避免原版 MME 对象排序键碰撞；两个附件使用不同路径，避免同名文件的 EMM 匹配歧义。这些属于输入修正。
+
+复现（Python 需 Pillow，Windows 图形会话须可用）：
+
+```powershell
+$mme = 'C:/path/to/MMEffect_v037x64_English/MMEffect_v037x64_English/MMEffect.dll'
+python scripts/compare_mme_render.py --original $mme --x86 build-x86/build/Release/scene_mme_gpu_test.exe
+python scripts/compare_mme_render.py --original $mme --model $model --x86 build-x86/build/Release/scene_mme_gpu_test.exe
+ctest --test-dir build-x64/build -C Release -R scene_mme_gpu --output-on-failure
+ctest --test-dir build-x86/build -C Release -R scene_mme_gpu --output-on-failure
+```
+
+脚本每次使用新目录，原版／端口 x64 任一图像、原始阴影、矩阵或绘制记录不同即失败；设备不可用的返回值 77 也不能算对照通过。x86 端口独立执行全部生命周期断言，跨架构差异另列在 JSON 中，不据此改变其浮点规则；尚未加载原版 x86 MMEffect。此前 77 像素和阴影 4 ULP 记录仍按原输入保留。原版 DLL、真实模型和共享 Toon 不随仓库分发；本批尚未覆盖任意社区效果包、完整原版 GUI 链路或真实驱动故障。
+
+本批最终完整 CTest 为 x64 80/80（53.97 秒）、x86 78/78（144.35 秒），无跳过。上述对照与负向验证完成后，另一次旧 `scene_effect_gpu --original` 复跑因 D3D9 设备创建失败返回 77，未计为通过；本批已经完成的原版 MMEffect 对照及 CTest 结果来自此前实际可用的 HAL 会话。
+
+## 2026-10-26：真实效果包与原版 x86 MMEffect
+
+完整原版 MMD＋MMHack GUI 链路仍未完成：桌面自动化原生连接返回 `native pipe is unavailable (os error 2)`，这不等于 D3D9 HAL 不可用。按本轮要求，继续完成不依赖 GUI 的原版引擎与真实效果包对照；这里的 MMD／MMHack 查询及场景绘制仍来自端口，不能将结果写成完整原版宿主已通过。
+
+原版 x86 MMEffect v0.37 English 的 SHA-256 为 `2bb240fd157232a10b756a68ee3d1b43cb6a1ef2fe37c0321d83445b910589c4`。测试 PE 加载器按进程架构选择头、导入槽位及二进制身份。IDA 确认原版 x86 回调采用 `stdcall`、对象 ID 为 32 位；EMM 入口 RVA `0x2B970` 将路径放入 ECX、HWND 放入栈，返回时弹出四字节。适配仅在测试边界转换这些参数，保留端口嵌入式接口。生成 PMD、真实 Sour PMX 的原有完整效果套件，分别与对应架构的原版引擎比较，全部图像、阴影、矩阵和绘制记录相等。报告保存在本机 `out/mme-both-native-generated`、`out/mme-both-native-real`。
+
+真实资源采用本地 ray-mmd，提交 `218a91cd1c53f49850b2772ebbcb98bf258e75b1`，不改写包内效果文件。新增 `--model-effect` 和 `--scene-effect`，覆盖：
+
+| 场景 | 输入 |
+|---|---|
+| 材质与纹理采样 | Sour Miku PMX＋`Main/main.fx` |
+| 轮廓效果 | 生成 PMD＋`Outline/Fixed Color/outline.fx` |
+| 组合与后处理 | 生成 PMD＋`Main/main.fx`＋附件承载 `ray.fx`，不加载控制器／天空盒 |
+
+每个场景记录分配、重复绘制、生产 Reset 前后、FrameDriver 的 Present 丢失恢复以及解除分配；每个引擎保存 16 张 PNG、8 份 R32F 阴影、5 份光照矩阵、6 份绘制记录和 6 份逐次绘制记录。逐次记录包括当前着色器代码摘要、其读取的 VS／PS 浮点常量、渲染状态、纹理与深度目标规格，以及最多四个颜色目标在绘制后的像素摘要。覆盖 `DrawPrimitiveUP`／`DrawIndexedPrimitiveUP`，不能只记录模型几何调用。组合场景一帧实际执行 44 次绘制，其中 31 次为全屏后处理；Reset／Present 恢复段共 176 次绘制。`--scene-effect` 的完成检查要求实际执行带纹理输入的 buffer pass。
+
+上述三组在 x64、x86 上均与对应原版 MMEffect 的全部比较产物相等。最终报告及预览分别保存在本机 `out/mme-material-complete-trace`、`out/mme-outline-complete-trace`、`out/mme-ray-complete-trace`。本轮全量 CTest 为 x64 80/80（101.57 秒）、x86 78/78（158.22 秒），无跳过；补齐全屏绘制记录后，两架构 `scene_mme_gpu` 再次实际通过（6.95／7.67 秒）。
+
+首次对照发现 x86 轮廓着色器代码不同。IDA `0x1000C970`／调用点 `0x1000CD10` 确认原版 x86 正常编译标志为 `0`，调试模式为 `0xC0`；x64 则为 `0x1000 | debugFlags`。端口曾无条件添加 `D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY`，现按架构恢复原版选项。修复前的报告 `out/mme-outline-package` 检出 VS／PS 代码差异，即使该输入的最终像素相等，也没有计作完全通过。
+
+夹具另处理两种无效比较：新建 D3D9 颜色目标的初始像素未定义，因此仅在测试设备中给两边的新目标设置相同零初值，避免 Reset 后显存复用顺序造成未覆盖区域不同；生产路径不增加清屏。效果未读取的设备常量也可能保留不同残值，真实包的参数比较改为从 SM2／SM3 字节码识别实际读取的寄存器，包含矩阵展开、相对索引及排除 shader 内部 `DEF` 常量。生成套件仍保留原先的完整前 32 个 float4 寄存器记录。这些初始条件与比较范围必须随结果保留，不能据此声称原版为所有中间目标隐式清零。
+
+对真实包，不再要求同一引擎 Reset 前后的画面必然相等：原版本身也出现该变化，测试逐阶段比较原版和端口的相同操作序列；静态生成效果仍保留恢复前后必须相等的断言。夹具临时目录增加进程号，避免并发原版／端口进程复用已删除的 `GetTempFileName` 占位文件而撞目录。
+
+复现（两种原版 DLL 必须匹配对应架构，Python 需 Pillow）：
+
+```powershell
+$mme64 = 'C:/path/to/MMEffect_v037x64_English/MMEffect.dll'
+$mme32 = 'C:/path/to/MMEffect_v037_English/MMEffect.dll'
+$ray = 'C:/path/to/ray-mmd'
+$both = @('--original', $mme64, '--x86', 'build-x86/build/Release/scene_mme_gpu_test.exe', '--original-x86', $mme32)
+python scripts/compare_mme_render.py @both --model $model --model-effect "$ray/Main/main.fx"
+python scripts/compare_mme_render.py @both --model-effect "$ray/Outline/Fixed Color/outline.fx"
+python scripts/compare_mme_render.py @both --model-effect "$ray/Main/main.fx" --scene-effect "$ray/ray.fx"
+```
+
+脚本分别比较原版 x64／端口 x64、原版 x86／端口 x86，任一所比较的产物不同即失败；跨架构差异单列。报告包含模型、原版 DLL、效果文件的 SHA-256，以及效果仓库提交与工作区状态。旧输入的 77 个像素、168 个阴影 texel 最大 4 ULP，以及生成组合场景的 2,460 个像素差异继续保留；原版 x86 效果引擎相等仍不能替代原版 x86 MMD 渲染宿主的独立验证。GUI 效果分配／解除、EMM 保存重载、模型重载和窗口缩放，以及控制器、天空盒和任意效果包组合仍需后续验证。
+
+## 2026-10-26：原版 x86 MMD 渲染数值对照
+
+本轮关闭 MME／物理，固定第 0 帧，使用相同模型、相机、灯光、Toon、附件、设备和线程数，执行原版 x86 MMD 的加载、姿态求值、蒙皮、材质、描边、阴影及标准效果绘制机器码。原版 EXE 的 SHA-256 为 `7566eafcbd1099ce74d34f2c0ffc89ea3bd32e6363912fd07fcfe822b2e78dbd`，执行前强制校验。x86 测试映像移至 `0x20000000`，由 [启动脚本](../scripts/run_native_render.py) 在进程初始化前预留原版固定基址；测试初始化器随后释放占位并映射原版，未改写原版算法。加载器初始化原版静态 VC9 CRT，并通过原版清理入口释放其私有堆；OpenMP 必须使用实际 VCOMP90，不再回退 VCOMP140。
+
+原版 x86 锚点（VA）：模型加载 `0x4BF3E0`、帧求值 `0x4B4260`、Morph `0x4970B0`、蒙皮 `0x4B0C50`、PMX 无附加 UV 工作函数 `0x4A9400`、材质 `0x4912F0`、描边 `0x492640`、自阴影 `0x426CD0`、标准效果帧 `0x4277E0`、附件固定功能／地面投影 `0x4C4A10`。各入口按 IDA 核验的 x86 参数、按值结构及栈清理适配，不套用 x64 原型。宿主窗口、设备和场景装配仍由测试提供；这不是完整原版 GUI／MMHack／MMEffect 链路。
+
+### 比较条件与首处分歧
+
+过去在 `wmain` 内设置 `OMP_NUM_THREADS=1`，对已经静态加载并初始化的 VCOMP140 不生效，而稍后加载的原版 VCOMP90 读取到该值。现直接对两个运行库调用 `omp_set_dynamic(0)`／`omp_set_num_threads`，覆盖一个和四个工作线程。原版 x86 的 D3D 主线程使用 24 位 x87 精度，工作线程使用 53 位；IDA 核验 VCOMP90 的派发路径没有复制调用者浮点控制字。因此没有把所有工作线程强制改成主线程模式。
+
+纠正线程条件后，旧的阴影最大 4 ULP 差异消失；所测场景的光照矩阵与 R32F 阴影在对应原版／端口之间及两个原版之间逐位相等。不能将不同线程分区下的旧结果当作生产阴影算法错误，也不要求原版串行结果与并行结果天然相等。
+
+按加载后姿态、骨骼矩阵、蒙皮主体、描边、材质与设备参数、逐次绘制颜色目标的顺序比较，发现并修正两处端口偏差：
+
+| 差异 | 原版依据 | 最小修正与回归 |
+|---|---|---|
+| PMX 描边在每次乘法后提前存为 float | x86 `0x4AA95E..0x4AA99C` 连续三次 `FMUL`、一次 `FADD`，最终才 `FSTP`；收缩分支为 `0x4AAA36..0x4AAA88` | 仅 x86 扩张尾部保留六条 x87 指令，遵循当前工作线程精度；收缩复用现有 x87 兼容助手。x64 保留原有单精度算序 |
+| `Place.w` 沿用矩阵运算结果，x86 可得到 `0x3F7FFFFF` | x86 `0x427B3C..0x427B71`、x64 `0x7FF7CB4C226C..0x7FF7CB4C228E` 仅覆盖先前 LightDir 临时向量的 XYZ，保留 W 的精确 `1.0f` | 提交参数前显式赋 `place[3] = 1.0f`；检查实际效果参数和逐次绘制读取的常量 |
+
+修复前，四线程真实 PMX 主体缓冲相等，但非零描边下有 2,540 个描边坐标分量不同。修复后，Sour Miku PMX（139,692 顶点、25 材质、331 骨骼）的两视角 × 描边倍率 0／1／2，在一个和四个线程下主体、描边缓冲均逐字节相等。新增 [pmx_outline](../tests/pmx_outline_test.cpp)，以 4,100 个顶点覆盖扩张、收缩及抵消输入；x86 显式覆盖 24／53 位精度并恢复每个线程控制字，x64 验证其单精度结果。临时恢复提前 float 舍入后，该回归在 `0xBB1B6019`／`0xBB1B6018` 处检出失败；记录为本机 `out/pmx-outline-negative.json`。
+
+### 77／2,460 像素的原版架构差异
+
+下表直接比较两个原版的输出，SM2／SM3 均得到相同差异数量。对应架构的原版与端口在这些输入下均相等：
+
+| 输入 | 软件顶点处理：不同像素／最大通道差 | 硬件顶点处理：不同像素 | R32F 阴影不同 texel |
+|---|---|---|---|
+| 真实 PMX 组合场景 | 77／1 | 0 | 0 |
+| 生成 PMD 组合场景 | 2,460／1 | 0 | 0 |
+
+生成场景的首次颜色分歧是第七次绘制（零起始 draw 6），即附件地面投影阴影。此前的颜色目标相等；此处几何、矩阵、材质、渲染状态和纹理级状态相等，且没有绑定顶点／像素着色器。IDA 在 x86 `0x4C4D52` 确认原版提交 `Diffuse.a = 0.7f`。真实 D3D9 `ProcessVertices` 诊断得到 x86 打包 alpha 为 `0xB2`、x64 为 `0xB3`，解释随后的单色阶混合差异；换用硬件顶点处理，两种输入的跨架构像素差异均归零。因此不通过修改材质透明度或 x86 数值规则强行匹配 x64 软件处理结果。
+
+原版各自的 D3DX9_32／D3DX9_43 对相同嵌入式 FX 源码也生成了不同 shader／preshader 字节码，已保存反汇编。这不能单独解释本次像素差异：逐次颜色回读将首次分歧定位到固定功能绘制，而硬件处理对照进一步验证了该边界。
+
+诊断保存在本机 `out/effect-native-x86-generated-process`／`out/effect-native-x64-generated-process`（逐次图像摘要、常量、状态与打包颜色），以及 `out/native-render-cross-architecture.json`（软件／硬件跨架构摘要）。硬件原版图像位于 `out/effect-native-{x86,x64}-{generated-hardware,real-hardware-final}`。这些结论限于本次 NVIDIA TITAN Xp／D3D9 环境和输入，不推广为所有驱动的颜色转换规则。
+
+### 最终验证与复现
+
+真实 PMX、生成 PMD 在两架构各 12 组标准效果场景，合计 48 组的最终颜色、阴影位值、光照矩阵及所记录的有效绘制常量／材质与变换均与对应原版相等。每次还检查实际 `Place.w`、蒙皮缓冲和重复绘制结果。最终报告为 `out/native-{x86,x64}-{real,generated}-final`；x86 六组固定功能图像与真实 Reset 后图像见 `out/native-x86-real-fixed-final`，单线程六组顶点见 `out/native-x86-real-serial-final`。新增 `--numeric-only` 仍执行两视角全部三种倍率，不在首组成功后提前返回。
+
+```powershell
+$original32 = 'C:/path/to/MikuMikuDanceE_v932/MikuMikuDance.exe'
+$original64 = 'C:/path/to/MikuMikuDanceE_v932x64/MikuMikuDance.exe'
+$model = 'C:/path/to/miku.pmx'
+python scripts/run_native_render.py build-x86/build/Release/scene_render_gpu_test.exe --original $original32 --model $model --output out/native32-vertices --threads 4
+python scripts/run_native_render.py build-x86/build/Release/scene_render_gpu_test.exe --original $original32 --model $model --output out/native32-serial --threads 1 --numeric-only 1
+python scripts/run_native_render.py build-x86/build/Release/scene_effect_gpu_test.exe --original $original32 --model $model --output out/native32-effects --without-mme 1 --threads 4
+./build-x64/build/Release/scene_effect_gpu_test.exe --original $original64 --model $model --output out/native64-effects --without-mme 1 --threads 4
+```
+
+省略 `--model` 使用生成 PMD；增加 `--scenario 5` 保存该组合场景的逐次绘制诊断，增加 `--hardware-vp 1` 对照硬件顶点处理。硬件模式要求实际设备具有该创建标志，设备不可用的 77 返回值不算通过。原版二进制、VC90 运行库和真实模型不随仓库分发。
+
+该批 x64／x86 Release 完整构建通过，全量 CTest 分别为 81/81（61.41 秒）、79/79（129.12 秒），无跳过。图形结果覆盖固定场景和当时调用链；其后的 MMHack 查询与拦截验证见下一节，完整原版 GUI、真实界面效果分配与 EMM 保存重载仍需后续验证。
+
+## 2026-10-26：原版 MMD／MMHack 宿主查询与绘制拦截对照
+
+本轮增加三层无 GUI 基准，均执行本机原版机器码，不分发原版程序或 DLL。`native_host_query_test` 调用对应架构 MMD 的导出；`mmh_host_parity_test` 调用原版 MMHack 的设备包装器，在 MMEffect 入口记录回调；`native_host_render_test` 将原版 MMD 查询、MMHack 和 MMEffect 接在真实 HAL 设备上，与端口在同一进程、同一输入下比较。最后一层的模型加载、蒙皮和绘制命令仍由端口提供，因此不等同于原版 GUI、原版 MMD 主循环或所有效果包的完整验证。
+
+### 发现与最小修复
+
+| 差异 | 原版依据 | 修复 |
+|---|---|---|
+| `MmeHostClear` 丢弃 `OnClear` 的 HRESULT，总是返回成功 | MMHack x64 `0x180003A20`、x86 `0x10003850` 直接返回回调结果 | 返回实际 HRESULT；测试注入 `E_FAIL`，同时确认绘制回调仍按原版返回零 |
+| 技术表最后一项写成不存在的 `DiffuseBSSphiaTexCd2Tec`，没有登记真实技术的纹理标志 | x64 表 `0x18005BDF0` 的最后一个名称指向 `0x18005BCF0`；x86 名称位于 `0x1004754C`，均为 `DiffuseBSSphiaTexTec`，标志 `0x01000101` | 仅修正名称，保留原版标志和技术顺序 |
+
+没有调整之前确认的 x86／x64 软件顶点处理 alpha 差异、描边求值顺序或工作线程精度。本轮 x86 灯光矩阵一度相差数 ULP，原因是测试在 D3D9 创建设备后才初始化映射程序的 VC9 CRT，改变了 x87 精度；夹具恢复真实 MMD 创建设备后的 24 位精度后逐位匹配，生产数学代码无需更改。
+
+### 查询与回调覆盖
+
+- x86、x64 各通过 7,536 次 MMD 导出查询比较：模型／附件槽位空洞及最后槽位、显示顺序、材质边界、骨骼／表情、矩阵、Shift-JIS 文件名、当前对象／材质／技术、重复绘制计数和播放时间。原版不检查的骨骼／表情元素下标只传有效值；无效模型序号单独覆盖，不把越界崩溃当成安全接口契约。
+- 两架构的 PMD、PMX 各通过 351 条 MMHack 回调及状态记录，即每架构 702 条。覆盖主体、自阴影主体、描边、地面阴影、自阴影深度，12 种标准技术、固定功能与 shader、Sphere 乘算／加算／附加 UV、纹理身份、材质名称内容、三个光照矩阵、对象移除／重新加入，以及成功和失败的真实 Reset。`mmh_host_parity`、`mmh_host_pmx_parity` 固化为常规 CTest；即使没有原版二进制，也检查对象／材质／pass 契约、技术存在性及 Clear 失败传播。
+- 原版 x64 的公开对象 ID 仍截为 32 位，活动对象后紧跟 pass／重复计数。夹具只在原版 ABI 边界转换状态和身份，端口保留完整指针。原版 VC9 locale 由其自身 CRT 创建，避免向原版查询函数传入 UCRT locale。
+
+原版 MMHack 使用 `CreateIndexBuffer`（D3D9 槽 27，x64 `0x180002D40`）记录模型资源；夹具通过真实包装器创建索引缓冲，并调用原版路径登记函数，未伪造原版 STL 容器。设备构造／析构和 CRT 初始化亦使用对应架构的原版入口，但跳过安装全进程 IAT hooks 的 DLL 主函数。回调观察测试中的附件使用只有 COM 身份头的测试对象，不代表真实附件网格的原版包装器已验证；实际 GPU 链路本轮覆盖生成 PMD。
+
+### 生命周期图像
+
+`native_host_render_test` 在两架构各比较 8 对图像：未分配、分配、替换效果、卸载后重新载入但尚未重新分配、重新分配、512→384 渲染尺寸变化、解除效果、真实设备 Reset。模型重载保留旧分配直至新对象建立，确保查询身份确实变化。颜色、R32F 自阴影及光照矩阵全部逐位相等；额外检查原版链路重复帧稳定。报告与 PNG／原始阴影位于本机 `out/native-host-x64`、`out/native-host-x86`，`report.json` 分别记录 8 对比较及零差异结果。
+
+```powershell
+# Supply matching-architecture local originals; binaries are not distributed.
+$original = 'C:/path/to/MikuMikuDance.exe'
+$hack = 'C:/path/to/MMHack.dll'
+$engine = 'C:/path/to/MMEffect.dll'
+./build-x64/build/Release/native_host_query_test.exe --original $original
+./build-x64/build/Release/mmh_host_parity_test.exe --original $original --mmhack $hack
+./build-x64/build/Release/mmh_host_parity_test.exe --original $original --mmhack $hack --pmx 1
+./build-x64/build/Release/native_host_render_test.exe --original $original --mmhack $hack --mme $engine --output out/native-host-x64
+# Prefix the equivalent x86 commands with: python scripts/run_native_render.py
+```
+
+### 已确认的兼容边界
+
+原版 MMHack 0.37 x86 的 `GetAcsAttachedPmd`（`0x100011E0`）读取附件 `+564/+568`，而本轮原版 MMD 的附件世界矩阵函数 `0x42A720` 读取 `+560/+564`；后者与已验证的 `AccessoryRecord::parentModel/parentBone` 一致。`+568` 已是附件名称开头。动态夹具令真实父模型为 `-1`、骨骼为 `0`、名称头 DWORD 为 `7`：原版 x86 MMHack 错报模型 0／骨骼 7，端口报告未绑定。该原版 DLL 布局缺陷单独记录并断言，未复制到具名成员访问；x64 同项查询相等。因此不能声称所有架构的全部 MMHack 导出都已严格等价。
+
+本轮也未覆盖原版 GUI 中的效果分配／EMM 保存、全部真实效果包、附件真实网格包装器与所有驱动的设备丢失过程；已有这些方向的独立测试不代替完整原版链路验证。
+
+最终两架构 Release 完整构建通过；全量 CTest 为 x64 83/83（98.19 秒）、x86 81/81（161.88 秒），无失败、无跳过。另行执行的 8 次原版二进制对照全部返回零，命令和输出保存于本机 `out/native-host-oracles.json`；新增夹具格式检查与 `git diff --check` 通过。
+
 ## 构建与验证记录
 
 构建以 `profiles/x64` 为基准，先创建仓库中的 Bullet 配方，再安装应用依赖。完整命令统一维护在 [发布说明](RELEASES.md#reproduce-the-release-build)，避免使用旧的工作站锁文件或上游 Bullet 替代本地修改版。输出路径以实际生成结果为准。

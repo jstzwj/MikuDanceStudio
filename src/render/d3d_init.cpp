@@ -334,7 +334,7 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
         r->renderTargetHeight = rtH;
 
         if (SUCCEEDED(d3dx->createTexture(device, rtW, rtH, 1, D3DUSAGE_RENDERTARGET /*1*/,
-                                          static_cast<D3DFORMAT>(114) /*A16B16G16R16F*/,
+                                          static_cast<D3DFORMAT>(114) /*R32F*/,
                                           D3DPOOL_DEFAULT /*0*/, &r->hdrTexture))) {
             // sprite texture from the embedded PNG (res 0x67)
             HRSRC res = FindResourceA(hModule, MAKEINTRESOURCEA(0x67), "PNG");

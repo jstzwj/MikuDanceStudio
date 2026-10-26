@@ -831,7 +831,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
     void* effect = sub->effect;
     if (device == nullptr || effect == nullptr)
         return;
-    const float* light = reinterpret_cast<const float*>(&app->SceneLight());
+    const D3DLIGHT9& light = app->SceneLight();
     // 0x4C593B..0x4C594F: the effect accessory renderer does not feed the
     // raw ambient/emissive sum to EgColor.  Its RGB channels are attenuated
     // by app+0xA0CF0 (the projected/self-shadow colour factor copied into
@@ -865,6 +865,9 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
         d3dx::Get().multiply(&value, &world,
                              reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
         fx::SetMatrix(effect, "matWorldViewProj", &value);
+        // x64 RVA DE222..DE244 clears translation after preparing both
+        // projections. The lighting matrices contain rotation and scale only.
+        world.m[3][0] = world.m[3][1] = world.m[3][2] = 0.0f;
         fx::SetMatrix(effect, "matWorld", &world);
         Matrix inverseScale;
         const float inv = 1.0f / (mdl::Accessory(accessory)->scale * 10.0f);
@@ -888,19 +891,23 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
         for (DWORD i = 0; i < count; ++i) {
             ++mdl::Accessory(accessory)->currentMaterial;
             const auto* material = &materials[i];
-            D3DMATERIAL9 copy = *material;
-            copy.Diffuse.a *= mdl::Accessory(accessory)->opacity;
-            device->SetMaterial(&copy);
-            float edge[4] = {(material->Ambient.r * light[9] + material->Emissive.r) * edgeFactor,
-                             (material->Ambient.g * light[10] + material->Emissive.g) * edgeFactor,
-                             (material->Ambient.b * light[11] + material->Emissive.b) * edgeFactor,
-                             copy.Diffuse.a};
-            float specular[4] = {material->Specular.r * light[5], material->Specular.g * light[6],
-                                 material->Specular.b * light[7], material->Power};
+            // RVA DE337..DE34F passes the stored material unchanged; opacity belongs
+            // to EgColor.a, including when MME captures the device material.
+            device->SetMaterial(material);
+            float edge[4] = {
+                (material->Ambient.r * light.Ambient.r + material->Emissive.r) * edgeFactor,
+                (material->Ambient.g * light.Ambient.g + material->Emissive.g) * edgeFactor,
+                (material->Ambient.b * light.Ambient.b + material->Emissive.b) * edgeFactor,
+                material->Diffuse.a * mdl::Accessory(accessory)->opacity};
+            float specular[4] = {material->Specular.r * light.Specular.r,
+                                 material->Specular.g * light.Specular.g,
+                                 material->Specular.b * light.Specular.b, material->Power};
             if (specular[3] == 0.0f)
                 specular[3] = 0.1f;
-            float diffuse[4] = {material->Diffuse.r * light[9], material->Diffuse.g * light[10],
-                                material->Diffuse.b * light[11], 1.0f};
+            // RVA DE474..DE4B8 uses D3DLIGHT9::Diffuse (+4), not Ambient (+36).
+            float diffuse[4] = {material->Diffuse.r * light.Diffuse.r,
+                                material->Diffuse.g * light.Diffuse.g,
+                                material->Diffuse.b * light.Diffuse.b, 1.0f};
             fx::SetFloatArray(effect, "EgColor", edge, 4);
             fx::SetFloatArray(effect, "SpcColor", specular, 4);
             fx::SetFloatArray(effect, "DifColor", diffuse, 4);

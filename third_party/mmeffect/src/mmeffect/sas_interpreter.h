@@ -80,6 +80,10 @@ void SasUnload(SasEffect* sas);
 // reset device, re-binding the texture parameters.
 void SasRecreateResources(SasEffect* sas, IDirect3DDevice9* device);
 
+// FUN_18000B880 checks the viewport even when source hot reload is disabled.
+// Rebuild default-pool resources when its width or height changes.
+void SasRefreshViewport(SasEffect* sas, IDirect3DDevice9* device);
+
 // Lost-device half for resources created in D3DPOOL_DEFAULT. Must run before
 // IDirect3DDevice9::Reset; recreation alone after Reset is too late.
 void SasReleaseDeviceResources(SasEffect* sas);

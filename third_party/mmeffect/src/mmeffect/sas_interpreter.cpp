@@ -728,30 +728,14 @@ static int SasBuildResourceObject(SasEffect* sas, int semanticId,
         }
     }
 
-    // Resolve the requested pixel size. ViewportRatio scales the screen size
-    // (REFERENCE.txt: default {1.0,1.0}). The original reads the host's
-    // screen-size globals (= the swap-chain back buffer); the port reads the
-    // back buffer directly. Sizing from the VIEWPORT instead breaks the
-    // MRT invariant at the final composite: the script restores slot 0 to the
-    // back buffer while slots 1-3 still point at the (now smaller) offscreen
-    // targets - the size mismatch makes the driver silently drop ALL output
-    // merges into the back buffer (the frozen-screen bug).
-    int screenW = 64, screenH = 64;
-    if (sas->device != nullptr) {
-        IDirect3DSurface9* backBuffer = nullptr;
-        if (SUCCEEDED(sas->device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
-                                                 &backBuffer)) &&
-            backBuffer != nullptr) {
-            D3DSURFACE_DESC bbDesc;
-            memset(&bbDesc, 0, sizeof(bbDesc));
-            if (SUCCEEDED(backBuffer->GetDesc(&bbDesc)) && bbDesc.Width > 0 &&
-                bbDesc.Height > 0) {
-                screenW = static_cast<int>(bbDesc.Width);
-                screenH = static_cast<int>(bbDesc.Height);
-            }
-            backBuffer->Release();
-        }
-    }
+    // FUN_18000B880 captures the caller's viewport dimensions before parsing
+    // or refreshing the effect. FUN_1800143D0 applies ViewportRatio to that
+    // size, independent of the swap-chain back buffer and script-bound targets.
+    const int screenW = static_cast<int>(sas->viewportWidth);
+    const int screenH = static_cast<int>(sas->viewportHeight);
+    res.hasViewportRatio = hasViewportRatio;
+    res.viewportRatio[0] = viewportRatio[0];
+    res.viewportRatio[1] = viewportRatio[1];
     if (hasViewportRatio) {
         res.reqWidth = static_cast<int>(screenW * viewportRatio[0]);
         res.reqHeight = static_cast<int>(screenH * viewportRatio[1]);
@@ -2451,6 +2435,10 @@ SasEffect* SasParse(ID3DXEffect* effect, const std::string& pathAnsi,
     sas->effect = effect;
     sas->device = device;
     sas->path = pathAnsi;
+    D3DVIEWPORT9 viewport{};
+    if (device != nullptr) device->GetViewport(&viewport);
+    sas->viewportWidth = viewport.Width;
+    sas->viewportHeight = viewport.Height;
 
     D3DXEFFECT_DESC ed;
     memset(&ed, 0, sizeof(ed));
@@ -2722,24 +2710,46 @@ void SasReleaseDeviceResources(SasEffect* sas) {
 }
 
 void SasRecreateResources(SasEffect* sas, IDirect3DDevice9* device) {
-    // Device-reset hook (PHASE3 integration note #7): the D3DPOOL_DEFAULT
-    // resources (render targets / depth stencils) died with the reset -
-    // [sub_180014270] only those are dropped and re-created, then the
-    // texture parameters are re-bound. MANAGED resources stay as-is.
+    // Shared viewport-change / device-reset path [sub_180014270]: drop
+    // D3DPOOL_DEFAULT resources, recompute relative dimensions, recreate
+    // them and rebind effect parameters. MANAGED resources stay as-is.
     if (sas == nullptr || device == nullptr) {
         return;
     }
     SasReleaseDeviceResources(sas);
     sas->device = device;
+    D3DVIEWPORT9 viewport{};
+    if (SUCCEEDED(device->GetViewport(&viewport))) {
+        sas->viewportWidth = viewport.Width;
+        sas->viewportHeight = viewport.Height;
+    }
     for (size_t i = 0; i < sas->resources.size(); ++i) {
         if (!SasNeedsResetRebuild(sas->resources[i])) {
             continue;
+        }
+        SasResource& res = sas->resources[i];
+        // FUN_1800143D0 recomputes the signed request before dispatching
+        // creation. Fixed-size targets are recreated with their old request.
+        if (res.hasViewportRatio) {
+            res.reqWidth = res.texWidth = res.viewportRatio[0] < 0.0f ? -1 :
+                static_cast<int>(static_cast<float>(sas->viewportWidth) * res.viewportRatio[0]);
+            res.reqHeight = res.texHeight = res.viewportRatio[1] < 0.0f ? -1 :
+                static_cast<int>(static_cast<float>(sas->viewportHeight) * res.viewportRatio[1]);
         }
         if (SasEnsureResourceTexture(sas, &sas->resources[i]) &&
             sas->resources[i].texture != nullptr) {
             sas->effect->SetTexture(sas->resources[i].param,
                                     sas->resources[i].texture);
         }
+    }
+}
+
+void SasRefreshViewport(SasEffect* sas, IDirect3DDevice9* device) {
+    if (sas == nullptr || device == nullptr) return;
+    D3DVIEWPORT9 viewport{};
+    if (SUCCEEDED(device->GetViewport(&viewport)) &&
+        (sas->viewportWidth != viewport.Width || sas->viewportHeight != viewport.Height)) {
+        SasRecreateResources(sas, device);
     }
 }
 

@@ -5,6 +5,7 @@
 #include "../src/render/model_materials.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -115,9 +116,19 @@ struct Effect {
     void** vtable;
     std::string technique;
     std::map<std::string, std::array<float, 4>> colors;
+    std::map<std::string, D3DMATRIX> matrices;
     bool additive = false;
     int begins = 0, passes = 0, ends = 0, passEnds = 0;
 };
+Effect& Fx(void* p);
+HRESULT WINAPI Matrix(void* p, const char* name, const D3DMATRIX* matrix) {
+    Fx(p).matrices[name] = *matrix;
+    return S_OK;
+}
+HRESULT WINAPI ReadMatrix(void* p, const char* name, D3DMATRIX* matrix) {
+    *matrix = Fx(p).matrices[name];
+    return S_OK;
+}
 Effect& Fx(void* p) {
     return *static_cast<Effect*>(p);
 }
@@ -152,6 +163,18 @@ HRESULT WINAPI EndPass(void* p) {
 }
 HRESULT WINAPI End(void* p) {
     ++Fx(p).ends;
+    return S_OK;
+}
+HRESULT WINAPI Shader(void*, void*) {
+    return S_OK;
+}
+struct AccessoryMesh {
+    void** vtable;
+    unsigned draws = 0;
+};
+HRESULT WINAPI Subset(void* p, DWORD index) {
+    Check(index == 0, "accessory material subset");
+    ++static_cast<AccessoryMesh*>(p)->draws;
     return S_OK;
 }
 struct Buffer {
@@ -383,6 +406,57 @@ void TestColorAndOrder() {
               f.device.states[D3DRS_ZFUNC] == D3DCMP_LESSEQUAL,
           "frame sorts sparse slots by draw order and publishes/restores object and states");
 }
+void TestAccessoryEffectInputs() {
+    Fixture f;
+    std::array<void*, 4> meshTable{};
+    meshTable[3] = reinterpret_cast<void*>(&Subset);
+    AccessoryMesh mesh{meshTable.data()};
+    mdl::AccessoryRecord accessory{};
+    InitAccessoryRecord(&accessory);
+    accessory.mesh = &mesh;
+    accessory.scale = .5f;
+    accessory.position[0] = 3;
+    accessory.position[1] = 4;
+    accessory.position[2] = 5;
+    accessory.opacity = .25f;
+    accessory.shadowEnabled = 1;
+    D3DMATERIAL9 material{};
+    material.Diffuse = {.5f, .25f, .125f, .8f};
+    material.Ambient = {.2f, .4f, .6f, 1};
+    material.Emissive = {.1f, .2f, .3f, 0};
+    accessory.materials = &material;
+    accessory.materialCount = 1;
+    f.app->AccessorySlot(0) = &accessory;
+    f.app->SceneLight().Ambient = {.7f, .6f, .5f, 1};
+    f.app->SceneLight().Specular = {.2f, .3f, .4f, 1};
+    f.app->ProjectedShadowAmbientIntensity() = .5f;
+    D3DMATRIX identity{};
+    identity._11 = identity._22 = identity._33 = identity._44 = 1;
+    f.app->LightViewProjection() = f.app->WorldViewProjection() = identity;
+    f.effect.matrices["matRotate"] = identity;
+    f.effectTable[38] = reinterpret_cast<void*>(&Matrix);
+    f.effectTable[39] = reinterpret_cast<void*>(&ReadMatrix);
+    f.deviceTable[92] = f.deviceTable[107] = reinterpret_cast<void*>(&Shader);
+    RenderAccessoriesEffectRange(f.app.get(), 0, 1);
+    const auto& color = f.effect.colors.at("DifColor");
+    Check(color == std::array<float, 4>{5, 2.5f, 1.25f, 1},
+          "original accessory DifColor uses the directional light's diffuse RGB");
+    Check(std::abs(f.effect.colors.at("EgColor")[0] - .09f) < .000001f &&
+              f.effect.colors.at("EgColor")[3] == .2f,
+          "accessory ambient/emissive color and opacity follow separate shader inputs");
+    Check(f.device.material.Diffuse.a == .8f && material.Diffuse.a == .8f,
+          "MME observes the original material alpha without a second opacity factor");
+    const auto& world = f.effect.matrices.at("matWorld");
+    const auto& projection = f.effect.matrices.at("matWorldViewProj");
+    const auto& rotation = f.effect.matrices.at("matWRotate");
+    Check(world._41 == 0 && world._42 == 0 && world._43 == 0 && world._11 == 5 &&
+              projection._41 == 3 && projection._42 == 4 && projection._43 == 5 &&
+              rotation._41 == 0 && rotation._42 == 0 && rotation._43 == 0,
+          "lighting drops translation after preserving it in both projection matrices");
+    Check(mesh.draws == 1 && accessory.currentMaterial == -1 &&
+              f.app->ActiveRenderObject() == nullptr,
+          "accessory submission restores its cursor and active identity");
+}
 }
 int main() {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -390,5 +464,6 @@ int main() {
     TestTextureStages();
     TestEffectAndShadows();
     TestColorAndOrder();
+    TestAccessoryEffectInputs();
     return failures ? 1 : 0;
 }

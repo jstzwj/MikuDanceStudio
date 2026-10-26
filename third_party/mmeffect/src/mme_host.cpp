@@ -211,8 +211,9 @@ HRESULT __cdecl MmeHostClear(IDirect3DDevice9* device, unsigned long rect_count,
         g_mmh.clearColor = color;                // DAT_18006ccc4
         mainTarget = 1;
     }
-    OnClear(device, rect_count, rects, flags, color, z, stencil, mainTarget);
-    return S_OK;
+    // Both native wrappers return the callback HRESULT unchanged (x64
+    // 0x180003A20, x86 0x10003850), including device-loss failures.
+    return OnClear(device, rect_count, rects, flags, color, z, stencil, mainTarget);
 }
 
 // [0x180002de0] Device BeginScene slot 41 - frame-start state machine.

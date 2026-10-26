@@ -480,14 +480,17 @@ struct Fixture {
     IDirect3DDevice9* device = nullptr;
     std::filesystem::path directory;
     bool ready = false;
-    explicit Fixture(bool allowMemoryDevice = false) {
+    explicit Fixture(bool allowMemoryDevice = false,
+                     DWORD vertexProcessing = D3DCREATE_SOFTWARE_VERTEXPROCESSING) {
         app->state = {};
         wchar_t temp[MAX_PATH]{}, unique[MAX_PATH]{};
         Check(GetTempPathW(MAX_PATH, temp) && GetTempFileNameW(temp, L"mds", 0, unique),
               "temporary directory name");
         DeleteFileW(unique);
-        directory = referenceDirectory.empty() ? std::filesystem::path(unique)
-                                               : referenceDirectory / "assets";
+        directory = referenceDirectory.empty()
+                        ? std::filesystem::path(std::wstring(unique) + L"-" +
+                                                std::to_wstring(GetCurrentProcessId()))
+                        : referenceDirectory / "assets";
         std::filesystem::create_directories(directory.parent_path());
         std::filesystem::create_directory(directory);
         window = CreateWindowW(L"STATIC", L"Scene roundtrip", WS_OVERLAPPED, 0, 0, 900, 900,
@@ -501,8 +504,8 @@ struct Fixture {
         pp.hDeviceWindow = window;
         pp.BackBufferWidth = pp.BackBufferHeight = 64;
         pp.BackBufferFormat = D3DFMT_A8R8G8B8;
-        HRESULT created = d3d->CreateDevice(0, D3DDEVTYPE_HAL, window,
-                                            D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &device);
+        HRESULT created =
+            d3d->CreateDevice(0, D3DDEVTYPE_HAL, window, vertexProcessing, &pp, &device);
         if (FAILED(created)) {
             const HRESULT halResult = created;
             // This test checks scene state and resource lifetime, not pixels.

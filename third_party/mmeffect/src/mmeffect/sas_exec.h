@@ -145,6 +145,8 @@ struct SasResource {
     int         reqWidth = 0;        // resolved request (viewport ratio applied)
     int         reqHeight = 0;
     int         reqDepth = 0;
+    bool        hasViewportRatio = false;
+    float       viewportRatio[2] = {1.0f, 1.0f};
     int         mipLevels = 1;
     // [sub_180011960 0x1800123bb-0x1800125ee / 0x1800129bf] the RAW
     // "Dimensions"/"Width"/"Height" triple and "Miplevels"/"Levels" value
@@ -319,6 +321,8 @@ struct SasTechnique {
 struct SasEffect {
     ID3DXEffect*  effect = nullptr;      // sas+0x00 (not AddRef'd; engine owns)
     IDirect3DDevice9* device = nullptr;  // captured from the parse call
+    UINT          viewportWidth = 0;
+    UINT          viewportHeight = 0;
     std::string   path;                  // loader path (log context)
     std::string   log;                   // sas+0x70 per-effect log text
     bool          hasErrors = false;     // sas+0x38 error flag

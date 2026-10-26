@@ -819,6 +819,7 @@ void MmeSortPlanObjects(MmeContext* ctx,
         std::set<MaterialBinding*> assignments;
         auto collect = [&](ModelData* model, MaterialBinding* binding, bool visible, ModelData* owner) {
             if (!binding || !binding->sas || !assignments.insert(binding).second) return;
+            SasRefreshViewport(binding->sas, ctx->device);
             MmeUpdateControlObjects(model, binding, owner);
             for (auto& resource : binding->sas->resources) {
                 if (resource.semanticId != 0x2E) continue;
@@ -982,8 +983,8 @@ void MmeRebuildRenderPassPlan()
     // the ctx+0x190 background-fixup map (per-node subtree destroy
     // sub_180003310 + COM Release + node free, then the ctx+0x198 sentinel /
     // ctx+0x1A0 size reset), store the viewport and set ctx+0x18A = 1. The
-    // cached effects' SAS offscreen resources keep their parse-time size -
-    // the original refreshes them only on a device reset (FUN_18002de40).
+    // effect resource resizing is separate: FUN_18000B880 -> FUN_180014270,
+    // handled while resolving assignments above, before building target turns.
     IDirect3DDevice9* device = ctx->device;
     if (device != nullptr) {
         D3DVIEWPORT9 viewport;

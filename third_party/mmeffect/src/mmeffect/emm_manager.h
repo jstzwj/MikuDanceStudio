@@ -420,7 +420,8 @@ bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex);
 void MmeEmmClearSubsetShows(ModelData* model);
 
 // [FUN_180030590] assign one effect file to (objectId, subsetIndex); pass
-// subsetIndex < 0 for the whole object. path "" clears the assignment.
+// subsetIndex < 0 for the whole object. An empty path selects the standard
+// shader; an explicit subset entry blocks inheritance from the whole object.
 // Returns true when the object was found and the effect (if any) loaded.
 bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::string& path);
 

@@ -225,6 +225,7 @@ MaterialBinding* MmeResolveModelEffectBinding(ModelData* model);
 
 // Resolve one explicit per-material assignment. Unlike the whole-object
 // binding this never changes the carrier's scene/pass classification.
+// An empty path creates a null-effect binding, overriding whole-object fallback.
 MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex,
                                                 const std::string& effectPath);
 

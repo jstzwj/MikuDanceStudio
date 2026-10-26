@@ -10,8 +10,8 @@
 // (x64 RVA 0xC1415..0xC2670), and the SDEF quaternion blend helper
 // (x64 RVA 0xC2D20). Binary identity and address verification are recorded
 // in reports/fix21_source_evidence.md. The PMD arithmetic keeps its VC9 rounding parity
-// branch; the PMX arithmetic follows the x64 SSE orderings, which is the
-// behavior baseline for this port.
+// branch; PMX uses the corresponding architecture's arithmetic. In particular,
+// x86 outline expansion retains x87 intermediates until the final float store.
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -141,6 +141,30 @@ float EdgeComponent(float position, float normal, float amount) {
     return btMmdMath::edgeComponent(position, normal, amount);
 #else
     return position + normal * amount;
+#endif
+}
+
+float PmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
+                       float materialSize) {
+#if defined(_M_IX86)
+    // Original x86 VA 4AA95E..4AA99C: three multiplies and one add, with
+    // no intermediate float stores. Preserve each worker's x87 precision;
+    // forcing all workers to the main thread's 24-bit mode changes native results.
+    float result;
+    __asm {
+        fld normal
+        fmul frameScale
+        fmul vertexScale
+        fmul materialSize
+        fadd position
+        fstp result
+    }
+    return result;
+#else
+    float amount = frameScale * normal;
+    amount *= vertexScale;
+    amount *= materialSize;
+    return position + amount;
 #endif
 }
 
@@ -616,14 +640,14 @@ void SkinPmx(const mdl::ModelRecord* model, float edgeDistance, bool opaqueEdge,
         edge.diffuse = PackPmxEdgeColor(material, opaqueEdge);
         if (source.hasPmxEdgeData == 0) {
             for (int component = 0; component < 3; ++component)
-                edge.position[component] = main.base.position[component] -
-                                           main.base.normal[component] * 0.004999999888241291f;
+                edge.position[component] =
+                    EdgeComponent(main.base.position[component], main.base.normal[component],
+                                  -0.004999999888241291f);
         } else {
             for (int component = 0; component < 3; ++component) {
-                float amount = edgeDistance * main.base.normal[component];
-                amount *= source.edgeScale;
-                amount *= material.edgeSize;
-                edge.position[component] = main.base.position[component] + amount;
+                edge.position[component] =
+                    PmxEdgeComponent(main.base.position[component], main.base.normal[component],
+                                     edgeDistance, source.edgeScale, material.edgeSize);
             }
         }
     }
