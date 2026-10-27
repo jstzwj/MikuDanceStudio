@@ -99,7 +99,9 @@ public:
 
     // EMM shown/hide state (the ".show" rows of the [Effect] section).
     bool shown() const { return shown_; }
-    void setShown(bool value) { shown_ = value; }
+    void setShown(bool value) { shown_ = value; shownRecorded_ = true; }
+    bool shownRecorded() const { return shownRecorded_; }
+    void resetShown() { shown_ = true; shownRecorded_ = false; }
 
     // Per-subset effect paths ("Pmd0[2]=fx" / "Pmd0@Hair=fx" EMM rows).
     // Phase 3 seam: recorded for EMM round-trips and the dialog; the render
@@ -225,6 +227,7 @@ private:
     D3DMATRIX             planMatrixCopy_;      // +0x190 (FUN_180059aa0 copy)
     std::string           effectFile_;          // Phase 2: assigned .fx path
     bool                  shown_;               // Phase 2: EMM shown state
+    bool                  shownRecorded_ = false; // original working node hasShow byte
     std::map<int, std::string> subsetEffects_;      // Phase 3 seam: [n] rows
     std::map<std::string, std::string> subsetEffectsByName_;  // @name rows
     bool                  attached_;            // Phase 2: GetAcsAttachedPmd

@@ -3,7 +3,7 @@
 
 namespace {
 int Run(const std::filesystem::path& modelPath, const std::filesystem::path& original,
-        const std::filesystem::path& output, bool numericOnly, int threads) {
+        const std::filesystem::path& output, bool numericOnly, int threads, bool renderFeatures) {
     Check(threads >= 1 && threads <= 64, "render thread count 1..64");
     omp_set_dynamic(0);
     omp_set_num_threads(threads);
@@ -17,17 +17,24 @@ int Run(const std::filesystem::path& modelPath, const std::filesystem::path& ori
         HHOOK hook;
         ~HookLifetime() { UnhookWindowsHookEx(hook); }
     } hookLifetime{hook};
-    Fixture f;
+    Fixture f(numericOnly);
     if (!f.ready)
         return 77;
     D3DCAPS9 caps{};
-    Hr(f.device->GetDeviceCaps(&caps), "real device caps");
-    if (caps.DeviceType == D3DDEVTYPE_NULLREF)
-        return 77;
-    D3DADAPTER_IDENTIFIER9 adapter{};
-    Hr(f.d3d->GetAdapterIdentifier(0, 0, &adapter), "adapter identity");
-    std::printf("GPU: %s; device type %u\n", adapter.Description, unsigned(caps.DeviceType));
+    if (!numericOnly) {
+        Hr(f.device->GetDeviceCaps(&caps), "real device caps");
+        if (caps.DeviceType == D3DDEVTYPE_NULLREF)
+            return 77;
+        D3DADAPTER_IDENTIFIER9 adapter{};
+        Hr(f.d3d->GetAdapterIdentifier(0, 0, &adapter), "adapter identity");
+        std::printf("GPU: %s; device type %u\n", adapter.Description, unsigned(caps.DeviceType));
+    }
     auto path = modelPath;
+    if (renderFeatures) {
+        Check(path.empty(), "feature fixture does not modify external models");
+        path = f.directory / "features.pmx";
+        WriteComplexModel(path, false, true);
+    }
     if (path.empty()) {
         path = f.directory / L"render.pmd";
         WriteModel(path);
@@ -48,7 +55,9 @@ int Run(const std::filesystem::path& modelPath, const std::filesystem::path& ori
     SetPhysicsMode(&model, 0, app.ModelSlots(), 0);
     SetPhysicsMode(&model, 1, app.ModelSlots(), 0);
     SaveRenderModel(output, "port_pose", model);
-    SharedToons toons(f);
+    std::unique_ptr<SharedToons> toons;
+    if (!numericOnly)
+        toons = std::make_unique<SharedToons>(f);
     std::unique_ptr<OriginalModel> reference;
     if (!original.empty()) {
         reference = std::make_unique<OriginalModel>(*binary, f, path, threads);
@@ -202,7 +211,7 @@ int wmain(int argc, wchar_t** argv) {
     int result = 1;
     try {
         std::filesystem::path model, original, output;
-        bool numericOnly = false;
+        bool numericOnly = false, renderFeatures = false;
         int threads = 4;
         Check(argc % 2 == 1, "expected --model/--original/--output path pairs");
         for (int i = 1; i + 1 < argc; i += 2) {
@@ -217,10 +226,13 @@ int wmain(int argc, wchar_t** argv) {
                 threads = _wtoi(argv[i + 1]);
             else if (option == L"--numeric-only")
                 numericOnly = std::wstring(argv[i + 1]) == L"1";
-            else
+            else if (option == L"--features") {
+                Check(std::wstring(argv[i + 1]) == L"1", "features 1");
+                renderFeatures = true;
+            } else
                 throw std::runtime_error("unknown render test option");
         }
-        result = Run(model, original, output, numericOnly, threads);
+        result = Run(model, original, output, numericOnly, threads, renderFeatures);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "scene render: %s\n", error.what());
     }

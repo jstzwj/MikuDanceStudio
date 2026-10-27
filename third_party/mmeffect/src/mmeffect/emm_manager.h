@@ -144,27 +144,9 @@
 // Divergences (documented):
 //   - boost::regex -> std::regex (ECMAScript grammar, the boost default);
 //     lexical_cast -> the strict scanner below.
-//   - The save side emits only the default [Effect] section (no
-//     [Effect@base(n)] owner sections): the port's engine keeps subset
-//     bindings per object without an owner-effect registry, so neither the
-//     owner-name counters nor the "%x"-keyed display-name table can be
-//     synthesized. Owner sections are fully read and applied; after a
-//     load/save round trip their rows reappear as [n] rows of the default
-//     section (same assignments, simplified structure). For the port's
-//     reachable state (no owner-scoped assignments exist) the flattened
-//     output is byte-identical to the original's: the original's a3 vector
-//     holds exactly ONE record (the default section) when no assignment
-//     node carries an owner set.
-//   - The whole ".show" row is synthesized from the live object state
-//     (always present for a registered object); the original writes it
-//     only when the working-map node recorded a whole-show flag (key -1).
-//     The "[n].show" rows round-trip through the manager-side registry
-//     (see MmeEmmSetSubsetShown); the RUNTIME hide effect for a hidden
-//     subset still needs the draw gate hookup in callbacks.cpp (see
-//     MmeEmmEffectiveSubsetShown) - the original drops the subset's draws
-//     at binding time (sub_18002CA80 @0x18002ce6e inserts a NULL
-//     LoadedEffect node), the port's draw path does not gate per subset
-//     yet.
+//   - Base assignments and named owner sections retain separate scopes. The
+//     writer enumerates assignment-local 0x2E resources; explicit visibility
+//     presence is retained independently of its true/false value.
 //   - The port's PMM-save hook placement: the original fires the same
 //     FUN_180057290 body from the OnCreateModel/OnDeleteModel/OnBeginScene
 //     export callbacks (xrefs @0x180057456/0x1800574b7/0x180057513, each
@@ -343,6 +325,9 @@ public:
     void SetDefaultEffect(const std::string& path) { defaultPath_ = path; }
     void SetDefaultEntries(const std::vector<EmmEffectEntry>& entries) {
         defaultEntries_ = entries;
+    }
+    void SetOwnerSections(const std::vector<EmmEffectSection>& sections) {
+        effectSections_ = sections;
     }
 
 private:

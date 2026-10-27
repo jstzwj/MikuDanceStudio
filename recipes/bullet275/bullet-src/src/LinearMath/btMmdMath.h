@@ -12,6 +12,9 @@ float dot3(const float* left, const float* right);
 float squaredDistance3(const float* left, const float* right);
 void cross3(float* out, const float* left, const float* right);
 float edgeComponent(float p, float n, float a);
+float pmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
+                       float materialSize);
+float edgeDistanceScale(float distance, float fov, float modelScale);
 float blendTransformComponent(const float* input, const float* matrix0,
                               const float* matrix1, int component, float weight0,
                               bool position);

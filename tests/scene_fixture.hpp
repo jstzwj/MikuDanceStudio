@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <float.h>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -44,8 +45,10 @@ LRESULT CALLBACK CloseUnexpectedDialog(int code, WPARAM window, LPARAM data) {
     return CallNextHookEx(nullptr, code, window, data);
 }
 void Check(bool value, const char* message) {
-    if (!value)
+    if (!value) {
+        std::fprintf(stderr, "FAIL: %s\n", message);
         throw std::runtime_error(message);
+    }
 }
 void Near(float actual, float expected, const char* message) {
     if (!std::isfinite(actual) || !std::isfinite(expected) ||
@@ -152,7 +155,8 @@ void WriteModel(const std::filesystem::path& path) {
 
 // Independent PMX 2.0 fixture: a bent two-link leg, an IK controller,
 // fixed/local axes, append rotation/translation, and a group morph.
-void WriteComplexModel(const std::filesystem::path& path, bool withPhysics = false) {
+void WriteComplexModel(const std::filesystem::path& path, bool withPhysics = false,
+                       bool renderFeatures = false) {
     Bytes b;
     const auto text = [&](const wchar_t* value) {
         b.U(static_cast<unsigned>(wcslen(value) * 2));
@@ -167,24 +171,39 @@ void WriteComplexModel(const std::filesystem::path& path, bool withPhysics = fal
     b.Text("PMX ", 4);
     b.F(2);
     b.U(8, 1);
-    for (int value : {0, 0, 1, 1, 1, 1, 1, 1})
-        b.U(value, 1); // UTF-16, no extra UV, one-byte indices
+    for (int value : {0, renderFeatures ? 1 : 0, 1, 1, 1, 1, 1, 1})
+        b.U(value, 1); // UTF-16, optional extra UV, one-byte indices
     text(L"complex");
     text(L"complex");
     text(L"generated IK cross-load fixture");
     text(L"");
     b.U(3);
     for (int i = 0; i < 3; ++i) {
-        vector(float(i), 2, 0);
-        vector(0, 1, 0);
+        if (renderFeatures)
+            vector(i == 1 ? 4.0f : 0.0f, i == 2 ? 12.0f : 8.0f, 0);
+        else
+            vector(float(i), 2, 0);
+        vector(0, renderFeatures ? 0.0f : 1.0f, renderFeatures ? -1.0f : 0.0f);
         b.F(0);
         b.F(0);
-        b.U(0, 1); // BDEF1
-        b.U(2, 1); // knee
+        if (renderFeatures) {
+            vector(.25f * i, .5f, .75f);
+            b.F(1);    // additional UV1
+            b.U(3, 1); // SDEF, two bones and weight
+            b.U(1, 1);
+            b.U(2, 1);
+            b.F(.6f);
+            vector(0, 2, 0);
+            vector(0, 1, 0);
+            vector(0, 3, 0);
+        } else {
+            b.U(0, 1); // BDEF1
+            b.U(2, 1); // knee
+        }
         b.F(1);
     }
     b.U(3);
-    for (int index : {0, 1, 2})
+    for (int index : {0, renderFeatures ? 2 : 1, renderFeatures ? 1 : 2})
         b.U(index, 1);
     b.U(0); // textures
     b.U(1); // materials
@@ -242,13 +261,13 @@ void WriteComplexModel(const std::filesystem::path& path, bool withPhysics = fal
             b.U(0, 1);
         }
     }
-    b.U(3); // vertex, bone and group morphs
-    for (int i = 0; i < 3; ++i) {
+    b.U(renderFeatures ? 4 : 3); // vertex, bone, group and optional extra UV morph
+    for (int i = 0; i < (renderFeatures ? 4 : 3); ++i) {
         const wchar_t* name = i == 0 ? L"vertex" : (i == 1 ? L"bone" : L"group");
         text(name);
         text(name);
         b.U(4, 1);
-        b.U(i == 0 ? 1 : (i == 1 ? 2 : 0), 1);
+        b.U(i == 3 ? 4 : i == 0 ? 1 : (i == 1 ? 2 : 0), 1);
         b.U(i == 2 ? 2 : 1);
         if (i == 0) {
             b.U(1, 1);
@@ -258,11 +277,15 @@ void WriteComplexModel(const std::filesystem::path& path, bool withPhysics = fal
             vector(.5f, .25f, -.125f);
             vector(0, .2f, 0);
             b.F(std::sqrt(.96f));
-        } else {
+        } else if (i == 2) {
             b.U(0, 1);
             b.F(.75f);
             b.U(1, 1);
             b.F(.5f);
+        } else {
+            b.U(1, 1);
+            vector(.125f, -.25f, .5f);
+            b.F(.75f);
         }
     }
     b.U(2); // display groups
@@ -522,6 +545,13 @@ struct Fixture {
                     return;
                 device = new SceneMemoryDevice();
                 std::puts("physics fixture uses CPU buffers; textures/rendering are not tested");
+#if defined(_M_IX86)
+                // A real D3D9 device without FPU_PRESERVE selects 24-bit
+                // x87 precision. Keep CPU fallback at that same boundary,
+                // even if device availability changes between two reloads.
+                unsigned control;
+                _controlfp_s(&control, _PC_24, _MCW_PC);
+#endif
             } else {
                 std::puts("scene state fixture uses a D3D9 reference device");
             }

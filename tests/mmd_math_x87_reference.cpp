@@ -154,4 +154,42 @@ void integrateRotation(const float* w, float dt,
 	*pdw = qdw;
 }
 
+// Frozen outline instruction oracles. MMD x86 VA 4AA95E..4AA99C and
+// 4B1FEE..4B2020; these instructions must remain independent of btMmdMath.
+__declspec(noinline) float pmxEdgeComponent(float position, float normal, float frameScale,
+                                            float vertexScale, float materialSize) {
+    float result;
+    __asm {
+        fld normal
+        fmul frameScale
+        fmul vertexScale
+        fmul materialSize
+        fadd position
+        fstp result
+    }
+    return result;
+}
+
+__declspec(noinline) float edgeDistanceScale(float distance, float fov, float modelScale) {
+    // Original doubles at VA 5311D0 / 5311C8, read directly from the binary.
+    // The former decimal distance literal rounded one double ULP too high.
+    const double distanceScale = 0x1.797cc40000000p-15;
+    const double fovScale = 0x1.3333340000000p-1;
+    float scale;
+    __asm {
+        fld distance
+        fmul distanceScale
+        fld fov
+        fmul fovScale
+        fld1
+        faddp st(1), st
+        fmulp st(1), st
+        fstp scale
+        fld scale
+        fmul modelScale
+        fstp scale
+    }
+    return scale;
+}
+
 } // namespace mmd_math_x87_reference

@@ -87,6 +87,35 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
             throw std::runtime_error("MME shader bytecode");
         return Hash(code.data(), code.size());
     }
+    static std::array<bool, 16> PixelSamplers(IDirect3DPixelShader9* shader) {
+        std::array<bool, 16> used{};
+        if (!shader)
+            return used;
+        UINT bytes = 0;
+        if (FAILED(shader->GetFunction(nullptr, &bytes)))
+            throw std::runtime_error("MME sampler shader size");
+        std::vector<DWORD> code(bytes / sizeof(DWORD));
+        if (FAILED(shader->GetFunction(code.data(), &bytes)))
+            throw std::runtime_error("MME sampler shader tokens");
+        for (std::size_t i = 1; i < code.size();) {
+            const DWORD opcode = code[i] & 0xFFFF;
+            if (opcode == 0xFFFF)
+                break;
+            const auto length = opcode == 0xFFFE ? (code[i] >> 16 & 0x7FFF) : (code[i] >> 24 & 15);
+            if (i + length >= code.size())
+                throw std::runtime_error("MME sampler instruction length");
+            if (opcode != 0xFFFE)
+                for (std::size_t j = 1; j <= length; ++j) {
+                    const DWORD token = code[i + j];
+                    const DWORD type = (token >> 28 & 7) | (token >> 8 & 0x18);
+                    const DWORD index = token & 0x7FF;
+                    if ((token & 0x80000000) && type == D3DSPR_SAMPLER && index < used.size())
+                        used[index] = true;
+                }
+            i += length + 1;
+        }
+        return used;
+    }
     template <class T> void ShaderConstants(std::ostream& out, T* shader, bool pixel) {
         out << '{';
         if (!shader) {
@@ -235,12 +264,45 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
         ShaderConstants(out, vs.p, false);
         out << ",\"ps_constants\":";
         ShaderConstants(out, ps.p, true);
+        auto samplers = PixelSamplers(ps.p);
+        if (!ps.p) {
+            for (DWORD stage = 0; stage < 8; ++stage) {
+                DWORD colorOp = D3DTOP_DISABLE;
+                real->GetTextureStageState(stage, D3DTSS_COLOROP, &colorOp);
+                if (colorOp == D3DTOP_DISABLE)
+                    break;
+                for (bool alpha : {false, true}) {
+                    DWORD op = colorOp;
+                    if (alpha)
+                        real->GetTextureStageState(stage, D3DTSS_ALPHAOP, &op);
+                    if (op == D3DTOP_DISABLE)
+                        continue;
+                    for (int arg = 0; arg < 3; ++arg) {
+                        if ((arg == 0 && op != D3DTOP_MULTIPLYADD && op != D3DTOP_LERP) ||
+                            (arg == 1 && op == D3DTOP_SELECTARG2) ||
+                            (arg == 2 && op == D3DTOP_SELECTARG1))
+                            continue;
+                        constexpr D3DTEXTURESTAGESTATETYPE colors[] = {
+                            D3DTSS_COLORARG0, D3DTSS_COLORARG1, D3DTSS_COLORARG2};
+                        constexpr D3DTEXTURESTAGESTATETYPE alphas[] = {
+                            D3DTSS_ALPHAARG0, D3DTSS_ALPHAARG1, D3DTSS_ALPHAARG2};
+                        DWORD value = 0;
+                        real->GetTextureStageState(stage, alpha ? alphas[arg] : colors[arg],
+                                                   &value);
+                        if ((value & D3DTA_SELECTMASK) == D3DTA_TEXTURE)
+                            samplers[stage] = true;
+                    }
+                }
+            }
+        }
         out << ",\"textures\":[";
         for (DWORD i = 0; i < 16; ++i) {
             if (i)
                 out << ',';
             Owned<IDirect3DBaseTexture9> texture;
-            if (SUCCEEDED(real->GetTexture(i, &texture.p)) && texture.p &&
+            // A shader can leave unrelated fixed-function textures bound.
+            // Match only sampled inputs, as with shader-read constants above.
+            if (samplers[i] && SUCCEEDED(real->GetTexture(i, &texture.p)) && texture.p &&
                 texture.p->GetType() == D3DRTYPE_TEXTURE) {
                 D3DSURFACE_DESC desc{};
                 static_cast<IDirect3DTexture9*>(texture.p)->GetLevelDesc(0, &desc);

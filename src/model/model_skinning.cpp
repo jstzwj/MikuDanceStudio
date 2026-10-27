@@ -147,19 +147,7 @@ float EdgeComponent(float position, float normal, float amount) {
 float PmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
                        float materialSize) {
 #if defined(_M_IX86)
-    // Original x86 VA 4AA95E..4AA99C: three multiplies and one add, with
-    // no intermediate float stores. Preserve each worker's x87 precision;
-    // forcing all workers to the main thread's 24-bit mode changes native results.
-    float result;
-    __asm {
-        fld normal
-        fmul frameScale
-        fmul vertexScale
-        fmul materialSize
-        fadd position
-        fstp result
-    }
-    return result;
+    return btMmdMath::pmxEdgeComponent(position, normal, frameScale, vertexScale, materialSize);
 #else
     float amount = frameScale * normal;
     amount *= vertexScale;
@@ -533,8 +521,12 @@ float PmdEdgeDistance(MMDApp* app, const mdl::ModelRecord* model, const float fr
     const float dy = worldPoint[1] - camera[1];
     const float dz = worldPoint[2] - camera[2];
     const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+#if defined(_M_IX86)
+    return btMmdMath::edgeDistanceScale(distance, app->CameraFov(), record.edgeScale);
+#else
     return distance * 0.00004500000068219379f * (app->CameraFov() * 0.6000000238418579f + 1.0f) *
            record.edgeScale;
+#endif
 }
 
 void SkinPmd(const mdl::ModelRecord* model, float edgeDistance, mdl::EdgeVertex* edgeVertices,

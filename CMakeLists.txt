@@ -482,6 +482,8 @@ if(BUILD_TESTING)
     endif()
     set(MDS_ORIGINAL_MMD_EXE "" CACHE FILEPATH "Optional original MMD executable for native rendering comparisons")
     set(MDS_ORIGINAL_MME_DIR "" CACHE PATH "Optional directory containing original MMHack.dll and MMEffect.dll")
+    set(MDS_NATIVE_PMX_FILE "" CACHE FILEPATH "Optional local PMX for the full native rendering chain")
+    set(MDS_NATIVE_RAY_DIR "" CACHE PATH "Optional local ray-mmd repository for native effect comparisons")
     if(MDS_ORIGINAL_MMD_EXE AND MDS_ORIGINAL_MME_DIR)
         set(native_scene_launcher)
         if(CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -494,6 +496,36 @@ if(BUILD_TESTING)
                 --mme ${MDS_ORIGINAL_MME_DIR}/MMEffect.dll
                 --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene)
         set_tests_properties(native_scene_render PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+        set_tests_properties(native_scene_render PROPERTIES FIXTURES_SETUP native_scene_emm)
+        function(add_native_scene_case name)
+            add_test(NAME native_scene_${name}
+                COMMAND ${native_scene_launcher} $<TARGET_FILE:native_scene_render_test>
+                    --original ${MDS_ORIGINAL_MMD_EXE}
+                    --mmhack ${MDS_ORIGINAL_MME_DIR}/MMHack.dll
+                    --mme ${MDS_ORIGINAL_MME_DIR}/MMEffect.dll
+                    --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene-${name} ${ARGN})
+            set_tests_properties(native_scene_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800 RUN_SERIAL TRUE)
+        endfunction()
+        add_native_scene_case(features --features 1)
+        add_test(NAME native_scene_numeric
+            COMMAND ${native_scene_launcher} $<TARGET_FILE:scene_render_gpu_test>
+                --original ${MDS_ORIGINAL_MMD_EXE} --numeric-only 1 --features 1
+                --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene-numeric)
+        set_tests_properties(native_scene_numeric PROPERTIES TIMEOUT 120)
+        add_native_scene_case(cross --cross-load ${CMAKE_CURRENT_BINARY_DIR}/native-scene/port_assigned.emm)
+        set_tests_properties(native_scene_cross PROPERTIES FIXTURES_REQUIRED native_scene_emm)
+        if(MDS_NATIVE_PMX_FILE)
+            add_native_scene_case(pmx --model ${MDS_NATIVE_PMX_FILE})
+            if(MDS_NATIVE_RAY_DIR)
+                add_native_scene_case(material --model ${MDS_NATIVE_PMX_FILE}
+                    --model-effect ${MDS_NATIVE_RAY_DIR}/Main/main.fx)
+                add_native_scene_case(outline --model ${MDS_NATIVE_PMX_FILE}
+                    --model-effect "${MDS_NATIVE_RAY_DIR}/Outline/Fixed Color/outline.fx")
+                add_native_scene_case(post --model ${MDS_NATIVE_PMX_FILE}
+                    --model-effect ${MDS_NATIVE_RAY_DIR}/Main/main.fx
+                    --scene-effect ${MDS_NATIVE_RAY_DIR}/ray.fx)
+            endif()
+        endif()
     endif()
     add_executable(model_render_test tests/model_render_test.cpp)
     target_link_libraries(model_render_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -745,6 +777,10 @@ if(BUILD_TESTING)
     target_include_directories(mme_effect_mapping_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_effect_mapping_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME mme_effect_mapping COMMAND mme_effect_mapping_test)
+    add_executable(mme_emm_save_test tests/mme_emm_save_test.cpp)
+    target_include_directories(mme_emm_save_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_emm_save_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_emm_save COMMAND mme_emm_save_test)
     add_executable(background_hotkeys_test tests/background_hotkeys_test.cpp)
     target_link_libraries(background_hotkeys_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME background_hotkeys COMMAND background_hotkeys_test)

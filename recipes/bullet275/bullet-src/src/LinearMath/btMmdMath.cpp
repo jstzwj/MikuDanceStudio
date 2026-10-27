@@ -74,6 +74,23 @@ void cross3(float* out, const float* left, const float* right) {
 float edgeComponent(float position, float normal, float amount) {
     return static_cast<float>(double(normal) * amount + position);
 }
+float pmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
+                       float materialSize) {
+    // MMD x86 VA 4AA95E..4AA99C: keep all three products and the sum on
+    // x87 until the final float store, using the calling worker's precision.
+    return static_cast<float>(((double(normal) * frameScale) * vertexScale) * materialSize +
+                              position);
+}
+float edgeDistanceScale(float distance, float fov, float modelScale) {
+    // MMD x86 VA 4B1FEE..4B2020: the constants are float values promoted
+    // to double. Store the distance/FOV product to float BEFORE applying
+    // the model scale; omitting this store changes the original rounding.
+    const double distanceScale = double(0.00004500000068219379f);
+    const double fovScale = double(0.6000000238418579f);
+    volatile float scale = static_cast<float>((double(distance) * distanceScale) *
+                                              (double(fov) * fovScale + 1.0));
+    return scale * modelScale;
+}
 float blendTransformComponent(const float* input, const float* matrix0,
                               const float* matrix1, int component, float weight0,
                               bool position) {

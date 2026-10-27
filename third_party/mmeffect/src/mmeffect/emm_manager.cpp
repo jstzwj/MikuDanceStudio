@@ -21,6 +21,7 @@
 #include "mme_log.h"
 #include "mme_util.h"
 #include "model_data.h"
+#include "sas_exec.h"
 
 #include "../include/MMDExport.h"  // ExpGetPmd*/ExpGetAcs* host enumeration
 
@@ -598,6 +599,176 @@ std::map<unsigned long long, std::map<int, bool>>& SubsetShowRegistry()
     return registry;
 }
 
+struct EmmSaveObject
+{
+    int slot;
+    EmmObjectRecord record;
+    EmmEffectEntry entry;
+    ModelData *model;
+};
+
+void ApplyOwnerSections(const std::vector<EmmEffectSection> &sections,
+                        const std::map<std::string, ModelData *> &byKey)
+{
+    struct OwnerTarget
+    {
+        ModelData *model;
+        SasResource *resource;
+        unsigned turn;
+    };
+    std::map<std::string, OwnerTarget> owners;
+    std::set<const EmmEffectSection *> applied;
+    bool progressed;
+    do
+    {
+        progressed = false;
+        for (const auto &section : sections)
+        {
+            if (section.isDefault())
+                continue;
+            if (applied.count(&section))
+                continue;
+            const auto owner = byKey.find(section.ownerKey);
+            if (owner == byKey.end() || !owner->second)
+                continue;
+            MaterialBinding *binding = nullptr;
+            if (section.ownerMaterialName.empty())
+            {
+                binding = MmeFindMaterialBinding(0, owner->second, section.ownerSubsetIndex, true);
+            }
+            else
+            {
+                const auto parent = owners.find(section.ownerMaterialName);
+                if (parent == owners.end())
+                    continue;
+                binding = MmeResolveTurnEffectBinding(parent->second.turn, *parent->second.resource,
+                                                      parent->second.model, owner->second,
+                                                      section.ownerSubsetIndex);
+            }
+            if (!binding || !binding->sas)
+                continue;
+            for (auto &resource : binding->sas->resources)
+            {
+                if (resource.semanticId != 0x2E || resource.name != section.baseName)
+                    continue;
+                unsigned &turn = binding->offscreenTurns[resource.name];
+                if (!turn)
+                    turn = ++g_ownerManager->nextTurnId;
+                g_ownerManager->turnOwners[turn] = owner->second;
+                owners[section.name.substr(7)] = {owner->second, &resource, turn};
+                applied.insert(&section);
+                progressed = true;
+                for (const auto &entry : section.entries)
+                {
+                    const auto object = byKey.find(entry.key);
+                    if (object == byKey.end() || !object->second)
+                        continue;
+                    const auto id = object->second->objectId();
+                    if (!entry.effectPath.empty())
+                        resource.effectOverrides[{id, -1}] = entry.effectPath;
+                    if (entry.hasShow)
+                        resource.shownOverrides[{id, -1}] = entry.shown;
+                    for (const auto &row : entry.subsetPaths)
+                        if (row.first >= 0 && row.first < object->second->materialCount())
+                            resource.effectOverrides[{id, row.first}] = row.second;
+                    for (const auto &row : entry.subsetShows)
+                        if (row.first >= 0 && row.first < object->second->materialCount())
+                            resource.shownOverrides[{id, row.first}] = row.second;
+                }
+            }
+        }
+    } while (progressed);
+}
+
+std::vector<EmmEffectSection> CollectOwnerSections(const std::vector<EmmSaveObject> &rows)
+{
+    // RVA 30590 walks assignment-owned offscreen resources recursively;
+    // their paths and visibility are scoped to the declaring assignment.
+    std::vector<EmmEffectSection> ownerSections;
+    std::map<std::string, unsigned> nameCounts;
+    if (!g_ownerManager)
+        return ownerSections;
+    std::vector<const EmmSaveObject *> displayRows;
+    for (const auto &row : rows)
+        if (row.model)
+            displayRows.push_back(&row);
+    std::stable_sort(displayRows.begin(), displayRows.end(), [](const EmmSaveObject *a, const EmmSaveObject *b) {
+        return a->model->passPlanScratch().renderOrder < b->model->passPlanScratch().renderOrder;
+    });
+    // Section suffixes follow the native depth-first owner walk, rather
+    // than pointer order in the binding lookup table (RVA 30590 tail).
+    std::set<unsigned> visitedTurns;
+    const auto collect = [&](const auto &self, unsigned turnId, const std::string &parent) -> void {
+        if (!visitedTurns.insert(turnId).second)
+            return;
+        for (const auto *owner : displayRows)
+        {
+            for (int subset = -1; subset < owner->model->materialCount(); ++subset)
+            {
+                const auto assignment = g_ownerManager->bindings.find({turnId, owner->model, subset});
+                if (assignment == g_ownerManager->bindings.end())
+                    continue;
+                auto *binding = assignment->second;
+                if (!binding || !binding->sas)
+                    continue;
+                std::map<std::string, SasResource *> resources;
+                for (auto &resource : binding->sas->resources)
+                    if (resource.semanticId == 0x2E)
+                        resources[resource.name] = &resource;
+                for (const auto &named : resources)
+                {
+                    auto &resource = *named.second;
+                    EmmEffectSection section;
+                    section.baseName = resource.name;
+                    const auto count = nameCounts[resource.name]++;
+                    const auto label = resource.name + (count ? "(" + std::to_string(count) + ")" : "");
+                    section.name = "Effect@" + label;
+                    section.ownerKey = owner->entry.key;
+                    section.ownerSubsetIndex = subset;
+                    section.ownerMaterialName = parent;
+                    const auto turn = binding->offscreenTurns.find(resource.name);
+                    for (const auto &row : rows)
+                    {
+                        if (!row.model)
+                            continue;
+                        EmmEffectEntry entry;
+                        entry.key = row.entry.key;
+                        const auto id = row.model->objectId();
+                        const auto *value = MmeOffscreenEffectValue(resource, row.model, owner->model);
+                        const auto *declared =
+                            MmeFindDefaultEffectRow(resource.defaultEffectMap, row.model, owner->model);
+                        const auto shown = resource.shownOverrides.find({id, -1});
+                        entry.hasShow =
+                            shown != resource.shownOverrides.end() || (declared && declared->second == "hide");
+                        entry.shown = MmeOffscreenObjectShown(resource, row.model, owner->model);
+                        if (row.model->renderClass() == 0)
+                        {
+                            entry.effectPath = !value || *value == "none" || *value == "hide" ? kNone
+                                               : *value == "main_default"                     ? row.entry.effectPath
+                                                                                              : AbsPathCopy(*value);
+                            for (int n = 0; n < row.model->materialCount(); ++n)
+                            {
+                                const auto path = resource.effectOverrides.find({id, n});
+                                if (path != resource.effectOverrides.end())
+                                    entry.subsetPaths[n] = path->second;
+                                const auto show = resource.shownOverrides.find({id, n});
+                                if (show != resource.shownOverrides.end())
+                                    entry.subsetShows[n] = show->second;
+                            }
+                        }
+                        section.entries.push_back(std::move(entry));
+                    }
+                    ownerSections.push_back(std::move(section));
+                    if (turn != binding->offscreenTurns.end() && turn->second)
+                        self(self, turn->second, label);
+                }
+            }
+        }
+    };
+    collect(collect, 0, std::string());
+    return ownerSections;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -759,46 +930,70 @@ bool EmmFile::Save(const char* path) const
     }
     fprintf(file, "\n");
 
+    auto writeEntries = [&](const std::vector<EmmEffectEntry> &entries) {
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            const EmmEffectEntry &entry = entries[i];
+            if (!entry.effectPath.empty())
+            {
+                fprintf(file, "%s = %s\n", entry.key.c_str(), entry.effectPath.c_str());
+            }
+            if (entry.hasShow)
+            {
+                fprintf(file, "%s.show = %s\n", entry.key.c_str(), entry.shown ? "true" : "false");
+            }
+            if (!entry.subsetPaths.empty() || !entry.subsetShows.empty())
+            {
+                int maxIndex = -1;
+                for (std::map<int, std::string>::const_iterator it = entry.subsetPaths.begin();
+                     it != entry.subsetPaths.end(); ++it)
+                {
+                    if (it->first > maxIndex)
+                    {
+                        maxIndex = it->first;
+                    }
+                }
+                for (std::map<int, bool>::const_iterator it = entry.subsetShows.begin();
+                     it != entry.subsetShows.end(); ++it)
+                {
+                    if (it->first > maxIndex)
+                    {
+                        maxIndex = it->first;
+                    }
+                }
+                for (int n = 0; n <= maxIndex; ++n)
+                {
+                    std::map<int, std::string>::const_iterator pit = entry.subsetPaths.find(n);
+                    if (pit != entry.subsetPaths.end())
+                    {
+                        fprintf(file, "%s[%d] = %s\n", entry.key.c_str(), n, pit->second.c_str());
+                    }
+                    std::map<int, bool>::const_iterator sit = entry.subsetShows.find(n);
+                    if (sit != entry.subsetShows.end())
+                    {
+                        fprintf(file, "%s[%d].show = %s\n", entry.key.c_str(), n,
+                                sit->second ? "true" : "false");
+                    }
+                }
+            }
+        }
+        fprintf(file, "\n");
+    };
     fprintf(file, "[Effect]\n");
     fprintf(file, "Default = %s\n", defaultPath_.c_str());
-    for (size_t i = 0; i < defaultEntries_.size(); ++i) {
-        const EmmEffectEntry& entry = defaultEntries_[i];
-        if (!entry.effectPath.empty()) {
-            fprintf(file, "%s = %s\n", entry.key.c_str(), entry.effectPath.c_str());
-        }
-        if (entry.hasShow) {
-            fprintf(file, "%s.show = %s\n", entry.key.c_str(),
-                    entry.shown ? "true" : "false");
-        }
-        if (!entry.subsetPaths.empty() || !entry.subsetShows.empty()) {
-            int maxIndex = -1;
-            for (std::map<int, std::string>::const_iterator it = entry.subsetPaths.begin();
-                 it != entry.subsetPaths.end(); ++it) {
-                if (it->first > maxIndex) {
-                    maxIndex = it->first;
-                }
-            }
-            for (std::map<int, bool>::const_iterator it = entry.subsetShows.begin();
-                 it != entry.subsetShows.end(); ++it) {
-                if (it->first > maxIndex) {
-                    maxIndex = it->first;
-                }
-            }
-            for (int n = 0; n <= maxIndex; ++n) {
-                std::map<int, std::string>::const_iterator pit = entry.subsetPaths.find(n);
-                if (pit != entry.subsetPaths.end()) {
-                    fprintf(file, "%s[%d] = %s\n", entry.key.c_str(), n,
-                            pit->second.c_str());
-                }
-                std::map<int, bool>::const_iterator sit = entry.subsetShows.find(n);
-                if (sit != entry.subsetShows.end()) {
-                    fprintf(file, "%s[%d].show = %s\n", entry.key.c_str(), n,
-                            sit->second ? "true" : "false");
-                }
-            }
-        }
+    writeEntries(defaultEntries_);
+    for (const auto &section : effectSections_)
+    {
+        if (section.isDefault())
+            continue;
+        fprintf(file, "[%s]\nOwner = %s", section.name.c_str(), section.ownerKey.c_str());
+        if (section.ownerSubsetIndex >= 0)
+            fprintf(file, "[%d]", section.ownerSubsetIndex);
+        if (!section.ownerMaterialName.empty())
+            fprintf(file, "@%s", section.ownerMaterialName.c_str());
+        fprintf(file, "\n");
+        writeEntries(section.entries);
     }
-    fprintf(file, "\n");
     fclose(file);
     return true;
 }
@@ -1068,7 +1263,7 @@ bool MmeEmmLoad(const char* path)
         }
         model->clearSubsetEffects();
         MmeEmmClearSubsetShows(model);
-        model->setShown(true);
+        model->resetShown();
         ApplyEffectToModel(model, std::string());
     }
 
@@ -1104,6 +1299,16 @@ bool MmeEmmLoad(const char* path)
         obj.path = file != nullptr ? file : "";
         live.push_back(obj);
     }
+
+    // Original 2E8D0 builds its live walk through a map keyed by +0xEC,
+    // the cached absolute render order. Slot enumeration gives the wrong
+    // duplicate-file match after objects are reordered in the host.
+    std::stable_sort(live.begin(), live.end(),
+                     [](const LiveObject& a, const LiveObject& b) {
+                         const int first = a.model ? a.model->passPlanScratch().renderOrder : 0;
+                         const int second = b.model ? b.model->passPlanScratch().renderOrder : 0;
+                         return first < second;
+                     });
 
     // [Object] records in the writer's slot-sorted order (FUN_18004C150).
     std::vector<EmmObjectRecord> records = emm.objectRecords();
@@ -1172,13 +1377,15 @@ bool MmeEmmLoad(const char* path)
         MmeLogWrite((std::string(path) + "\n" + kErrFailedMapping + list).c_str(), 1);
     }
 
-    // --- apply every section's rows (file order), then the missing-file
-    // report (the requests carry their own paths; the Owner line assigns
-    // nothing).
+    // Apply base assignments first, then resolve owner-scoped rows against
+    // their declaring offscreen resources. An Owner line alone assigns no path.
     std::vector<std::string> assignedPaths;
     const std::vector<EmmEffectSection>& sections = emm.effectSections();
     for (size_t s = 0; s < sections.size(); ++s) {
         const EmmEffectSection& section = sections[s];
+        // Named rows belong to an offscreen resource, never to the base
+        // scene's (turn 0, object, subset) assignments (RVA 2E8D0).
+        if (!section.isDefault()) continue;
         for (size_t e = 0; e < section.entries.size(); ++e) {
             const EmmEffectEntry& entry = section.entries[e];
             std::map<std::string, ModelData*>::const_iterator it = byKey.find(entry.key);
@@ -1221,6 +1428,8 @@ bool MmeEmmLoad(const char* path)
         }
     }
 
+    ApplyOwnerSections(sections, byKey);
+
     // [0x1800B4DA0] MessageBoxA(0x30): distinct assigned paths that do not
     // exist, sorted and deduplicated like FUN_18003D0C0/FUN_18003D250.
     {
@@ -1250,20 +1459,14 @@ bool MmeEmmSave(const char* path)
     // [FUN_1800315F0] serialize the live state: every host object in the
     // enumeration, absolute paths, "none" sentinels; rows ordered by the
     // slot sort (FUN_18004C150 compares the slot int only).
-    struct SaveRow {
-        int slot;
-        EmmObjectRecord record;
-        EmmEffectEntry entry;
-        ModelData* model;
-    };
-    std::vector<SaveRow> rows;
+    std::vector<EmmSaveObject> rows;
     MmeContext* ctx = g_context;
     if (ctx != nullptr) {
         for (int pass = 0; pass < 2; ++pass) {
             const bool isModel = (pass == 0);
             const int num = isModel ? ExpGetPmdNum() : ExpGetAcsNum();
             for (int i = 0; i < num; ++i) {
-                SaveRow row;
+                EmmSaveObject row;
                 row.slot = i;
                 row.record.isModel = isModel;
                 row.record.slot = i;
@@ -1282,12 +1485,12 @@ bool MmeEmmSave(const char* path)
                         // effectPath keeps EmmFile::Save from emitting the
                         // row, exactly like the original's empty entry path).
                         row.entry.effectPath.clear();
-                        row.entry.hasShow = true;
+                        row.entry.hasShow = row.model->shownRecorded();
                         row.entry.shown = row.model->shown();
                     } else {
                         row.entry.effectPath =
                             effect.empty() ? kNone : AbsPathCopy(effect);
-                        row.entry.hasShow = true;
+                        row.entry.hasShow = row.model->shownRecorded();
                         row.entry.shown = row.model->shown();
                         for (std::map<int, std::string>::const_iterator it =
                                  row.model->subsetEffects().begin();
@@ -1316,7 +1519,7 @@ bool MmeEmmSave(const char* path)
         }
     }
     std::stable_sort(rows.begin(), rows.end(),
-                     [](const SaveRow& a, const SaveRow& b) { return a.slot < b.slot; });
+                     [](const EmmSaveObject& a, const EmmSaveObject& b) { return a.slot < b.slot; });
 
     EmmFile emm;
     std::vector<EmmObjectRecord> objects;
@@ -1332,6 +1535,7 @@ bool MmeEmmSave(const char* path)
     const std::string& def = DefaultEffectRef();
     emm.SetDefaultEffect(def.empty() ? kNone : AbsPathCopy(def));
     emm.SetDefaultEntries(entries);
+    emm.SetOwnerSections(CollectOwnerSections(rows));
     return emm.Save(path);
 }
 
@@ -1376,6 +1580,7 @@ bool MmeEmdLoad(const char* path, const std::vector<ModelData*>& targets)
         // [FUN_180031980] the replace-first walk also erases the object's
         // show records (hasShow nodes) before the EMD rows are written back.
         MmeEmmClearSubsetShows(model);
+        model->resetShown();
 
         if (!entry.effectPath.empty()) {
             // "none"/"hide"/"main_default" resolve to the empty path.

@@ -80,7 +80,7 @@ public:
         *state = source.state;
         for (auto& slot : state->modelSlots)
             slot = nullptr;
-        state->modelSlots[0] = model.model.get();
+        state->modelSlots[0] = source.ModelSlot(0) ? model.model.get() : nullptr;
         state->renderer = model.renderer.get();
         static_assert(offsetof(MMDAppState, reservedLightDirection) ==
                           (sizeof(void*) == 8 ? 0x9F040 : 0x9E174),
@@ -190,6 +190,9 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
     RenderTarget target(f.device, dimension);
     r.backbufferSurface = target.color.p;
     r.depthStencilSurface = target.depth.p;
+    // Prepare the frame counter before copying/binding the original host.
+    // In x86 it lives in the copied state; setting it afterwards skips Frame.
+    app.state.renderPassCount = 1;
     std::unique_ptr<OriginalRenderApp> originalState;
     if (original && bind) {
         originalState = std::make_unique<OriginalRenderApp>(app, *original);
@@ -212,7 +215,6 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
     Hr(f.device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW), "cull");
     Hr(f.device->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, kBackground, 1, 0),
        "clear frame");
-    app.state.renderPassCount = 1;
     Hr(mikudancestudio::mme::BeginScene(&app, f.device), "effect begin scene");
     // Each sample owns a fresh render target. Register its clear after MME has
     // identified it at BeginScene, rather than inheriting a previous target.
@@ -225,7 +227,18 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
             originalState = std::make_unique<OriginalRenderApp>(app, *original);
         originalState->Shadow(*original, camera, world);
         image.light = originalState->LightMatrix();
-        originalState->Frame(*original, world);
+        // The native entry draws one turn; the original frame driver owns
+        // the repeat loop and decrements the host counter before each call.
+        auto* repeat =
+            reinterpret_cast<int*>(reinterpret_cast<unsigned char*>(originalState->State()) +
+                                   (sizeof(void*) == 8 ? 0xA11E0 : 0xA0270));
+        unsigned turns = 0;
+        while (*repeat > 0) {
+            Check(++turns < 32, "native MME render pass convergence");
+            --*repeat;
+            originalState->Frame(*original, world);
+        }
+        Check(turns > 0, "native frame driver must execute at least one turn");
     } else {
         RenderShadowMap(&app, &world._11);
         image.light = app.LightViewProjection();

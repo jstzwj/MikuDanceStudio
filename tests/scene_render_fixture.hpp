@@ -286,7 +286,14 @@ std::array<std::vector<float>, 3> RenderModelNumbers(const mdl::ModelRecord& mod
             append(vertices, v.position, 3);
             append(vertices, v.normal, 3);
             append(vertices, v.uv, 2);
-            append(vertices, v.weight, 4);
+            // BDEF1 consumes no weight, BDEF2/SDEF consume only weight[0].
+            // The remaining working slots can contain uninitialized bytes.
+            const auto weights = v.weightType == mdl::PmxWeightType::bdef1   ? 0u
+                                 : v.weightType == mdl::PmxWeightType::bdef4 ? 4u
+                                                                             : 1u;
+            append(vertices, v.weight, weights);
+            for (unsigned component = 0; component < 4; ++component)
+                append(vertices, v.additionalUvByComponent[component], model.pmxAdditionalUvCount);
         }
     for (unsigned i = 0; i < model.materialCount; ++i) {
         const auto& m = model.materials[i];
@@ -301,11 +308,20 @@ std::array<std::vector<float>, 3> RenderModelNumbers(const mdl::ModelRecord& mod
 }
 void SameRenderModel(const mdl::ModelRecord& a, const mdl::ModelRecord& b) {
     const auto port = RenderModelNumbers(a), original = RenderModelNumbers(b);
-    for (unsigned i = 0; i < port.size(); ++i)
-        Check(port[i].size() == original[i].size() &&
-                  (port[i].empty() || std::memcmp(port[i].data(), original[i].data(),
-                                                  port[i].size() * sizeof(float)) == 0),
-              "model numerical fields differ from original");
+    const char* kinds[] = {"bones", "vertices", "materials"};
+    for (unsigned i = 0; i < port.size(); ++i) {
+        Check(port[i].size() == original[i].size(), "model numerical field count");
+        for (std::size_t j = 0; j < port[i].size(); ++j) {
+            std::uint32_t actual, expected;
+            std::memcpy(&actual, &port[i][j], sizeof actual);
+            std::memcpy(&expected, &original[i][j], sizeof expected);
+            if (actual != expected) {
+                std::fprintf(stderr, "model %s[%zu]: port=%08X original=%08X\n", kinds[i], j,
+                             actual, expected);
+                Check(false, "model numerical fields differ from original");
+            }
+        }
+    }
 }
 void SaveRenderModel(const std::filesystem::path& directory, const std::string& name,
                      const mdl::ModelRecord& model) {

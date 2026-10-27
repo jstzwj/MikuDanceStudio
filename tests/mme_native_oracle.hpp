@@ -19,6 +19,7 @@ public:
     NativeMmeOracle(const NativeMmeOracle&) = delete;
     NativeMmeOracle& operator=(const NativeMmeOracle&) = delete;
     void LoadMapping(const std::filesystem::path& path, HWND window);
+    void SaveMapping(const std::filesystem::path& path);
     void* Module() const;
 };
 

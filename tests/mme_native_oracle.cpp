@@ -242,6 +242,17 @@ void NativeMmeOracle::LoadMapping(const std::filesystem::path& path, HWND window
     Require(load(path.string().c_str(), window), "native EMM load");
 #endif
 }
+void NativeMmeOracle::SaveMapping(const std::filesystem::path& path) {
+#if defined(_M_X64)
+    const auto save = reinterpret_cast<bool (*)(const char*)>(
+        reinterpret_cast<unsigned char*>(impl->image) + 0x315F0);
+#else
+    // IDA RVA 2E5B0: path on the stack, RET 4; unlike the EMM load entry.
+    const auto save = reinterpret_cast<bool(__stdcall*)(const char*)>(
+        reinterpret_cast<unsigned char*>(impl->image) + 0x2E5B0);
+#endif
+    Require(save(path.string().c_str()), "native EMM save");
+}
 
 extern "C" {
 int OracleInitialize(IDirect3DDevice9* d) {
