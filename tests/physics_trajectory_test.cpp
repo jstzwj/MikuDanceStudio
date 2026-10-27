@@ -8,7 +8,9 @@
 #include "BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
+#include <intrin.h>
 #include <map>
 #include <optional>
 #include <iomanip>
@@ -71,6 +73,28 @@ std::uint64_t TrajectoryDigest(const std::vector<Sample>& trajectory, std::size_
             mix(static_cast<std::uint32_t>(flag));
     }
     return hash;
+}
+
+void DumpTrajectoryPrefix(const std::vector<Sample>& trajectory, std::size_t count) {
+    int cpu[4];
+    __cpuid(cpu, 1);
+    unsigned control = 0;
+    _controlfp_s(&control, 0, 0);
+    std::printf("physics trace CPU=%08X/%08X/%08X/%08X control=%08X mxcsr=%08X\n", cpu[0], cpu[1],
+                cpu[2], cpu[3], control, _mm_getcsr());
+    for (std::size_t frame = 0; frame < count; ++frame) {
+        const auto& sample = trajectory[frame];
+        for (std::size_t index = 0; index < sample.values.size(); ++index) {
+            std::uint32_t bits;
+            std::memcpy(&bits, &sample.values[index], sizeof(bits));
+            std::printf("physics trace frame=%zu field=%s bits=%08X\n", frame,
+                        sample.Field(index).c_str(), bits);
+        }
+        for (std::size_t index = 0; index < sample.flags.size(); ++index)
+            std::printf("physics trace frame=%zu flag=%zu value=%d\n", frame, index,
+                        sample.flags[index]);
+    }
+    std::fflush(stdout);
 }
 
 #if defined(_M_X64)
@@ -1007,12 +1031,15 @@ std::vector<Sample> Run(const std::filesystem::path& externalModel,
     }
     if (externalModel.empty() && frames >= 20) {
         const auto digest = TrajectoryDigest(trajectory, 20);
+        std::printf("generated PMX first 20 frames digest: %016llX\n",
+                    static_cast<unsigned long long>(digest));
+        std::fflush(stdout);
 #if defined(_M_X64)
+        if (digest != 0xAEC1372BE331E093ull || std::getenv("MDS_PHYSICS_TRACE"))
+            DumpTrajectoryPrefix(trajectory, 20);
         // Frozen after an unmodified VC90 oracle matched all first twenty frames.
         Check(digest == 0xAEC1372BE331E093ull, "reference-derived PMX trajectory prefix");
 #endif
-        std::printf("generated PMX first 20 frames digest: %016llX\n",
-                    static_cast<unsigned long long>(digest));
     }
     Check(f.physics->world->getNumConstraints() == static_cast<int>(model.jointCount),
           "trajectory changed the constraint count");

@@ -1028,3 +1028,7 @@ v10.08 的[首次发布构建](https://github.com/jstzwj/MikuDanceStudio/actions
 两架构分别按发布配置重新创建 C++17 依赖并在隔离目录构建（`MIKUDANCESTUDIO_DIAG=OFF`）。`bullet_allocation` 和完整 `physics_trajectory` 各 2/2 通过、零跳过，后者保留两次 600 帧轨迹、停止／跳帧／模式／模型／PMM 重载检查；x86 9.16 秒、x64 8.29 秒。这些是本地针对性回归，后续发布仍须由修复后的标签重新运行完整两架构 CI，不以绕过失败测试或恢复旧依赖代替。
 
 本地记录在 `out/release-10.08/`：`bullet-{before-x86,after-x86,after-x64}.log`、`allocation-{before,after}-x86/`、`local-x{86,64}-{conan,configure,build,targeted}.log` 及对应 JUnit。首次 CI 结果保存在 `tests-x{86,64}/`。
+
+随后[第二次 CI](https://github.com/jstzwj/MikuDanceStudio/actions/runs/40565312044)的 x86 85/85 通过，确认堆损坏修复；x64 86/87 通过，物理轨迹的固定前缀哈希不匹配，发布仍被阻断。相同源码及 C++17 依赖在本地 x64 通过；首次 CI 的 x64 也曾匹配 `AEC1372BE331E093`。临时禁用本机 CRT 的 FMA3 路径仍匹配，不能据此定位远端差异，也未保留该开关。
+
+物理测试现先输出实际哈希，再断言原基准；不匹配时逐字段输出前 20 帧位模式、CPU 标识和浮点控制状态。也可显式设置 `MDS_PHYSICS_TRACE=1` 导出本地匹配快照，已记录为 `physics-baseline-trace.log`。没有更改基准、比较条件或生产数值；这项日志补全用于定位远端首次分歧，不能表述为 x64 失败原因已经修复。
