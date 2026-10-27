@@ -176,19 +176,22 @@ struct OriginalModel {
         module.Function<PoseCall>(poseRva)(model.get(), 1, models, 0);
     }
     void Skin(MMDApp& app, const D3DXMATRIX& world) {
+        // Native callers pass the fixed-view eye, separately from the world-space
+        // camera focus used to construct WORLD (x64 2A223..2A254, x86 46DB93).
+        const float eye[3] = {app.ViewOffsetX(), app.ViewOffsetY(), app.CameraDistance()};
 #if defined(_M_X64)
-        // IDA RVA C13C0 and caller 2A1D0: WORLD, camera XYZ, FOV, shadow byte.
+        // IDA RVA C13C0 and caller 2A1D0: WORLD, fixed-view eye, FOV, shadow byte.
         using SkinCall =
             void (*)(mdl::ModelRecord*, const float*, const float*, float, unsigned char);
-        module.Function<SkinCall>(0xC13C0)(model.get(), &world._11, app.CameraPosition(),
-                                           app.CameraFov(), app.state.selfShadowEnabled);
+        module.Function<SkinCall>(0xC13C0)(model.get(), &world._11, eye, app.CameraFov(),
+                                         app.state.selfShadowEnabled);
 #else
         // IDA caller 46DBE9: renderer, WORLD by value, camera pointer, FOV,
         // shadow byte. The callee returns with RET 50h (80 stack bytes).
         using SkinCall = void(__thiscall*)(mdl::ModelRecord*, D3DRenderer*, D3DMATRIX, const float*,
                                            float, unsigned char);
-        module.Function<SkinCall>(0xB0C50)(model.get(), renderer.get(), world, app.CameraPosition(),
-                                           app.CameraFov(), app.state.selfShadowEnabled);
+        module.Function<SkinCall>(0xB0C50)(model.get(), renderer.get(), world, eye, app.CameraFov(),
+                                         app.state.selfShadowEnabled);
 #endif
     }
     void Materials(MMDApp& app) {

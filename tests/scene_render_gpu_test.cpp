@@ -91,7 +91,10 @@ int Run(const std::filesystem::path& modelPath, const std::filesystem::path& ori
         D3DXMATRIX camera, projection;
         D3DXMatrixLookAtLH(&camera, &eye, &center, &up);
         D3DXMatrixPerspectiveFovLH(&projection, 3.14159265358979323846f / 6, 1, .1f, 1000);
-        std::memcpy(app.CameraPosition(), &eye, sizeof eye);
+        std::memcpy(app.CameraPosition(), &center, sizeof center);
+        app.ViewOffsetX() = eye.x;
+        app.ViewOffsetY() = eye.y;
+        app.CameraDistance() = eye.z;
         for (float scale : {0.0f, 1.0f, 2.0f}) {
             model.edgeScale = scale;
             UpdateModelVertexBuffers(&app, &model, &world._11);

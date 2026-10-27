@@ -512,7 +512,10 @@ float PmdEdgeDistance(MMDApp* app, const mdl::ModelRecord* model, const float fr
     }
     float worldPoint[3];
     TransformPosition(worldPoint, modelPoint, frameWorld);
-    const float* camera = app->CameraPosition();
+    // WORLD already incorporates the camera focus and rotation. The native
+    // callers measure against the fixed-view eye (x64 RVA 0x2A223..0x2A254,
+    // x86 VA 0x46DB93..0x46DBE9), not the world-space camera focus.
+    const float camera[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
     // x64 0x7FF7CB4E29C2..0x7FF7CB4E2A56 is single-precision throughout:
     // subss deltas, mulss squares, call sqrtf, then distance *
     // 4.5e-05f * (fov * 0.6f + 1.0f) * edgeScale (the two constants are

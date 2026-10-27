@@ -407,10 +407,12 @@ bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex);
 // same way before writing the file's rows back).
 void MmeEmmClearSubsetShows(ModelData* model);
 
-// [FUN_180030590] assign one effect file to (objectId, subsetIndex); pass
+// Assign one effect file to (objectId, subsetIndex); pass
 // subsetIndex < 0 for the whole object. An empty path selects the standard
 // shader; an explicit subset entry blocks inheritance from the whole object.
-// Returns true when the object was found and the effect (if any) loaded.
+// Returns true when the object was found and its assignment was recorded.
+// Load failure retains the path with an effect-free binding, as in the native
+// working map (x64 0x18002D0F6 / x86 0x1002A6E6); it is reported separately.
 bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::string& path);
 
 // --- [FUN_18002DEF0 / sub_18000B880] Re-resolve hot-reload bindings (leave assignments intact) ------

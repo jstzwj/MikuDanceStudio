@@ -168,15 +168,22 @@ bool SasIsSubsetAllowed(const SasEffect* sas, int techIndex, int subset);
 // state; an explicit annotation byte requires equality with the material
 // state). A technique that passes those filters but fails the validity check
 // - [System] SkipValidation=false: the ValidateTechnique result (record+8);
-// true: the vs_3_0/ps_3_0 mix check (record+9) [byte_1800D99D9 select at
+// true: the shader capability check (record+9) [byte_1800D99D9 select at
 // 0x18001dcb3] - is skipped and remembered; when NO valid technique matched,
-// the LAST remembered invalid one is returned as a fallback (the original
-// still draws through it). *validMatch receives the "found" byte (false only
-// for the invalid fallback; true for a valid match and for the no-match
-// null). Returns D3DXHANDLE; nullptr when nothing matched.
+// the LAST remembered invalid one is returned as a fallback. The load-time
+// selection-table validation rejects that fallback. *validMatch receives the
+// "found" byte (false only for the invalid fallback; true for a valid match
+// and for the no-match null). Returns D3DXHANDLE; nullptr when nothing matched.
 D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
                               bool useTexture, bool useSpheremap, bool useToon,
                               bool* validMatch);
+
+// [x64 0x18001DD20 / x86 0x1001BE60] Validate every selection used by the
+// model's five draw tables. Unmatched selections are allowed; a matched
+// technique without a valid fallback rejects the assignment. Returns its
+// diagnostic, or an empty string on success. Does not change the shared SAS
+// model: the same compiled effect can serve objects with different subsets.
+std::string SasValidateTechniqueSelections(const SasEffect* sas, int materialCount);
 
 // --- execution (implemented in sas_exec.cpp) ---
 //

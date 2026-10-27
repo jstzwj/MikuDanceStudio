@@ -777,6 +777,14 @@ if(BUILD_TESTING)
     target_include_directories(mme_effect_mapping_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_effect_mapping_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME mme_effect_mapping COMMAND mme_effect_mapping_test)
+    add_executable(mme_technique_validation_test tests/mme_technique_validation_test.cpp)
+    target_include_directories(mme_technique_validation_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack
+        third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_technique_validation_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_technique_validation COMMAND mme_technique_validation_test)
+    add_test(NAME scene_comparison_inputs COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_freeze_scene_compare.py)
     add_executable(mme_emm_save_test tests/mme_emm_save_test.cpp)
     target_include_directories(mme_emm_save_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_emm_save_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -851,4 +859,12 @@ if(BUILD_TESTING)
     add_dependencies(embedded_mme_resources_test MikuDanceStudio)
     add_test(NAME embedded_mme_resources
         COMMAND embedded_mme_resources_test $<TARGET_FILE:MikuDanceStudio>)
+    # These tests do not create windows, devices or modal dialogs. Safe while
+    # the interactive desktop is in use: ctest -L cpu_no_windows.
+    set_tests_properties(mme_technique_validation scene_comparison_inputs
+        mme_effect_mapping mme_emm_save mme_initialization_test
+        mme_host_object_cache embedded_mme_resources PROPERTIES LABELS cpu_no_windows)
+    if (TEST mmd_math)
+        set_tests_properties(mmd_math PROPERTIES LABELS cpu_no_windows)
+    endif()
 endif()

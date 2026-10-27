@@ -297,7 +297,7 @@ unsigned long MmeEngineQueryFileStamp(const std::string& pathAnsi)
     return stamp;
 }
 
-std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
+static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* device,
                                                       const std::string& pathAnsi)
 {
     EffectCache& cache = EffectCacheRef();
@@ -458,6 +458,36 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     return entry;
 }
 
+std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
+                                                     const std::string& pathAnsi,
+                                                     int materialCount)
+{
+    auto loaded = LoadCachedEffectFile(device, pathAnsi);
+    if (!loaded || !loaded->effect) {
+        return loaded;
+    }
+    const auto key = std::make_pair(materialCount, g_skipValidation);
+    auto validation = loaded->techniqueValidation.find(key);
+    if (validation == loaded->techniqueValidation.end()) {
+        validation = loaded->techniqueValidation.emplace(
+            key, SasValidateTechniqueSelections(loaded->sas, materialCount)).first;
+    }
+    if (validation->second.empty()) {
+        return loaded;
+    }
+
+    // Native load tail: x64 0x18000C432 / x86 0x1000CF5E rejects a nonzero
+    // selection-table result. Keep the compiled cache entry intact: subset
+    // restrictions can make this assignment invalid while another model's
+    // smaller material range remains valid. The existing caller owns error
+    // reporting and assignment/reload failure handling.
+    auto failure = std::make_shared<LoadedEffect>();
+    failure->path = pathAnsi;
+    failure->fileStamp = loaded->fileStamp;
+    failure->errorText = validation->second;
+    return failure;
+}
+
 std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     IDirect3DDevice9* device, const std::shared_ptr<LoadedEffect>& source)
 {
@@ -481,7 +511,8 @@ std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     return instance;
 }
 
-void MmeEngineUnloadEffectFile(const std::string& pathAnsi)
+void MmeEngineUnloadEffectFile(const std::string& pathAnsi,
+                               const std::shared_ptr<LoadedEffect>& expected)
 {
     // [0x18000b210] Reference-counted equivalent of FUN_18000b210: the original "unload effect file" operation
     // lets the cached entry's shared_ptr references converge: the cache map erases its own reference,
@@ -496,7 +527,11 @@ void MmeEngineUnloadEffectFile(const std::string& pathAnsi)
     // MmeEnsureMaterialBinding switches owner references, and the old entry then dies through its destruction chain.
     // No rendering frame occurs between unload and reassignment (synchronous within one message handler); the binding's
     // borrowed effect/sas pointers are updated to the new entry before the old one dies.
-    EffectCacheRef().erase(pathAnsi);
+    auto& cache = EffectCacheRef();
+    auto found = cache.find(pathAnsi);
+    if (found != cache.end() && (!expected || found->second == expected)) {
+        cache.erase(found);
+    }
 }
 
 void MmeEngineClearCaches()

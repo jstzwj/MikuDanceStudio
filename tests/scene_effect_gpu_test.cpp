@@ -82,7 +82,9 @@ int RunEffects(const std::filesystem::path& path, const std::filesystem::path& e
     std::memcpy(&app.ViewRotationTransform(), &world, sizeof world);
     const D3DXVECTOR3 center(model.physicsMode == 2 ? 0.0f : 1.0f, app.ViewOffsetY(), 0);
     const D3DXVECTOR3 eye(center.x, center.y, model.physicsMode == 2 ? -45.0f : -5.0f), up(0, 1, 0);
-    std::memcpy(app.CameraPosition(), &eye, sizeof eye);
+    std::memcpy(app.CameraPosition(), &center, sizeof center);
+    app.ViewOffsetX() = eye.x;
+    app.CameraDistance() = eye.z;
     D3DXMatrixLookAtLH(&view, &eye, &center, &up);
     D3DXMatrixPerspectiveFovLH(&projection, 3.14159265358979323846f / 6, 1, .1f, 1000);
     UpdateModelVertexBuffers(&app, &model, &world._11);

@@ -357,7 +357,8 @@ int RunScene(const std::filesystem::path& executable, const std::filesystem::pat
     std::memcpy(&app.ViewRotationTransform(), &world, sizeof world);
     const D3DXVECTOR3 center(app.ViewOffsetX(), app.ViewOffsetY(), 0);
     const D3DXVECTOR3 eye(center.x, center.y, pmx ? -45.0f : -5.0f), up(0, 1, 0);
-    std::memcpy(app.CameraPosition(), &eye, sizeof eye);
+    std::memcpy(app.CameraPosition(), &center, sizeof center);
+    app.CameraDistance() = eye.z;
     D3DXMatrixLookAtLH(&view, &eye, &center, &up);
     D3DXMatrixPerspectiveFovLH(&projection, 3.14159265358979323846f / 6, 1, .1f, 1000);
     OriginalModel original(image, f, model.path);

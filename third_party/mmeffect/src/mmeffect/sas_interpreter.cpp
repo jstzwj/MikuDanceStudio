@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include <cctype>
+#include <set>
 
 namespace mme {
 
@@ -2859,11 +2860,10 @@ bool SasIsSubsetAllowed(const SasEffect* sas, int techIndex, int subset) {
 //                                   record+8
 // The FIRST valid match returns immediately; a matched-but-invalid technique
 // is remembered (the LAST one wins) and returned only when the whole order
-// was walked without a valid match - the original still selects (and draws)
-// it, with the "found" byte cleared. The "Error: some techniques cannot run
-// on this hardware:" report keyed off that byte in sub_18001DD20 is dead
-// code in the shipped binary (its flag is only ever cleared - 0x18001DDBE /
-// 0x18001E2E8 / 0x18001E3C8), so an invalid fallback never fails the load.
+// was walked without a valid match, with the "found" byte cleared. The
+// load-time table builder rejects those selections. Its local counter is a
+// set size, incremented by the out-of-line tree insertion helper, rather
+// than a flag local to sub_18001DD20.
 D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
                               bool useTexture, bool useSpheremap, bool useToon,
                               bool* validMatch) {
@@ -2928,6 +2928,46 @@ D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
         *validMatch = false;
     }
     return fallback;
+}
+
+std::string SasValidateTechniqueSelections(const SasEffect* sas, int materialCount) {
+    if (sas == nullptr || sas->effect == nullptr || materialCount <= 0) {
+        return {};
+    }
+    if (sas->scriptClass == kSasClassScene || sas->scriptOrder != kSasOrderStandard) {
+        materialCount = 1;
+    }
+    std::set<D3DXHANDLE, std::less<D3DXHANDLE>> invalid;
+    for (int mode = 0; mode < 5; ++mode) {
+        if (mode != 0 && sas->scriptOrder != kSasOrderStandard) {
+            continue;
+        }
+        for (int subset = 0; subset < materialCount; ++subset) {
+            const int combinations = mode <= 1 ? 8 : 1;
+            for (int flags = 0; flags < combinations; ++flags) {
+                bool valid = true;
+                const D3DXHANDLE handle = SasSelectTechnique(
+                    sas, mode, subset, (flags & 1) != 0, (flags & 2) != 0,
+                    (flags & 4) != 0, &valid);
+                if (!valid) {
+                    invalid.insert(handle);
+                }
+            }
+        }
+    }
+    if (invalid.empty()) {
+        return {};
+    }
+    std::string error = "Error: some techniques cannot run on this hardware:";
+    for (D3DXHANDLE handle : invalid) {
+        for (const SasTechnique& technique : sas->techniques) {
+            if (technique.handle == handle) {
+                error += " " + technique.name;
+                break;
+            }
+        }
+    }
+    return error + "\n";
 }
 
 }  // namespace mme

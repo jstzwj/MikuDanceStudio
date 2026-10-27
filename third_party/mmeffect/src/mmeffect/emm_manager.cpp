@@ -260,6 +260,9 @@ ModelData* FindModelBySlot(bool isModel, int slot)
     return it->second;
 }
 
+void ReportEffectLoadFailure(const std::string& effectPath,
+                             const std::shared_ptr<LoadedEffect>& loaded);
+
 // Apply one assignment to a live model: record it in ModelData and load the
 // effect through the engine (the load logs "Loading effect file: ...").
 void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
@@ -275,37 +278,15 @@ void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
         MmeDropMaterialBindings(model);
         return;
     }
+    // Native 0x18002CC4C..0x18002CC61 releases the previous binding before
+    // loading its replacement. 0x18002D0F6..0x18002D10F returns on failure
+    // without erasing the working-map path.
+    MmeEnsureMaterialBinding(0, model, -1, nullptr, effectPath, nullptr);
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = ctx != nullptr ? ctx->device : nullptr;
-    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath);
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath, model->materialCount());
     if (loaded != nullptr && loaded->effect == nullptr && !loaded->errorText.empty()) {
-        // [0x18000b880] the failed-load path. First log segment is the raw
-        // error text plus one "\n" (0x18000ba10-0x18000ba3b: sub_180005760
-        // appends "\n", sub_180009080(x, 0) writes it) - the extra newline
-        // makes the blank separator line.
-        MmeLogWrite((loaded->errorText + "\n").c_str(), 0);
-        // [0x18000ba43] unload FIRST (sub_18000B210; a null-effect entry logs
-        // nothing), then build the message and message-box it (0x18000bbcf).
-        MmeEngineUnloadEffectFile(effectPath);
-        model->setEffectFile(std::string());
-        // [0x18000ba52-0x18000ba74] the prefix language branch: ExpGetEnglishMode
-        // (fallback byte_1800D99DD = 0, Japanese) selects English
-        // "Failed to load effect file:" (0x1800B3B18) or the Shift-JIS prefix
-        // at 0x1800B3AE8; the MessageBox text is prefix + path + "\n\n" +
-        // errorText with prefix and path directly concatenated.
-        const char* prefix = MmeIsEnglishUiMode()
-            ? "Failed to load effect file:"   // 0x1800b3b18 (EN)
-            // unk_1800B3AE8, Shift-JIS "Failed to load effect file:"
-            : "\x83\x47\x83\x74\x83\x46\x83\x4E\x83\x67\x83\x74"
-              "\x83\x40\x83\x43\x83\x8B\x82\xCC\x93\xC7\x82\xDD"
-              "\x8D\x9E\x82\xDD\x82\xC9\x8E\xB8\x94\x73\x82\xB5"
-              "\x82\xDC\x82\xB5\x82\xBD\x3A";
-
-        std::string message = prefix;
-        message += effectPath;
-        message += "\n\n";
-        message += loaded->errorText;
-        MmeLogWrite(message.c_str(), 1);   // dedup + MessageBoxA (FUN_180009080 flag)
+        ReportEffectLoadFailure(effectPath, loaded);
         return;
     }
     // Eager binding build (the original's FUN_18002ca80 runs at ASSIGNMENT
@@ -331,6 +312,15 @@ void ApplySubsetEffectToModel(ModelData* model, int subsetIndex, const std::stri
 {
     const std::string effectPath = rawPath == kNone ? std::string() : rawPath;
     model->setSubsetEffect(subsetIndex, effectPath);
+    MmeEnsureMaterialBinding(0, model, subsetIndex, nullptr, effectPath, nullptr);
+    if (!effectPath.empty()) {
+        auto loaded = MmeEngineLoadEffectFile(g_context ? g_context->device : nullptr,
+                                              effectPath, model->materialCount());
+        if (!loaded || !loaded->effect) {
+            if (loaded && !loaded->errorText.empty()) ReportEffectLoadFailure(effectPath, loaded);
+            return;
+        }
+    }
     MmeResolveSubsetEffectBinding(model, subsetIndex, effectPath);
 }
 
@@ -1710,11 +1700,11 @@ bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::st
     }
     ModelData* model = it->second;
     if (subsetIndex >= 0) {
-        model->setSubsetEffect(subsetIndex, path);
-        MmeResolveSubsetEffectBinding(model, subsetIndex, path);
+        ApplySubsetEffectToModel(model, subsetIndex, path);
         return true;
     } else {
         model->clearSubsetEffects();
+        MmeDropMaterialBindings(model);
     }
     ApplyEffectToModel(model, path);
     return true;
@@ -1732,12 +1722,10 @@ bool EffectPathInReloadScope(const std::string& bindingPath, const std::string& 
     return path.empty() || bindingPath == path;
 }
 
-// [0x18000ba10-0x18000bbcf] Hot-reload version of sub_18000B880's failure reporting: errorText +
-// "\n" log, unload the failed cache entry ([0x18000ba43]), language-specific
-// "Failed to load effect file:" dialog (dedup gate). The only difference from ApplyEffectToModel's
-// failure block is retaining the assignment: original reload failures preserve the working map; the binding remains
-// without an effect until the file changes again (stamp is updated, polling is silent).
-void ReportReloadFailure(const std::string& effectPath,
+// [0x18000ba10-0x18000bbcf] Shared assignment/reload failure reporting.
+// The working-map path survives; only the failed binding loses its effect.
+// A model-specific selection failure must not evict a compatible cached source.
+void ReportEffectLoadFailure(const std::string& effectPath,
                          const std::shared_ptr<LoadedEffect>& loaded)
 {
     if (loaded == nullptr) {
@@ -1746,7 +1734,7 @@ void ReportReloadFailure(const std::string& effectPath,
     // [0x18000ba10] First part: original errorText + one "\n" (blank-line separator).
     MmeLogWrite((loaded->errorText + "\n").c_str(), 0);
     // [0x18000ba43] Unload the failed entry before assembling the dialog text.
-    MmeEngineUnloadEffectFile(effectPath);
+    MmeEngineUnloadEffectFile(effectPath, loaded);
     // [0x18000ba52-0x18000ba74] ExpGetEnglishMode (fallback byte_1800D99DD=0,
     // Japanese) selects the prefix; text = prefix + path + "\n\n" + errorText.
     const char* prefix = MmeIsEnglishUiMode()
@@ -1765,12 +1753,12 @@ void ReportReloadFailure(const std::string& effectPath,
 
 // Load (failures have already been reported through sub_18000B880's failure path); return the cached entry on success.
 std::shared_ptr<LoadedEffect> ReloadEffectForRebind(IDirect3DDevice9* device,
-                                                    const std::string& effectPath)
+                                                    const std::string& effectPath, int materialCount)
 {
-    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath);
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath, materialCount);
     if (loaded == nullptr || loaded->effect == nullptr) {
         if (loaded != nullptr && !loaded->errorText.empty()) {
-            ReportReloadFailure(effectPath, loaded);
+            ReportEffectLoadFailure(effectPath, loaded);
         }
         // Empty errorText = missing file (stamp==0): sub_18000BC90 at 0x18000bd19
         // returns early and silently, without a log or dialog.
@@ -1827,8 +1815,7 @@ bool MmeRebindEffectAssignments(const std::string& path)
     // Consumption phase B: resolve again from current assignments, whole-object then subsets per model (original
     // sub_18002C910 traversal: (object, -1) followed by (object, 0..count-1) for each object,
     // in model registration order). Failed-load assignments retain their values, waiting for the next
-    // stamp change after file repair, unlike MmeAssignEffect/ApplyEffectToModel's "clear assignment on failure"
-    // semantics; this matches original hot reload.
+    // stamp change after file repair, as in the original working map.
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return false;
@@ -1842,7 +1829,7 @@ bool MmeRebindEffectAssignments(const std::string& path)
         }
         const std::string& whole = model->effectFile();
         if (!whole.empty() && EffectPathInReloadScope(whole, path)) {
-            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, whole);
+            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, whole, model->materialCount());
             if (fresh != nullptr) {
                 // Rebuild scene-class wiring (renderClass/drawsGeometry/sceneTechIndex) during resolution;
                 // resolution internally calls ClearSasBinding when the class falls back to object.
@@ -1856,7 +1843,7 @@ bool MmeRebindEffectAssignments(const std::string& path)
             if (it->second.empty() || !EffectPathInReloadScope(it->second, path)) {
                 continue;
             }
-            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, it->second);
+            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, it->second, model->materialCount());
             if (fresh != nullptr) {
                 MmeResolveSubsetEffectBinding(model, it->first, it->second);
                 LogDoneOnce(fresh);

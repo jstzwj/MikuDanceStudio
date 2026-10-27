@@ -171,9 +171,10 @@ int Run(const std::filesystem::path& modelFile, const std::filesystem::path& dll
     const bool pmx = model.physicsMode == 2;
     const D3DXVECTOR3 center(pmx ? 0.0f : 1.0f, pmx ? 10.0f : .5f, 0);
     const D3DXVECTOR3 eye(center.x, center.y, pmx ? -45.0f : -5.0f), up(0, 1, 0);
-    app.ViewOffsetX() = 0;
+    app.ViewOffsetX() = eye.x;
     app.ViewOffsetY() = center.y;
-    std::memcpy(app.CameraPosition(), &eye, sizeof eye);
+    std::memcpy(app.CameraPosition(), &center, sizeof center);
+    app.CameraDistance() = eye.z;
     D3DXMatrixLookAtLH(&view, &eye, &center, &up);
     D3DXMatrixPerspectiveFovLH(&projection, 3.14159265358979323846f / 6, 1, .1f, 1000);
     UpdateModelVertexBuffers(&app, &model, &world._11);

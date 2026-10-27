@@ -31,7 +31,9 @@
 #pragma once
 
 #include <memory>
+#include <map>
 #include <string>
+#include <utility>
 
 #include <d3d9.h>
 #include <d3dx9.h>
@@ -51,6 +53,9 @@ struct LoadedEffect {
     std::string   errorText;          // last load error (logged by the apply path)
     unsigned long fileStamp = 0;      // FUN_18000B7F0 validity token (0 = invalid)
     SasEffect*    sas = nullptr;      // [FUN_18000c470] parsed SAS model (null when absent/invalid)
+    // Validation uses immutable parsed technique flags. Cache it per model
+    // material range and SkipValidation policy, outside the per-draw path.
+    std::map<std::pair<int, bool>, std::string> techniqueValidation;
     bool          doneLogged = false; // [0x18000bc10] sub_18000B880's "done.\n\n" latch:
                                       // written once per actual load/reload of this
                                       // file (v11 && *a1), not on cache hits (the
@@ -107,14 +112,21 @@ unsigned long MmeEngineQueryFileStamp(const std::string& pathAnsi);
 // the _INDEX/PSIZE15/MME_MIPMAP defines through the shared effect pool, and
 // records compile errors into the entry. Returns the cache entry; on failure
 // the entry's `effect` stays null and `errorText` carries the reason.
+// Validate the five draw tables for materialCount subsets on cache hits too;
+// a selection failure returns a null-effect diagnostic without changing the
+// compiled source or other assignments sharing it.
 std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
-                                                      const std::string& pathAnsi);
+                                                      const std::string& pathAnsi,
+                                                      int materialCount = 0);
 std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     IDirect3DDevice9* device, const std::shared_ptr<LoadedEffect>& source);
 
 // [0x18000b210] FUN_18000b210: drop the cache entry for `pathAnsi`, logging
 // "Unload effect file: <path>\n\n" first. No-op when the file is not cached.
-void MmeEngineUnloadEffectFile(const std::string& pathAnsi);
+// A failure releases only its own entry, never another assignment's cached
+// source. Omitting expected retains explicit file invalidation semantics.
+void MmeEngineUnloadEffectFile(const std::string& pathAnsi,
+    const std::shared_ptr<LoadedEffect>& expected = nullptr);
 
 // [0x18000a990] sub_18000A990 (cache side of 40004 Reload All = FUN_18002DEF0):
 // clear the effect-cache and texture-cache trees (original heads 0x1800D9C68 / 0x1800D9C88, per-node

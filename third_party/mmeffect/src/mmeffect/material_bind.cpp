@@ -415,12 +415,10 @@ static unsigned int MmeTechniquePassCount(const SasEffect* sas, D3DXHANDLE handl
 // [sub_18001DD20] the load-time selection-table precompute. Scene-class
 // effects (ScriptClass scene) and any pre/post-process order clamp the
 // subset count to one, and pre/post effects build ONLY the object-mode
-// table [0x18001ddab-0x18001ddbe / 0x18001de1d]. The original's trailing
-// "Error: some techniques cannot run on this hardware:" report is dead code
-// in the shipped binary (its flag is only ever cleared - 0x18001DDBE /
-// 0x18001E2E8 / 0x18001E3C8 - so sub_18001DD20 always returns 0 and never
-// fails the load); a selection that resolves only to an invalid technique is
-// still stored and drawn. The same applies here.
+// table [0x18001ddab-0x18001ddbe / 0x18001de1d]. The engine validates the
+// selections before returning an effect for this model. The native error
+// report is reachable: its local counter is the invalid-handle set's size,
+// incremented by sub_18003BF10 (x86 sub_10003590).
 static void MmeBuildDrawTechniqueTable(MaterialBinding* binding, SasEffect* sas,
                                        ModelData* model)
 {
@@ -668,7 +666,7 @@ MaterialBinding* MmeResolveModelEffectBinding(ModelData* model)
     }
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = (ctx != nullptr) ? ctx->device : nullptr;
-    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, path);
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, path, model->materialCount());
     if (loaded == nullptr || loaded->effect == nullptr) {
         return nullptr;
     }
@@ -750,7 +748,7 @@ MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = ctx != nullptr ? ctx->device : nullptr;
     std::shared_ptr<LoadedEffect> loaded =
-        MmeEngineLoadEffectFile(device, effectPath);
+        MmeEngineLoadEffectFile(device, effectPath, model->materialCount());
     if (loaded == nullptr || loaded->effect == nullptr) {
         return nullptr;
     }
@@ -1052,7 +1050,8 @@ MaterialBinding* MmeResolveTurnEffectBinding(unsigned int turnId,
         }
         if (path.empty()) return nullptr;
     }
-    auto loaded = MmeEngineLoadEffectFile(g_context ? g_context->device : nullptr, path);
+    auto loaded = MmeEngineLoadEffectFile(g_context ? g_context->device : nullptr, path,
+                                         model->materialCount());
     if (!loaded || !loaded->effect) return nullptr;
     auto* binding = MmeEnsureMaterialBinding(turnId, model, subsetIndex,
         loaded->effect, path, loaded);
