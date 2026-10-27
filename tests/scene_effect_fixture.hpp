@@ -152,6 +152,7 @@ std::vector<DWORD> ShadowPixels(IDirect3DDevice9* device, IDirect3DSurface9* sur
     return result;
 }
 struct Image {
+    std::vector<MmeRecordingDevice::PassTargets> passTargets;
     std::vector<DWORD> color, shadow;
     D3DMATRIX light{};
     std::vector<std::string> constants;
@@ -271,6 +272,7 @@ Image Draw(Fixture& f, StandardEffect& effect, const D3DXMATRIX& camera,
     Hr(effect.effect->GetFloatArray("Place", place, 4), "read camera reference parameter");
     Check(place[3] == 1.0f, "camera reference must retain exact homogeneous W");
     if (trace) {
+        image.passTargets = trace->passTargets;
         image.constants = trace->constants;
         image.states = trace->states;
         trace->Save(output, name);

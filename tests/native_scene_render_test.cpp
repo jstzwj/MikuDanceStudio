@@ -461,6 +461,7 @@ int RunScene(const std::filesystem::path& executable, const std::filesystem::pat
     auto draw = [&](const std::string& stage, UINT size = kSize) {
         select();
         const auto name = std::string(native ? "native_" : "port_") + stage;
+        trace.captureContext = name;
         images[name] = Draw(
             f, native ? nativeEffect : portEffect, view, projection, world, output, name,
             native ? &original : nullptr, size, &trace,
@@ -716,19 +717,33 @@ technique Shadowed < string MMDPass="object_ss"; > {
         const ShadowDifference shadow(n.shadow, p.shadow);
         std::printf("compare %s: color=%u shadow=%u states=%d constants=%d\n", stage.c_str(),
                     color.pixels, shadow.pixels, n.states == p.states, n.constants == p.constants);
+        // Compare pass records first to locate a divergence before final pixels.
+        MmeRecordingDevice::RequireSamePasses(stage, passes[std::string("native_") + stage],
+                                              passes[std::string("port_") + stage], n.passTargets,
+                                              p.passTargets);
         SameImage(n, p, "original draw/MMHack/MMEffect scene image");
         Check(n.states == p.states && n.constants == p.constants &&
                   calls.at(std::string("native_") + stage) ==
                       calls.at(std::string("port_") + stage),
               "original native scene draw state/geometry");
-        Check(passes[std::string("native_") + stage] == passes[std::string("port_") + stage],
-              "original scene intermediate targets and pass order");
+        std::map<unsigned, unsigned> formats;
+        for (const auto& pass : n.passTargets)
+            for (const auto& target : pass)
+                if (target.present)
+                    ++formats[static_cast<unsigned>(target.desc.Format)];
         report << (comma ? "," : "") << "{\"stage\":\"" << stage
                << "\",\"color_differences\":" << color.pixels
                << ",\"shadow_differences\":" << shadow.pixels
                << ",\"draws\":" << calls.at(std::string("native_") + stage).size()
                << ",\"matrix_equal\":true,\"draw_state_equal\":true,"
-                  "\"geometry_equal\":true,\"shader_constants_equal\":true}";
+                  "\"geometry_equal\":true,\"shader_constants_equal\":true,\"passes\":"
+               << n.passTargets.size() << ",\"target_readbacks_by_format\":{";
+        bool firstFormat = true;
+        for (const auto& format : formats) {
+            report << (firstFormat ? "" : ",") << '"' << format.first << "\":" << format.second;
+            firstFormat = false;
+        }
+        report << "}}";
         comma = true;
     }
     report << "],\"failures\":0}\n";

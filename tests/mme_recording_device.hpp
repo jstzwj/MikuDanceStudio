@@ -2,6 +2,7 @@
 
 #include "d3d9_device_fixture.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -21,6 +22,21 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
     std::vector<std::array<DWORD, 272>> draws;
     bool capturePasses = false;
     std::vector<std::string> passes;
+    struct PassTarget {
+        bool present = false;
+        D3DSURFACE_DESC desc{};
+        std::uint64_t hash = 0;
+        bool operator==(const PassTarget& other) const {
+            return present == other.present &&
+                   (!present ||
+                    (desc.Width == other.desc.Width && desc.Height == other.desc.Height &&
+                     desc.Format == other.desc.Format &&
+                     desc.MultiSampleType == other.desc.MultiSampleType && hash == other.hash));
+        }
+    };
+    using PassTargets = std::array<PassTarget, 4>;
+    std::vector<PassTargets> passTargets;
+    std::string captureContext;
     unsigned readbacks = 0;
     unsigned screenDraws = 0;
     IDirect3DTexture9* offscreen = nullptr; // borrowed until assignment/reset
@@ -185,67 +201,158 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
         out << "[" << d.Width << ',' << d.Height << ',' << static_cast<unsigned>(d.Format) << ','
             << d.MultiSampleType << ']';
     }
+    static UINT PixelBytes(D3DFORMAT format) {
+        switch (format) {
+        case D3DFMT_A8:
+        case D3DFMT_L8:
+            return 1;
+        case D3DFMT_R16F:
+            return 2;
+        case D3DFMT_A8R8G8B8:
+        case D3DFMT_X8R8G8B8:
+        case D3DFMT_R32F:
+        case D3DFMT_G16R16F:
+            return 4;
+        case D3DFMT_A16B16G16R16F:
+        case D3DFMT_G32R32F:
+            return 8;
+        case D3DFMT_A32B32G32R32F:
+            return 16;
+        default:
+            return 0;
+        }
+    }
+    static std::uint64_t HashRows(const void* data, INT pitch, std::size_t rowBytes, UINT height) {
+        const auto stride = static_cast<std::ptrdiff_t>(pitch);
+        const auto magnitude = pitch < 0 ? -static_cast<std::int64_t>(pitch) : pitch;
+        if (!data || static_cast<std::uint64_t>(magnitude) < rowBytes)
+            throw std::runtime_error("invalid MME target readback pitch");
+        auto hash = std::uint64_t{14695981039346656037ull};
+        for (UINT y = 0; y < height; ++y)
+            hash = Hash(static_cast<const char*>(data) + static_cast<std::ptrdiff_t>(y) * stride,
+                        rowBytes, hash);
+        return hash;
+    }
+    [[noreturn]] void ReadbackFailure(const char* operation, DWORD index,
+                                      const D3DSURFACE_DESC& desc, HRESULT result) const {
+        std::ostringstream message;
+        message << "MME pass capture: stage=" << captureContext << " draw=" << passes.size()
+                << " target=" << index << " desc=";
+        Description(message, desc);
+        message << " operation=" << operation << " HRESULT=0x" << std::hex
+                << static_cast<unsigned>(result);
+        throw std::runtime_error(message.str());
+    }
+    PassTarget ReadTarget(DWORD index, IDirect3DSurface9* surface) {
+        PassTarget target;
+        target.present = true;
+        auto& desc = target.desc;
+        const auto describe = surface->GetDesc(&desc);
+        if (FAILED(describe))
+            ReadbackFailure("GetDesc", index, desc, describe);
+        const auto pixelBytes = PixelBytes(desc.Format);
+        if (!pixelBytes)
+            ReadbackFailure("unsupported format", index, desc, D3DERR_NOTAVAILABLE);
+        Owned<IDirect3DTexture9> texture;
+        Owned<IDirect3DSurface9> copy;
+        HRESULT result;
+        if (desc.Format == D3DFMT_A8 || desc.Format == D3DFMT_L8) {
+            // D3D9 plain surfaces reject these formats. A system-memory texture
+            // level preserves their raw bytes without a color conversion.
+            result = real->CreateTexture(desc.Width, desc.Height, 1, 0, desc.Format,
+                                         D3DPOOL_SYSTEMMEM, &texture.p, nullptr);
+            if (FAILED(result))
+                ReadbackFailure("CreateTexture", index, desc, result);
+            result = texture.p->GetSurfaceLevel(0, &copy.p);
+            if (FAILED(result))
+                ReadbackFailure("GetSurfaceLevel", index, desc, result);
+        } else {
+            result = real->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format,
+                                                       D3DPOOL_SYSTEMMEM, &copy.p, nullptr);
+            if (FAILED(result))
+                ReadbackFailure("CreateOffscreenPlainSurface", index, desc, result);
+        }
+        result = real->GetRenderTargetData(surface, copy.p);
+        if (FAILED(result))
+            ReadbackFailure("GetRenderTargetData", index, desc, result);
+        D3DLOCKED_RECT lock{};
+        result = copy.p->LockRect(&lock, nullptr, D3DLOCK_READONLY);
+        if (FAILED(result))
+            ReadbackFailure("LockRect", index, desc, result);
+        try {
+            target.hash = HashRows(lock.pBits, lock.Pitch,
+                                   static_cast<std::size_t>(desc.Width) * pixelBytes, desc.Height);
+        } catch (...) {
+            copy.p->UnlockRect();
+            throw;
+        }
+        result = copy.p->UnlockRect();
+        if (FAILED(result))
+            ReadbackFailure("UnlockRect", index, desc, result);
+        ++readbacks;
+        return target;
+    }
+    static void RequireSamePasses(const std::string& stage,
+                                  const std::vector<std::string>& original,
+                                  const std::vector<std::string>& port,
+                                  const std::vector<PassTargets>& originalTargets,
+                                  const std::vector<PassTargets>& portTargets) {
+        if (originalTargets.size() != original.size() || portTargets.size() != port.size())
+            throw std::runtime_error("incomplete MME target capture");
+        const auto common = original.size() < port.size() ? original.size() : port.size();
+        for (std::size_t i = 0; i < common; ++i) {
+            if (original[i] == port[i])
+                continue;
+            std::ostringstream message;
+            message << "MME first pass difference: stage=" << stage << " draw=" << i;
+            for (unsigned target = 0; target < 4; ++target) {
+                const auto& a = originalTargets[i][target];
+                const auto& b = portTargets[i][target];
+                if (a == b)
+                    continue;
+                message << " target=" << target << " original=";
+                Description(message, a.desc);
+                message << ':' << std::hex << a.hash << std::dec << " port=";
+                Description(message, b.desc);
+                message << ':' << std::hex << b.hash;
+                throw std::runtime_error(message.str());
+            }
+            message << " shaders/constants/textures/depth/states differ";
+            throw std::runtime_error(message.str());
+        }
+        if (original.size() != port.size()) {
+            std::ostringstream message;
+            message << "MME first pass difference: stage=" << stage << " draw=" << common
+                    << " pass count original=" << original.size() << " port=" << port.size();
+            throw std::runtime_error(message.str());
+        }
+    }
     // Read back each public render target after an actual draw. Store hashes
     // instead of retaining default-pool resources across effect changes/Reset.
     void CapturePass(HRESULT drawResult) {
         if (!capturePasses)
             return;
+        if (FAILED(drawResult))
+            ReadbackFailure("draw", 0, {}, drawResult);
+        PassTargets targets{};
         std::ostringstream out;
         out << "{\"result\":" << static_cast<unsigned>(drawResult) << ",\"targets\":[";
         for (DWORD i = 0; i < 4; ++i) {
             if (i)
                 out << ',';
             Owned<IDirect3DSurface9> target;
-            if (FAILED(real->GetRenderTarget(i, &target.p))) {
+            const auto result = real->GetRenderTarget(i, &target.p);
+            if (result == D3DERR_NOTFOUND) {
                 out << "null";
                 continue;
             }
-            D3DSURFACE_DESC desc{};
-            if (FAILED(target.p->GetDesc(&desc)))
-                throw std::runtime_error("MME target description");
+            if (FAILED(result) || !target.p)
+                ReadbackFailure("GetRenderTarget", i, {}, FAILED(result) ? result : E_POINTER);
+            targets[i] = ReadTarget(i, target.p);
             out << "{\"desc\":";
-            Description(out, desc);
-            UINT pixelBytes = 0;
-            switch (desc.Format) {
-            case D3DFMT_A8R8G8B8:
-            case D3DFMT_X8R8G8B8:
-            case D3DFMT_R32F:
-            case D3DFMT_G16R16F:
-                pixelBytes = 4;
-                break;
-            case D3DFMT_A16B16G16R16F:
-            case D3DFMT_G32R32F:
-                pixelBytes = 8;
-                break;
-            case D3DFMT_A32B32G32R32F:
-                pixelBytes = 16;
-                break;
-            case D3DFMT_R16F:
-                pixelBytes = 2;
-                break;
-            }
-            Owned<IDirect3DSurface9> copy;
-            HRESULT result =
-                pixelBytes ? real->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format,
-                                                               D3DPOOL_SYSTEMMEM, &copy.p, nullptr)
-                           : D3DERR_NOTAVAILABLE;
-            if (SUCCEEDED(result))
-                result = real->GetRenderTargetData(target.p, copy.p);
-            D3DLOCKED_RECT lock{};
-            if (SUCCEEDED(result))
-                result = copy.p->LockRect(&lock, nullptr, D3DLOCK_READONLY);
-            std::uint64_t hash = 0;
-            if (SUCCEEDED(result)) {
-                hash = 14695981039346656037ull;
-                for (UINT y = 0; y < desc.Height; ++y)
-                    hash = Hash(static_cast<const char*>(lock.pBits) + y * lock.Pitch,
-                                desc.Width * pixelBytes, hash);
-                if (FAILED(copy.p->UnlockRect()))
-                    throw std::runtime_error("MME pass readback unlock");
-                ++readbacks;
-            }
-            out << ",\"readback\":" << static_cast<unsigned>(result) << ",\"hash\":\"" << std::hex
-                << hash << std::dec << "\"}";
+            Description(out, targets[i].desc);
+            out << ",\"readback\":0,\"hash\":\"" << std::hex << targets[i].hash << std::dec
+                << "\"}";
         }
         Owned<IDirect3DSurface9> depth;
         out << "],\"depth\":";
@@ -323,6 +430,7 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
         }
         out << "}}";
         passes.push_back(out.str());
+        passTargets.push_back(targets);
     }
     void Record(D3DPRIMITIVETYPE type, int base, UINT min, UINT vertices, UINT start, UINT count) {
         std::array<DWORD, 272> row{};
@@ -427,6 +535,7 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
             if (!passFile.good())
                 throw std::runtime_error("write MME pass trace");
             passes.clear();
+            passTargets.clear();
         }
     }
 };
