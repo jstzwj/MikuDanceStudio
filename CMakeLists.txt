@@ -24,14 +24,10 @@ if (MSVC)
     # The original binary tolerates implicit narrowing everywhere; keep the
     # port close to VC9 behaviour rather than modern strictness.
     add_compile_options(/wd4267 /wd4244 /wd4245)
-    # VC9 had no C++17 aligned operator new/delete (P0035).  Without this
-    # switch our TUs allocate over-aligned Bullet objects (e.g. the 1456-byte
-    # btGeneric6DofSpringConstraint, align 16) through _aligned_malloc while
-    # the bullet275 static library's deleting destructors free them with the
-    # plain operator delete - free() on an _aligned_malloc block, which
-    # corrupts the heap and kills the process at teardown (0xC0000374,
-    # see ShutdownCleanup -> DisposePhysicsWorld).  The original shipped
-    # exactly the plain-new pairing, so this is also the faithful setting.
+    # Match VC9's plain new/delete convention on both sides of the Bullet
+    # boundary. The Bullet recipe must use this switch too: on x86, C++17
+    # otherwise pairs a plain constraint allocation with an aligned deleting
+    # destructor (or the reverse with a C++14 library), corrupting the heap.
     add_compile_options(/Zc:alignedNew-)
 else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
@@ -384,6 +380,9 @@ if(BUILD_TESTING)
     target_include_directories(key_registrars_test PRIVATE include)
     target_link_libraries(key_registrars_test PRIVATE user32 D3DXRuntime)
     add_test(NAME key_registrars COMMAND key_registrars_test)
+    add_executable(bullet_allocation_test tests/bullet_allocation_test.cpp)
+    target_link_libraries(bullet_allocation_test PRIVATE BULLET275::BULLET275)
+    add_test(NAME bullet_allocation COMMAND bullet_allocation_test)
     add_executable(background_quad_test tests/background_quad_test.cpp)
     target_include_directories(background_quad_test PRIVATE include)
     add_test(NAME background_quad COMMAND background_quad_test)
@@ -863,8 +862,8 @@ if(BUILD_TESTING)
         COMMAND embedded_mme_resources_test $<TARGET_FILE:MikuDanceStudio>)
     # These tests do not create windows, devices or modal dialogs. Safe while
     # the interactive desktop is in use: ctest -L cpu_no_windows.
-    set_tests_properties(mme_technique_validation scene_comparison_inputs gui_export_comparison
-        mme_effect_mapping mme_emm_save mme_initialization_test
+    set_tests_properties(bullet_allocation mme_technique_validation scene_comparison_inputs
+        gui_export_comparison mme_effect_mapping mme_emm_save mme_initialization_test
         mme_host_object_cache embedded_mme_resources PROPERTIES LABELS cpu_no_windows)
     if (TEST mmd_math)
         set_tests_properties(mmd_math PROPERTIES LABELS cpu_no_windows)

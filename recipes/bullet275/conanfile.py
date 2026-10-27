@@ -38,6 +38,12 @@ class Bullet275Conan(ConanFile):
              "project(bullet275 LANGUAGES CXX)\n"
              "set(BULLET_VERSION 2.75)\n"  # normally set by bullet's root CMakeLists
              f"set(BULLET_SOURCE_DIR \"{src}\")\n"
+             # Match the application's VC9 allocation convention. With C++17
+             # on x86, Bullet's deleting destructors otherwise call aligned
+             # delete for constraints allocated by the application's plain new.
+             "if(MSVC)\n"
+             "  add_compile_options(/Zc:alignedNew-)\n"
+             "endif()\n"
              # VC9 generated a mixed floating-point model for MMD's Bullet:
              # collision-shape inertia routines use scalar SSE, while the
              # complete constraint-solver path (6DoF/spring row generation as

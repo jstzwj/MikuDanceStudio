@@ -1016,3 +1016,15 @@ IDA 核对原版 x64 RVA `0x96310`（VA `0x7FF7CB4B6310`）与 x86 VA `0x460130`
 六项原始 RGBA 回归覆盖 Alpha 单像素差异、波动样本不能计为完全相等、波动位置中的系统性偏差不能被掩码隐藏、通道范围相交但完整颜色集合不相交，以及尺寸／样本不完整的拒绝。加入 CTest `gui_export_comparison`，不需要 Pillow、窗口或设备。两架构重新配置及 CPU 子集通过：x64 **8/8**、x86 **9/9**，零失败、零跳过；Python 语法检查和 `git diff --check` 通过。本轮没有修改生产渲染，因此未重复上一节已通过的完整 C++ 构建与全量 GPU 回归。
 
 本地证据在 `out/gui-rgb-20261028/`：`original-01..04.png`、`port-01..04.png`、`original-restarted-01.png`、`uniform-comparison.json`、`restart-comparison.json`、`input-manifest.json`、`common-mmconfig.ini` 和 `ctest-x{64,86}-cpu.log`。快照位于 `out/gui-loop-20261027-153458/state-uniform-*/`。测试程序均已退出，原版程序及模型不进入提交。下一步若继续追查，应捕获同一 GUI 帧的绘制输入和 resolve 前后目标，区分半透明叠加、采样解析与导出回读；当前仍不能指定首个产生变化的 GPU pass，也没有扩大到 x86 GUI 重复采样。
+
+## 2026-10-28：发布依赖分配约定
+
+v10.08 的[首次发布构建](https://github.com/jstzwj/MikuDanceStudio/actions/runs/40563724939)在 x86 `physics_trajectory` 检出堆损坏 `0xC0000374`，83/84 通过；x64 86/86 通过，均无跳过。发布任务因此未执行。该流程显式以 C++17 构建 Bullet，而本地既有回归使用 C++14 依赖；之前因 C++17 依赖退出堆损坏而恢复旧配置的记录，不能作为新环境可发布的依据。
+
+应用已有 `/Zc:alignedNew-`，Bullet 配方却未设置。x86 的 `btGeneric6DofSpringConstraint` 对齐为 16，超过默认 new 对齐；应用分配使用普通 `operator new`，C++17 Bullet 构造器安装的虚表对应删除析构器却使用对齐 `operator delete`。x64 默认 new 对齐为 16，不触发同一差异。修复在 Bullet 配方的 MSVC 构建中同样禁用 C++17 对齐分配，保留 VC9 的普通分配约定，不修改约束布局、物理算法或浮点选项。
+
+新增 `bullet_allocation`：在应用编译单元创建弹簧约束，通过 `btTypedConstraint` 的虚析构释放，重复 32 次，不创建窗口、设备或世界。独立 x86 探针链接旧 C++17 包时退出码稳定为 `0xC0000374`；相同源码链接新包后正常退出。该负向验证不依赖 D3D 或完整物理场景。
+
+两架构分别按发布配置重新创建 C++17 依赖并在隔离目录构建（`MIKUDANCESTUDIO_DIAG=OFF`）。`bullet_allocation` 和完整 `physics_trajectory` 各 2/2 通过、零跳过，后者保留两次 600 帧轨迹、停止／跳帧／模式／模型／PMM 重载检查；x86 9.16 秒、x64 8.29 秒。这些是本地针对性回归，后续发布仍须由修复后的标签重新运行完整两架构 CI，不以绕过失败测试或恢复旧依赖代替。
+
+本地记录在 `out/release-10.08/`：`bullet-{before-x86,after-x86,after-x64}.log`、`allocation-{before,after}-x86/`、`local-x{86,64}-{conan,configure,build,targeted}.log` 及对应 JUnit。首次 CI 结果保存在 `tests-x{86,64}/`。
