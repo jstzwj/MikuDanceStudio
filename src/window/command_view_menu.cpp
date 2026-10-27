@@ -382,13 +382,23 @@ static const char kMsgOpenOniJp[] =
 
 // 0x52F650: JP title "Save extended model"
 static const wchar_t kTitleSaveModelJp[] = L"\x62E1\x5F35\x30E2\x30C7\x30EB\x4FDD\x5B58";
-// 0x52F218: JP picture filter label "Image formats below" (label is
-// followed by a double NUL in the binary - the pattern list is empty).
+// 0x52F218 / x64 0x7FF7CB54F400: single NULs separate labels and
+// patterns; only the end of the complete filter list has a double NUL.
+#define MDS_PICTURE_FILTER_PATTERNS                                                                \
+    L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\0"                                                 \
+    L"Bmp files(*.bmp)\0*.bmp\0"                                                                   \
+    L"Jpeg files(*.jpg)\0*.jpg\0"                                                                  \
+    L"Png files(*.png)\0*.png\0"                                                                   \
+    L"Dds files(*.dds)\0*.dds\0"                                                                   \
+    L"DIB files(*.dib)\0*.dib\0"                                                                   \
+    L"pfm files(*.pfm)\0*.pfm\0"                                                                   \
+    L"HDR files(*.hdr)\0*.hdr\0"                                                                   \
+    L"All Files(*.*)\0*.*\0"
+static const wchar_t kFilterPicEn[] = L"All picture format\0" MDS_PICTURE_FILTER_PATTERNS;
 static const wchar_t kFilterPicJp[] =
     L"\x5168\x3066\x306E\x5BFE\x5FDC\x30D5\x30A9\x30FC\x30DE\x30C3\x30C8"
-    L"\x00\x00"
-    L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\x00\x00"
-    L"Bmp files(*.bmp)\x00\x00*.bmp\x00\x00";
+    L"\0" MDS_PICTURE_FILTER_PATTERNS;
+#undef MDS_PICTURE_FILTER_PATTERNS
 // 0x52F1D0: JP title "Output image file"
 static const wchar_t kTitleRenderJp[] = L"\x753B\x50CF\x30D5\x30A1\x30A4\x30EB\x51FA\x529B";
 // 0x52DC84: JP title "Open file"
@@ -1130,8 +1140,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
 
     // ------------------------------------------------------------------
     // 276 (0x0048AFA4): "render to picture file".  Save dialog with the
-    // picture filter (EN 0x52F3F8 / JP 0x52F218, label followed by an
-    // empty pattern list as in the binary), defext "bmp", title "render
+    // picture filter (EN 0x52F3F8 / JP 0x52F218), defext "bmp", title "render
     // to picture file" / JP 0x52F1D0, initial dir DirUser / "UserFile";
     // dir gate 0x12D like 263; the chosen path goes to app+0x9F134 and
     // the render target grows (locale screenWidth/screenHeight, 0x1D4E4/
@@ -1150,10 +1159,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         std::memset(&ofn, 0, sizeof(ofn));
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = english ? L"All picture format\x00\x00"
-                                    L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\x00\x00"
-                                    L"Bmp files(*.bmp)\x00\x00*.bmp\x00\x00"
-                                  : kFilterPicJp;
+        ofn.lpstrFilter = english ? kFilterPicEn : kFilterPicJp;
         ofn.lpstrFile = fileBuf;
         ofn.nFilterIndex = 1;
         ofn.nMaxFile = 0x100;
@@ -1179,6 +1185,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         D3DRenderer* locale = app->Renderer();
         const std::int32_t oldW = locale->screenWidth;  // 0x1D4E4
         const std::int32_t oldH = locale->screenHeight; // 0x1D4E8
+        // x86 0x48B101..0x48B119 / x64 0x7FF7CB46F829..0x7FF7CB46F849:
+        // TimelineAdvance restores these dimensions after saving the image.
+        app->state.recRTW = oldW;
+        app->state.recRTH = oldH;
         const std::int32_t renderW = app->RenderWidth();
         const std::int32_t renderH = app->RenderHeight();
         if (renderW > oldW || renderH > oldH) {

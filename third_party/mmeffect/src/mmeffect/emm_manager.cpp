@@ -226,8 +226,8 @@ std::string& DefaultEffectRef()
     return path;
 }
 
-// [Object] slot keys resolve against the HOST enumeration (the same indexes
-// the original's Pmd<N>/Acs<N> rows use): ExpGetPmdID(i)/ExpGetAcsID(i).
+// Resolve a host enumeration index through ExpGetPmdID(i)/ExpGetAcsID(i).
+// EMM Pmd<N>/Acs<N> keys instead use the object's absolute draw order.
 ModelData* FindModelBySlot(bool isModel, int slot)
 {
     MmeContext* ctx = g_context;
@@ -1457,8 +1457,10 @@ bool MmeEmmLoad(const char* path)
 bool MmeEmmSave(const char* path)
 {
     // [FUN_1800315F0] serialize the live state: every host object in the
-    // enumeration, absolute paths, "none" sentinels; rows ordered by the
-    // slot sort (FUN_18004C150 compares the slot int only).
+    // enumeration, absolute paths, "none" sentinels. FUN_1800315F0 copies
+    // ModelData+0xec (absolute draw order), not the host enumeration index,
+    // into both the key and the sort field (FUN_18004C150). The x86 twin
+    // FUN_1002E5B0 reads ModelData+0x84 at 0x1002E680.
     std::vector<EmmSaveObject> rows;
     MmeContext* ctx = g_context;
     if (ctx != nullptr) {
@@ -1467,13 +1469,13 @@ bool MmeEmmSave(const char* path)
             const int num = isModel ? ExpGetPmdNum() : ExpGetAcsNum();
             for (int i = 0; i < num; ++i) {
                 EmmSaveObject row;
-                row.slot = i;
                 row.record.isModel = isModel;
-                row.record.slot = i;
                 const char* file = isModel ? ExpGetPmdFilename(i) : ExpGetAcsFilename(i);
                 row.record.objectPath = file != nullptr ? AbsPathCopy(file) : "";
                 row.model = FindModelBySlot(isModel, i);
-                row.entry.key = KeyName(isModel, i);
+                row.slot = row.model != nullptr ? row.model->passPlanScratch().renderOrder : 0;
+                row.record.slot = row.slot;
+                row.entry.key = KeyName(isModel, row.slot);
                 if (row.model != nullptr) {
                     const std::string& effect = row.model->effectFile();
                     if (row.model->renderClass() != 0) {

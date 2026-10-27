@@ -855,25 +855,6 @@ void DlgAddDefaultRow(HWND list)
     DlgSetRowCheck(list, index, 0);
 }
 
-std::string DlgSubsetRowLabel(ModelData* model, int subset, int matCount)
-{
-    // FUN_18003fff0's subset row text: "  |-- <name>:" and, for the last
-    // material, "  `-- <name>:"; unnamed materials fall back to
-    // JP "Material%d" (Japanese UI) / "subset%d".
-    const wchar_t* materialName = GetMaterialName(model->objectId(),
-                                                  (unsigned long)subset, 0);
-    std::string name;
-    if (materialName != nullptr) {
-        name = MmeWideToAnsi(materialName);
-    }
-    if (name.empty()) {
-        name = MmeFormat(MmeIsEnglishUiMode() ? "subset%d" : "\xE6\x9D\x90\xE8\xB3\xAA%d",
-                         subset);
-    }
-    return MmeFormat(subset == matCount - 1 ? "  `-- %s:" : "  |-- %s:",
-                     name.c_str());
-}
-
 void DlgAddObjectRow(HWND list, ModelData* model)
 {
     RowRef row;
@@ -911,14 +892,14 @@ void DlgAddObjectRow(HWND list, ModelData* model)
             RowRef sub;
             sub.model = model;
             sub.subset = m;
-            std::string label = DlgSubsetRowLabel(model, m, matCount);
-            LVITEMA subItem;
+            std::wstring label = MmeDlgSubsetRowLabel(*model, m, MmeIsEnglishUiMode());
+            LVITEMW subItem;
             memset(&subItem, 0, sizeof(subItem));
             subItem.mask = LVIF_TEXT | LVIF_PARAM;
             subItem.iItem = (int)g_rows.size();
-            subItem.pszText = const_cast<LPSTR>(label.c_str());
+            subItem.pszText = const_cast<LPWSTR>(label.c_str());
             subItem.lParam = (LPARAM)g_rows.size();
-            int subIndex = (int)SendMessageA(list, LVM_INSERTITEMA, 0,
+            int subIndex = (int)SendMessageW(list, LVM_INSERTITEMW, 0,
                                              (LPARAM)&subItem);
             if (subIndex < 0) {
                 break;
@@ -2076,6 +2057,19 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
 }
 
 } // namespace
+
+std::wstring MmeDlgSubsetRowLabel(const ModelData& model, int subset, bool english)
+{
+    // FUN_18003FFF0: use the constructor's +0xa0/+0xc0 name
+    // vectors, prepend the subset index, and insert with LVM_INSERTITEMW.
+    const auto& names = english ? model.materialNamesEn() : model.materialNamesJp();
+    const std::wstring index = std::to_wstring(subset);
+    const std::wstring& name = names.at(static_cast<size_t>(subset));
+    std::wstring label = subset == model.materialCount() - 1 ? L"  `-- " : L"  |-- ";
+    label += index + L": ";
+    label += name.empty() ? (english ? L"subset" : L"\u6750\u8cea") + index : name;
+    return label;
+}
 
 void MmeDlgOpenAssignmentDialog()
 {

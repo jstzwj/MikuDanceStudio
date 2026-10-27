@@ -3,6 +3,8 @@
 #include "mme_context.h"
 #include "mme_globals.h"
 #include "model_data.h"
+#include "mme_dlg.h"
+#include "../third_party/mmeffect/src/mmhack/mmhack_state.h"
 
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -65,9 +67,27 @@ void Run() {
         context.modelRegistry[key] = data;
         return data;
     };
+    const auto modelId = reinterpret_cast<unsigned long long>(model.get());
+    auto& metadata = g_mmh.objData[modelId];
+    metadata.isPmd = true;
+    metadata.mats.resize(2);
+    metadata.mats[0].name0 = L"\u6750\u8cea\u540d";
+    metadata.mats[1].name0 = L"Japanese";
+    metadata.mats[1].name1 = L"English";
     auto* pmd = add(model.get(), "C:\\fixture\\first.pmd", 1);
+    g_mmh.objData.erase(modelId);
     auto* carrier = add(&accessories[0], "C:\\fixture\\multi.x", 0);
     auto* other = add(&accessories[1], "C:\\fixture\\multi.x", 0);
+    Check(mme::MmeDlgSubsetRowLabel(*pmd, 0, true) == L"  |-- 0: subset0" &&
+              mme::MmeDlgSubsetRowLabel(*pmd, 1, true) == L"  `-- 1: English" &&
+              mme::MmeDlgSubsetRowLabel(*pmd, 0, false) == L"  |-- 0: \u6750\u8cea\u540d" &&
+              mme::MmeDlgSubsetRowLabel(*carrier, 1, false) == L"  `-- 1: \u6750\u8cea1",
+          "GUI labels retain subset number, cached localized name and Unicode fallback");
+    // A real GUI save with one loaded model writes Pmd1, not Pmd0. Keys
+    // follow the absolute display order, including mixed object types.
+    pmd->passPlanScratch().renderOrder = 1;
+    carrier->passPlanScratch().renderOrder = 0;
+    other->passPlanScratch().renderOrder = 2;
     const std::string main = "C:\\effects\\Main\\main.fx";
     pmd->setEffectFile(main);
     other->setEffectFile(main);
@@ -111,8 +131,12 @@ void Run() {
           "save all duplicate instances and nine offscreen owners");
     const auto& root = saved.effectSections().front();
     Check(root.isDefault() && root.entries.size() == 2, "scene carrier has no base path row");
-    Check(Entry(root, "Pmd0").effectPath == main && !Entry(root, "Pmd0").hasShow &&
-              Entry(root, "Acs1").effectPath == main && !Entry(root, "Acs1").hasShow,
+    Check(saved.objectRecords()[0].slot == 0 && !saved.objectRecords()[0].isModel &&
+              saved.objectRecords()[1].slot == 1 && saved.objectRecords()[1].isModel &&
+              saved.objectRecords()[2].slot == 2,
+          "EMM object keys and row ordering use absolute draw order");
+    Check(Entry(root, "Pmd1").effectPath == main && !Entry(root, "Pmd1").hasShow &&
+              Entry(root, "Acs2").effectPath == main && !Entry(root, "Acs2").hasShow,
           "implicit visibility must not become explicit show rows");
     for (std::size_t i = 0; i < names.size(); ++i) {
         const auto& section = saved.effectSections()[i + 1];
@@ -123,7 +147,7 @@ void Run() {
         Check(self.effectPath.empty() && self.hasShow && !self.shown && self.subsetPaths.empty(),
               "carrier serializes only its hidden flag");
         const bool utility = i < 3;
-        const auto& modelEntry = Entry(section, "Pmd0");
+        const auto& modelEntry = Entry(section, "Pmd1");
         Check(modelEntry.effectPath ==
                   (utility  ? "none"
                    : i == 3 ? "C:\\effects\\materials\\material_2.0.fx"
@@ -132,18 +156,18 @@ void Run() {
               "native resolved offscreen model assignment");
         Check(modelEntry.hasShow == utility && (!utility || !modelEntry.shown),
               "native model visibility-presence rules");
-        const auto& accessoryEntry = Entry(section, "Acs1");
+        const auto& accessoryEntry = Entry(section, "Acs2");
         Check(accessoryEntry.hasShow == (i != 8) && (i == 8 || !accessoryEntry.shown),
               "duplicate accessory has independent scoped visibility");
     }
     other->setShown(true);
     Check(mme::MmeEmmSave(output.c_str()) && saved.Load(output.c_str()), "save explicit true");
-    Check(Entry(saved.effectSections().front(), "Acs1").hasShow &&
-              Entry(saved.effectSections().front(), "Acs1").shown,
+    Check(Entry(saved.effectSections().front(), "Acs2").hasShow &&
+              Entry(saved.effectSections().front(), "Acs2").shown,
           "explicit true remains distinguishable from an absent row");
     other->resetShown();
     Check(mme::MmeEmmSave(output.c_str()) && saved.Load(output.c_str()), "save reset visibility");
-    Check(!Entry(saved.effectSections().front(), "Acs1").hasShow,
+    Check(!Entry(saved.effectSections().front(), "Acs2").hasShow,
           "reset clears visibility row presence");
 
     pmd->passPlanScratch().renderOrder = 10;
@@ -164,12 +188,12 @@ void Run() {
     Check(mme::MmeEmmSave(output.c_str()) && saved.Load(output.c_str()), "save nested owners");
     Check(saved.effectSections().size() == 12, "serialize each scoped resource once");
     const auto& nestedSection = saved.effectSections()[5];
-    Check(nestedSection.name == "Effect@MaterialMap(1)" && nestedSection.ownerKey == "Pmd0" &&
+    Check(nestedSection.name == "Effect@MaterialMap(1)" && nestedSection.ownerKey == "Pmd10" &&
               nestedSection.ownerSubsetIndex == 0 &&
               nestedSection.ownerMaterialName == "MaterialMap",
           "nested owner suffix and parent follow the native depth-first walk");
     const auto& secondSection = saved.effectSections().back();
-    Check(secondSection.name == "Effect@MaterialMap(2)" && secondSection.ownerKey == "Acs1" &&
+    Check(secondSection.name == "Effect@MaterialMap(2)" && secondSection.ownerKey == "Acs30" &&
               secondSection.ownerMaterialName.empty(),
           "same-name owners are numbered by display order, independently of pointer order");
 
@@ -180,11 +204,11 @@ void Run() {
     incoming.SetObjectRecords(saved.objectRecords());
     incoming.SetDefaultEffect("none");
     std::vector<mme::EmmEffectEntry> entries;
-    for (const char* key : {"Pmd0", "Acs0", "Acs1"}) {
+    for (const char* key : {"Pmd10", "Acs20", "Acs30"}) {
         mme::EmmEffectEntry entry;
         entry.key = key;
         entry.effectPath = "none";
-        if (entry.key == "Acs0") {
+        if (entry.key == "Acs20") {
             entry.hasShow = true;
             entry.shown = false;
         }
@@ -194,9 +218,9 @@ void Run() {
     mme::EmmEffectSection unresolved;
     unresolved.name = "Effect@MaterialMap";
     unresolved.baseName = "MaterialMap";
-    unresolved.ownerKey = "Acs0";
+    unresolved.ownerKey = "Acs20";
     mme::EmmEffectEntry scoped;
-    scoped.key = "Pmd0";
+    scoped.key = "Pmd10";
     scoped.effectPath = "none";
     scoped.hasShow = true;
     scoped.shown = false;

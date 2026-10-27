@@ -3,6 +3,7 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "../src/render/model_materials.hpp"
+#include "d3d9_device_fixture.hpp"
 
 #include <array>
 #include <cstdio>
@@ -26,6 +27,12 @@ struct Window {
         if (hwnd)
             DestroyWindow(hwnd);
     }
+};
+// Exercise the production frame setup and clear on a real render target,
+// stopping before scene drawing so the background RGBA remains observable.
+struct ClearOnlyDevice : SnapshotDeviceFixture {
+    using SnapshotDeviceFixture::SnapshotDeviceFixture;
+    HRESULT STDMETHODCALLTYPE BeginScene() override { return E_FAIL; }
 };
 bool Good(HRESULT hr, const char* call) {
     if (FAILED(hr))
@@ -208,6 +215,33 @@ int main() {
         }
         REQUIRE(sprites->Unlock());
     }
+    app->ModelSlot(kModelSlotCount - 1) = nullptr;
+    app->CameraMode() = 1;
+    app->CameraParentModel() = -1;
+    app->RecordingWindow() = window.hwnd;
+    app->RenderWidth() = app->RenderHeight() = 64;
+    app->state.messageSeen = 1;
+    ClearOnlyDevice clearDevice(device.p);
+    renderer->device = &clearDevice;
+    for (int stencil : {0, 1}) {
+        renderer->d3dInitialized = static_cast<unsigned char>(stencil);
+        for (int black : {0, 1}) {
+            app->state.blackBackgroundEnabled = static_cast<unsigned char>(black);
+            REQUIRE(device->Clear(0, nullptr, D3DCLEAR_TARGET, 0xFFFF00FF, 1, 0));
+            RenderFrameScene(app.get());
+            REQUIRE(device->GetRenderTargetData(target.p, readback.p));
+            REQUIRE(readback->LockRect(&locked, nullptr, D3DLOCK_READONLY));
+            const DWORD actual = *static_cast<const DWORD*>(locked.pBits);
+            const DWORD expected = black ? 0x00000000 : 0x00FFFFFF;
+            if (actual != expected) {
+                std::fprintf(stderr, "frame background RGBA: %08lX, expected %08lX\n", actual,
+                             expected);
+                ++failures;
+            }
+            REQUIRE(readback->UnlockRect());
+        }
+    }
+    renderer->device = device.p;
     g_Block = nullptr;
     return failures ? 1 : 0;
 }

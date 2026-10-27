@@ -335,9 +335,11 @@ void RenderFrameScene(MMDApp* app) {
     DWORD clearFlags = D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER;
     if (sub->d3dInitialized != 0)
         clearFlags |= D3DCLEAR_STENCIL;
+    // x86 0x46DC2D/0x46DC32, x64 0x7FF7CB44A2A2/0x7FF7CB44A2B1:
+    // both backgrounds retain zero alpha, including image-file capture.
     const D3DCOLOR clearColor = app->state.blackBackgroundEnabled != 0
-                                    ? D3DCOLOR_XRGB(0, 0, 0)
-                                    : D3DCOLOR_XRGB(255, 255, 255);
+                                    ? D3DCOLOR_ARGB(0, 0, 0, 0)
+                                    : D3DCOLOR_ARGB(0, 255, 255, 255);
     mme::ClearScene(app, device, clearFlags, clearColor, 1.0f, 0);
 
     app->state.renderPassCount = 1;
