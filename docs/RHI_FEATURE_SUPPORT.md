@@ -6,16 +6,16 @@ test; an API's theoretical capabilities do not imply adapter support.
 
 | Contract / feature | Null | DX9 editor | DX11 | DX12 | Vulkan |
 | --- | --- | --- | --- | --- | --- |
-| CPU PMD/PMX scene, IK, Bullet and PMM evaluation | CPU validation | Native | Independent CPU producer | Independent CPU producer | No backend |
-| Resident immutable geometry/material versions | Validation | Native | Implemented | Implemented | No backend |
-| Single RGBA8 + D24S8 model frame | Validation | Native | Implemented | Implemented | No backend |
-| Explicit sequential passes and sampled attachment dependencies | `rhi_render_pass` / `rhi_frame_passes` | Native implicit state | Generated-scene gate | Generated-scene gate | No backend |
-| R32 float shadow color + independent D24S8 attachment | Clear/read validation | Built-in effect | Generated-scene gate | Generated-scene gate | No backend |
-| Built-in self-shadow generation and composition | No rasterization | Native | CPU PMD/PMX producer; bounded hardware comparison | CPU PMD/PMX producer; bounded hardware comparison | No backend |
-| Multiple simultaneous color attachments (MRT) | Rejected | Native API only | Not exposed | Not exposed | No backend |
-| Mips / layers / MSAA on explicit render textures | Rejected | Separate legacy paths | Rejected | Rejected | No backend |
-| Native MME `.fx` execution | Unsupported | Implemented | Unsupported | Unsupported | No backend |
-| Dynamic screen texture / post-processing | Dependency foundation | Native | Not yet integrated | Not yet integrated | No backend |
+| CPU PMD/PMX scene, IK, Bullet and PMM evaluation | CPU validation | Native | Independent CPU producer | Independent CPU producer | Independent CPU producer |
+| Resident immutable geometry/material versions | Validation | Native | Implemented | Implemented | Implemented |
+| Single RGBA8 + D24S8 model frame | Validation | Native | Implemented | Implemented | Offscreen |
+| Explicit sequential passes and sampled attachment dependencies | `rhi_render_pass` / `rhi_frame_passes` | Native implicit state | Generated-scene gate | Generated-scene gate | Generated-scene gate + synchronization validation |
+| R32 float shadow color + independent D24S8 attachment | Clear/read validation | Built-in effect | Generated-scene gate | Generated-scene gate | Generated-scene gate |
+| Built-in self-shadow generation and composition | No rasterization | Native | CPU PMD/PMX producer; bounded hardware comparison | CPU PMD/PMX producer; bounded hardware comparison | Generated PMD/PMX and real PMD pass; real PMX sampling difference remains |
+| Multiple simultaneous color attachments (MRT) | Rejected | Native API only | Not exposed | Not exposed | Rejected |
+| Mips / layers / MSAA on explicit render textures | Rejected | Separate legacy paths | Rejected | Rejected | Rejected |
+| Native MME `.fx` execution | Unsupported | Implemented | Unsupported | Unsupported | Unsupported |
+| Dynamic screen texture / post-processing | Dependency foundation | Native | Not yet integrated | Not yet integrated | Not yet integrated |
 
 ## Explicit pass rules
 
@@ -90,6 +90,11 @@ UV1 and material morph shading fail explicitly. The legacy preview controller
 still consumes its single-target stream; presenting the new frame through that
 controller is a separate integration step, not an implicit fallback to DX9.
 
-Vulkan is currently an enum value only. `BackendAvailable(Backend::Vulkan)` is
-false and `CreateBackendDevice` returns `backend_not_built`. No Vulkan device,
-SPIR-V pipeline, barrier implementation or acceptance test is connected yet.
+The optional [Vulkan offscreen adapter](RHI_VULKAN_OFFSCREEN.md) implements
+Vulkan 1.3 devices, uploaded resources, explicit attachments, SPIR-V graphics
+pipelines, Synchronization2 barriers, timeline completion and staging readback.
+`BackendAvailable(Backend::Vulkan)` reports build availability;
+`CreateOffscreenBackendDevice` selects DX11, DX12 or Vulkan without a window.
+Vulkan presentation is still unsupported: `CreateBackendDevice` returns
+`presentation_not_supported` when Vulkan is built. No preview/WSI or native MME
+support is implied by offscreen availability.

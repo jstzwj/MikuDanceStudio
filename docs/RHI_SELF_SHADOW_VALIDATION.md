@@ -161,8 +161,11 @@ strict CTest diagnostics compare DX11 WARP against hardware DX9 as before.
 Next, route the explicit final frame target through presentation, then add
 dynamic screen textures and post-processing. WARP material precision and exact
 SM3/SM5 differences can be investigated independently of bounded acceptance.
-Vulkan is not implemented: only its enum exists and the factory reports
-`backend_not_built`. Its first implementation should provide offscreen device
-creation, resources, pass transitions, SPIR-V pipelines and staging readback,
-then reuse the generated shadow/main tests and PMD/PMX producer. It should
-consume the same access/pass and CPU scene contracts as DX11/DX12.
+The [Vulkan offscreen adapter](RHI_VULKAN_OFFSCREEN.md) now reuses the same
+shadow/main tests, PMD/PMX CPU producer, pass validation and numerical limits.
+Generated models and the real PMD pass bounded acceptance. On TITAN Xp the real
+PMX shadow map is exact, but its main image has texture-sampling differences
+up to 15 RGB bytes and one differing coverage pixel. The external PMX bounded
+gate remains a failure; no expected-failure flag or wider tolerance is applied.
+This is independent of the existing WARP issue and does not establish Vulkan
+presentation or full model parity.

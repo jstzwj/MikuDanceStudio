@@ -3,6 +3,8 @@
 #include "mikudancestudio/runtime_cpu_scene_producer.hpp"
 #include "mikudancestudio/rhi_d3d11.hpp"
 #include "mikudancestudio/rhi_d3d12.hpp"
+#include "mikudancestudio/rhi_backend.hpp"
+#include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "self_shadow_dx9_reference.hpp"
 #include "self_shadow_compare.hpp"
@@ -79,7 +81,8 @@ int main(int argc, char** argv) try {
     const std::string comparison = argv[4];
     if ((comparison != "strict" && comparison != "tolerant" && comparison != "measure") ||
         (variant != "dx11-warp" && variant != "dx11-hardware" && variant != "dx12-warp" &&
-         variant != "dx12-hardware"))
+         variant != "dx12-hardware" && variant != "vulkan-hardware" &&
+         variant != "vulkan-hardware-debug"))
         return 2;
     const auto evidence = argc > 5 ? std::filesystem::u8path(argv[5]) : std::filesystem::path{};
     if (!evidence.empty())
@@ -103,15 +106,22 @@ int main(int argc, char** argv) try {
     CHECK(producer.Load(scene, resolver, true, assets, reason));
     const bool dx12 = variant.find("dx12") != std::string::npos;
     const bool warp = variant.find("warp") != std::string::npos;
-    auto eleven =
-        dx12
-            ? D3D11Bundle{}
-            : CreateD3D11OffscreenDevice(128, 96, warp ? D3D11Driver::Warp : D3D11Driver::Hardware);
-    auto twelve = dx12 ? CreateD3D12OffscreenDevice(
-                             128, 96, warp ? D3D12Driver::Warp : D3D12Driver::Hardware, {{}, true})
-                       : D3D12Bundle{};
-    CHECK(dx12 ? bool(twelve) : bool(eleven));
-    SceneRenderer renderer(dx12 ? *twelve.device : *eleven.device);
+    const bool vulkan = variant.find("vulkan") == 0;
+    BackendOptions options;
+    options.backend = vulkan ? Backend::Vulkan : dx12 ? Backend::D3D12 : Backend::D3D11;
+    options.driver = warp ? BackendDriver::Software : BackendDriver::Hardware;
+    options.debugLayer = dx12 || variant.find("debug") != std::string::npos;
+    auto native = CreateOffscreenBackendDevice(128, 96, options);
+    reason = native.reason;
+    if (!native && options.debugLayer &&
+        (reason == "validation_layer_unavailable" ||
+         reason == "validation_extensions_unavailable")) {
+        std::cerr << "SKIP: " << reason << "\n";
+        return 77;
+    }
+    CHECK(native);
+    std::cerr << "adapter: " << native.adapter << "\n";
+    SceneRenderer renderer(*native.device);
     shadow_reference::Reference reference(assetsPath / "skin_effect_sm3.fx");
     bool exact = true, accepted = true;
     for (int mode : {1, 2})
@@ -186,7 +196,11 @@ int main(int argc, char** argv) try {
         }
     CHECK(renderer.Unload(1) && renderer.Detach());
     if (dx12)
-        CHECK(QueryD3D12Stats(*twelve.device).debugErrors == 0);
+        CHECK(QueryD3D12Stats(*native.device).debugErrors == 0);
+#ifdef MIKUDANCESTUDIO_RHI_VULKAN
+    if (vulkan)
+        CHECK(QueryVulkanStats(*native.device).validationErrors == 0);
+#endif
     if (comparison == "strict" && !exact) {
         std::cerr << "FAIL strict DX9 comparison: no tolerance was applied\n";
         return 1;

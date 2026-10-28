@@ -17,8 +17,11 @@ mode.add_argument('--tolerant', action='store_true')
 args = parser.parse_args()
 
 def run(model):
-    subprocess.run([args.test, str(model), args.assets, args.variant,
-                    'strict' if args.strict else 'tolerant' if args.tolerant else 'measure'], check=True, timeout=120)
+    completed = subprocess.run([args.test, str(model), args.assets, args.variant,
+                    'strict' if args.strict else 'tolerant' if args.tolerant else 'measure'], timeout=120)
+    if completed.returncode == 77:
+        raise SystemExit(77)
+    completed.check_returncode()
 
 if args.external:
     path = os.environ.get('MDS_SELF_SHADOW_' + args.external.upper())

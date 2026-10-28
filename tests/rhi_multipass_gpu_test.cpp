@@ -1,5 +1,7 @@
 #include "mikudancestudio/rhi_d3d11.hpp"
 #include "mikudancestudio/rhi_d3d12.hpp"
+#include "mikudancestudio/rhi_backend.hpp"
+#include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_render_pass.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include <algorithm>
@@ -87,21 +89,23 @@ int main(int argc, char** argv) {
     const bool dx12 = arg.find("dx12") != std::string::npos,
                warp = arg.find("warp") != std::string::npos;
     const bool debug = arg.find("debug") != std::string::npos;
-    auto eleven =
-        dx12 ? D3D11Bundle{}
-             : CreateD3D11OffscreenDevice(64, 64, warp ? D3D11Driver::Warp : D3D11Driver::Hardware);
-    auto twelve = dx12 ? CreateD3D12OffscreenDevice(
-                             64, 64, warp ? D3D12Driver::Warp : D3D12Driver::Hardware, {{}, debug})
-                       : D3D12Bundle{};
-    if (!(dx12 ? bool(twelve) : bool(eleven))) {
-        std::fprintf(
-            stderr, "creation failed: %llx %s\n",
-            static_cast<unsigned long long>(dx12 ? twelve.creationError : eleven.creationError),
-            (dx12 ? twelve.creationReason : eleven.creationReason).c_str());
-        return 1;
+    const bool vulkan = arg.find("vulkan") != std::string::npos;
+    BackendOptions options;
+    options.backend = vulkan ? Backend::Vulkan : dx12 ? Backend::D3D12 : Backend::D3D11;
+    options.driver = warp ? BackendDriver::Software : BackendDriver::Hardware;
+    options.debugLayer = debug;
+    auto native = CreateOffscreenBackendDevice(64, 64, options);
+    if (!native) {
+        std::fprintf(stderr, "creation failed: %lld %s\n",
+                     static_cast<long long>(native.nativeError), native.reason.c_str());
+        return vulkan && debug &&
+                       (native.reason == "validation_layer_unavailable" ||
+                        native.reason == "validation_extensions_unavailable")
+                   ? 77
+                   : 1;
     }
-    CHECK(dx12 ? !twelve.swapchain : !eleven.swapchain);
-    auto& d = dx12 ? *twelve.device : *eleven.device;
+    std::printf("adapter: %s\n", native.adapter.c_str());
+    auto& d = *native.device;
     CHECK(d.ModelFeatures().offscreen && !d.ModelFeatures().presentation);
     auto floor = Quad(.95f, .8f), blocker = Quad(.15f, .2f);
     auto floorV =
@@ -185,10 +189,11 @@ int main(int argc, char** argv) {
         CHECK(!d.ReadRenderTexture(map, mapImage));
     }
     CHECK(d.Destroy(floorV) && d.Destroy(blockerV));
+#ifdef MIKUDANCESTUDIO_RHI_D3D12
     if (dx12)
         CHECK(QueryD3D12Stats(d).debugErrors == 0);
-    D3D11Bundle replacementEleven;
-    D3D12Bundle replacementTwelve, recovery;
+#endif
+    OffscreenBackendDevice replacement, recovery;
     SceneRenderer renderer(d);
     PreparedModelFrame prepared;
     CompletionToken token;
@@ -213,34 +218,37 @@ int main(int argc, char** argv) {
     }
     CHECK(renderer.ReadTarget(1, 2, rendered) && rendered.bytes == baseline);
     CHECK(renderer.Stats().uploads == 2);
-    replacementEleven =
-        dx12 ? D3D11Bundle{}
-             : CreateD3D11OffscreenDevice(64, 64, warp ? D3D11Driver::Warp : D3D11Driver::Hardware);
-    replacementTwelve =
-        dx12 ? CreateD3D12OffscreenDevice(64, 64, warp ? D3D12Driver::Warp : D3D12Driver::Hardware,
-                                          {{}, debug})
-             : D3D12Bundle{};
-    CHECK(dx12 ? bool(replacementTwelve) : bool(replacementEleven));
-    auto& replaced = dx12 ? *replacementTwelve.device : *replacementEleven.device;
+    replacement = CreateOffscreenBackendDevice(64, 64, options);
+    CHECK(replacement);
+    auto& replaced = *replacement.device;
     CHECK(renderer.Rebind(replaced) && !renderer.Submit(prepared, token));
     CHECK(renderer.Prepare(1, frame, prepared) && renderer.Submit(prepared, token));
     CHECK(renderer.ReadTarget(1, 2, rendered) && rendered.bytes == baseline &&
           renderer.Stats().uploads == 4);
+#ifdef MIKUDANCESTUDIO_RHI_D3D12
     if (dx12)
         CHECK(QueryD3D12Stats(d).debugErrors == 0 && QueryD3D12Stats(replaced).debugErrors == 0);
+#endif
+#ifdef MIKUDANCESTUDIO_RHI_VULKAN
+    if (vulkan)
+        CHECK(QueryVulkanStats(d).validationErrors == 0 &&
+              QueryVulkanStats(replaced).validationErrors == 0);
+#endif
+#ifdef MIKUDANCESTUDIO_RHI_D3D12
     if (dx12 && warp) {
         CHECK(RemoveD3D12DeviceForTest(replaced) &&
               replaced.PollCompletion(token) == CompletionState::DeviceLost);
         CHECK(renderer.Detach());
-        replacementTwelve.device.reset();
-        twelve.device.reset();
-        recovery = CreateD3D12OffscreenDevice(64, 64, D3D12Driver::Warp, {{}, debug});
+        replacement.device.reset();
+        native.device.reset();
+        recovery = CreateOffscreenBackendDevice(64, 64, options);
         CHECK(recovery);
         CHECK(renderer.Rebind(*recovery.device) && !renderer.Submit(prepared, token));
         CHECK(renderer.Prepare(1, frame, prepared) && renderer.Submit(prepared, token));
         CHECK(renderer.ReadTarget(1, 2, rendered) && rendered.bytes == baseline);
         CHECK(QueryD3D12Stats(*recovery.device).debugErrors == 0);
     }
+#endif
     CHECK(renderer.Unload(1) && !renderer.ReadTarget(1, 2, rendered));
     CHECK(renderer.Detach() && renderer.Stats().residentResources == 0 &&
           renderer.Stats().retiringResources == 0);
