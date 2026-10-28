@@ -68,7 +68,7 @@ void AdvanceFrameRenderGate(MMDApp* app) {
         state = 1;
     if (app->state.frameVolumeControlEnabled == 0)
         state = 1;
-    if (app->FrameRangeDialog() != nullptr)
+    if (app->EnglishNameDialog() != nullptr)
         state = 1;
 
     if (state == 1)
@@ -84,8 +84,8 @@ void AdvanceFrameRenderGate(MMDApp* app) {
 
 void TraceOperationInput(MMDApp* app, const char* phase) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_AB_TRACE_INPUT", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_TRACE_INPUT", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
     const int state = app->LeftMouseButtonState();
@@ -101,21 +101,18 @@ void TraceOperationInput(MMDApp* app, const char* phase) {
     const unsigned slot = app->state.slotIdx;
     auto* model = app->ModelSlot(slot);
     if (model != nullptr) {
-        const int selected = mikudancestudio::mdl::Mdl(model)->selectedBone;
-        auto* bones = mikudancestudio::mdl::Bones(model);
-        const int count = static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount);
+        const int selected = model->selectedBone;
+        auto* bones = model->boneTable;
+        const int count = static_cast<int>(model->boneCount);
         if (bones != nullptr && selected >= 0 && selected < count)
-            std::memcpy(quaternion, &bones[selected].rotQuat[0],
-                        sizeof(quaternion));
+            std::memcpy(quaternion, &bones[selected].rotQuat[0], sizeof(quaternion));
     }
     std::fprintf(stream,
-        "{\"phase\":\"%s\",\"state\":%d,\"mode\":%u,"
-        "\"mouse\":[%d,%d,%d,%d],\"quaternion\":["
-        "\"%08X\",\"%08X\",\"%08X\",\"%08X\"]}\n",
-        phase, state, mode,
-        app->MouseX(), app->MouseY(),
-        app->PreviousMouseX(), app->PreviousMouseY(),
-        quaternion[0], quaternion[1], quaternion[2], quaternion[3]);
+                 "{\"phase\":\"%s\",\"state\":%d,\"mode\":%u,"
+                 "\"mouse\":[%d,%d,%d,%d],\"quaternion\":["
+                 "\"%08X\",\"%08X\",\"%08X\",\"%08X\"]}\n",
+                 phase, state, mode, app->MouseX(), app->MouseY(), app->PreviousMouseX(),
+                 app->PreviousMouseY(), quaternion[0], quaternion[1], quaternion[2], quaternion[3]);
     std::fclose(stream);
 }
 
@@ -128,28 +125,25 @@ bool LineCaptureSwitchReady() {
     }
 
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return false;
 
     char readyPath[MAX_PATH]{};
-    std::snprintf(readyPath, sizeof(readyPath),
-                  "%s\\vb.capture.ready", directory);
+    std::snprintf(readyPath, sizeof(readyPath), "%s\\vb.capture.ready", directory);
     const DWORD attributes = GetFileAttributesA(readyPath);
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
 bool IsRegularFile(const char* path) {
     const DWORD attributes = GetFileAttributesA(path);
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
 bool WriteCaptureMarker(const char* path, const char* contents) {
-    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return false;
     DWORD written = 0;
@@ -162,17 +156,15 @@ bool WriteCaptureMarker(const char* path, const char* contents) {
 
 void ActivateRefreshedVbCapture() {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
 
     char requestPath[MAX_PATH]{};
     char activePath[MAX_PATH]{};
-    std::snprintf(requestPath, sizeof(requestPath),
-                  "%s\\vb.capture.ready", directory);
-    std::snprintf(activePath, sizeof(activePath),
-                  "%s\\vb.capture.active", directory);
+    std::snprintf(requestPath, sizeof(requestPath), "%s\\vb.capture.ready", directory);
+    std::snprintf(activePath, sizeof(activePath), "%s\\vb.capture.active", directory);
     if (IsRegularFile(requestPath) && !IsRegularFile(activePath))
         WriteCaptureMarker(activePath, "active after successful Present\n");
 }
@@ -186,22 +178,19 @@ void HoldPresentCaptureFence() {
     }
 
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
 
     char requestPath[MAX_PATH]{};
     char readyPath[MAX_PATH]{};
     char releasePath[MAX_PATH]{};
-    std::snprintf(requestPath, sizeof(requestPath),
-                  "%s\\screen.present.request", directory);
+    std::snprintf(requestPath, sizeof(requestPath), "%s\\screen.present.request", directory);
     if (!IsRegularFile(requestPath))
         return;
-    std::snprintf(readyPath, sizeof(readyPath),
-                  "%s\\screen.present.ready", directory);
-    std::snprintf(releasePath, sizeof(releasePath),
-                  "%s\\screen.present.release", directory);
+    std::snprintf(readyPath, sizeof(readyPath), "%s\\screen.present.ready", directory);
+    std::snprintf(releasePath, sizeof(releasePath), "%s\\screen.present.release", directory);
     if (!WriteCaptureMarker(readyPath, "presented\n"))
         return;
 
@@ -212,9 +201,9 @@ void HoldPresentCaptureFence() {
         Sleep(1);
 }
 
-#endif  // MIKUDANCESTUDIO_DIAG
+#endif // MIKUDANCESTUDIO_DIAG
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // VA 0x00460130 - TimelineAdvance (misleading ledger name: this is the
@@ -247,96 +236,93 @@ void HoldPresentCaptureFence() {
 void TimelineAdvance(MMDApp* app) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr)
-        return;  // wrapper absent: nothing the original could act on either
-    IDirect3DDevice9* device = r->device;  // +0x1D4E0
+        return; // wrapper absent: nothing the original could act on either
+    IDirect3DDevice9* device = r->device; // +0x1D4E0
     if (device == nullptr)
         return;
 
-    IDirect3DSurface9* surf = nullptr;                            // 0x46016A
-    if (FAILED(device->CreateRenderTarget(
-            app->RenderWidth(),
-            app->RenderHeight(),
-            r->backbufferFormat,  // wrapper+0x1D540
-            D3DMULTISAMPLE_NONE, 0, FALSE, &surf, nullptr))) {
-        DestroyWindow(app->RecordingWindow());                    // 0x460177
+    IDirect3DSurface9* surf = nullptr; // 0x46016A
+    if (FAILED(device->CreateRenderTarget(app->RenderWidth(), app->RenderHeight(),
+                                          r->backbufferFormat, // wrapper+0x1D540
+                                          D3DMULTISAMPLE_NONE, 0, FALSE, &surf, nullptr))) {
+        DestroyWindow(app->RecordingWindow()); // 0x460177
         app->RecordingWindow() = nullptr;
-        RefreshMainWindowViewport(app);                                           // 0x460185
+        RefreshMainWindowViewport(app); // 0x460185
         return;
     }
 
-    IDirect3DSurface9** backBuffer = &r->backbufferSurface;  // +0x1D538
-    if (*backBuffer == nullptr)                                   // 0x460197
+    IDirect3DSurface9** backBuffer = &r->backbufferSurface; // +0x1D538
+    if (*backBuffer == nullptr)                             // 0x460197
         device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backBuffer);
 
-    RECT rect;                                                    // 0x4601B7
+    RECT rect; // 0x4601B7
     rect.left = 0;
     rect.top = 0;
     rect.right = app->RenderWidth();
     rect.bottom = app->RenderHeight();
 
     HRESULT hr = device->StretchRect(*backBuffer, &rect, surf, &rect,
-                                     D3DTEXF_LINEAR);             // 0x460200
+                                     D3DTEXF_LINEAR); // 0x460200
     if (FAILED(hr))
         hr = device->StretchRect(*backBuffer, &rect, surf, &rect,
-                                 D3DTEXF_NONE);                   // 0x46022E
+                                 D3DTEXF_NONE); // 0x46022E
     if (FAILED(hr)) {
         // both blits rejected: no file is written, just clean up.
-        DestroyWindow(app->RecordingWindow());                    // 0x46023B
+        DestroyWindow(app->RecordingWindow()); // 0x46023B
         app->RecordingWindow() = nullptr;
-        RefreshMainWindowViewport(app);                                           // 0x460249
+        RefreshMainWindowViewport(app); // 0x460249
         if (surf != nullptr)
-            surf->Release();                                      // 0x460260
+            surf->Release(); // 0x460260
         return;
     }
 
     // ---- save path (0x460269): extension ladder -------------------------
     const wchar_t* path = app->CaptureSavePath();
-    std::intptr_t format;  // passed straight to D3DX as the original does
+    std::intptr_t format; // passed straight to D3DX as the original does
     if (wcsstr(path, L".bmp") != nullptr)
-        format = 0;                                               // D3DXIFF_BMP
+        format = 0; // D3DXIFF_BMP
     else if (wcsstr(path, L".jpg") != nullptr)
-        format = 1;                                               // D3DXIFF_JPG
+        format = 1; // D3DXIFF_JPG
     else if (wcsstr(path, L".png") != nullptr)
-        format = 3;                                               // D3DXIFF_PNG
+        format = 3; // D3DXIFF_PNG
     else if (wcsstr(path, L".dds") != nullptr)
-        format = 4;                                               // D3DXIFF_DDS
+        format = 4; // D3DXIFF_DDS
     else if (wcsstr(path, L".dib") != nullptr)
-        format = 6;                                               // D3DXIFF_DIB
+        format = 6; // D3DXIFF_DIB
     else if (wcsstr(path, L".pfm") != nullptr)
-        format = 8;                                               // D3DXIFF_PFM
+        format = 8; // D3DXIFF_PFM
     else if (wcsstr(path, L".hdr") != nullptr)
-        format = 7;                                               // D3DXIFF_HDR
+        format = 7; // D3DXIFF_HDR
     else
-        format = reinterpret_cast<std::intptr_t>(surf);           // 0x46031C
+        format = reinterpret_cast<std::intptr_t>(surf); // 0x46031C
     auto& d3dxApi = d3dx::Get();
-    d3dxApi.saveSurfaceToFileW(path, static_cast<int>(format),
-                               surf, nullptr, &rect);            // 0x46032D
+    d3dxApi.saveSurfaceToFileW(path, static_cast<int>(format), surf, nullptr, &rect); // 0x46032D
     if (surf != nullptr) {
-        surf->Release();                                          // 0x460340
+        surf->Release(); // 0x460340
         surf = nullptr;
     }
 
-    if (*backBuffer == nullptr)                                   // 0x46034C
+    if (*backBuffer == nullptr) // 0x46034C
         device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backBuffer);
-    if (r->multisampleAvailable == 0)  // wrapper+0x1D4F8
-        device->SetRenderTarget(0, *backBuffer);                  // 0x460391
-    DestroyWindow(app->RecordingWindow());                        // 0x46039A
+    if (r->multisampleAvailable == 0)            // wrapper+0x1D4F8
+        device->SetRenderTarget(0, *backBuffer); // 0x460391
+    DestroyWindow(app->RecordingWindow());       // 0x46039A
     app->RecordingWindow() = nullptr;
 
     // window-vs-device size check (0x4603B2..0x460410): when either device
     // dimension is larger than the window's, adopt the window size and reset.
     const std::int32_t winW = app->state.recRTW;
     const std::int32_t winH = app->state.recRTH;
-    const bool tooWide = r->screenHeight > winH;   // wrapper+0x1D4E8
-    const bool tooHigh = r->screenWidth > winW;    // wrapper+0x1D4E4
+    const bool tooWide = r->screenHeight > winH; // wrapper+0x1D4E8
+    const bool tooHigh = r->screenWidth > winW;  // wrapper+0x1D4E4
     if (tooWide || tooHigh) {
-        r->presentParameters.BackBufferWidth = winW;   // 0x1D4FC
-        r->presentParameters.BackBufferHeight = winH;  // 0x1D500
-        r->screenWidth = winW;   // 0x1D4E4
-        r->screenHeight = winH;  // 0x1D4E8
-        PostDeviceReset(app);                                     // 0x460410
+        r->presentParameters.BackBufferWidth = winW;  // 0x1D4FC
+        r->presentParameters.BackBufferHeight = winH; // 0x1D500
+        r->screenWidth = winW;                        // 0x1D4E4
+        r->screenHeight = winH;                       // 0x1D4E8
+        PostDeviceReset(app);                         // 0x460410
     }
-    RefreshMainWindowViewport(app);                                               // 0x460417
+    RefreshMainWindowViewport(app); // 0x460417
 }
 
 void FrameDriver(MMDApp* app) {
@@ -345,8 +331,8 @@ void FrameDriver(MMDApp* app) {
     // frame driver in real-time runs (stderr is unavailable in the GUI
     // subsystem).
     static char tickPath[MAX_PATH]{};
-    static bool tickInit = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_TRACE_TICKS", tickPath, sizeof tickPath) != 0;
+    static bool tickInit =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_TRACE_TICKS", tickPath, sizeof tickPath) != 0;
     if (tickInit) {
         static LONG tickCount = 0;
         if (InterlockedIncrement(&tickCount) % 60 == 0) {
@@ -355,10 +341,12 @@ void FrameDriver(MMDApp* app) {
         }
     }
 #endif
-    if(!PollApplicationSwapchain(app)) return;
+    if (!PollApplicationSwapchain(app))
+        return;
 #ifdef MIKUDANCESTUDIO_DIAG
     RunApplicationSwapchainDiagnostic(app);
-    if(!ApplicationSwapchainCanRender(app)) return;
+    if (!ApplicationSwapchainCanRender(app))
+        return;
 #endif
     AdvanceFrameRenderGate(app);
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -406,7 +394,7 @@ void FrameDriver(MMDApp* app) {
         s.state.framesPerSecond = 60;
 
     // ---- 1. mouse-delta snapshot reset ------------------------------------
-    MouseInteractionBegin(app);                                  // per-frame
+    MouseInteractionBegin(app); // per-frame
     ConsumeRightButtonDrag(app);
     ConsumeMiddleButtonPan(app);
     ConsumeKeyboardInput(app);
@@ -423,12 +411,12 @@ void FrameDriver(MMDApp* app) {
         case ViewportDragMode::ViewAxisRotateZ:
             ModeRotate(app, static_cast<int>(mode) - 1);
             break;
-        case ViewportDragMode::LocalAxisTranslateX:
-        case ViewportDragMode::LocalAxisTranslateY:
-        case ViewportDragMode::LocalAxisTranslateZ:
+        case ViewportDragMode::AxisRotateX:
+        case ViewportDragMode::AxisRotateY:
+        case ViewportDragMode::AxisRotateZ:
             ModeTranslate(app, static_cast<int>(mode) - 4);
             break;
-        case ViewportDragMode::BoneScale:
+        case ViewportDragMode::BoneMoveHorizontal:
             ModeScale(app);
             break;
         case ViewportDragMode::BoneMoveVertical:
@@ -462,20 +450,18 @@ void FrameDriver(MMDApp* app) {
     MouseInteractionEnd(app);
 
     // ---- 4. selection callback (0x46DCA4..0x46DCCD) ---------------------
-    unsigned char selActive = 0;
-    if (s.state.frameStepPlayback == 0 &&                  // 0x9ED90
-        s.state.depthDeviceEnabled != 0) {                  // 0xA03B8
+    bool selActive = false;
+    if (s.state.frameStepPlayback == 0 &&  // 0x9ED90
+        s.state.depthDeviceEnabled != 0) { // 0xA03B8
         // 0xA03D4 = the OpenNI is-tracking callback slot (literal was a
         // +0x80 decimal slip that landed mid-cameraAttachmentBasis)
         // ?OpenNIIsTracking@@YGXPA_N@Z - void __stdcall OpenNIIsTracking(bool*)
-        using OpenNIIsTrackingFn = void(__stdcall*)(unsigned char*);
-        auto cb = reinterpret_cast<OpenNIIsTrackingFn>(
-            s.OpenniTrackingCallback());                         // 0xA03D4
+        auto cb = s.OpenNi().isTracking; // 0xA03D4
         if (cb != nullptr)
             cb(&selActive);
-        // 0x46DCCF..0x46DD61（x64 0x7FF7CB44A34C..0x7FF7CB44A3EC）：原版
-        // 泵在探测之后立即做的深度图请求与菜单 0x124 卫生（oni_skeleton_
-        // pump.cpp 含地址锚点）。
+        // 0x46DCCF..0x46DD61 (x64 0x7FF7CB44A34C..0x7FF7CB44A3EC): the original
+        // pump's depth-map request and menu 0x124 maintenance immediately after detection (address anchors in oni_skeleton_
+        // pump.cpp).
         ManageKinectRecordGate(app, selActive);
     }
 
@@ -494,21 +480,20 @@ void FrameDriver(MMDApp* app) {
     if (requireLineEnabled && LineCaptureSwitchReady() &&
         InterlockedCompareExchange(&lineModeRequested, 1, 0) == 0) {
         const bool alreadyModelMode =
-            app->state.optflag[0] == 0 &&
-            app->EditMode() == ViewportEditMode::Bone;
+            app->CameraMode() == 0 && app->EditMode() == ViewportEditMode::Bone;
         if (!alreadyModelMode) {
             RebuildModelModePanel(app);
-            app->state.optflag[0] = 0;
+            app->CameraMode() = 0;
             app->EditMode() = ViewportEditMode::Bone;
-            PostLanguageSweep(app);
+            RebuildTimelineTrackPanel(app);
             PostModelReload2(app);
             HandleWindowSize(app);
             InvalidateRect(static_cast<HWND>(app->Hwnd()), nullptr, FALSE);
         }
         char stableCapture[2]{};
-        if (GetEnvironmentVariableA(
-                "MIKUDANCESTUDIO_AB_STABLE_CAPTURE", stableCapture,
-                sizeof(stableCapture)) == 1 && stableCapture[0] == '1') {
+        if (GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_STABLE_CAPTURE", stableCapture,
+                                    sizeof(stableCapture)) == 1 &&
+            stableCapture[0] == '1') {
             app->state.fpsOverlayElapsedSeconds = 0.0f;
             app->state.fpsOverlayFrameCount = 0;
             app->state.framesPerSecond = 0;
@@ -523,25 +508,25 @@ void FrameDriver(MMDApp* app) {
     // the frame-step byte 0x9ED90 set (AVI recording / manual stepping)
     // the readback+push pass runs before the catch-up; a failure inside
     // it runs the recording epilogue and returns from the whole driver.
-    if (s.state.frameStepPlayback != 0) {                   // 0x9ED90
+    if (s.state.frameStepPlayback != 0) { // 0x9ED90
         if (!RecordingReadbackPass(app))
             return;
     }
 
     // ---- 6. playback catch-up + physics (0x46EEE0..0x46FEB8) ------------
     PlaybackCatchup(app, selActive);
-    // ---- 6.5 Kinect 骨架驱动泵块（x64 0x7FF7CB44C12E..0x7FF7CB44C656）----
-    // 原版位于物理帧内部：settle 上升沿请求（0x7FF7CB44C12E）之后、gate B
-    // （0x7FF7CB44C65B）之前。settle 请求已移植在 physics_frame.cpp，该文件
-    // 本轮冻结，故此处按同一三重门先行调用（门输入互不影响；块尾与
-    // DisableKinect 都会补置 settle，先后次序无观测差异）。
-    // oni_skeleton_pump.cpp 含完整地址锚点。
+    // ---- 6.5 Kinect skeleton driver pump block (x64 0x7FF7CB44C12E..0x7FF7CB44C656) ----
+    // Originally inside the physics frame, after the settle rising-edge request (0x7FF7CB44C12E) and before gate B
+    // (0x7FF7CB44C65B). The settle request is already ported in physics_frame.cpp, which was
+    // frozen for this pass, so invoke it first here under the same three conditions (the gate inputs are independent; both the block tail and
+    // DisableKinect request settling again, so their order has no observable difference).
+    // oni_skeleton_pump.cpp contains the complete address anchors.
     PumpKinectSkeleton(app, selActive);
     PhysicsFrame(app, selActive);
-    // x64 0x7FF7CB456F21（泵尾，紧随 previousMouse 回写 0x7FF7CB456F08..F17）:
-    // 把本趟 selActive 滞留进 app+0xA137C；下一趟物理帧的 settle 请求
-    // （0x7FF7CB44C12E）读它做上升沿判定。物理帧已消费完上一趟的值，
-    // 此处回写不影响本趟。
+    // x64 0x7FF7CB456F21 (pump tail, immediately after previousMouse stores at 0x7FF7CB456F08..F17):
+    // latch this iteration's selActive into app+0xA137C; the next physics frame's settle request
+    // (0x7FF7CB44C12E) reads it to detect a rising edge. This frame has already consumed the previous value,
+    // so writing it here does not affect the current iteration.
     s.state.selectionActiveLatch = selActive;
 
     // The original produces text at 0x46FECF and resets/rebuilds the
@@ -552,7 +537,7 @@ void FrameDriver(MMDApp* app) {
 
     // ---- 7. timeline flag handoff (0x479864..0x479896) -------------------
     if (s.state.timelineAdvanceDue != 0) {
-        TimelineAdvance(app);                                     // 0x460130
+        TimelineAdvance(app); // 0x460130
         s.state.timelineAdvanceDue = 0;
         s.state.timelineAdvanceRequested = 0;
     }
@@ -566,14 +551,17 @@ void FrameDriver(MMDApp* app) {
 #ifdef MIKUDANCESTUDIO_DIAG
         if (getenv("MIKUDANCESTUDIO_TRACE_REC")) {
             FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_REC"), "a");
-            if (tf) { fputs("frame section8 reload path\n", tf); fclose(tf); }
+            if (tf) {
+                fputs("frame section8 reload path\n", tf);
+                fclose(tf);
+            }
         }
 #endif
         s.state.cameraAttachmentTransformSuppressed = 0;
         s.ViewOffsetX() = 0.0f;
         s.ViewOffsetY() = 0.0f;
-        ReloadModels(app);                                        // 0x42E640
-        PostModelReload(app);                                     // 0x41A650
+        ReloadModels(app);    // 0x42E640
+        PostModelReload(app); // 0x41A650
         s.state.modelReloadPending = 0;
     }
 
@@ -591,17 +579,15 @@ void FrameDriver(MMDApp* app) {
     //   { Sleep(1); if (A0274) pump one message; } then 0x440DB0.
     IDirect3DDevice9* device = nullptr;
     if (s.Renderer() != nullptr)
-        device = s.Renderer()->device;                     // +0x1D4E0
-    static HRESULT hr = D3D_OK;         // stale-local equivalent
+        device = s.Renderer()->device; // +0x1D4E0
+    static HRESULT hr = D3D_OK;        // stale-local equivalent
     bool presented = false;
     if (device != nullptr) {
-        if (s.state.messageSeen != 0 &&
-            s.AviStereoOutput() == 0) {
+        if (s.state.messageSeen != 0 && s.AviStereoOutput() == 0) {
             presented = true;
             if (s.FullscreenMode() != 0) {
-                hr = mme::Present(app, device, nullptr, nullptr,
-                                  nullptr, nullptr);
-            } else if (s.RecordingWindow() != nullptr) {          // 0xA0D24
+                hr = mme::Present(app, device, nullptr, nullptr, nullptr, nullptr);
+            } else if (s.RecordingWindow() != nullptr) { // 0xA0D24
                 RECT r;
                 r.left = 0;
                 r.top = 0;
@@ -609,16 +595,13 @@ void FrameDriver(MMDApp* app) {
                 // slips landing inside the dirModel path buffer)
                 r.right = static_cast<LONG>(s.RenderWidth());
                 r.bottom = static_cast<LONG>(s.RenderHeight());
-                hr = mme::Present(app, device, &r, &r,
-                                  s.RecordingWindow(), nullptr);
+                hr = mme::Present(app, device, &r, &r, s.RecordingWindow(), nullptr);
             } else if (s.FloatingWindow() != nullptr) {
-                RECT r = s.ViewportRect();                        // 0xA0D40
-                hr = mme::Present(app, device, &r, &r,
-                                  s.state.floatingWindow, nullptr);
+                RECT r = s.ViewportRect(); // 0xA0D40
+                hr = mme::Present(app, device, &r, &r, s.state.floatingWindow, nullptr);
             } else {
-                RECT r = s.ViewportRect();                        // 0xA0D40
-                hr = mme::Present(app, device, &r, &r,
-                                  static_cast<HWND>(s.Hwnd()), nullptr);
+                RECT r = s.ViewportRect(); // 0xA0D40
+                hr = mme::Present(app, device, &r, &r, static_cast<HWND>(s.Hwnd()), nullptr);
             }
             if (hr == D3DERR_DEVICELOST && ApplicationSwapchainEnabled()) {
                 PostDeviceReset(app); // nonblocking recovery, poll on later frames
@@ -651,42 +634,32 @@ void FrameDriver(MMDApp* app) {
     // Byte compare at 0x479CB9; 0xA0B00/0xA0B04 are INTEGER frame fields
     // (fild + 2^32 fixup on negative, i.e. unsigned load) divided by the
     // constant 30.0 (dbl_52BA68); EnableWindow pushes 0 (0x479D58).
-    if (s.state.recordPlaybackStartPending != 0) {       // 0x9EDD8
-        s.CurrentFrame() =
-            s.state.recordSavedFrame;        // 0x9EDDC
-        s.state.frameStepPlayback = 1;          // 0x9ED90
+    if (s.state.recordPlaybackStartPending != 0) {   // 0x9EDD8
+        s.CurrentFrame() = s.state.recordSavedFrame; // 0x9EDDC
+        s.state.frameStepPlayback = 1;               // 0x9ED90
         // (was a raw 650128 literal = 0x9EB90, one of the +/-0x100
         // decimal slips; 0x9ED90 = 650640)
 
         const std::int32_t fa = s.state.aviRecordStartFrame;
-        s.state.playbackStartSeconds =
-            static_cast<float>((fa < 0
-                                    ? static_cast<double>(fa) + g_Wrap32
-                                    : static_cast<double>(fa)) /
-                               g_FrameScale);
+        s.state.playbackStartSeconds = static_cast<float>(
+            (fa < 0 ? static_cast<double>(fa) + g_Wrap32 : static_cast<double>(fa)) / g_FrameScale);
 
         const std::int32_t fb = s.state.aviRecordEndFrame;
-        s.state.playbackEndSeconds =
-            static_cast<float>((fb < 0
-                                    ? static_cast<double>(fb) + g_Wrap32
-                                    : static_cast<double>(fb)) /
-                               g_FrameScale);
+        s.state.playbackEndSeconds = static_cast<float>(
+            (fb < 0 ? static_cast<double>(fb) + g_Wrap32 : static_cast<double>(fb)) / g_FrameScale);
 
         s.state.aviBackgroundSample = s.state.aviRecordStartFrame;
         s.PlaybackCursorSeconds() = s.PlaybackStartSeconds();
 
-        if (s.state.aviRecordStartFrame ==
-            s.CurrentFrame())
+        if (s.state.aviRecordStartFrame == s.CurrentFrame())
             s.state.playbackFrameChanged = 1;
 
         s.state.playbackActive = 1;
-        UpdateBoneFrames(app);                                    // 0x433A40
+        UpdateBoneFrames(app); // 0x433A40
         s.state.recordedFrameCount = 0;
-        EnableWindow(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayButton),
-                     FALSE);
+        EnableWindow(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayButton), FALSE);
         s.state.recordPlaybackStartPending = 0;
     }
-
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

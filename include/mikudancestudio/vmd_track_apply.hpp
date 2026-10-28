@@ -2,7 +2,9 @@
 
 namespace mikudancestudio {
 class MMDApp;
-namespace format { struct VmdDocument; }
+namespace format {
+struct VmdDocument;
+}
 
 // Apply global VMD tracks through the existing Windows key registrars.
 // UI repaint and model reload are owned by the caller.

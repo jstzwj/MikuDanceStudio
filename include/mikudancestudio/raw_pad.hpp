@@ -17,9 +17,10 @@
 
 namespace mikudancestudio {
 
-template <std::size_t N>
-struct RawPad { unsigned char b[N]; };
+template <std::size_t N> struct RawPad {
+    unsigned char b[N];
+};
 
 struct EmptyPad {};
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

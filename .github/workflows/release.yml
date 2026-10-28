@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build (for example v10.00)
+        description: Git ref to build (an existing version tag when publishing)
         required: true
         type: string
+      validation_only:
+        description: Run both architecture regressions without packaging or publishing
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -40,6 +44,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate tag and version
+        if: ${{ !inputs.validation_only }}
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python scripts/release.py --tag "$env:RELEASE_TAG"
@@ -89,16 +94,19 @@ jobs:
             out/ci/build/Testing/Temporary/*.log
           if-no-files-found: warn
       - name: Package
+        if: ${{ !inputs.validation_only }}
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python scripts/release.py --tag "$env:RELEASE_TAG" --build-dir out/ci/build --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.validation_only }}
         with:
           name: release-${{ matrix.arch }}
           path: out/release/*
           if-no-files-found: error
 
   publish:
+    if: ${{ !inputs.validation_only }}
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -13,6 +13,7 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+#include "LinearMath/btMmdMath.h"
 #include "btConvexShape.h"
 #include "btTriangleShape.h"
 #include "btSphereShape.h"
@@ -39,32 +40,7 @@ static inline vec_float4 vec_dot3( vec_float4 vec0, vec_float4 vec1 )
 static BT_NOINLINE void mmdSupportNormalize(btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [eax+4]
-		fmul st, st
-		fld dword ptr [eax+8]
-		fmul st, st
-		faddp st(1), st
-		fld dword ptr [eax]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::normalizeSupport(v);
 #else
 	v.normalize();
 #endif
@@ -77,25 +53,7 @@ static BT_NOINLINE void mmdSupportNormalizeLenSqr(btVector3& v,
 														   btScalar lenSqr)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [lenSqr]
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::normalizeSupportLength(v, lenSqr);
 #else
 	v *= btScalar(1.) / btSqrt(lenSqr);
 #endif
@@ -306,8 +264,13 @@ btVector3 btConvexShape::localGetSupportVertexWithoutMarginNonVirtual (const btV
 		btScalar maxDot(btScalar(-BT_LARGE_FLOAT));
 
 		btVector3 vec = vec0;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+		// MMD x64 RVA 0xE9EA0 sums X/Y before Z for capsule support.
+		btScalar lenSqr = vec.length2();
+#else
 		btScalar lenSqr = (vec.getZ()*vec.getZ() + vec.getY()*vec.getY())
 			+ vec.getX()*vec.getX();
+#endif
 		if (lenSqr < btScalar(0.0001))
 		{
 			vec.setValue(1,0,0);
@@ -378,9 +341,14 @@ btVector3 btConvexShape::localGetSupportVertexWithoutMarginNonVirtual (const btV
 btVector3 btConvexShape::localGetSupportVertexNonVirtual (const btVector3& localDir) const
 {
 	btVector3 localDirNorm = localDir;
-	if ((localDirNorm.getY()*localDirNorm.getY()
-		+ localDirNorm.getZ()*localDirNorm.getZ())
-		+ localDirNorm.getX()*localDirNorm.getX() < (SIMD_EPSILON*SIMD_EPSILON))
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xEA500 uses the same dot for the zero-direction check.
+	if (localDirNorm.length2() < (SIMD_EPSILON * SIMD_EPSILON))
+#else
+	if ((localDirNorm.getY() * localDirNorm.getY() + localDirNorm.getZ() * localDirNorm.getZ()) +
+			localDirNorm.getX() * localDirNorm.getX() <
+		(SIMD_EPSILON * SIMD_EPSILON))
+#endif
 	{
 		localDirNorm.setValue(btScalar(-1.),btScalar(-1.),btScalar(-1.));
 	}

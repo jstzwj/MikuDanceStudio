@@ -33,9 +33,15 @@ void	btBoxShape::calculateLocalInertia(btScalar mass,btVector3& inertia) const
 	btScalar ly=btScalar(2.)*(halfExtents.y());
 	btScalar lz=btScalar(2.)*(halfExtents.z());
 
-		inertia.setValue((ly*ly + lz*lz) * mass * btScalar(0.083333336f),
-					(lx*lx + lz*lz) * mass * btScalar(0.083333336f),
-					(lx*lx + ly*ly) * mass * btScalar(0.083333336f));
-
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xE81D0 rounds mass/12 before multiplying each sum.
+	const btScalar scaledMass = mass * btScalar(0.083333336f);
+	inertia.setValue((ly * ly + lz * lz) * scaledMass, (lx * lx + lz * lz) * scaledMass,
+					 (lx * lx + ly * ly) * scaledMass);
+#else
+	inertia.setValue((ly * ly + lz * lz) * mass * btScalar(0.083333336f),
+					 (lx * lx + lz * lz) * mass * btScalar(0.083333336f),
+					 (lx * lx + ly * ly) * mass * btScalar(0.083333336f));
+#endif
 }
 

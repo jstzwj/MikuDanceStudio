@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include <cctype>
+#include <set>
 
 namespace mme {
 
@@ -206,12 +207,12 @@ static bool SasGetAnnotationString(ID3DXEffect* effect, D3DXHANDLE param,
 //   values         [0x1800B39A0..0x1800B3A90)  (60 dwords)
 // 60 entries, matched with stricmp after a strnicmp("FMT_",4) /
 // strnicmp("D3DFMT_",7) prefix strip [sub_180011960, 0x180012C43..0x180012DE7;
-// 反查 sub_180011920——两处循环上界均为 0x3C=60，名字/值表同索引配对].
-// NOTE (2026-09 复核，前注有误): 前版注释称 "x64 值表 [32..53] 区间整体
-// 错位一格且缺 0x6F，两份原版不一致"。逐字节重读 x64 0x1800B39A0 全部
-// 60 项后否证：FourCC 段 'UYVY','RGBG','YUY2','GRGB','DXT1'..'DXT5','MET1'
-// 与 L16=0x51、R16F=0x6F 均逐项就位，x64 序列与 x86 完全一致——本表
-// 即 x64 1:1 转录，D24S8=0x4B 等争议项无任何偏差，勿再"修复"。
+// Cross-checked against sub_180011920: both loops are bounded by 0x3C=60, pairing names/values at the same index].
+// NOTE (2026-09 recheck; the previous comment was wrong): the previous comment claimed "x64 values [32..53] are all
+// shifted by one and omit 0x6F, so the two originals differ". A byte-by-byte reread of all x64 0x1800B39A0
+// 60 entries disproved this: the FourCC sequence 'UYVY','RGBG','YUY2','GRGB','DXT1'..'DXT5','MET1'
+// and L16=0x51, R16F=0x6F are all in place; the x64 sequence exactly matches x86. This table
+// is a 1:1 x64 transcription; disputed entries such as D24S8=0x4B have no discrepancy. Do not "fix" them again.
 // ===========================================================================
 
 struct SasFormatEntry {
@@ -728,30 +729,14 @@ static int SasBuildResourceObject(SasEffect* sas, int semanticId,
         }
     }
 
-    // Resolve the requested pixel size. ViewportRatio scales the screen size
-    // (REFERENCE.txt: default {1.0,1.0}). The original reads the host's
-    // screen-size globals (= the swap-chain back buffer); the port reads the
-    // back buffer directly. Sizing from the VIEWPORT instead breaks the
-    // MRT invariant at the final composite: the script restores slot 0 to the
-    // back buffer while slots 1-3 still point at the (now smaller) offscreen
-    // targets - the size mismatch makes the driver silently drop ALL output
-    // merges into the back buffer (the frozen-screen bug).
-    int screenW = 64, screenH = 64;
-    if (sas->device != nullptr) {
-        IDirect3DSurface9* backBuffer = nullptr;
-        if (SUCCEEDED(sas->device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
-                                                 &backBuffer)) &&
-            backBuffer != nullptr) {
-            D3DSURFACE_DESC bbDesc;
-            memset(&bbDesc, 0, sizeof(bbDesc));
-            if (SUCCEEDED(backBuffer->GetDesc(&bbDesc)) && bbDesc.Width > 0 &&
-                bbDesc.Height > 0) {
-                screenW = static_cast<int>(bbDesc.Width);
-                screenH = static_cast<int>(bbDesc.Height);
-            }
-            backBuffer->Release();
-        }
-    }
+    // FUN_18000B880 captures the caller's viewport dimensions before parsing
+    // or refreshing the effect. FUN_1800143D0 applies ViewportRatio to that
+    // size, independent of the swap-chain back buffer and script-bound targets.
+    const int screenW = static_cast<int>(sas->viewportWidth);
+    const int screenH = static_cast<int>(sas->viewportHeight);
+    res.hasViewportRatio = hasViewportRatio;
+    res.viewportRatio[0] = viewportRatio[0];
+    res.viewportRatio[1] = viewportRatio[1];
     if (hasViewportRatio) {
         res.reqWidth = static_cast<int>(screenW * viewportRatio[0]);
         res.reqHeight = static_cast<int>(screenH * viewportRatio[1]);
@@ -2451,6 +2436,10 @@ SasEffect* SasParse(ID3DXEffect* effect, const std::string& pathAnsi,
     sas->effect = effect;
     sas->device = device;
     sas->path = pathAnsi;
+    D3DVIEWPORT9 viewport{};
+    if (device != nullptr) device->GetViewport(&viewport);
+    sas->viewportWidth = viewport.Width;
+    sas->viewportHeight = viewport.Height;
 
     D3DXEFFECT_DESC ed;
     memset(&ed, 0, sizeof(ed));
@@ -2722,24 +2711,46 @@ void SasReleaseDeviceResources(SasEffect* sas) {
 }
 
 void SasRecreateResources(SasEffect* sas, IDirect3DDevice9* device) {
-    // Device-reset hook (PHASE3 integration note #7): the D3DPOOL_DEFAULT
-    // resources (render targets / depth stencils) died with the reset -
-    // [sub_180014270] only those are dropped and re-created, then the
-    // texture parameters are re-bound. MANAGED resources stay as-is.
+    // Shared viewport-change / device-reset path [sub_180014270]: drop
+    // D3DPOOL_DEFAULT resources, recompute relative dimensions, recreate
+    // them and rebind effect parameters. MANAGED resources stay as-is.
     if (sas == nullptr || device == nullptr) {
         return;
     }
     SasReleaseDeviceResources(sas);
     sas->device = device;
+    D3DVIEWPORT9 viewport{};
+    if (SUCCEEDED(device->GetViewport(&viewport))) {
+        sas->viewportWidth = viewport.Width;
+        sas->viewportHeight = viewport.Height;
+    }
     for (size_t i = 0; i < sas->resources.size(); ++i) {
         if (!SasNeedsResetRebuild(sas->resources[i])) {
             continue;
+        }
+        SasResource& res = sas->resources[i];
+        // FUN_1800143D0 recomputes the signed request before dispatching
+        // creation. Fixed-size targets are recreated with their old request.
+        if (res.hasViewportRatio) {
+            res.reqWidth = res.texWidth = res.viewportRatio[0] < 0.0f ? -1 :
+                static_cast<int>(static_cast<float>(sas->viewportWidth) * res.viewportRatio[0]);
+            res.reqHeight = res.texHeight = res.viewportRatio[1] < 0.0f ? -1 :
+                static_cast<int>(static_cast<float>(sas->viewportHeight) * res.viewportRatio[1]);
         }
         if (SasEnsureResourceTexture(sas, &sas->resources[i]) &&
             sas->resources[i].texture != nullptr) {
             sas->effect->SetTexture(sas->resources[i].param,
                                     sas->resources[i].texture);
         }
+    }
+}
+
+void SasRefreshViewport(SasEffect* sas, IDirect3DDevice9* device) {
+    if (sas == nullptr || device == nullptr) return;
+    D3DVIEWPORT9 viewport{};
+    if (SUCCEEDED(device->GetViewport(&viewport)) &&
+        (sas->viewportWidth != viewport.Width || sas->viewportHeight != viewport.Height)) {
+        SasRecreateResources(sas, device);
     }
 }
 
@@ -2849,11 +2860,10 @@ bool SasIsSubsetAllowed(const SasEffect* sas, int techIndex, int subset) {
 //                                   record+8
 // The FIRST valid match returns immediately; a matched-but-invalid technique
 // is remembered (the LAST one wins) and returned only when the whole order
-// was walked without a valid match - the original still selects (and draws)
-// it, with the "found" byte cleared. The "Error: some techniques cannot run
-// on this hardware:" report keyed off that byte in sub_18001DD20 is dead
-// code in the shipped binary (its flag is only ever cleared - 0x18001DDBE /
-// 0x18001E2E8 / 0x18001E3C8), so an invalid fallback never fails the load.
+// was walked without a valid match, with the "found" byte cleared. The
+// load-time table builder rejects those selections. Its local counter is a
+// set size, incremented by the out-of-line tree insertion helper, rather
+// than a flag local to sub_18001DD20.
 D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
                               bool useTexture, bool useSpheremap, bool useToon,
                               bool* validMatch) {
@@ -2918,6 +2928,46 @@ D3DXHANDLE SasSelectTechnique(const SasEffect* sas, int drawMode, int subset,
         *validMatch = false;
     }
     return fallback;
+}
+
+std::string SasValidateTechniqueSelections(const SasEffect* sas, int materialCount) {
+    if (sas == nullptr || sas->effect == nullptr || materialCount <= 0) {
+        return {};
+    }
+    if (sas->scriptClass == kSasClassScene || sas->scriptOrder != kSasOrderStandard) {
+        materialCount = 1;
+    }
+    std::set<D3DXHANDLE, std::less<D3DXHANDLE>> invalid;
+    for (int mode = 0; mode < 5; ++mode) {
+        if (mode != 0 && sas->scriptOrder != kSasOrderStandard) {
+            continue;
+        }
+        for (int subset = 0; subset < materialCount; ++subset) {
+            const int combinations = mode <= 1 ? 8 : 1;
+            for (int flags = 0; flags < combinations; ++flags) {
+                bool valid = true;
+                const D3DXHANDLE handle = SasSelectTechnique(
+                    sas, mode, subset, (flags & 1) != 0, (flags & 2) != 0,
+                    (flags & 4) != 0, &valid);
+                if (!valid) {
+                    invalid.insert(handle);
+                }
+            }
+        }
+    }
+    if (invalid.empty()) {
+        return {};
+    }
+    std::string error = "Error: some techniques cannot run on this hardware:";
+    for (D3DXHANDLE handle : invalid) {
+        for (const SasTechnique& technique : sas->techniques) {
+            if (technique.handle == handle) {
+                error += " " + technique.name;
+                break;
+            }
+        }
+    }
+    return error + "\n";
 }
 
 }  // namespace mme

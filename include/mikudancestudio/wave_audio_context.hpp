@@ -38,12 +38,8 @@ struct WaveAudioContext {
     std::uint8_t reserved[3];
     LONG volume;
 
-    LONG ReadStopFlag() {
-        return InterlockedCompareExchange(&stopFlag, 0, 0);
-    }
-    void WriteStopFlag(LONG value) {
-        InterlockedExchange(&stopFlag, value);
-    }
+    LONG ReadStopFlag() { return InterlockedCompareExchange(&stopFlag, 0, 0); }
+    void WriteStopFlag(LONG value) { InterlockedExchange(&stopFlag, value); }
 };
 
 #if !defined(_WIN64)
@@ -53,4 +49,4 @@ static_assert(offsetof(WaveAudioContext, path) == 0x30, "x86 wave path");
 static_assert(offsetof(WaveAudioContext, volume) == 0x258, "x86 wave volume");
 #endif
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

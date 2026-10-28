@@ -119,6 +119,15 @@
 namespace mikudancestudio {
 namespace {
 
+// x64 converts unsigned key times to float; x86 compares through fild.
+#if defined(_M_IX86)
+using KeyFrameTime = double;
+#else
+using KeyFrameTime = float;
+#endif
+
+using kfa::CopyIkDisplayFlags;
+
 using kfa::CopyBoneKeyVerbatim;
 using kfa::WriteBonePrevVerbatim;
 using kfa::MirrorBackupsToWorking;
@@ -128,8 +137,7 @@ using kfa::MirrorBackupsToCurrent;
 // constant 0x40490FD8 promoted to double and halved, which is exactly how
 // the original folded the pi/2 operand.
 constexpr double kPiHalfBits = static_cast<double>(3.141592f) * 0.5;
-static_assert(__builtin_bit_cast(std::uint64_t, kPiHalfBits) ==
-                  0x3FF921FB00000000ULL,
+static_assert(__builtin_bit_cast(std::uint64_t, kPiHalfBits) == 0x3FF921FB00000000ULL,
               "pi/2 double constant bit-exact");
 
 double PiHalfBits() {
@@ -141,138 +149,97 @@ double PiHalfBits() {
 // was a misread of the constant's low byte.
 const float kQuatClamp = 0.999999f;
 
-const double kCpScale = 0.02362200058996677;
-// x64 uses the float image of that double: 0x3CC182ED (dword_7FF7CB552988).
-const float kCpScaleF = 0.02362200058996677f;
-
-}  // namespace
+} // namespace
 
 // ---- VA 0x004A05A0 / x64 sub_7FF7CB4EDB00 ----------------------------------
-float BoneEase(unsigned char* model, int channel, int keyIdx, float t) {
-    const mdl::BoneKey& rec = mdl::BoneKeys(model)[keyIdx];
-    const unsigned char x1 = rec.interpolation[channel];
-    const unsigned char y1 = rec.interpolation[channel + 4];
-    const unsigned char x2 = rec.interpolation[channel + 8];
-    const unsigned char y2 = rec.interpolation[channel + 12];
-    if (x2 == y2 && x1 == y1) return t;  // linear curve (0x4A05DE)
-
-#if defined(_M_IX86)
-    // x86 0x4A05A0: double scale locals, x87-extended polynomial, float
-    // u/step stack slots (the compare keeps the pre-store value).
-    const double x1c = static_cast<double>(
-                           static_cast<signed char>(x1)) * kCpScale;
-    const double x2c = static_cast<double>(
-                           static_cast<signed char>(x2)) * kCpScale;
-
-    // 12 halving bisection steps on X(u) = t; u/step kept as float exactly
-    // like the original stack slots (the step halves BEFORE the update).
-    float u = 0.5f, step = 0.5f;
-    for (int i = 0; i < 12; ++i) {
-        const float om = 1.0f - u;
-        const double xu = (double)om * (double)om * (double)u * x1c +
-                          (double)om * (double)u * (double)u * x2c +
-                          (double)u * (double)u * (double)u;
-        if (xu == (double)t) break;
-        step *= 0.5f;
-        u = xu >= (double)t ? (float)(u - step) : (float)(u + step);
-    }
-
-    const float om = 1.0f - u;
-    const double y1c = static_cast<double>(
-                           static_cast<signed char>(y1)) * kCpScale;
-    const double y2c = static_cast<double>(
-                           static_cast<signed char>(y2)) * kCpScale;
-    return static_cast<float>(
-        (double)u * ((double)u * (double)u) +
-        (double)om * (double)om * (double)u * y1c +
-        (double)om * (double)u * (double)u * y2c);
-#else
-    // x64 sub_7FF7CB4EDB00: single precision end to end - the byte*scale
-    // products (mulss dword_7FF7CB552988 = 0x3CC182ED), the bisection
-    // compare (ucomiss on float gx) and the tail, which multiplies the
-    // raw y bytes first and applies the scale afterwards
-    // (0x7FF7CB4EDBC0..0x7FF7CB4EDE2E).
-    const float x1c = static_cast<float>(
-                          static_cast<signed char>(x1)) * kCpScaleF;
-    const float x2c = static_cast<float>(
-                          static_cast<signed char>(x2)) * kCpScaleF;
-    const float y1b = static_cast<float>(
-        static_cast<signed char>(y1));
-    const float y2b = static_cast<float>(
-        static_cast<signed char>(y2));
-
-    // 12 halving bisection steps on X(u) = t (the step halves BEFORE the
-    // update: mulss xmm2, 0.5f at each unrolled block head).
-    float u = 0.5f, step = 0.5f;
-    for (int i = 0; i < 12; ++i) {
-        const float om = 1.0f - u;
-        const float gx = (om * om * u) * x1c + (om * u * u) * x2c +
-                         u * u * u;
-        if (gx == t) break;                              // ucomiss
-        step *= 0.5f;
-        u = gx >= t ? u - step : u + step;
-    }
-
-    const float om = 1.0f - u;
-    return (om * om * u) * y1b * kCpScaleF + (om * u * u) * y2b * kCpScaleF +
-           u * u * u;
-#endif
+float BoneEase(const mdl::ModelRecord* model, int channel, int keyIdx, float t) {
+    return format::EvaluatePmmBoneCurve(model->boneKeys[keyIdx].interpolation, channel, t);
 }
 
 // ---- VA 0x00499B50 --------------------------------------------------------
-void NotifyBonePhysicsMode(unsigned char* model, int boneIdx, unsigned char mode) {
-    mikudancestudio::mdl::RigidRecord* const rigids = mikudancestudio::mdl::Rigids(model);
-    const int cnt = static_cast<int>(mdl::Mdl(model)->rigidCount);
+void NotifyBonePhysicsMode(mdl::ModelRecord* model, int boneIdx, unsigned char mode) {
+    mikudancestudio::mdl::RigidRecord* const rigids = model->rigidTable;
+    const int cnt = static_cast<int>(model->rigidCount);
     for (int i = 0; i < cnt; ++i) {
         mikudancestudio::mdl::RigidRecord* const r = &rigids[i];
-        if (r->staticFlag != 0 || r->boneIndex != boneIdx) continue;
-        btRigidBody* const body = static_cast<btRigidBody*>(r->body);
+        if (r->staticFlag != 0 || r->boneIndex != boneIdx)
+            continue;
+        btRigidBody* const body = r->body;
         if (body == nullptr)
             continue;
 
         const int flags = body->getCollisionFlags();
         if (mode != 0) {
-            body->setCollisionFlags(
-                flags | btCollisionObject::CF_KINEMATIC_OBJECT);
+            body->setCollisionFlags(flags | btCollisionObject::CF_KINEMATIC_OBJECT);
             r->mode = 0;
         } else {
-            body->setCollisionFlags(
-                flags & ~btCollisionObject::CF_KINEMATIC_OBJECT);
+            body->setCollisionFlags(flags & ~btCollisionObject::CF_KINEMATIC_OBJECT);
             r->mode = r->kinematicFlag != 0 ? 2 : 1;
         }
-        // x64 定谳：0x7FF7CB4E3140 全函数（以及 Advance 内联段
-        // 0x7FF7CB4F15EA / 0x7FF7CB4F1780）只做两件事——写 btRigidBody
-        // +0xE0 的 CF_KINEMATIC 位（or/and 2）和模式字节，没有任何
-        // activation 调用。移植方原先保留的
-        // setActivationState(DISABLE_DEACTIVATION) 已按 x64 基准撤除。
+        // Verified against x64: the entire 0x7FF7CB4E3140 function (and the inline Advance sections at
+        // 0x7FF7CB4F15EA / 0x7FF7CB4F1780) only write the btRigidBody
+        // +0xE0 CF_KINEMATIC bit (or/and 2) and mode byte, with no
+        // activation call. The port's previous
+        // setActivationState(DISABLE_DEACTIVATION) was removed to match x64.
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VA 0x004B2210 - broadcast the physics view mode to every bone-flagged
+// rigid notify.  __thiscall(model, int mode) where mode is app+0xA0CC4
+// (view menu 0x109/0x10D/0x10E/0x110).
+//   mode == 0 : physics off  -> NotifyBonePhysicsMode(model, bone, 1)  (kinematic)
+//   mode == 1 : physics on   -> NotifyBonePhysicsMode(model, bone, 0)  (dynamic)
+//   mode >= 2 : per-bone flag at &bone->physicsDisabled selects 1/0
+// x64 RVA 0xC2EE0: only bones with hasRigidBody participate. The menu
+// and PMM-load callers pass the current view mode; this changes collision
+// flags/modes without pushing a motion-state transform (ModelKinematicSync).
+// ---------------------------------------------------------------------------
+void ApplyModelBonePhysicsMode(mdl::ModelRecord* model, int mode) {
+    const int boneCount = model->boneCount; // 0x4B2218
+    mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
+    if (mode == 0) {
+        for (int i = 0; boneCount > 0 && i < boneCount; ++i) // 0x4B221A
+            if (bones[i].hasRigidBody != 0)
+                NotifyBonePhysicsMode(model, i, 1); // 0x4B2243
+    } else if (mode == 1) {
+        for (int i = 0; boneCount > 0 && i < boneCount; ++i) // 0x4B2263
+            if (bones[i].hasRigidBody != 0)
+                NotifyBonePhysicsMode(model, i, 0); // 0x4B2283
+    } else if (mode >= 2) {
+        for (int i = 0; boneCount > 0 && i < boneCount; ++i) { // 0x4B22A3
+            mikudancestudio::mdl::BoneRecord* bone = &bones[i];
+            if (bone->hasRigidBody != 0)
+                NotifyBonePhysicsMode(model, i, bone->physicsDisabled != 0); // 0x4B22D1
+        }
     }
 }
 
 // ---- VA 0x004A2CD0 --------------------------------------------------------
 // Initializes every per-model animation cursor at playback start.  Unlike
 // SeekModelFrame this preserves the incremental-track state consumed by 0x4A31D0.
-void InitModelTrackCursors(unsigned char* model, float cursor, int physicsMode) {
-    unsigned char* const m = model;
-    const double frame = static_cast<double>(cursor) * 30.0;
+void InitModelTrackCursors(mdl::ModelRecord* model, float cursor, int physicsMode) {
+    mdl::ModelRecord* const m = model;
+    // Both originals round seconds * 30 through a float before track comparisons.
+    const float frame = cursor * 30.0f;
 
     // IK/display master track.  This is a single linked list rooted at 0.
-    mdl::DisplayKey* const ikKeys = mdl::DisplayKeys(m);
-    mdl::ModelRecord& state = *mdl::Mdl(m);
+    mdl::DisplayKey* const ikKeys = (m)->displayKeys;
+    mdl::ModelRecord& state = *m;
     format::PmmDisplayCursor displayCursor;
     format::PmmDisplaySelection displaySelection;
-    if (format::SelectPmmDisplayKey(
-            kfa::ReadLiveDisplayKeyLink, ikKeys, frame,
-            format::PmmDisplayTraversal::InitializePlayback,
-            displayCursor, displaySelection)) {
+    if (format::SelectPmmDisplayKey(kfa::ReadLiveDisplayKeyLink, ikKeys, frame,
+                                    format::PmmDisplayTraversal::InitializePlayback, displayCursor,
+                                    displaySelection)) {
         state.displayKeyCursor = displayCursor.index;
         state.displayTrackActive = displayCursor.active ? 1 : 0;
         kfa::ApplyDisplaySelection(m, ikKeys, displaySelection);
     }
 
     // Morph tracks are independently rooted at their morph index.
-    const int morphCount = static_cast<int>(mdl::Mdl(m)->morphCount);
-    mdl::MorphKey* const morphKeys = mdl::MorphKeys(m);
-    mikudancestudio::mdl::MorphRecord* const morphValues = mikudancestudio::mdl::Morphs(m);
+    const int morphCount = static_cast<int>(m->morphCount);
+    mdl::MorphKey* const morphKeys = m->morphKeys;
+    mikudancestudio::mdl::MorphRecord* const morphValues = m->morphs;
     unsigned char* const morphActive = state.morphTrackActive;
     std::uint32_t* const morphCursor = state.morphKeyCursors;
     for (int morph = 0; morph < morphCount; ++morph) {
@@ -280,7 +247,7 @@ void InitModelTrackCursors(unsigned char* model, float cursor, int physicsMode) 
         morphCursor[morph] = static_cast<std::uint32_t>(morph);
         for (;;) {
             const int cur = static_cast<int>(morphCursor[morph]);
-            if (static_cast<double>(morphKeys[cur].frame) >= frame)
+            if (static_cast<KeyFrameTime>(morphKeys[cur].frame) >= frame)
                 break;
             const int next = static_cast<int>(morphKeys[cur].next);
             if (next != 0) {
@@ -295,9 +262,9 @@ void InitModelTrackCursors(unsigned char* model, float cursor, int physicsMode) 
 
     // Bone tracks are independently rooted at their bone index.  The start
     // initializer excludes only type 7, exactly as 0x4A301F does.
-    const int boneCount = static_cast<int>(mdl::Mdl(m)->boneCount);
-    mdl::BoneKey* const boneKeys = mdl::BoneKeys(m);
-    mikudancestudio::mdl::BoneRecord* const bones = mdl::Bones(m);
+    const int boneCount = static_cast<int>(m->boneCount);
+    mdl::BoneKey* const boneKeys = m->boneKeys;
+    mikudancestudio::mdl::BoneRecord* const bones = m->boneTable;
     unsigned char* const boneActive = state.boneTrackActive;
     std::uint32_t* const boneCursor = state.boneKeyCursors;
     for (int boneIndex = 0; boneIndex < boneCount; ++boneIndex) {
@@ -311,7 +278,7 @@ void InitModelTrackCursors(unsigned char* model, float cursor, int physicsMode) 
         for (;;) {
             const int cur = static_cast<int>(boneCursor[boneIndex]);
             const mdl::BoneKey& rec = boneKeys[cur];
-            if (static_cast<double>(rec.frame) >= frame)
+            if (static_cast<KeyFrameTime>(rec.frame) >= frame)
                 break;
             const int next = static_cast<int>(rec.next);
             if (next != 0) {
@@ -335,28 +302,32 @@ void InitModelTrackCursors(unsigned char* model, float cursor, int physicsMode) 
 }
 
 // ---- VA 0x004A31D0 --------------------------------------------------------
-void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) {
-    unsigned char* const m = model;
-    mdl::ModelRecord& state = *mdl::Mdl(m);
+void AdvanceModelKeyframes(mdl::ModelRecord* model, float cursor, int physicsMode) {
+    mdl::ModelRecord* const m = model;
+    mdl::ModelRecord& state = *m;
 
-    // cursor(seconds) -> frame, 1/1000 round-up (0x4A31E1; same shape as
-    // PlaybackPoseAdvance's rounding tail)
-    double frame = static_cast<double>(cursor) * 30.0;
-    {
-        const double scaled = frame * 1000.0;
-        if (scaled - static_cast<double>(static_cast<int>(scaled)) >= 0.5)
-            frame = static_cast<double>(static_cast<int>(scaled) + 1) / 1000.0;
+    // x64 RVA 0xD08EC..0xD0925 uses mulss/divss throughout. x86
+    // 0x4A31E1/0x4A31F7/0x4A322A stores both frame and scaled as floats;
+    // its integer/1000 division stays on the x87 stack until the float store.
+    float frame = cursor * 30.0f;
+    const float scaled = frame * 1000.0f;
+    const int whole = static_cast<int>(scaled);
+    if (scaled - static_cast<float>(whole) >= 0.5f) {
+#if defined(_M_IX86)
+        frame = static_cast<float>(static_cast<double>(whole + 1) / 1000.0);
+#else
+        frame = static_cast<float>(whole + 1) / 1000.0f;
+#endif
     }
 
     // ==== section 1: IK master tracks (0x4A3236) ==========================
     if (state.displayTrackActive != 0) {
-        mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
+        mdl::DisplayKey* const keys = (m)->displayKeys;
         format::PmmDisplayCursor cursor{state.displayKeyCursor, true};
         format::PmmDisplaySelection selection;
-        if (format::SelectPmmDisplayKey(
-                kfa::ReadLiveDisplayKeyLink, keys, frame,
-                format::PmmDisplayTraversal::AdvancePlayback,
-                cursor, selection)) {
+        if (format::SelectPmmDisplayKey(kfa::ReadLiveDisplayKeyLink, keys, frame,
+                                        format::PmmDisplayTraversal::AdvancePlayback, cursor,
+                                        selection)) {
             state.displayKeyCursor = cursor.index;
             state.displayTrackActive = cursor.active ? 1 : 0;
             kfa::ApplyDisplaySelection(m, keys, selection);
@@ -364,16 +335,16 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
     }
 
     // ==== section 2: morph tracks (0x4A391B) ==============================
-    const int morphCnt = static_cast<int>(mdl::Mdl(m)->morphCount);
+    const int morphCnt = static_cast<int>(m->morphCount);
     if (morphCnt > 0) {
-        mdl::MorphKey* const keys = mdl::MorphKeys(m);
-        mikudancestudio::mdl::MorphRecord* const vals = mikudancestudio::mdl::Morphs(m);  // 136-byte structs
+        mdl::MorphKey* const keys = m->morphKeys;
+        mikudancestudio::mdl::MorphRecord* const vals = m->morphs; // 136-byte structs
         unsigned char* const active = state.morphTrackActive;
         std::uint32_t* const cursors = state.morphKeyCursors;
         for (int k = 0; k < morphCnt; ++k) {
-            if (active[k] == 0) continue;
-            while ((double)keys[cursors[k]].frame < frame &&
-                   active[k] != 0) {
+            if (active[k] == 0)
+                continue;
+            while (static_cast<KeyFrameTime>(keys[cursors[k]].frame) < frame && active[k] != 0) {
                 const mdl::MorphKey& rec = keys[cursors[k]];
                 const int next = static_cast<int>(rec.next);
                 if (next != 0)
@@ -383,10 +354,11 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                     vals[k].value = rec.value;
                 }
             }
-            if (active[k] == 0) continue;
+            if (active[k] == 0)
+                continue;
             const mdl::MorphKey& rec = keys[cursors[k]];
             float v;
-            if (frame == (double)rec.frame) {
+            if (frame == static_cast<KeyFrameTime>(rec.frame)) {
                 v = rec.value;
             } else {
                 const mdl::MorphKey& prev = keys[rec.previous];
@@ -397,14 +369,12 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                 // final store - modelled with doubles like the rest of the
                 // x86 branches in this port.
                 const float tF = (float)((frame - (double)prev.frame) /
-                                         (double)(std::uint32_t)(
-                                             rec.frame - prev.frame));
+                                         (double)(std::uint32_t)(rec.frame - prev.frame));
                 const float delta = rec.value - prev.value;
-                v = (float)((double)tF * (double)delta +
-                            (double)prev.value);
+                v = (float)((double)tF * (double)delta + (double)prev.value);
 #else
-                v = format::InterpolatePmmMorphValue(
-                    prev.value, rec.value, prev.frame, rec.frame, frame);
+                v = format::InterpolatePmmMorphValue(prev.value, rec.value, prev.frame, rec.frame,
+                                                     frame);
 #endif
             }
             vals[k].value = v;
@@ -412,31 +382,28 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
     }
 
     // ==== section 3: bone tracks (0x4A3AA5) ===============================
-    const int boneCnt = static_cast<int>(mdl::Mdl(m)->boneCount);
+    const int boneCnt = static_cast<int>(m->boneCount);
     if (boneCnt > 0) {
-        mdl::BoneKey* const keys = mdl::BoneKeys(m);
-        mikudancestudio::mdl::BoneRecord* const bones =
-            mdl::Bones(m);
+        mdl::BoneKey* const keys = m->boneKeys;
+        mikudancestudio::mdl::BoneRecord* const bones = m->boneTable;
         unsigned char* const active = state.boneTrackActive;
         std::uint32_t* const cursors = state.boneKeyCursors;
         for (int b = 0; b < boneCnt; ++b) {
             mikudancestudio::mdl::BoneRecord* const bone = &bones[b];
-            if (active[b] == 0) continue;
+            if (active[b] == 0)
+                continue;
 
             // advance (0x4A3ACA) - MIKUDANCESTUDIO_SPIN_CANARY guards a record-
             // link cycle (diagnostic; the original chain is acyclic)
 #ifdef MIKUDANCESTUDIO_DIAG
             int spin = 0;
 #endif
-            while ((double)keys[cursors[b]].frame < frame &&
-                   active[b] != 0) {
+            while (static_cast<KeyFrameTime>(keys[cursors[b]].frame) < frame && active[b] != 0) {
 #ifdef MIKUDANCESTUDIO_DIAG
                 if (++spin > 100000 && getenv("MIKUDANCESTUDIO_SPIN_CANARY")) {
                     FILE* sf = fopen(getenv("MIKUDANCESTUDIO_SPIN_CANARY"), "a");
                     if (sf) {
-                        fprintf(sf,
-                                "BONE spin b=%d cursor=%d frame=%.3f\n",
-                                b, cursors[b], frame);
+                        fprintf(sf, "BONE spin b=%d cursor=%d frame=%.3f\n", b, cursors[b], frame);
                         fclose(sf);
                     }
                     spin = 0;
@@ -451,51 +418,50 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                 // terminal key (0x4A3B1C)
                 active[b] = 0;
                 for (int c = 0; c < 4; ++c)
-                    bone->rotQuat[c] = rec.rotation[c];  // +0x14C
+                    bone->rotQuat[c] = rec.rotation[c]; // +0x14C
                 for (int c = 0; c < 3; ++c)
                     bone->trans[c] = rec.position[c];
                 const unsigned char mode = rec.physicsDisabled;
-                if (bone->hasRigidBody != 0 && bone->physicsDisabled != mode &&
-                    physicsMode >= 2) {
-                    NotifyBonePhysicsMode(m, b, mode);  // 0x4A3BF9
+                if (bone->hasRigidBody != 0 && bone->physicsDisabled != mode && physicsMode >= 2) {
+                    NotifyBonePhysicsMode(m, b, mode); // 0x4A3BF9
                     bone->physicsDisabled = rec.physicsDisabled;
                 }
                 const int selIdx = bone->slotIndex;
                 if (selIdx < 0) {
                     active[b] = 0;
                 } else {
-                    const mdl::BoneOrderEntry& window =
-                        mdl::BoneOrder(m)[selIdx];
-                    const auto decision =
-                        format::SelectPmmBoneTerminalPose(
-                            rec.frame, frame,
-                            kfa::PortableSelector(window));
-                    kfa::ApplyLiveBoneSelectorPose(
-                        bone, decision, rec, rec, true);
-                    if (window.windowEnd == 0) active[b] = 0;
+                    const mdl::BoneOrderEntry& window = (m)->boneOrderTable[selIdx];
+                    const auto decision = format::SelectPmmBoneTerminalPose(
+                        rec.frame, frame, kfa::PortableSelector(window));
+                    kfa::ApplyLiveBoneSelectorPose(bone, decision, rec, rec, true);
+                    if (window.windowEnd == 0)
+                        active[b] = 0;
                 }
                 break;
             }
-            if (active[b] == 0) continue;
+            if (active[b] == 0)
+                continue;
 
             const int cursorIdx = cursors[b];
             const mdl::BoneKey& rec = keys[cursorIdx];
             const std::uint32_t curFrame = rec.frame;
 
-            if (frame == (double)curFrame) {
+            if (frame == static_cast<KeyFrameTime>(curFrame)) {
                 // exact hit (0x4A3D32)
                 CopyBoneKeyVerbatim(bone, rec);
-                if (physicsMode >= 2 && bone->hasRigidBody != 0) {  // 0x4A3DBE
+                if (physicsMode >= 2 && bone->hasRigidBody != 0) { // 0x4A3DBE
                     const int nextIdx = static_cast<int>(rec.next);
                     const unsigned char cmode = rec.physicsDisabled;
                     if (nextIdx <= 0) {
-                        if (bone->physicsDisabled != cmode) NotifyBonePhysicsMode(m, b, cmode);
+                        if (bone->physicsDisabled != cmode)
+                            NotifyBonePhysicsMode(m, b, cmode);
                         bone->physicsDisabled = cmode;
                         continue;
                     }
                     const mdl::BoneKey& nrec = keys[nextIdx];
                     if (nrec.physicsDisabled != 1 || cmode != 0) {
-                        if (bone->physicsDisabled != cmode) NotifyBonePhysicsMode(m, b, cmode);
+                        if (bone->physicsDisabled != cmode)
+                            NotifyBonePhysicsMode(m, b, cmode);
                         bone->physicsDisabled = cmode;
                         continue;
                     }
@@ -503,7 +469,8 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                     // (0x4A3E17): notify, remember the start frame, mirror
                     // the backups into the working copies AND the current
                     // pose
-                    if (bone->physicsDisabled == 0) NotifyBonePhysicsMode(m, b, 1);
+                    if (bone->physicsDisabled == 0)
+                        NotifyBonePhysicsMode(m, b, 1);
                     bone->physicsDisabled = 1;
                     bone->rigidIdx = static_cast<std::int32_t>(curFrame);
                     for (int c = 0; c < 4; ++c)
@@ -511,7 +478,7 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                     for (int c = 0; c < 3; ++c)
                         bone->ikWorkingPos[c] = bone->ikBackup[c];
                     for (int c = 0; c < 4; ++c)
-                        bone->rotQuat[c] = bone->ikBackup[3 + c];  // +0x14C <- +0x194
+                        bone->rotQuat[c] = bone->ikBackup[3 + c]; // +0x14C <- +0x194
                     for (int c = 0; c < 3; ++c)
                         bone->trans[c] = bone->ikBackup[c];
                 }
@@ -522,30 +489,28 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
             const int prevIdx = static_cast<int>(rec.previous);
             const mdl::BoneKey& prevRec = keys[prevIdx];
             std::uint32_t prevFrame = prevRec.frame;
-            float ppos[3] = {prevRec.position[0], prevRec.position[1],
-                             prevRec.position[2]};
-            float pq[4] = {prevRec.rotation[0], prevRec.rotation[1],
-                           prevRec.rotation[2], prevRec.rotation[3]};
+            float ppos[3] = {prevRec.position[0], prevRec.position[1], prevRec.position[2]};
+            float pq[4] = {prevRec.rotation[0], prevRec.rotation[1], prevRec.rotation[2],
+                           prevRec.rotation[3]};
 
-            if (physicsMode >= 2 && bone->hasRigidBody != 0) {  // 0x4A3FAE
-                if (rec.physicsDisabled == 1 &&
-                    prevRec.physicsDisabled == 0) {
+            if (physicsMode >= 2 && bone->hasRigidBody != 0) { // 0x4A3FAE
+                if (rec.physicsDisabled == 1 && prevRec.physicsDisabled == 0) {
                     // mid-interpolation segment (0x4A3FC3)
-                    const std::uint32_t start =
-                        static_cast<std::uint32_t>(bone->rigidIdx);
+                    const std::uint32_t start = static_cast<std::uint32_t>(bone->rigidIdx);
                     if (start < prevFrame || start >= curFrame) {
                         // stale arm -> re-arm from the backups (0x4A3FF1,
                         // unsigned; disasm 0x4A3FF1's [ecx+ebp] operand is
                         // the PREVIOUS record, var_34 the CURRENT frame)
-                        if (bone->physicsDisabled == 0) NotifyBonePhysicsMode(m, b, 1);
+                        if (bone->physicsDisabled == 0)
+                            NotifyBonePhysicsMode(m, b, 1);
                         bone->physicsDisabled = 1;
                         bone->rigidIdx = static_cast<std::int32_t>(prevFrame);
                         std::memcpy(bone->ikWorkingQuat, bone->ikBackup + 3,
                                     sizeof(bone->ikWorkingQuat));
-                        std::memcpy(bone->ikWorkingPos, bone->ikBackup,
-                                    sizeof(bone->ikWorkingPos));
+                        std::memcpy(bone->ikWorkingPos, bone->ikBackup, sizeof(bone->ikWorkingPos));
                     }
-                    if (bone->physicsDisabled == 0) NotifyBonePhysicsMode(m, b, 1);
+                    if (bone->physicsDisabled == 0)
+                        NotifyBonePhysicsMode(m, b, 1);
                     bone->physicsDisabled = 1;
                     // blend from the armed working copies (0x4A40CD)
                     pq[0] = bone->ikWorkingQuat[0];
@@ -555,11 +520,11 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                     ppos[0] = bone->ikWorkingPos[0];
                     ppos[1] = bone->ikWorkingPos[1];
                     ppos[2] = bone->ikWorkingPos[2];
-                    prevFrame = static_cast<std::uint32_t>(
-                        bone->rigidIdx);
+                    prevFrame = static_cast<std::uint32_t>(bone->rigidIdx);
                 } else {
                     const unsigned char pmode = prevRec.physicsDisabled;
-                    if (bone->physicsDisabled != pmode) NotifyBonePhysicsMode(m, b, pmode);
+                    if (bone->physicsDisabled != pmode)
+                        NotifyBonePhysicsMode(m, b, pmode);
                     bone->physicsDisabled = pmode;
                 }
             }
@@ -567,13 +532,10 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
             // Selector-window crossing overrides this segment's interpolation.
             const int selIdx = bone->slotIndex;
             if (selIdx >= 0) {
-                const mdl::BoneOrderEntry& window =
-                    mdl::BoneOrder(m)[selIdx];
+                const mdl::BoneOrderEntry& window = (m)->boneOrderTable[selIdx];
                 const auto decision = format::SelectPmmBoneSegmentPose(
-                    prevFrame, curFrame, frame,
-                    kfa::PortableSelector(window));
-                if (kfa::ApplyLiveBoneSelectorPose(
-                        bone, decision, prevRec, rec, true, ppos, pq))
+                    prevFrame, curFrame, frame, kfa::PortableSelector(window));
+                if (kfa::ApplyLiveBoneSelectorPose(bone, decision, prevRec, rec, true, ppos, pq))
                     continue;
             }
 
@@ -586,49 +548,40 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
             right.frame = curFrame;
             std::memcpy(left.position.data(), ppos, sizeof ppos);
             std::memcpy(left.rotation.data(), pq, sizeof pq);
-            std::memcpy(right.position.data(), rec.position,
-                        sizeof rec.position);
-            std::memcpy(right.rotation.data(), rec.rotation,
-                        sizeof rec.rotation);
-            std::memcpy(right.interpolation.data(), rec.interpolation,
-                        sizeof rec.interpolation);
+            std::memcpy(right.position.data(), rec.position, sizeof rec.position);
+            std::memcpy(right.rotation.data(), rec.rotation, sizeof rec.rotation);
+            std::memcpy(right.interpolation.data(), rec.interpolation, sizeof rec.interpolation);
             format::PmmEvaluatedBone blended;
-            if (format::InterpolatePmmBonePlaybackSegment(left, right, frame,
-                                                           blended)) {
-                std::memcpy(bone->rotQuat, blended.rotation.data(),
-                            sizeof(float) * 4);
+            if (format::InterpolatePmmBonePlaybackSegment(left, right, frame, blended)) {
+                std::memcpy(bone->rotQuat, blended.rotation.data(), sizeof(float) * 4);
                 const auto boneType = static_cast<std::int8_t>(bone->type);
                 if (boneType <= static_cast<std::int8_t>(mdl::BoneType::Effector) ||
                     bone->type == mdl::BoneType::FixedAxis)
-                    std::memcpy(bone->trans, blended.translation.data(),
-                                sizeof(float) * 3);
+                    std::memcpy(bone->trans, blended.translation.data(), sizeof(float) * 3);
                 continue;
             }
 #endif
 
             // full interpolation (LABEL_122, 0x4A433D)
-            const float cq[4] = {rec.rotation[0], rec.rotation[1],
-                                 rec.rotation[2], rec.rotation[3]};
+            const float cq[4] = {rec.rotation[0], rec.rotation[1], rec.rotation[2],
+                                 rec.rotation[3]};
 #if defined(_M_IX86)
             // x86 0x4A4361..0x4A4398: fild m32int prevFrame (jge + fadd
             // flt_52B9F0 = 2^32 when negative, i.e. unsigned) subtracted
-            // from the double frame by fsubp 0x4A4373, fild m32int
+            // from the float-stored frame by fsubp 0x4A4373, fild m32int
             // (curFrame - prevFrame) with the same unsigned fixup as the
             // fdivp 0x4A4389 divisor, and a single rounding at the
             // fstp float 0x4A4390 - double intermediates like the morph
-            // section above (the float-cast frame would round early and
-            // skew tF once frame passes ~16000).
-            const float tF =
-                (float)((frame - (double)prevFrame) /
-                        (double)(curFrame - prevFrame));
+            // section above; subtract and divide on the x87 stack before tF
+            // rounds to float.
+            const float tF = (float)((frame - (double)prevFrame) / (double)(curFrame - prevFrame));
 #else
             // x64 0x7FF7CB4F1D30..61: cvtsi2ss + subss + divss - the raw
             // fraction divides in SINGLE precision on the float-cast frame
             // (frame kept as float in xmm4).
             const float tF =
                 (static_cast<float>(frame) - static_cast<float>(prevFrame)) /
-                static_cast<float>(static_cast<int>(curFrame) -
-                                   static_cast<int>(prevFrame));
+                static_cast<float>(static_cast<int>(curFrame) - static_cast<int>(prevFrame));
 #endif
             // EASED rotation fraction - the slerp below uses this value
             // (see the file header's decompiler-trap note)
@@ -637,15 +590,13 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
 #if defined(_M_IX86)
             // x86 0x4A43EF: CRT double acos/sin on float-rounded
             // intermediates (the x87 blend products stay extended).
-            const double dotD = (double)pq[0] * cq[0] +
-                                (double)pq[1] * cq[1] +
-                                (double)pq[2] * cq[2] +
-                                (double)pq[3] * cq[3];
+            const double dotD = (double)pq[0] * cq[0] + (double)pq[1] * cq[1] +
+                                (double)pq[2] * cq[2] + (double)pq[3] * cq[3];
             const float dot = (float)dotD;
-            if (static_cast<float>(1.0 - (double)dot * (double)dot) ==
-                0.0f) {
+            if (static_cast<float>(1.0 - (double)dot * (double)dot) == 0.0f) {
                 // parallel quaternions: previous key verbatim (0x4A4414)
-                for (int c = 0; c < 4; ++c) bone->rotQuat[c] = pq[c];
+                for (int c = 0; c < 4; ++c)
+                    bone->rotQuat[c] = pq[c];
             } else {
                 float dc = dot;
                 if (dc > 1.0f)
@@ -657,33 +608,23 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                     // long way around (0x4A44C6): complement angle, weights
                     // subtracted
                     const float th2 = (float)std::acos(-(double)dc);
-                    const float invS =
-                        (float)(1.0 / (double)(float)std::sin((double)th2));
-                    const float aStart =
-                        (float)((1.0 - (double)eRot) * (double)th2);
-                    const float w0 =
-                        (float)std::sin((double)aStart) * invS;
+                    const float invS = (float)(1.0 / (double)(float)std::sin((double)th2));
+                    const float aStart = (float)((1.0 - (double)eRot) * (double)th2);
+                    const float w0 = (float)std::sin((double)aStart) * invS;
                     const float aEnd = (float)((double)eRot * (double)th2);
-                    const float w1 =
-                        (float)std::sin((double)aEnd) * invS;
+                    const float w1 = (float)std::sin((double)aEnd) * invS;
                     for (int c = 0; c < 4; ++c)
                         bone->rotQuat[c] =
-                            (float)((double)pq[c] * (double)w0 -
-                                    (double)w1 * (double)cq[c]);
+                            (float)((double)pq[c] * (double)w0 - (double)w1 * (double)cq[c]);
                 } else {
-                    const float invS =
-                        (float)(1.0 / (double)(float)std::sin((double)th));
-                    const float aStart =
-                        (float)((1.0 - (double)eRot) * (double)th);
-                    const float w0 =
-                        (float)std::sin((double)aStart) * invS;
+                    const float invS = (float)(1.0 / (double)(float)std::sin((double)th));
+                    const float aStart = (float)((1.0 - (double)eRot) * (double)th);
+                    const float w0 = (float)std::sin((double)aStart) * invS;
                     const float aEnd = (float)((double)eRot * (double)th);
-                    const float w1 =
-                        (float)std::sin((double)aEnd) * invS;
+                    const float w1 = (float)std::sin((double)aEnd) * invS;
                     for (int c = 0; c < 4; ++c)
                         bone->rotQuat[c] =
-                            (float)((double)pq[c] * (double)w0 +
-                                    (double)w1 * (double)cq[c]);
+                            (float)((double)pq[c] * (double)w0 + (double)w1 * (double)cq[c]);
                 }
             }
 #else
@@ -696,11 +637,11 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
             // against dword_7FF7CB552C1C = 0x3FC90FD8 (the float image of
             // the truncated-double constant - float-exact, so the double
             // compare below is bit-identical).
-            const float dot = pq[0] * cq[0] + pq[1] * cq[1] +
-                              pq[2] * cq[2] + pq[3] * cq[3];
+            const float dot = pq[0] * cq[0] + pq[1] * cq[1] + pq[2] * cq[2] + pq[3] * cq[3];
             if (1.0f - dot * dot == 0.0f) {
                 // parallel quaternions: previous key verbatim (0x4A4414)
-                for (int c = 0; c < 4; ++c) bone->rotQuat[c] = pq[c];
+                for (int c = 0; c < 4; ++c)
+                    bone->rotQuat[c] = pq[c];
             } else {
                 float dc = dot;
                 if (dc > 1.0f)
@@ -730,8 +671,7 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
             // position easing (0x4A46AF); the raw fraction goes in, the
             // callee eases per axis.  Type gate uses a SIGNED <= 6 compare
             // on the byte (setle), so negative type bytes pass too.
-            const std::int8_t btype =
-                static_cast<std::int8_t>(bone->type);
+            const std::int8_t btype = static_cast<std::int8_t>(bone->type);
             if (btype <= static_cast<std::int8_t>(mdl::BoneType::Effector) ||
                 bone->type == mdl::BoneType::FixedAxis) {
                 for (int axis = 0; axis < 3; ++axis) {
@@ -749,4 +689,4 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

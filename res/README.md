@@ -12,6 +12,10 @@
 持有，经 rc.exe 编译逐字节再生）。它们仍是原作者的受版权保护作品；
 本项目不主张对其所有权。发行前请确认你已获得相应授权，或用自制素材替换。
 
+这些原版素材不在项目自有代码的 [MIT 许可](../LICENSE) 授权范围内。
+原版 readme 中的许可声明和免责声明原文保存在
+[licenses/MikuMikuDance.txt](../licenses/MikuMikuDance.txt)。
+
 ## 目录结构
 
 ```
@@ -68,7 +72,7 @@ rc.exe（10.0.19041 / 10.0.26100 双版验证）重发的模板字节与原版**
 ## 重新生成
 
 ```sh
-python scripts/gen_resources.py gen   # 重建 gen_resources*.res（需 rc.exe）
-python scripts/gen_resources.py verify # 校验与入库版本逐字节一致
-python scripts/dialog_rc.py verify    # .rc 编译产物 == 锚点 .res 内模板
+python scripts/gen_resources.py gen   # Rebuild gen_resources*.res (requires rc.exe)
+python scripts/gen_resources.py verify # Verify byte-for-byte equality with the checked-in version
+python scripts/dialog_rc.py verify    # .rc compilation output == templates in the reference .res
 ```

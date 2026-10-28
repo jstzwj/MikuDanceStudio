@@ -1,12 +1,12 @@
-// mme_host.cpp - MmeHost* 集成层：原 MMHack.dll 设备拦截逻辑的去 hook 化
-// 重宿主。
+// mme_host.cpp - MmeHost* integration layer: rehost the original MMHack.dll device interception logic
+// without hooks.
 //
-// 原版经由 d3d9.dll 代理 + IAT/vtable 包装器拦截 MMD 的设备调用；本文件把
-// 每个拦截点的逻辑（[0x180002de0] BeginScene 状态机、[0x180003cb0] EndScene、
+// The original intercepts MMD device calls through a d3d9.dll proxy + IAT/vtable wrappers. This file ports
+// each interception point's logic ([0x180002de0] BeginScene state machine, [0x180003cb0] EndScene,
 // [0x180003a20] Clear、[0x180002780] DrawPrimitive、[0x1800027f0]
-// DrawIndexedPrimitive、[FUN_180001db0] 设备销毁，以及 hook 侧的标准效果登
-// 记/PMM 跟踪/纹理记录）原样移植为宿主可直接调用的导出函数。状态捕获仍通
-// 过设备状态窥探 + Exp* 宿主查询完成，与原版一致。
+// DrawIndexedPrimitive, [FUN_180001db0] device destruction, plus hook-side standard-effect registration,
+// PMM tracking and texture records) unchanged into exports the host can call directly. State capture still uses
+// device-state inspection + Exp* host queries, matching the original.
 #include "mme_host_api.h"
 
 #include <cstdio>
@@ -37,84 +37,81 @@ extern "C" void __cdecl MmeHostShutdownRuntime() {
     mme::MmeUiShutdownRuntime();
 }
 
-// src/exports/effect_api.cpp 的内部直取（非导出，C 链接）：模型/附件的原始
-// 宽字符路径（model+0x24BC / acc+0x29C，即加载所用 D3DXLoadMeshFromXW 宽路
-// 径）。原版 MMHack 全程保留该宽路径：[0x1800043b0] hook 把它原样登记进
-// ObjData+0x30（wstring，sub_18000f150 直接拷贝），[sub_18000f340] 读回后传
-// [FUN_18000e020]（wfopen_s 解析材质表/toon，无 ANSI 往返）。内置版同样直
-// 取——ExpGetPmdFilename 的 Wide→SJIS 输出再经 CP_ACP 回宽对非 SJIS 字符
-// 有损，会破坏材质表/toon 文件解析。MMEffect.dll 无法从 exe 导入库解析非
-// 导出符号，故由宿主桥经 MmeHostSetPathProviders 注入函数指针（等价于原
-// 版 MMHack 与 exe 间的进程内直连）。
-static const wchar_t* (__cdecl* g_mmdModelPathW)(int) = nullptr;
-static const wchar_t* (__cdecl* g_mmdAcsPathW)(int) = nullptr;
+// Internal direct access from src/exports/effect_api.cpp (not exported, C linkage): original model/accessory
+// wide-character paths (model+0x24BC / acc+0x29C, the paths used by D3DXLoadMeshFromXW).
+// Original MMHack preserves these wide paths throughout: hook [0x1800043b0] registers them unchanged in
+// ObjData+0x30 (wstring, copied directly by sub_18000f150); [sub_18000f340] reads them and passes them to
+// [FUN_18000e020] (wfopen_s parses materials/toon files without an ANSI round trip). The embedded version also accesses them
+// directly: round-tripping ExpGetPmdFilename's wide->SJIS output back through CP_ACP loses non-SJIS characters
+// and corrupts material/toon parsing. MMEffect.dll cannot resolve non-exported symbols through the EXE's import
+// library, so the host bridge injects function pointers with MmeHostSetPathProviders (equivalent to the original
+// in-process direct connection between MMHack and the EXE).
+static const wchar_t*(__cdecl* g_mmdModelPathW)(int) = nullptr;
+static const wchar_t*(__cdecl* g_mmdAcsPathW)(int) = nullptr;
 
 namespace {
 
-// 原 MyDirect3DDevice9 包装器的自有字段（+0x1c/+0x20/+0x28/+0x2c 与三张对
-// 象缓存图），本工程单设备假设与原版一致。
+// Original MyDirect3DDevice9 wrapper's own fields (+0x1c/+0x20/+0x28/+0x2c and three object-cache
+// maps); this project shares the original's single-device assumption.
 struct MmeHostDeviceState {
-    mme::DeviceInitialization initialization;     // 包装器 +0x1c 的生命周期
-    IDirect3DSurface9* trackedRT = nullptr;       // 包装器 +0x20（借用指针）
-    int currentObject = 0;                        // 包装器 +0x28
-    int endSceneFired = 0;                        // 包装器 +0x2c
-    std::list<MmhCachedObject*> objectList;       // 包装器 +0x58 节点表
-    std::unordered_map<unsigned long long, MmhCachedObject*> objectById;   // +0x30
-    std::map<int, MmhCachedObject*> objectByOrder;                          // +0x60
+    mme::DeviceInitialization initialization; // Wrapper +0x1c lifecycle
+    IDirect3DSurface9* trackedRT = nullptr;   // Wrapper +0x20 (borrowed pointer)
+    int currentObject = 0;                    // Wrapper +0x28
+    int endSceneFired = 0;                    // Wrapper +0x2c
+    std::list<MmhCachedObject*> objectList;   // Wrapper +0x58 node table
+    std::unordered_map<unsigned long long, MmhCachedObject*> objectById; // +0x30
+    std::map<int, MmhCachedObject*> objectByOrder;                       // +0x60
 };
 
 MmeHostDeviceState g_host;
 
-// [FUN_180002de0 创建路径 4936-4943 行] 新检出对象的每对象数据。材质表由
-// FUN_18000e020 直接解析模型文件（PMX 内嵌名 / PMD 的 "<model>.txt" 行与
-// toon 引用）；附件保持空表——GetMaterialName [0x180001130] 只服务
-// isPmd == 1 的对象。
+// [FUN_180002de0 creation path, lines 4936-4943] Per-object data for newly detected objects. Materials are
+// parsed directly from the model file by FUN_18000e020 (embedded PMX names / PMD "<model>.txt" lines and
+// toon references). Accessories retain empty tables: GetMaterialName [0x180001130] serves only
+// objects with isPmd == 1.
 void MmhPopulateObjectData(unsigned long long id, bool isPmd, int hostIndex,
-                           const wchar_t* modelPath)
-{
+                           const wchar_t* modelPath) {
     (void)hostIndex;
     MmhObjData& d = g_mmh.objData[id];
     d.id = id;
     d.isPmd = isPmd;
-    // 宽字符模型路径（原版: ObjData+0x30 wstring，FUN_18000f340 读回并传给
-    // FUN_18000e020）：直取宿主原始宽路径，不经窄字符往返。
+    // Wide-character model path (original: ObjData+0x30 wstring, read by FUN_18000f340 and passed to
+    // FUN_18000e020): obtain the host's original wide path directly, without a narrow-character round trip.
     d.modelName = (modelPath != nullptr) ? modelPath : L"";
     d.mats.clear();
     if (isPmd) {
-        // [FUN_18000e020] 原版在 OnCreateModel 之前、以 &ObjData.materials
-        // 为输出调用。
+        // [FUN_18000e020] The original calls this before OnCreateModel, passing &ObjData.materials
+        // as the output.
         MmhMaterialTableLoadFromFile(d.modelName.c_str(), &d.mats);
     }
-    // 附属信息 (+0x240/+0x244)：原版 ObjData 从不写入这两个字段，宿主填充
-    // 亦不快照——GetAcsAttachedPmd [0x1800012d0] 每次调用时经 sub_18000F2B0
-    // 的借位分支 [0x18000f331] 直接读宿主附件对象内存（本工程等价实现见
-    // mmhack_getters.cpp：AccessoryRecord::parentModel/parentBone），保持关键
-    // 帧驱动的附属变化实时可见。此处保留 -1/0 构造默认仅作布局锚点。
+    // Attachment information (+0x240/+0x244): original ObjData never writes these fields, nor does host population
+    // snapshot them. GetAcsAttachedPmd [0x1800012d0] directly reads the host accessory object on each call through sub_18000F2B0's
+    // borrowed-data branch [0x18000f331] (equivalent implementation in this project:
+    // mmhack_getters.cpp, AccessoryRecord::parentModel/parentBone), keeping keyframe-driven
+    // attachment changes immediately visible. Retain construction defaults -1/0 here only as layout anchors.
     d.attachPmdIndex = -1;
     d.attachBoneIndex = 0;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
-// 窗口 / 标准效果 / 文件通知（原 hook 侧记录路径）
+// Window / standard effect / file notifications (original hook-side recording paths)
 // ---------------------------------------------------------------------------
-void __cdecl MmeHostSetPathProviders(const wchar_t* (__cdecl* model_path)(int),
-                                     const wchar_t* (__cdecl* acs_path)(int))
-{
+void __cdecl MmeHostSetPathProviders(const wchar_t*(__cdecl* model_path)(int),
+                                     const wchar_t*(__cdecl* acs_path)(int)) {
     g_mmdModelPathW = model_path;
     g_mmdAcsPathW = acs_path;
 }
 
-void __cdecl MmeHostSetMainWindow(HWND window)
-{
+void __cdecl MmeHostSetMainWindow(HWND window) {
     g_mmh.mainWindow = window;
     if (g_mmh.presentWindow == nullptr)
         g_mmh.presentWindow = window;
 
-    // [原 MMHack DllMain] exe 目录下的 MMEffect.debug 存在则置调试模式
-    // （x64 原版在 MMHack.dll 旁检查，与其同目录 = 宿主 exe 目录）。
-    // 探测仅一次（宿主桥可能在帧级刷新时重复调用本函数）。
+    // [Original MMHack DllMain] Enable debug mode if MMEffect.debug exists in the EXE directory
+    // (the x64 original checks beside MMHack.dll, which shares the host EXE directory).
+    // Probe only once (the host bridge may call this function repeatedly during per-frame refresh).
     static bool debugProbed = false;
     if (!debugProbed) {
         debugProbed = true;
@@ -124,8 +121,7 @@ void __cdecl MmeHostSetMainWindow(HWND window)
                 char* slash = strrchr(modulePath, '\\');
                 std::string debugFile =
                     (slash != nullptr)
-                        ? std::string(modulePath, slash - modulePath + 1) +
-                              "MMEffect.debug"
+                        ? std::string(modulePath, slash - modulePath + 1) + "MMEffect.debug"
                         : std::string("MMEffect.debug");
                 FILE* fp = nullptr;
                 if (fopen_s(&fp, debugFile.c_str(), "rb") == 0 && fp != nullptr) {
@@ -137,18 +133,17 @@ void __cdecl MmeHostSetMainWindow(HWND window)
     }
 }
 
-void __cdecl MmeHostSetStandardEffect(void* effect)
-{
-    // [0x180004440 Hooked_D3DXCreateEffectFromResourceA] 仅当
-    // qword_18006E7A0（currentEffect）尚未设置且新建效果非空时登记一次
-    // [0x1800044b6 条件 !qword_18006E7A0 && v8 && *v8]；此后的调用直接返回，
-    // 不覆盖已缓存效果也不重登记 12 个技术句柄。宿主在设备初始化尾调用。
+void __cdecl MmeHostSetStandardEffect(void* effect) {
+    // [0x180004440 Hooked_D3DXCreateEffectFromResourceA] Register once only if
+    // qword_18006E7A0 (currentEffect) is unset and the newly created effect is non-null
+    // [condition !qword_18006E7A0 && v8 && *v8 at 0x1800044b6]. Later calls return directly,
+    // without replacing the cached effect or re-registering the 12 technique handles. The host calls this at the end of device initialization.
     if (effect == nullptr)
         return;
     if (g_mmh.currentEffect != nullptr)
         return;
-    // [0x1800044c7 sub_180006350] 登记前清空技术缓存图（原版 hash 图
-    // qword_18006CCD0/DAT_18006ccf0 族的节点释放）。
+    // [0x1800044c7 sub_180006350] Clear the technique cache map before registration (original hash-map
+    // node releases for the qword_18006CCD0/DAT_18006ccf0 family).
     g_mmh.tecCache.clear();
     ID3DXEffect* fx = static_cast<ID3DXEffect*>(effect);
     for (int i = 0; i < MMH_TEC_COUNT; ++i) {
@@ -156,96 +151,88 @@ void __cdecl MmeHostSetStandardEffect(void* effect)
         if (handle != nullptr)
             MmhRecordTecHandle(handle, i);
     }
-    // [0x18000451d] 12 个句柄登记完成后才缓存当前效果。
+    // [0x18000451d] Cache the current effect only after registering all 12 handles.
     g_mmh.currentEffect = effect;
 }
 
-void __cdecl MmeHostSetDrawnWindow(HWND window)
-{
+void __cdecl MmeHostSetDrawnWindow(HWND window) {
     g_mmh.presentWindow = window;
 }
 
-void __cdecl MmeHostNotifyPmmLoaded(const wchar_t* path)
-{
+void __cdecl MmeHostNotifyPmmLoaded(const wchar_t* path) {
     if (path == nullptr || path[0] == L'\0')
         return;
     g_mmh.loadedPMMFile = path;
     g_mmh.loadedPmmFlag = true;
 }
 
-void __cdecl MmeHostNotifyPmmSaved(const wchar_t* path)
-{
+void __cdecl MmeHostNotifyPmmSaved(const wchar_t* path) {
     if (path == nullptr || path[0] == L'\0')
         return;
     g_mmh.savedPmmList.push_back(path);
 }
 
-void __cdecl MmeHostRecordTextureFile(const wchar_t* path,
-                                        IDirect3DBaseTexture9* texture)
-{
+void __cdecl MmeHostRecordTextureFile(const wchar_t* path, IDirect3DBaseTexture9* texture) {
     if (path == nullptr || path[0] == L'\0')
         return;
     MmhRecordTextureFile(std::wstring(path), texture);
 }
 
-int __cdecl MmeHostEffectsActive(void)
-{
+int __cdecl MmeHostEffectsActive(void) {
     return (g_host.initialization.IsReady() && !g_mmh.effectsDisabled) ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
-// 帧级拦截点
+// Per-frame interception points
 // ---------------------------------------------------------------------------
 
-// [0x180003a20] 设备 Clear 槽 43。
+// [0x180003a20] Device Clear slot 43.
 HRESULT __cdecl MmeHostClear(IDirect3DDevice9* device, unsigned long rect_count,
-                               const D3DRECT* rects, unsigned long flags,
-                               D3DCOLOR color, float z, unsigned long stencil)
-{
+                             const D3DRECT* rects, unsigned long flags, D3DCOLOR color, float z,
+                             unsigned long stencil) {
     IDirect3DSurface9* surf = nullptr;
     device->GetRenderTarget(0, &surf);
     if (surf != nullptr)
-        surf->Release();                         // 仅为借用比对
-    if (g_host.trackedRT == nullptr || !g_host.initialization.IsReady() ||
-        g_mmh.effectsDisabled) {
+        surf->Release(); // Borrowed only for comparison
+    if (g_host.trackedRT == nullptr || !g_host.initialization.IsReady() || g_mmh.effectsDisabled) {
         return device->Clear(rect_count, rects, flags, color, z, stencil);
     }
     int mainTarget = 0;
     if (surf == g_host.trackedRT && (flags & D3DCLEAR_TARGET) != 0) {
-        g_mmh.clearColor = color;                // DAT_18006ccc4
+        g_mmh.clearColor = color; // DAT_18006ccc4
         mainTarget = 1;
     }
-    OnClear(device, rect_count, rects, flags, color, z, stencil, mainTarget);
-    return S_OK;
+    // Both native wrappers return the callback HRESULT unchanged (x64
+    // 0x180003A20, x86 0x10003850), including device-loss failures.
+    return OnClear(device, rect_count, rects, flags, color, z, stencil, mainTarget);
 }
 
-// [0x180002de0] 设备 BeginScene 槽 41 - 帧首状态机。
-HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
-{
-    g_host.endSceneFired = 0;                    // +0x2c = 0
-    g_mmh.notEditMode = not_edit_mode;           // DAT_18006e796（宿主语义供给，
-                                                 // 替代 MmhProbeEditMode 的
-                                                 // 0x13D/0x1A1 控件探测）
-    g_mmh.frameTime = ExpGetFrameTime();         // DAT_18006e79c
+// [0x180002de0] Device BeginScene slot 41 - frame-start state machine.
+HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode) {
+    g_host.endSceneFired = 0;            // +0x2c = 0
+    g_mmh.notEditMode = not_edit_mode;   // DAT_18006e796 (semantics supplied by host,
+                                         // replacing MmhProbeEditMode's
+                                         // 0x13D/0x1A1 control probing)
+    g_mmh.frameTime = ExpGetFrameTime(); // DAT_18006e79c
 
-    // 惰性 MMEffect 初始化：首个 BeginScene 调用 Initialize。
+    // Lazy MMEffect initialization: the first BeginScene calls Initialize.
     if (!g_host.initialization.EnsureReady(
-        [device] { return Initialize(device); },
-        [] {
-            const char* msg = (g_mmh.currentEffect != nullptr)
-                ? "Initialize Error"
-                : "Initialize Error: failed to load default effect file. "
-                  "Please check video card capability.";
-            MessageBoxA(g_mmh.mainWindow, msg, "MikuMikuEffect", MB_ICONERROR);
-            g_mmh.effectsDisabled = 1;           // DAT_18006e794
-        }))
+            [device] { return Initialize(device); },
+            [] {
+                const char* msg = (g_mmh.currentEffect != nullptr)
+                                      ? "Initialize Error"
+                                      : "Initialize Error: failed to load default effect file. "
+                                        "Please check video card capability.";
+                MessageBoxA(g_mmh.mainWindow, msg, "MikuMikuEffect", MB_ICONERROR);
+                g_mmh.effectsDisabled = 1; // DAT_18006e794
+            }))
         return S_OK; // Original failure returns 0 without real BeginScene.
 
-    HRESULT hr = device->BeginScene();           // 真实槽 41 (+0x148)
+    HRESULT hr = device->BeginScene(); // Real slot 41 (+0x148)
     if (hr != 0)
         return hr;
 
-    // --- 构建当前存活的宿主对象 id 集 ----------------------------------------
+    // --- Build the set of currently live host object IDs ----------------------------------------
     int pmdNum = ExpGetPmdNum();
     int acsNum = ExpGetAcsNum();
     std::map<unsigned long long, bool> liveIds;
@@ -254,17 +241,17 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
     for (int i = 0; i < acsNum; i++)
         liveIds[(unsigned long long)(uintptr_t)ExpGetAcsID(i)] = true;
 
-    // --- 阶段 1+2: 清除已消失对象的缓存 (OnDeleteModel) -----------------------
-    mme::RemoveMissingHostObjects(g_host.objectList, g_host.objectById,
-        liveIds, [device](MmhCachedObject* obj) {
-            OnDeleteModel(device, obj->id);
-            if (obj->texRef != nullptr)
-                static_cast<IUnknown*>(obj->texRef)->Release();
-            g_mmh.objData.erase(obj->id);
-            delete obj;
-        });
+    // --- Stages 1+2: remove caches for disappeared objects (OnDeleteModel) -----------------------
+    mme::RemoveMissingHostObjects(g_host.objectList, g_host.objectById, liveIds,
+                                  [device](MmhCachedObject* obj) {
+                                      OnDeleteModel(device, obj->id);
+                                      if (obj->texRef != nullptr)
+                                          static_cast<IUnknown*>(obj->texRef)->Release();
+                                      g_mmh.objData.erase(obj->id);
+                                      delete obj;
+                                  });
 
-    // --- 阶段 3: 为新对象建立缓存 (OnCreateModel) ------------------------------
+    // --- Stage 3: cache new objects (OnCreateModel) ----------------------------------------------
     for (int i = 0; i < pmdNum; i++) {
         unsigned long long id = (unsigned long long)(uintptr_t)ExpGetPmdID(i);
         if (g_host.objectById.find(id) != g_host.objectById.end())
@@ -280,7 +267,8 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
             obj->fileName = mme::MmeWideToAnsi(widePath);
         } else {
             const char* fname = ExpGetPmdFilename(i);
-            if (fname) obj->fileName = fname;
+            if (fname)
+                obj->fileName = fname;
         }
         MmhPopulateObjectData(id, true, i,
                               (g_mmdModelPathW != nullptr) ? g_mmdModelPathW(i) : nullptr);
@@ -309,7 +297,8 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
             obj->fileName = mme::MmeWideToAnsi(widePath);
         } else {
             const char* fname = ExpGetAcsFilename(i);
-            if (fname) obj->fileName = fname;
+            if (fname)
+                obj->fileName = fname;
         }
         MmhPopulateObjectData(id, false, i,
                               (g_mmdAcsPathW != nullptr) ? g_mmdAcsPathW(i) : nullptr);
@@ -324,7 +313,7 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
         }
     }
 
-    // --- 阶段 4: 重建绘制次序图 -----------------------------------------------
+    // --- Stage 4: rebuild the draw-order map ----------------------------------------------------
     g_host.objectByOrder.clear();
     for (int i = 0; i < pmdNum; i++) {
         unsigned long long id = (unsigned long long)(uintptr_t)ExpGetPmdID(i);
@@ -341,29 +330,27 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode)
             g_host.objectByOrder[ExpGetAcsOrder(i)] = f->second;
     }
 
-    // 世界矩阵与逆（光照矩阵计算使用）
+    // World matrix and inverse (used for lighting matrix calculations)
     device->GetTransform(D3DTS_WORLDMATRIX(0), &g_mmh.worldMatrix);
     D3DXMatrixInverse(reinterpret_cast<D3DXMATRIX*>(&g_mmh.worldInverse), nullptr,
                       reinterpret_cast<const D3DXMATRIX*>(&g_mmh.worldMatrix));
 
-    // 跟踪当前渲染目标（借用；销毁路径不释放——与原版一致）。
-    g_host.trackedRT = nullptr;                  // +0x20 = 0
+    // Track the current render target (borrowed; not released on destruction, matching the original).
+    g_host.trackedRT = nullptr; // +0x20 = 0
     device->GetRenderTarget(0, &g_host.trackedRT);
     if (g_host.trackedRT != nullptr)
         g_host.trackedRT->Release();
 
-    g_mmh.currentSubsetIndex = -1;               // DAT_18006ccc0 = -1
-    g_host.currentObject = 0;                    // +0x28 = 0
+    g_mmh.currentSubsetIndex = -1; // DAT_18006ccc0 = -1
+    g_host.currentObject = 0;      // +0x28 = 0
 
-    OnBeginScene(device);                        // DAT_18006e800
+    OnBeginScene(device); // DAT_18006e800
     return 0;
 }
 
-// [0x180003b50/0x180003bd0/0x180003c50] 槽 34/30/32：EndScene 之前回读跟踪
-// 渲染目标时提前触发一次 OnEndScene（后台缓冲捕获/AVI 采样路径）。
-void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device,
-                                        IDirect3DSurface9* source)
-{
+// [0x180003b50/0x180003bd0/0x180003c50] Slots 34/30/32: reading the tracked render target before EndScene
+// triggers OnEndScene once, early (back-buffer capture/AVI sampling path).
+void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device, IDirect3DSurface9* source) {
     if (device == nullptr || source == nullptr)
         return;
     // MMHack's copy interceptors only fire when the copy reads the render
@@ -373,14 +360,12 @@ void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device,
         g_host.endSceneFired = 1;
     }
 }
-int __cdecl MmeHostEffectsEnabled(void)
-{
+int __cdecl MmeHostEffectsEnabled(void) {
     return MmeHostEffectsActive() && mme::g_context && mme::g_context->effectEnabled != 0;
 }
 
-// [0x180003cb0] 设备 EndScene 槽 42。
-HRESULT __cdecl MmeHostEndScene(IDirect3DDevice9* device)
-{
+// [0x180003cb0] Device EndScene slot 42.
+HRESULT __cdecl MmeHostEndScene(IDirect3DDevice9* device) {
     if (g_host.endSceneFired == 0) {
         OnEndScene(device);
         g_host.endSceneFired = 1;
@@ -389,69 +374,67 @@ HRESULT __cdecl MmeHostEndScene(IDirect3DDevice9* device)
 }
 
 // ---------------------------------------------------------------------------
-// 绘制拦截点
+// Draw interception points
 // ---------------------------------------------------------------------------
 
 namespace {
 
-// [DIP 4238-4281 行] 固定功能纹理捕获。
-void MmhCaptureFixedFunctionTextureState(IDirect3DDevice9* device)
-{
+// [DIP lines 4238-4281] Fixed-function texture capture.
+void MmhCaptureFixedFunctionTextureState(IDirect3DDevice9* device) {
     (void)device;
-    g_mmh.effectFileUsed = false;         // DAT_18006e795 = 0
-    // 标志 dword 复位: 字节 0..2 = 0, 字节 3 = (kind != 1)
+    g_mmh.effectFileUsed = false; // DAT_18006e795 = 0
+    // Reset flag dword: bytes 0..2 = 0, byte 3 = (kind != 1)
     g_mmh.texUsed = 0;
     g_mmh.sphereUsed = 0;
     g_mmh.subTexUsed = 0;
     g_mmh.diffuseFlag = (g_mmh.currentObjectKind != 1) ? 1 : 0;
-    g_mmh.sphereAdd = 0;                  // DAT_18006e797 = 0
-    g_mmh.baseTexture = nullptr;          // DAT_18006e7a8 = 0
-    g_mmh.sphereTexture = nullptr;        // DAT_18006e7b0 = 0
+    g_mmh.sphereAdd = 0;           // DAT_18006e797 = 0
+    g_mmh.baseTexture = nullptr;   // DAT_18006e7a8 = 0
+    g_mmh.sphereTexture = nullptr; // DAT_18006e7b0 = 0
 
     int startSampler = (g_mmh.currentObjectKind == 1) ? 1 : 0;
     for (int s = startSampler; s < 3; s++) {
         DWORD colorOp = 1;
         device->GetTextureStageState(s, D3DTSS_COLOROP, &colorOp);
         if (colorOp == D3DTOP_DISABLE)
-            break;                        // 级联已结束
+            break; // Texture-stage cascade has ended
         IDirect3DBaseTexture9* tex = nullptr;
         device->GetTexture(s, &tex);
         if (tex == nullptr)
             continue;
-        tex->Release();                   // 借用捕获
+        tex->Release(); // Borrowed capture
         DWORD ttf = 0;
         device->GetTextureStageState(s, D3DTSS_TEXTURETRANSFORMFLAGS, &ttf);
-        if (ttf == 2) {                   // D3DTTFF_COUNT2 -> 球贴图级
-            g_mmh.sphereTexture = tex;    // DAT_18006e7b0
-            g_mmh.sphereUsed = 1;         // byte @0x18006e789 = 1
+        if (ttf == 2) {                // D3DTTFF_COUNT2 -> sphere-map stage
+            g_mmh.sphereTexture = tex; // DAT_18006e7b0
+            g_mmh.sphereUsed = 1;      // byte @0x18006e789 = 1
             DWORD tci = 0;
             device->GetTextureStageState(s, D3DTSS_TEXCOORDINDEX, &tci);
             if (tci == 0x10000)
                 g_mmh.sphereAdd = (colorOp == 7 /* D3DTOP_ADD */) ? 1 : 0;
             else {
-                // [0x180002C8D] 普通UV驱动的球贴图级登记为子纹理(cd2)标志
-                // -> GetSphereMapMode 返回 3。
-                g_mmh.subTexUsed = 1;     // byte @0x18006e78a = 1
-                g_mmh.sphereAdd = 0;      // DAT_18006e797 = 0
+                // [0x180002C8D] Register the regular-UV-driven sphere-map stage as the subtexture (cd2) flag
+                // -> GetSphereMapMode returns 3.
+                g_mmh.subTexUsed = 1; // byte @0x18006e78a = 1
+                g_mmh.sphereAdd = 0;  // DAT_18006e797 = 0
             }
         } else {
-            g_mmh.texUsed = 1;            // byte @0x18006e788 = 1
-            g_mmh.baseTexture = tex;      // DAT_18006e7a8
+            g_mmh.texUsed = 1;       // byte @0x18006e788 = 1
+            g_mmh.baseTexture = tex; // DAT_18006e7a8
         }
     }
 }
 
-// [DIP 4282-4341 行] 效果（着色器）纹理捕获。
-void MmhCaptureEffectTextureState(IDirect3DDevice9* device)
-{
-    g_mmh.baseTexture = nullptr;          // DAT_18006e7a8 = 0
-    g_mmh.sphereTexture = nullptr;        // DAT_18006e7b0 = 0
+// [DIP lines 4282-4341] Effect (shader) texture capture.
+void MmhCaptureEffectTextureState(IDirect3DDevice9* device) {
+    g_mmh.baseTexture = nullptr;   // DAT_18006e7a8 = 0
+    g_mmh.sphereTexture = nullptr; // DAT_18006e7b0 = 0
     ID3DXEffect* effect = static_cast<ID3DXEffect*>(g_mmh.currentEffect);
     if (effect != nullptr) {
         // [0x1d8 = ID3DXEffect::GetCurrentTechnique()]
         D3DXHANDLE hTec = effect->GetCurrentTechnique();
-        // [FUN_1800061a0] 句柄 -> 表索引；未知句柄映射为 0（ColorRenderTec），
-        // 与新插入缓存节点的行为一致。
+        // [FUN_1800061a0] Handle -> table index; unknown handles map to 0 (ColorRenderTec),
+        // matching newly inserted cache-node behavior.
         int idx = MmhTecCacheIndex((const char*)hTec);
         if (idx < 0)
             idx = 0;
@@ -465,49 +448,46 @@ void MmhCaptureEffectTextureState(IDirect3DDevice9* device)
                 // [0x180004310] GetTexture(1, &baseTexture)
                 device->GetTexture(1, &g_mmh.baseTexture);
                 if (g_mmh.baseTexture != nullptr)
-                    g_mmh.baseTexture->Release();    // 借用
+                    g_mmh.baseTexture->Release(); // Borrowed
             }
             if (g_mmh.sphereUsed != 0) {
                 // [0x180004316] GetTexture(texUsed ? 2 : 1, &sphereTexture)
                 device->GetTexture(g_mmh.texUsed != 0 ? 2 : 1, &g_mmh.sphereTexture);
                 if (g_mmh.sphereTexture != nullptr)
-                    g_mmh.sphereTexture->Release();  // 借用
+                    g_mmh.sphereTexture->Release(); // Borrowed
             }
         } else {
-            // [0x1800027f0 4334 行] 技术不在缓存: 清标志
+            // [0x1800027f0 line 4334] Technique absent from cache: clear flags
             g_mmh.texUsed = 0;
             g_mmh.sphereUsed = 0;
             g_mmh.subTexUsed = 0;
             g_mmh.diffuseFlag = 0;
         }
         g_mmh.sphereAdd = 0;
-        // [0xb8 = ID3DXBaseEffect::GetBool] 读取 "spadd" 注释；
+        // [0xb8 = ID3DXBaseEffect::GetBool] Read the "spadd" annotation;
         // DAT_18006e797 = (result != 0)。
         BOOL spadd = 0;
         if (effect->GetBool("spadd", &spadd) == 0 && spadd != 0)
             g_mmh.sphereAdd = 1;
-        g_mmh.effectFileUsed = true;      // DAT_18006e795 = 1
+        g_mmh.effectFileUsed = true; // DAT_18006e795 = 1
     }
 }
 
-}  // namespace
+} // namespace
 
-// [0x180002780] 设备 DrawPrimitive 槽 81。效果激活时不转发：复位宿主状态后
-// 改调 MMEffect!OnDrawPrimitive（由它重发绘制）。
-HRESULT __cdecl MmeHostDrawPrimitive(IDirect3DDevice9* device,
-                                       D3DPRIMITIVETYPE type,
-                                       unsigned int start_vertex,
-                                       unsigned int primitive_count)
-{
+// [0x180002780] Device DrawPrimitive slot 81. When effects are active, do not forward: reset host state and
+// call MMEffect!OnDrawPrimitive instead (it reissues the draw).
+HRESULT __cdecl MmeHostDrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+                                     unsigned int start_vertex, unsigned int primitive_count) {
     if (g_mmh.effectsDisabled || g_host.endSceneFired != 0) {
-        return device->DrawPrimitive(type, start_vertex, primitive_count);   // 原始转发
+        return device->DrawPrimitive(type, start_vertex, primitive_count); // Forward unchanged
     }
-    g_mmh.currentSubsetIndex = -1;        // DAT_18006ccc0 = -1
-    g_host.currentObject = 0;             // +0x28 = 0
-    g_mmh.currentModelID = 0;             // DAT_18006e868 = 0
-    g_mmh.currentObjectKind = 0;          // DAT_18006e870 = 0
-    g_mmh.currentDrawType = 0;            // DAT_18006e798 = 0
-    g_mmh.effectFileUsed = false;         // DAT_18006e795 = 0
+    g_mmh.currentSubsetIndex = -1; // DAT_18006ccc0 = -1
+    g_host.currentObject = 0;      // +0x28 = 0
+    g_mmh.currentModelID = 0;      // DAT_18006e868 = 0
+    g_mmh.currentObjectKind = 0;   // DAT_18006e870 = 0
+    g_mmh.currentDrawType = 0;     // DAT_18006e798 = 0
+    g_mmh.effectFileUsed = false;  // DAT_18006e795 = 0
     OnDrawPrimitive(device, type, start_vertex, primitive_count);
     return 0;
 }
@@ -530,21 +510,17 @@ MmeHostDrawSnapshotProbe __cdecl MmeHostProbeDrawSnapshot() {
 #endif
 
 // [0x1800027f0] 设备 DrawIndexedPrimitive 槽 82。
-HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
-                                              D3DPRIMITIVETYPE type,
-                                              int base_vertex_index,
-                                              unsigned int min_vertex_index,
-                                              unsigned int vertex_count,
-                                              unsigned int start_index,
-                                              unsigned int primitive_count)
-{
+HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+                                            int base_vertex_index, unsigned int min_vertex_index,
+                                            unsigned int vertex_count, unsigned int start_index,
+                                            unsigned int primitive_count) {
     if (g_mmh.effectsDisabled || g_host.endSceneFired != 0) {
-        return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index,
-                                            vertex_count, start_index, primitive_count);
+        return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index, vertex_count,
+                                            start_index, primitive_count);
     }
 
-    // 取（并立即释放）当前顶点着色器以判定着色器路径。
-    // [0x1800027f0: 经真实槽 93 (+0x2e8) GetVertexShader]
+    // Get (and immediately release) the current vertex shader to identify the shader path.
+    // [0x1800027f0: GetVertexShader through real slot 93 (+0x2e8)]
     IDirect3DVertexShader9* vs = nullptr;
     device->GetVertexShader(&vs);
     if (vs != nullptr)
@@ -553,29 +529,28 @@ HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
     int objIdx = ExpGetCurrentObject();
     if (objIdx == 0) {
         g_host.currentObject = 0;
-        g_mmh.currentDrawType = 0;        // DAT_18006e798
-        g_mmh.currentSubsetIndex = -1;    // DAT_18006ccc0 = -1
-        g_mmh.currentModelID = 0;         // DAT_18006e868
-        g_mmh.currentObjectKind = 0;      // DAT_18006e870
+        g_mmh.currentDrawType = 0;     // DAT_18006e798
+        g_mmh.currentSubsetIndex = -1; // DAT_18006ccc0 = -1
+        g_mmh.currentModelID = 0;      // DAT_18006e868
+        g_mmh.currentObjectKind = 0;   // DAT_18006e870
     } else {
         if (g_host.currentObject != objIdx) {
             g_host.currentObject = objIdx;
-            // 绘制次序图查对象（缺项时保持空默认）。
-            std::map<int, MmhCachedObject*>::iterator f =
-                g_host.objectByOrder.find(objIdx);
+            // Look up the object in the draw-order map (missing entries retain null defaults).
+            std::map<int, MmhCachedObject*>::iterator f = g_host.objectByOrder.find(objIdx);
             MmhCachedObject* obj = (f != g_host.objectByOrder.end()) ? f->second : nullptr;
-            g_mmh.currentModelID = obj ? obj->id : 0;               // DAT_18006e868
-            g_mmh.currentObjectKind = obj ? obj->isPmd : 0;         // DAT_18006e870
+            g_mmh.currentModelID = obj ? obj->id : 0;       // DAT_18006e868
+            g_mmh.currentObjectKind = obj ? obj->isPmd : 0; // DAT_18006e870
         }
-        g_mmh.currentSubsetIndex = ExpGetCurrentMaterial();         // DAT_18006ccc0
-        g_mmh.currentDrawType = ExpGetCurrentTechnic();             // DAT_18006e798
+        g_mmh.currentSubsetIndex = ExpGetCurrentMaterial(); // DAT_18006ccc0
+        g_mmh.currentDrawType = ExpGetCurrentTechnic();     // DAT_18006e798
     }
 
-    // 混合模式标志: GetRenderState(D3DRS_DESTBLEND = 0x14); 目标混合为
-    // D3DBLEND_ONE(2) 时置 1。 [真实槽 58 (+0x1d0) GetRenderState]
+    // Blend-mode flag: GetRenderState(D3DRS_DESTBLEND = 0x14); set 1 when destination blending is
+    // D3DBLEND_ONE(2). [GetRenderState through real slot 58 (+0x1d0)]
     {
         DWORD destBlend = 0;
-        g_mmh.blendMode = 0;              // DAT_18006e7b8 = 0
+        g_mmh.blendMode = 0; // DAT_18006e7b8 = 0
         device->GetRenderState(D3DRS_DESTBLEND, &destBlend);
         if (destBlend == 2)
             g_mmh.blendMode = 1;
@@ -586,33 +561,30 @@ HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
     else
         MmhCaptureEffectTextureState(device);
 
-    OnDrawIndexedPrimitive(device, type, base_vertex_index, min_vertex_index,
-                           vertex_count, start_index, primitive_count);
+    OnDrawIndexedPrimitive(device, type, base_vertex_index, min_vertex_index, vertex_count,
+                           start_index, primitive_count);
     return 0;
 }
 
 // ---------------------------------------------------------------------------
-// 设备生命周期
+// Device lifecycle
 // ---------------------------------------------------------------------------
-void __cdecl MmeHostOnLostDevice(IDirect3DDevice9* device)
-{
+void __cdecl MmeHostOnLostDevice(IDirect3DDevice9* device) {
     if (!g_host.initialization.IsReady())
         return;
     OnLostDevice(device);
 }
 
-void __cdecl MmeHostOnResetDevice(IDirect3DDevice9* device)
-{
+void __cdecl MmeHostOnResetDevice(IDirect3DDevice9* device) {
     if (!g_host.initialization.IsReady())
         return;
     OnResetDevice(device);
 }
 
-// [FUN_180001db0 + FUN_180001c90] 设备销毁簿记：MMEffect!Cleanup、释放每个
-// 缓存对象捕获的纹理引用、清空对象缓存与 +0x1c 标志。跟踪渲染目标
-// (+0x20) 是借用指针（BeginScene 中即已释放），这里刻意不再释放。
-void __cdecl MmeHostDestroyDevice(IDirect3DDevice9* device)
-{
+// [FUN_180001db0 + FUN_180001c90] Device destruction bookkeeping: MMEffect!Cleanup, release texture references
+// captured by each cached object, clear object caches and the +0x1c flag. The tracked render target
+// (+0x20) is borrowed (already released inside BeginScene) and is deliberately not released again here.
+void __cdecl MmeHostDestroyDevice(IDirect3DDevice9* device) {
     // Original Release (0x180001D50 -> 0x180001DB0) calls Cleanup even when
     // Initialize failed: it may already have allocated the context/engine.
     Cleanup(device);

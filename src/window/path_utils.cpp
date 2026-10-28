@@ -22,7 +22,7 @@
 namespace mikudancestudio {
 
 wchar_t* ExtractDirFromPath(wchar_t* destination, const wchar_t* fullPath) {
-    wchar_t* out = destination;  // caller owns a wchar_t[1000]-class buffer
+    wchar_t* out = destination; // caller owns a wchar_t[1000]-class buffer
     wcscpy_s(out, 1000, fullPath);
 
     if (*out == L'\0')
@@ -32,21 +32,21 @@ wchar_t* ExtractDirFromPath(wchar_t* destination, const wchar_t* fullPath) {
     wchar_t* p = out;
     while (*p++)
         ;
-    --p;                       // p -> terminator
-    wchar_t* last = p - 1;     // last real character
+    --p;                   // p -> terminator
+    wchar_t* last = p - 1; // last real character
     if (*last == L'\\') {
-        *last = L'\0';         // trailing backslash: drop it
+        *last = L'\0'; // trailing backslash: drop it
         return out;
     }
     while (last >= out) {
         if (*last == L'\\') {
-            *last = L'\0';     // truncate at final backslash
+            *last = L'\0'; // truncate at final backslash
             return out;
         }
         --last;
     }
-    *out = L'\0';              // no backslash at all
+    *out = L'\0'; // no backslash at all
     return out;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -11,8 +11,8 @@
 
 namespace mikudancestudio {
 
-void ConvertAnsiToWide(const D3DRenderer* renderer, const char* source,
-                       wchar_t* destination, int destinationWords) {
+void ConvertAnsiToWide(const D3DRenderer* renderer, const char* source, wchar_t* destination,
+                       int destinationWords) {
     wcscpy_s(destination, destinationWords, L"");
     if (*source == '\0')
         return;
@@ -29,31 +29,28 @@ void ConvertAnsiToWide(const D3DRenderer* renderer, const char* source,
         return;
     }
     for (auto locale : renderer->localeTable) {
-        if (_mbstowcs_s_l(nullptr, destination, destinationWords, source,
-                         _TRUNCATE, locale) == 0)
+        if (_mbstowcs_s_l(nullptr, destination, destinationWords, source, _TRUNCATE, locale) == 0)
             break;
     }
 }
 
-void WideToSjis(const D3DRenderer* renderer, char* destination,
-                const wchar_t* source, std::size_t destinationBytes) {
+void WideToSjis(const D3DRenderer* renderer, char* destination, const wchar_t* source,
+                std::size_t destinationBytes) {
     if (*source == L'\0')
         return;
 
-    const int count = WideCharToMultiByte(932, 0, source, -1, nullptr, 0,
-                                          nullptr, nullptr);
+    const int count = WideCharToMultiByte(932, 0, source, -1, nullptr, 0, nullptr, nullptr);
     auto buffer = std::make_unique<char[]>(count);
     BOOL usedDefault = FALSE;
-    if (WideCharToMultiByte(932, 0, source, -1, buffer.get(), count,
-                            nullptr, &usedDefault) && !usedDefault) {
+    if (WideCharToMultiByte(932, 0, source, -1, buffer.get(), count, nullptr, &usedDefault) &&
+        !usedDefault) {
         strncpy_s(destination, destinationBytes, buffer.get(), _TRUNCATE);
         return;
     }
     for (auto locale : renderer->localeTable) {
         // STRUNCATE is nonzero: like any other failure it advances the chain.
-        if (_wcstombs_s_l(nullptr, destination, destinationBytes, source,
-                         _TRUNCATE, locale) == 0)
+        if (_wcstombs_s_l(nullptr, destination, destinationBytes, source, _TRUNCATE, locale) == 0)
             break;
     }
 }
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

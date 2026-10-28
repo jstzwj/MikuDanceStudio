@@ -15,7 +15,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <timeapi.h>   // timeGetTime (excluded by WIN32_LEAN_AND_MEAN)
+#include <timeapi.h> // timeGetTime (excluded by WIN32_LEAN_AND_MEAN)
 #include <new>
 
 #include <cstdint>
@@ -28,18 +28,21 @@
 #include "mikudancestudio/rhi_preview_host.hpp"
 #include "mme_host_api.h"
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-                   LPSTR lpCmdLine, int nShowCmd) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
     using namespace mikudancestudio;
 
     (void)hPrevInstance;
 
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
-    int argc=0;auto** argv=CommandLineToArgvW(GetCommandLineW(),&argc);
-    if(argv && argc>1 && std::wcscmp(argv[1],L"--rhi-preview")==0){
-        const int result=RunIndependentRhiPreview(argc-1,argv+1);LocalFree(argv);return result;
+    int argc = 0;
+    auto** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv && argc > 1 && std::wcscmp(argv[1], L"--rhi-preview") == 0) {
+        const int result = RunIndependentRhiPreview(argc - 1, argv + 1);
+        LocalFree(argv);
+        return result;
     }
-    if(argv)LocalFree(argv);
+    if (argv)
+        LocalFree(argv);
 #endif
 
     struct EffectRuntime {
@@ -53,13 +56,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // null-checks - an OOM propagates bad_alloc.
     MMDApp* app = new MMDApp();
     g_Block = app;
-    app->state = MMDAppState{};  // original: memset(p, 0, 0xA4530)
-    app->InitDefaults();                                          // 0x40A730
+    app->state = MMDAppState{}; // original: memset(p, 0, 0xA4530)
+    app->InitDefaults();        // 0x40A730
 
     if (*lpCmdLine != '\0') {
-        wchar_t converted[256];  // `Source` local in the original (ebp-0x204)
-        ConvertAnsiToWide(app->Renderer(),                  // [Block+0xA06C4]
-                          lpCmdLine, converted, 0x100);           // 0x407A70
+        wchar_t converted[256];            // `Source` local in the original (ebp-0x204)
+        ConvertAnsiToWide(app->Renderer(), // [Block+0xA06C4]
+                          lpCmdLine, converted, 0x100); // 0x407A70
         wcscpy_s(app->EnvFileName(), 0x100, converted);
     } else {
         // Original pushes only Format/BufferCount/Buffer - no varargs
@@ -71,49 +74,47 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         swprintf_s(app->EnvFileName(), 0x100, g_SourceFormat, L"", L"");
     }
 
-    if (!InitMainWindowAndD3D(g_Block, hInstance, nShowCmd))       // 0x47A5B0
+    if (!InitMainWindowAndD3D(g_Block, hInstance, nShowCmd)) // 0x47A5B0
         return 0;
 
     MSG msg;
-    std::uint32_t timeHigh = 0;         // v7/ebp - high 32 bits of last tick
-    DWORD timeLow = timeGetTime();      // Time/ebx
-    app->MilliToSec() = 0.001f;         // [Block+0xA0B70] = flt_5318D0
+    std::uint32_t timeHigh = 0;    // v7/ebp - high 32 bits of last tick
+    DWORD timeLow = timeGetTime(); // Time/ebx
+    app->MilliToSec() = 0.001f;    // [Block+0xA0B70] = flt_5318D0
 
-    PeekMessageA(&msg, nullptr, 0, 0, 0);  // PM_NOREMOVE prime, original arg set
+    PeekMessageA(&msg, nullptr, 0, 0, 0); // PM_NOREMOVE prime, original arg set
 #ifdef MIKUDANCESTUDIO_DIAG
     // DIAG(fps): once per second append loop/pump/sleep statistics to the
     // file named by MIKUDANCESTUDIO_PUMP_STATS.  Purely observational -
     // the loop below is untouched when the variable is unset.
     char pumpStatsPath[MAX_PATH]{};
     std::FILE* pumpStats = nullptr;
-    if (GetEnvironmentVariableA("MIKUDANCESTUDIO_PUMP_STATS",
-                                pumpStatsPath, MAX_PATH) > 0) {
+    if (GetEnvironmentVariableA("MIKUDANCESTUDIO_PUMP_STATS", pumpStatsPath, MAX_PATH) > 0) {
         pumpStats = std::fopen(pumpStatsPath, "a");
     }
     DWORD statsT0 = timeGetTime();
     std::uint64_t statsLoops = 0, statsMsgs = 0, statsPumps = 0;
     double statsSleepMs = 0.0, statsPumpMs = 0.0;
 #endif
-    while (msg.message != WM_QUIT) {       // 18
+    while (msg.message != WM_QUIT) { // 18
         if (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
 #ifdef MIKUDANCESTUDIO_DIAG
-            if (pumpStats != nullptr) ++statsMsgs;
+            if (pumpStats != nullptr)
+                ++statsMsgs;
 #endif
         } else {
-            std::uint32_t nowLow = timeGetTime();           // v9
-            std::uint32_t nowHigh = 0;                       // v10
+            std::uint32_t nowLow = timeGetTime(); // v9
+            std::uint32_t nowHigh = 0;            // v10
             // v13 = (now - last) * 0.001.  x64 0x7FF7CB4FB4B0..0x7FF7CB4FB4B8:
             // the subtraction runs against the FULL 64-bit last tick
             // (sub rax, rdi), then one cvtsi2ss and a single-precision
             // mulss by the 0.001f slot (xmm7, same bits as MilliToSec).
             // The old port multiplied in double.
-            const std::int64_t lastTick =
-                (static_cast<std::int64_t>(timeHigh) << 32) | timeLow;
-            float delta = static_cast<float>(
-                static_cast<std::int64_t>(nowLow) - lastTick) * 0.001f;
-            app->DeltaTime() = delta;                        // [Block+0xA077C]
+            const std::int64_t lastTick = (static_cast<std::int64_t>(timeHigh) << 32) | timeLow;
+            float delta = static_cast<float>(static_cast<std::int64_t>(nowLow) - lastTick) * 0.001f;
+            app->DeltaTime() = delta; // [Block+0xA077C]
 
             // v14 = 1/fpsLimit - delta (divss + subss, both float);
             // Sleep when cap enabled and positive.
@@ -126,24 +127,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 // x64 0x7FF7CB4FB4FD: divss by the same 0.001f slot, then
                 // cvttss2si r64.  Float division, not double: the last-ulp
                 // difference is magnified by the truncation below.
-                std::uint64_t addMs = static_cast<std::uint64_t>(
-                    static_cast<std::int64_t>(sleepSec / 0.001f));
+                std::uint64_t addMs =
+                    static_cast<std::uint64_t>(static_cast<std::int64_t>(sleepSec / 0.001f));
                 nowHigh = static_cast<std::uint32_t>(addMs >> 32);
                 nowLow += static_cast<std::uint32_t>(addMs);
                 app->DeltaTime() = sleepSec + app->DeltaTime();
 #ifdef MIKUDANCESTUDIO_DIAG
-                if (pumpStats != nullptr) statsSleepMs += timeGetTime() - pre;
+                if (pumpStats != nullptr)
+                    statsSleepMs += timeGetTime() - pre;
 #endif
             }
-            app->TimeNowLow() = nowLow;                      // [Block+0xA0B68]
-            app->TimeNowHigh() = nowHigh;                    // [Block+0xA0B6C]
+            app->TimeNowLow() = nowLow;   // [Block+0xA0B68]
+            app->TimeNowHigh() = nowHigh; // [Block+0xA0B6C]
             timeLow = nowLow;
             timeHigh = nowHigh;
 
 #ifdef MIKUDANCESTUDIO_DIAG
             DWORD pumpT0 = pumpStats != nullptr ? timeGetTime() : 0;
 #endif
-            FrameDriver(g_Block);                            // 0x46B090
+            FrameDriver(g_Block); // 0x46B090
 #ifdef MIKUDANCESTUDIO_DIAG
             if (pumpStats != nullptr) {
                 statsPumpMs += timeGetTime() - pumpT0;
@@ -152,12 +154,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 DWORD elapsed = timeGetTime() - statsT0;
                 if (elapsed >= 1000) {
                     std::fprintf(pumpStats,
-                        "loops=%llu msgs=%llu pump=%llu pumpMs=%.0f "
-                        "sleepMs=%.0f fpsLimit=%.2f\n",
-                        (unsigned long long)statsLoops,
-                        (unsigned long long)statsMsgs,
-                        (unsigned long long)statsPumps,
-                        statsPumpMs, statsSleepMs, app->FpsLimit());
+                                 "loops=%llu msgs=%llu pump=%llu pumpMs=%.0f "
+                                 "sleepMs=%.0f fpsLimit=%.2f\n",
+                                 (unsigned long long)statsLoops, (unsigned long long)statsMsgs,
+                                 (unsigned long long)statsPumps, statsPumpMs, statsSleepMs,
+                                 app->FpsLimit());
                     std::fflush(pumpStats);
                     statsT0 += elapsed;
                     statsLoops = statsMsgs = statsPumps = 0;
@@ -168,12 +169,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
     }
 #ifdef MIKUDANCESTUDIO_DIAG
-    if (pumpStats != nullptr) std::fclose(pumpStats);
+    if (pumpStats != nullptr)
+        std::fclose(pumpStats);
 #endif
 
     if (g_Block != nullptr) {
         MMDApp* victim = g_Block;
-        ShutdownCleanup(g_Block);                            // 0x462C40
+        ShutdownCleanup(g_Block); // 0x462C40
         delete victim;
         g_Block = nullptr;
     }

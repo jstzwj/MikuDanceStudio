@@ -68,6 +68,7 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model_input_bridge.hpp"
+#include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/pmm_scene_evaluation.hpp"
 #include "mikudancestudio/scene_timeline_bridge.hpp"
@@ -75,7 +76,7 @@
 namespace mikudancestudio {
 namespace {
 
-constexpr double kPiOver180 = 0.01745329238474369;   // dbl_52BB20 region
+constexpr double kPiOver180 = 0.01745329238474369; // dbl_52BB20 region
 
 // VA 0x00410140 / x64 sub_7FF7CB47A8B0 - camera-channel bezier easing.
 // ch 0..5 selects the control-byte column; the X curve 3(1-u)^2 u x1 +
@@ -95,61 +96,50 @@ float CameraEase(const mdl::CameraKey* keys, int ch, int idx, float t) {
     const auto& interpolation = keys[idx].interpolation;
     if (interpolation[0][ch] == interpolation[1][ch] &&
         interpolation[2][ch] == interpolation[3][ch])
-        return t;                                        // linear 0x410180
+        return t; // linear 0x410180
 #if defined(_M_IX86)
     // x86 0x410140: v47/v46 are double locals ((double)byte / 127.0), the
     // polynomial evaluates on the x87 stack, and u/step/gx live in float
     // stack slots (fstp/fld around the compare and the update).
-    const double x1 = static_cast<double>(
-                          static_cast<signed char>(interpolation[0][ch])) / 127.0;
-    const double x2 = static_cast<double>(
-                          static_cast<signed char>(interpolation[2][ch])) / 127.0;
+    const double x1 = static_cast<double>(static_cast<signed char>(interpolation[0][ch])) / 127.0;
+    const double x2 = static_cast<double>(static_cast<signed char>(interpolation[2][ch])) / 127.0;
     float u = 0.5f, half = 0.25f;
-    for (int i = 0; i < 12; ++i) {                       // 0x4101E5..4E5
+    for (int i = 0; i < 12; ++i) { // 0x4101E5..4E5
         const float om = 1.0f - u;
-        const double gx = om * 3.0 * u * u * x2 + om * (om * 3.0) * u * x1 +
-                          u * u * u;
-        if (static_cast<float>(gx) == t)                 // float-slot compare
+        const double gx = om * 3.0 * u * u * x2 + om * (om * 3.0) * u * x1 + u * u * u;
+        if (static_cast<float>(gx) == t) // float-slot compare
             break;
-        u = static_cast<float>(gx >= static_cast<double>(t) ? u - half
-                                                            : u + half);
+        u = static_cast<float>(gx >= static_cast<double>(t) ? u - half : u + half);
         half *= 0.5f;
     }
-    const float om = 1.0f - u;                           // 0x4104EF
+    const float om = 1.0f - u; // 0x4104EF
     return static_cast<float>(
-        3.0 * om * u * u *
-            static_cast<double>(
-                static_cast<signed char>(interpolation[3][ch])) / 127.0 +
-        om * (om * 3.0) * u *
-            static_cast<double>(
-                static_cast<signed char>(interpolation[1][ch])) / 127.0 +
+        3.0 * om * u * u * static_cast<double>(static_cast<signed char>(interpolation[3][ch])) /
+            127.0 +
+        om * (om * 3.0) * u * static_cast<double>(static_cast<signed char>(interpolation[1][ch])) /
+            127.0 +
         u * u * u);
 #else
     // x64: X scales pre-divided (divss 127.0f at 0x7FF7CB47A970/A979); the
     // loop compare is ucomiss on float gx; the Y tail multiplies the raw
     // bytes first and divides each product by 127.0f.
-    const float x1 = static_cast<float>(
-                         static_cast<signed char>(interpolation[0][ch])) / 127.0f;
-    const float x2 = static_cast<float>(
-                         static_cast<signed char>(interpolation[2][ch])) / 127.0f;
-    const float y1b = static_cast<float>(
-        static_cast<signed char>(interpolation[1][ch]));
-    const float y2b = static_cast<float>(
-        static_cast<signed char>(interpolation[3][ch]));
+    const float x1 = static_cast<float>(static_cast<signed char>(interpolation[0][ch])) / 127.0f;
+    const float x2 = static_cast<float>(static_cast<signed char>(interpolation[2][ch])) / 127.0f;
+    const float y1b = static_cast<float>(static_cast<signed char>(interpolation[1][ch]));
+    const float y2b = static_cast<float>(static_cast<signed char>(interpolation[3][ch]));
     float u = 0.5f, half = 0.25f;
-    for (int i = 0; i < 12; ++i) {                       // 0x7FF7CB47A980..B95
+    for (int i = 0; i < 12; ++i) { // 0x7FF7CB47A980..B95
         const float v = 1.0f - u;
         const float v3 = v * 3.0f;
         const float gx = (v3 * v * u) * x1 + (v3 * u * u) * x2 + u * u * u;
-        if (gx == t)                                     // ucomiss 0x7FF7CB47A9C3
+        if (gx == t) // ucomiss 0x7FF7CB47A9C3
             break;
-        u = gx >= t ? u - half : u + half;               // comiss/addss/subss
+        u = gx >= t ? u - half : u + half; // comiss/addss/subss
         half *= 0.5f;
     }
-    const float v = 1.0f - u;                            // 0x7FF7CB47ABC2
+    const float v = 1.0f - u; // 0x7FF7CB47ABC2
     const float v3 = v * 3.0f;
-    return (v3 * v * u) * y1b / 127.0f + (v3 * u * u) * y2b / 127.0f +
-           u * u * u;
+    return (v3 * v * u) * y1b / 127.0f + (v3 * u * u) * y2b / 127.0f + u * u * u;
 #endif
 }
 
@@ -174,11 +164,11 @@ void CopyLightKey(MMDApp* app, const mdl::LightKey& key, bool apply) {
     if (!apply)
         return;
     D3DRenderer* wrapper = s.Renderer();
-    IDirect3DDevice9* dev = wrapper->device;               // +0x1D4E0
-    dev->SetLight(0, &s.SceneLight());                       // slot 0xCC
+    IDirect3DDevice9* dev = wrapper->device; // +0x1D4E0
+    dev->SetLight(0, &s.SceneLight());       // slot 0xCC
 }
 
-}  // namespace
+} // namespace
 
 // VA 0x0042E640 - seek/evaluate the global camera key list.
 // This is the
@@ -196,8 +186,7 @@ void ReloadModels(MMDApp* app) {
     mdl::CameraKey* const keys = s.CameraKeys();
     if (keys == nullptr)
         return;
-    const std::uint32_t frame =
-        s.state.currentFrame;
+    const std::uint32_t frame = s.state.currentFrame;
     std::uint32_t index = 0;
     while (keys[index].frame < frame) {
         const std::uint32_t next = keys[index].next;
@@ -235,40 +224,35 @@ void ReloadModels(MMDApp* app) {
         // guarantees previousFrame < frame < currentFrame, i.e. a span of
         // at least 2, so cur-1 == prev is unreachable and the branch that
         // used to sit here was dead code copied from the playback path.
-        const float t = static_cast<float>(
-            static_cast<double>(frame - previousFrame) /
-            static_cast<double>(currentFrame - previousFrame));
+        const float t = static_cast<float>(static_cast<double>(frame - previousFrame) /
+                                           static_cast<double>(currentFrame - previousFrame));
         s.CameraPerspective() = previous.perspective;
-        float* output[6] = {
-            &s.CameraPosition()[0], &s.CameraPosition()[1],
-            &s.CameraPosition()[2], &s.CameraRotation()[0],
-            &s.CameraDistance(), &s.CameraFov()};
+        float* output[6] = {&s.CameraPosition()[0], &s.CameraPosition()[1], &s.CameraPosition()[2],
+                            &s.CameraRotation()[0], &s.CameraDistance(),    &s.CameraFov()};
         for (int channel = 0; channel < 6; ++channel) {
-            const float eased = CameraEase(keys, channel,
-                                            static_cast<int>(index), t);
-            const double a = channel < 3 ? previous.eye[channel]
-                : channel == 3 ? previous.target[0]
-                : channel == 4 ? previous.distance
-                               : static_cast<double>(previous.fov);
-            const double b = channel < 3 ? current.eye[channel]
-                : channel == 3 ? current.target[0]
-                : channel == 4 ? current.distance
-                               : static_cast<double>(current.fov);
+            const float eased = CameraEase(keys, channel, static_cast<int>(index), t);
+            const double a = channel < 3    ? previous.eye[channel]
+                             : channel == 3 ? previous.target[0]
+                             : channel == 4 ? previous.distance
+                                            : static_cast<double>(previous.fov);
+            const double b = channel < 3    ? current.eye[channel]
+                             : channel == 3 ? current.target[0]
+                             : channel == 4 ? current.distance
+                                            : static_cast<double>(current.fov);
             *output[channel] = static_cast<float>(eased * (b - a) + a);
         }
         // Camera channel 3 is one easing curve shared by all three
         // Euler components.  Hex-Rays exposes only the first store when
         // the x87 value is kept live; the following Y/Z stores are part
         // of the same original branch.
-        const float rotationEase = CameraEase(
-            keys, 3, static_cast<int>(index), t);
+        const float rotationEase = CameraEase(keys, 3, static_cast<int>(index), t);
         for (int axis = 0; axis < 3; ++axis) {
             const float a = previous.target[axis];
             const float b = current.target[axis];
-            s.CameraRotation()[axis] = static_cast<float>(
-                static_cast<double>(rotationEase) *
-                    (static_cast<double>(b) - static_cast<double>(a)) +
-                static_cast<double>(a));
+            s.CameraRotation()[axis] =
+                static_cast<float>(static_cast<double>(rotationEase) *
+                                       (static_cast<double>(b) - static_cast<double>(a)) +
+                                   static_cast<double>(a));
         }
         // View offset clear inside the interpolation stores
         // (x64 0x7FF7CB47A537; x86 0x308/0x30C).
@@ -286,20 +270,16 @@ void ReloadModels(MMDApp* app) {
     SeekPortableSceneCamera(app, static_cast<int>(frame));
     D3DRenderer* wrapper = s.Renderer();
     if (wrapper != nullptr) {
-        IDirect3DDevice9* device = wrapper->device;    // +120032
+        IDirect3DDevice9* device = wrapper->device; // +120032
         if (device != nullptr) {
             d3dx::D3DXMATRIXF projection{};
             auto& api = d3dx::Get();
             api.perspectiveFovLH(
-                &projection,
-                static_cast<float>(
-                    static_cast<double>(s.CameraFov()) * kPiOver180),
-                wrapper->aspectRatio,  // +0x1D4EC
+                &projection, static_cast<float>(static_cast<double>(s.CameraFov()) * kPiOver180),
+                wrapper->aspectRatio, // +0x1D4EC
                 1.0f, 100000.0f);
-            device->SetTransform(
-                D3DTS_PROJECTION,
-                reinterpret_cast<const D3DMATRIX*>(&projection));
-            SetCpuProjectionPolicy(app,render::FovConversion::DoubleMultiply);
+            device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&projection));
+            SetCpuProjectionPolicy(app, render::FovConversion::DoubleMultiply);
         }
     }
 }
@@ -309,38 +289,34 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
     auto& s = *app;
 
     // ---- 1. per-model keyframe application (0x4175A8) --------------------
-    unsigned char** models = s.ModelSlots();
+    mdl::ModelRecord** models = s.ModelSlots();
     for (int j = 0; j < kModelSlotCount; ++j)
         if (models[j] != nullptr)
-            AdvanceModelKeyframes(models[j], s.PlaybackCursorSeconds(),
-                      s.PlaybackPhysicsMode());
+            AdvanceModelKeyframes(models[j], s.PlaybackCursorSeconds(), s.PlaybackPhysicsMode());
     AdvancePortableScenePlayback(app);
 
     if (advance != 0)
-        return;                                          // 0x4175DB
+        return; // 0x4175DB
 
     // ---- 3. frame rounding (0x4175ED) -------------------------------------
-    double frame = static_cast<double>(s.PlaybackCursorSeconds() *
-                                       30.0f);
+    double frame = static_cast<double>(s.PlaybackCursorSeconds() * 30.0f);
     {
         const double scaled = frame * 1000.0;
         if (scaled - static_cast<double>(static_cast<int>(scaled)) >= 0.5)
             frame = static_cast<double>(static_cast<int>(scaled) + 1) / 1000.0;
     }
 
-    const bool editGate = s.state.optflag[0] != 0 ||
-                          s.state.followCameraEnabled != 0;
+    const bool editGate = s.CameraMode() != 0 || s.state.followCameraEnabled != 0;
 
     // ---- 4A. camera track (0x417656..0x417A48) ----------------------------
     if (editGate && s.CameraTrackActive() != 0) {
         mdl::CameraKey* keys = s.CameraKeys();
-        s.state.viewOffsetX = 0.0f;                        // 0x308/0x30C
+        s.state.viewOffsetX = 0.0f; // 0x308/0x30C
         s.state.viewOffsetY = 0.0f;
         while (true) {
             const mdl::CameraKey& key = keys[s.CameraTrackCursor()];
-            if (!(static_cast<double>(key.frame) < frame &&
-                  s.CameraTrackActive() != 0))
-                break;                                    // 0x4176AF
+            if (!(static_cast<double>(key.frame) < frame && s.CameraTrackActive() != 0))
+                break; // 0x4176AF
             const std::uint32_t next = key.next;
             if (next != 0) {
                 s.CameraTrackCursor() = next;
@@ -357,22 +333,20 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             const mdl::CameraKey& current = keys[cur];
             const std::uint32_t frameCur = current.frame;
             if (frame == static_cast<double>(frameCur)) {
-                CopyCameraKey(app, current);              // 0x41777B
+                CopyCameraKey(app, current); // 0x41777B
                 s.CameraParentModel() = current.parentModel;
                 s.CameraParentBone() = current.parentBone;
             } else {
                 const mdl::CameraKey& previous = keys[current.previous];
                 if (frameCur - 1 == previous.frame) {
-                    CopyCameraKey(app, previous);         // 0x4177F1
+                    CopyCameraKey(app, previous); // 0x4177F1
                 } else {
                     const std::uint32_t framePrev = previous.frame;
                     // x64 0x7FF7CB489D2A..0x7FF7CB489D4D: the fraction is
                     // single-precision throughout - (float)frame minus
                     // cvtsi2ss(prev.frame), divided by cvtsi2ss(cur-prev).
-                    const float t =
-                        (static_cast<float>(frame) -
-                         static_cast<float>(framePrev)) /
-                        static_cast<float>(frameCur - framePrev);
+                    const float t = (static_cast<float>(frame) - static_cast<float>(framePrev)) /
+                                    static_cast<float>(frameCur - framePrev);
                     s.CameraPerspective() = previous.perspective;
                     // Per-channel eased lerp (0x41789E..0x4179CA; x64
                     // 0x7FF7CB489D59..0x7FF7CB489E60 keeps every channel
@@ -380,28 +354,26 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                     // sub_410140 stays in st0 and multiplies the delta -
                     // the decompiler drops this (labels it the raw t); the
                     // disasm is authoritative.
-                    float* output[6] = {
-                        &s.CameraPosition()[0], &s.CameraPosition()[1],
-                        &s.CameraPosition()[2], &s.CameraRotation()[0],
-                        &s.CameraDistance(), &s.CameraFov()};
+                    float* output[6] = {&s.CameraPosition()[0], &s.CameraPosition()[1],
+                                        &s.CameraPosition()[2], &s.CameraRotation()[0],
+                                        &s.CameraDistance(),    &s.CameraFov()};
                     for (int ch = 0; ch < 6; ++ch) {
                         const float e = CameraEase(keys, ch, cur, t);
-                        const float curV = ch < 3 ? current.eye[ch]
-                            : ch == 3 ? current.target[0]
-                            : ch == 4 ? current.distance
-                                      : static_cast<float>(current.fov);
-                        const float prevV = ch < 3 ? previous.eye[ch]
-                            : ch == 3 ? previous.target[0]
-                            : ch == 4 ? previous.distance
-                                      : static_cast<float>(previous.fov);
+                        const float curV = ch < 3    ? current.eye[ch]
+                                           : ch == 3 ? current.target[0]
+                                           : ch == 4 ? current.distance
+                                                     : static_cast<float>(current.fov);
+                        const float prevV = ch < 3    ? previous.eye[ch]
+                                            : ch == 3 ? previous.target[0]
+                                            : ch == 4 ? previous.distance
+                                                      : static_cast<float>(previous.fov);
                         *output[ch] = e * (curV - prevV) + prevV;
                     }
                     const float rotationEase = CameraEase(keys, 3, cur, t);
                     for (int axis = 0; axis < 3; ++axis) {
                         const float curV = current.target[axis];
                         const float prevV = previous.target[axis];
-                        s.CameraRotation()[axis] =
-                            rotationEase * (curV - prevV) + prevV;
+                        s.CameraRotation()[axis] = rotationEase * (curV - prevV) + prevV;
                     }
                 }
                 s.CameraParentModel() = previous.parentModel;
@@ -411,17 +383,15 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         ApplyPortableSceneCamera(app);
         // projection rebuild (0x417A19..0x417A46)
         D3DRenderer* wrapper = s.Renderer();
-        const float fovRad = static_cast<float>(
-            static_cast<double>(s.CameraFov()) * kPiOver180);
+        const float fovRad = static_cast<float>(static_cast<double>(s.CameraFov()) * kPiOver180);
         d3dx::D3DXMATRIXF mat{};
         auto* d3dx = &d3dx::Get();
         d3dx->perspectiveFovLH(&mat, fovRad,
-                               wrapper->aspectRatio,  // +0x1D4EC
+                               wrapper->aspectRatio, // +0x1D4EC
                                1.0f, 100000.0f);
-        IDirect3DDevice9* dev = wrapper->device;   // +120032
-        dev->SetTransform(D3DTS_PROJECTION,
-                          reinterpret_cast<const D3DMATRIX*>(&mat));
-        SetCpuProjectionPolicy(app,render::FovConversion::DoubleMultiply);
+        IDirect3DDevice9* dev = wrapper->device; // +120032
+        dev->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&mat));
+        SetCpuProjectionPolicy(app, render::FovConversion::DoubleMultiply);
     }
 
     // ---- 4B. light track (0x417A62..0x417DB5) ------------------------------
@@ -434,8 +404,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         mdl::LightKey* keys = s.LightKeys();
         while (true) {
             const mdl::LightKey& key = keys[s.LightTrackCursor()];
-            if (!(static_cast<double>(key.frame) < frame &&
-                  s.LightTrackActive() != 0))
+            if (!(static_cast<double>(key.frame) < frame && s.LightTrackActive() != 0))
                 break;
             const std::uint32_t next = key.next;
             if (next != 0) {
@@ -450,7 +419,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             const mdl::LightKey& current = keys[s.LightTrackCursor()];
             const std::uint32_t frameCur = current.frame;
             if (frame == static_cast<double>(frameCur)) {
-                CopyLightKey(app, current, true);          // 0x417BC5
+                CopyLightKey(app, current, true); // 0x417BC5
             } else {
                 const mdl::LightKey& previous = keys[current.previous];
                 const std::uint32_t framePrev = previous.frame;
@@ -464,32 +433,27 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                     following.color[c] = current.color[c];
                 }
                 std::array<float, 6> interpolated{};
-                if (format::InterpolatePmmLightSegment(
-                        prior, following, frame,
-                        format::PmmLightInterpolation::Playback,
-                        interpolated)) {
+                if (format::InterpolatePmmLightSegment(prior, following, frame,
+                                                       format::PmmLightInterpolation::Playback,
+                                                       interpolated)) {
                     for (int c = 0; c < 3; ++c) {
                         s.LightColor()[c] = interpolated[c];
                         s.LightDirection()[c] = interpolated[c + 3];
                     }
                 } else {
-                    const float t =
-                        (static_cast<float>(frame) -
-                         static_cast<float>(framePrev)) /
-                        static_cast<float>(frameCur - framePrev);
+                    const float t = (static_cast<float>(frame) - static_cast<float>(framePrev)) /
+                                    static_cast<float>(frameCur - framePrev);
                     for (int c = 0; c < 3; ++c) {
-                        s.LightDirection()[c] = t *
-                            (current.direction[c] - previous.direction[c]) +
-                            previous.direction[c];
-                        s.LightColor()[c] = t *
-                            (current.color[c] - previous.color[c]) +
-                            previous.color[c];
+                        s.LightDirection()[c] = t * (current.direction[c] - previous.direction[c]) +
+                                                previous.direction[c];
+                        s.LightColor()[c] =
+                            t * (current.color[c] - previous.color[c]) + previous.color[c];
                     }
                 }
                 // mirrors + SetLight (0x417CFE..0x417DB3)
                 s.ApplyTimelineLightState();
                 D3DRenderer* wrapper = s.Renderer();
-                IDirect3DDevice9* dev = wrapper->device;  // +120032
+                IDirect3DDevice9* dev = wrapper->device; // +120032
                 dev->SetLight(0, &s.SceneLight());
             }
         }
@@ -500,16 +464,14 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         mdl::SelfShadowKey* keys = s.ShadowKeys();
         while (true) {
             const mdl::SelfShadowKey& key = keys[s.ShadowTrackCursor()];
-            if (!(static_cast<double>(key.frame) < frame &&
-                  s.ShadowTrackActive() != 0))
+            if (!(static_cast<double>(key.frame) < frame && s.ShadowTrackActive() != 0))
                 break;
             const std::uint32_t next = key.next;
             if (next != 0) {
                 s.ShadowTrackCursor() = next;
             } else {
                 s.ShadowTrackActive() = 0;
-                s.ShadowMode() =
-                    static_cast<signed char>(key.mode);
+                s.ShadowMode() = static_cast<signed char>(key.mode);
                 s.ShadowDistance() = key.distance;
                 break;
             }
@@ -518,13 +480,11 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             const mdl::SelfShadowKey& current = keys[s.ShadowTrackCursor()];
             const std::uint32_t frameCur = current.frame;
             if (frame == static_cast<double>(frameCur)) {
-                s.ShadowMode() =
-                    static_cast<signed char>(current.mode);
+                s.ShadowMode() = static_cast<signed char>(current.mode);
                 s.ShadowDistance() = current.distance;
             } else {
                 const mdl::SelfShadowKey& previous = keys[current.previous];
-                s.ShadowMode() =
-                    static_cast<signed char>(previous.mode);
+                s.ShadowMode() = static_cast<signed char>(previous.mode);
                 s.ShadowDistance() = previous.distance;
             }
         }
@@ -538,8 +498,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         mdl::GravityKey* keys = s.GravityKeys();
         while (true) {
             const mdl::GravityKey& key = keys[s.GravityTrackCursor()];
-            if (!(static_cast<double>(key.frame) < frame &&
-                  s.GravityTrackActive() != 0))
+            if (!(static_cast<double>(key.frame) < frame && s.GravityTrackActive() != 0))
                 break;
             const std::uint32_t next = key.next;
             if (next != 0) {
@@ -549,8 +508,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                 s.GravityNoiseEnabled() = key.noiseEnabled;
                 s.GravityNoise() = key.noise;
                 s.GravityMagnitude() = key.acceleration;
-                std::memcpy(s.GravityDirection(), key.direction,
-                            sizeof(key.direction));
+                std::memcpy(s.GravityDirection(), key.direction, sizeof(key.direction));
                 break;
             }
         }
@@ -561,16 +519,13 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                 s.GravityNoiseEnabled() = current.noiseEnabled;
                 s.GravityNoise() = current.noise;
                 s.GravityMagnitude() = current.acceleration;
-                std::memcpy(s.GravityDirection(), current.direction,
-                            sizeof(current.direction));
+                std::memcpy(s.GravityDirection(), current.direction, sizeof(current.direction));
             } else {
                 const mdl::GravityKey& previous = keys[current.previous];
                 const std::uint32_t framePrev = previous.frame;
                 // Single-precision fraction, x64 0x7FF7CB48A4A9..0x7FF7CB48A4C9.
-                const float t =
-                    (static_cast<float>(frame) -
-                     static_cast<float>(framePrev)) /
-                    static_cast<float>(frameCur - framePrev);
+                const float t = (static_cast<float>(frame) - static_cast<float>(framePrev)) /
+                                static_cast<float>(frameCur - framePrev);
                 s.GravityNoiseEnabled() = previous.noiseEnabled;
                 // Noise iteration count (x64 0x7FF7CB48A4CD..0x7FF7CB48A4E4):
                 // cvtdq2ps turns (cur - prev) into a FLOAT, mulss applies t,
@@ -578,16 +533,14 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                 // A double product can cross the integer boundary one frame
                 // later and shift the Bullet solver iteration count, so the
                 // float domain here is behavior-critical.
-                s.GravityNoise() = previous.noise +
-                    static_cast<int>(static_cast<float>(
-                        current.noise - previous.noise) * t);
+                s.GravityNoise() =
+                    previous.noise +
+                    static_cast<int>(static_cast<float>(current.noise - previous.noise) * t);
                 s.GravityMagnitude() =
-                    (current.acceleration - previous.acceleration) * t +
-                    previous.acceleration;
+                    (current.acceleration - previous.acceleration) * t + previous.acceleration;
                 for (int axis = 0; axis < 3; ++axis) {
                     s.GravityDirection()[axis] =
-                        (current.direction[axis] -
-                         previous.direction[axis]) * t +
+                        (current.direction[axis] - previous.direction[axis]) * t +
                         previous.direction[axis];
                 }
             }
@@ -595,7 +548,8 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
     }
 
     // ---- 6. accessory tracks (0x418093..0x4184E9) ---------------------------
-    if (editGate) ApplyPortableSceneGravity(app);
+    if (editGate)
+        ApplyPortableSceneGravity(app);
 
     for (int i = 0; i < 0xFF; ++i) {
         if (s.AccessoryTrackActive(i) == 0)
@@ -618,16 +572,12 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             accessory.shadowEnabled = key.shadowEnabled;
             accessory.parentModel = key.parentModel;
             accessory.parentBone = key.parentBone;
-            std::memcpy(accessory.rotation, key.rotation,
-                        sizeof accessory.rotation);
-            std::memcpy(accessory.position, key.position,
-                        sizeof accessory.position);
+            std::memcpy(accessory.rotation, key.rotation, sizeof accessory.rotation);
+            std::memcpy(accessory.position, key.position, sizeof accessory.position);
         };
         while (true) {
             const mdl::AccessoryKey& rec = keys[cursor];
-            if (!(static_cast<double>(
-                      rec.frame) < frame &&
-                  s.AccessoryTrackActive(i) != 0))
+            if (!(static_cast<double>(rec.frame) < frame && s.AccessoryTrackActive(i) != 0))
                 break;
             const std::uint32_t next = rec.next;
             if (next != 0) {
@@ -651,17 +601,14 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         } else {
             const mdl::AccessoryKey& recPrev = keys[recCur.previous];
             const std::uint32_t framePrev = recPrev.frame;
-            const float t = static_cast<float>(
-                (frame - static_cast<double>(framePrev)) /
-                static_cast<double>(frameCur - framePrev));
-            accessory.scale =
-                t * (recCur.scale - recPrev.scale) + recPrev.scale;
-            accessory.opacity =
-                t * (recCur.opacity - recPrev.opacity) + recPrev.opacity;
+            const float t = static_cast<float>((frame - static_cast<double>(framePrev)) /
+                                               static_cast<double>(frameCur - framePrev));
+            accessory.scale = t * (recCur.scale - recPrev.scale) + recPrev.scale;
+            accessory.opacity = t * (recCur.opacity - recPrev.opacity) + recPrev.opacity;
             applyDiscreteState(recPrev);
         }
     }
     ApplyPortableSceneAccessories(app);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

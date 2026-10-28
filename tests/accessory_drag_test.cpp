@@ -12,7 +12,7 @@ int main() {
     auto app = std::make_unique<MMDApp>();
     std::memset(&app->state, 0, sizeof(app->state));
     app->state.coordinateSystem = 2;
-    app->state.optflag[0] = 1;
+    app->CameraMode() = 1;
     app->state.cameraParentModel = -1;
     app->state.selectedObjectSlot = 1;
 

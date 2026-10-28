@@ -1,26 +1,15 @@
-// ===========================================================================
-// Frame-driver interaction modes (0x0046B090 region @ 0x470Cxx..0x4712xx)
-// ===========================================================================
-// Verified raw offsets (Ghidra ground truth):
-//   this+4/+8       previous mouse X/Y      this+0xC/+0x10 current mouse X/Y
-//   this+0x24 (36)  precision selector A    this+0xC0 (192) selector B
-//   this+0x88 (136) transform selector A    this+0x8C (140) selector B
-//   this+0x2F8 (760) model-mode flag        this+0x330 (816) anim gate
-//   this+0x308/30C/310 camera translate X/Y/Z
-//   this+0x314/318  camera rotation angles
-//   this+0x9EDD1 (650705) drag-active flag
-//   this+0x9ED98 (650648) select-state gate
-//   this+0x910 (2320) frame index  this+0xA0430 (656432) frame cursor
-//   this+0xA05D1 (656849) view-dirty  this+0xA442C (672812) view-lock
-//
-// Camera drag scales are recovered from the original image; the exact values
-// and precision of each declaration are preserved below.
-// =========================================================================//
+// Frame-driver viewport input (original x86 sub_46B090, x64 sub_7FF7CB4474F0).
+// Poll key edges, update picking/box selection, then consume operation-panel
+// drags. ViewportDragMode describes the second-stage drag, not the tool hit
+// code in ViewportToolAction. Undo snapshots belong to the press edge;
+// box-selection readouts and the active bone are finalized on release.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/panel_controls.hpp"
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -37,12 +26,12 @@ namespace mikudancestudio {
 
 // Exact doubles from the original image.  These stay double until the final
 // store, matching the x87 instruction stream at 0x470E4B..0x470EDF.
-double g_MouseScaleA = 0.5;                       // VA 0x0052B8F0
-double g_MouseScaleB = 0.004999999888241291;      // VA 0x0052E9C0
-double g_MouseScaleC = 0.05000000074505806;       // VA 0x0052D738
-float g_MouseScaleD = 0.0020000000949949f;        // VA 0x0052E8C0 (true
-                                                  // .rdata double; the old
-                                                  // PI/360 guess was wrong)
+double g_MouseScaleA = 0.5;                  // VA 0x0052B8F0
+double g_MouseScaleB = 0.004999999888241291; // VA 0x0052E9C0
+double g_MouseScaleC = 0.05000000074505806;  // VA 0x0052D738
+float g_MouseScaleD = 0.0020000000949949f;   // VA 0x0052E8C0 (true
+                                             // .rdata double; the old
+                                             // PI/360 guess was wrong)
 
 static void ViewRefreshGate(MMDApp* s) {
     // Original dword gates (Ghidra: this+0x9ED98 select-state gate,
@@ -54,19 +43,18 @@ static void ViewRefreshGate(MMDApp* s) {
         (s->state.followCameraEnabled | s->state.playbackStartsAtCurrentFrame |
          s->state.projectedShadowBlendEnabled) != 0 &&
         s->state.slotIdx == s->state.cameraParentModel &&
-        (s->state.optflag[0] | s->state.optflag[1] |
-         s->state.optflag[2] | s->state.optflag[3]) == 0 &&
-        s->state.cameraParentModel >= 0 &&
-        s->state.playbackActive == 0;
+        (s->CameraMode() | s->PanelExpanded(UiPanel::Camera) | s->PanelExpanded(UiPanel::Light) |
+         s->PanelExpanded(UiPanel::Accessory)) == 0 &&
+        s->state.cameraParentModel >= 0 && s->state.playbackActive == 0;
     if (frameGate) {
         // 0xA05D1 = viewDirty view-dirty byte (the old literal 658257 was a
-        // decimal slip that landed on the frame-range dialog HWND's byte 1)
-        s->state.viewDirty = 1;                                   // 0xA05D1
+        // decimal slip that landed on the English-name dialog HWND's byte 1)
+        s->state.viewDirty = 1; // 0xA05D1
         s->state.windowLayoutReady = 0;
-        PostLanguageSweep2(s);                                    // 0x40D070
+        InvalidateSelectionReadouts(s); // 0x40D070
         s->state.windowLayoutReady = 1;
     }
-    PostViewRefresh(s);                                           // 0x40D130
+    PostViewRefresh(s); // 0x40D130
 }
 
 namespace {
@@ -86,10 +74,10 @@ void PollKey(MMDApp* app, std::int32_t& keyState, int virtualKey) {
 
 float DragScale(MMDApp* app) {
     if (app->ShiftModifierActive())
-        return 0.5f;                            // flt_52960C / dbl_52B8F0
+        return 0.5f; // flt_52960C / dbl_52B8F0
     if (app->CtrlModifierActive())
-        return 0.005f;                          // flt_529604 / dbl_52E9C0
-    return 0.05f;                               // flt_52E9A4 / dbl_52D738
+        return 0.005f; // flt_529604 / dbl_52E9C0
+    return 0.05f;      // flt_52E9A4 / dbl_52D738
 }
 
 void PanCameraPosition(MMDApp* app, int dx, int dy) {
@@ -104,22 +92,19 @@ void PanCameraPosition(MMDApp* app, int dx, int dy) {
 
     const float sx = static_cast<float>(-dx) * scale;
     const float sy = static_cast<float>(dy) * scale;
-    app->CameraPositionX() += sx * matrix.m[0][0] +
-                              sy * matrix.m[1][0] + matrix.m[3][0];
-    app->CameraPositionY() += sx * matrix.m[0][1] +
-                              sy * matrix.m[1][1] + matrix.m[3][1];
-    app->CameraPositionZ() -= sx * matrix.m[0][2] +
-                              sy * matrix.m[1][2] + matrix.m[3][2];
+    app->CameraPositionX() += sx * matrix.m[0][0] + sy * matrix.m[1][0] + matrix.m[3][0];
+    app->CameraPositionY() += sx * matrix.m[0][1] + sy * matrix.m[1][1] + matrix.m[3][1];
+    app->CameraPositionZ() -= sx * matrix.m[0][2] + sy * matrix.m[1][2] + matrix.m[3][2];
 }
 
 // PanSelectedCameraKey (parented-camera-key MMB pan) moved to
 // pump_navigation.cpp with the rest of the x86 0x470BF5..0x47133D block.
 
-int ViewportToolAtPoint(MMDApp* app) {
+ViewportToolAction ViewportToolAtPoint(MMDApp* app) {
     app->ViewportToolHovered() = 0;
     app->ViewportToolOperation() = ViewportToolAction::None;
     if (app->ViewportInputActive() == 0)
-        return 0;
+        return ViewportToolAction::None;
 
     const int x = app->MouseX();
     const int y = app->MouseY();
@@ -130,21 +115,21 @@ int ViewportToolAtPoint(MMDApp* app) {
     RECT client{};
     GetClientRect(window, &client);
 
-    int operation = 0;
+    ViewportToolAction operation = ViewportToolAction::None;
     if (y > view.top - 25 && y < view.top) {
         if (x > client.right - 60 && x < client.right - 36)
-            operation = 1;
+            operation = ViewportToolAction::CameraOrbit;
         else if (x > client.right - 30 && x < client.right - 6)
-            operation = 2;
+            operation = ViewportToolAction::CameraPan;
     }
 
     float scale = 1.0f;
     if (D3DRenderer* r = app->Renderer())
-        scale = r->viewScale;  // wrapper+120048
+        scale = r->viewScale; // wrapper+120048
     if (!(scale > 0.0f))
         scale = 1.0f;
 
-    if (operation == 0 && app->PlaybackActive() == 0) {
+    if (operation == ViewportToolAction::None && app->PlaybackActive() == 0) {
         const float fx = static_cast<float>(x);
         const float fy = static_cast<float>(y);
         const float x0 = view.right - 127.0f * scale;
@@ -165,69 +150,72 @@ int ViewportToolAtPoint(MMDApp* app) {
         else if (fx > x4 && fx < x5)
             column = 2;
         if (column >= 0) {
-            const bool modelPanel =
-                app->state.optflag[0] != 0;
-            const std::uint32_t axisMode =
-                app->state.v32c;
+            const bool modelPanel = app->CameraMode() != 0;
+            const std::uint32_t axisMode = app->state.v32c;
             if (fy > upperTop && fy < upperBottom) {
                 if (modelPanel)
-                    operation = 18 + column;
+                    operation = std::array{ViewportToolAction::AngleAdjustX,
+                                           ViewportToolAction::AngleAdjustY,
+                                           ViewportToolAction::AngleAdjustZ}[column];
                 else if (axisMode == 0 || axisMode == 1)
-                    operation = 9 + column;
+                    operation = std::array{ViewportToolAction::TransformAxisX,
+                                           ViewportToolAction::TransformAxisY,
+                                           ViewportToolAction::TransformAxisZ}[column];
             } else if (fy > lowerTop && fy < lowerBottom) {
                 if (modelPanel)
-                    operation = 15 + column;
+                    operation = std::array{ViewportToolAction::CameraAdjustX,
+                                           ViewportToolAction::CameraAdjustY,
+                                           ViewportToolAction::CameraAdjustZ}[column];
                 else if (axisMode == 0 || axisMode == 2)
-                    operation = 12 + column;
+                    operation = std::array{ViewportToolAction::PhysicsAxisX,
+                                           ViewportToolAction::PhysicsAxisY,
+                                           ViewportToolAction::PhysicsAxisZ}[column];
             }
         }
 
-        if (operation == 0 && app->EditMode() == ViewportEditMode::Camera) {
+        if (operation == ViewportToolAction::None && app->EditMode() == ViewportEditMode::Rotate) {
             const int cx = app->ViewportToolCenterX();
             const int cy = app->ViewportToolCenterY();
             const int px = x - cx;
             const int py = y - cy;
             const bool horizontal =
-                ((px > 7 && px < 35) || (px > -35 && px < -7)) &&
-                py > -7 && py < 7;
+                ((px > 7 && px < 35) || (px > -35 && px < -7)) && py > -7 && py < 7;
             const bool vertical =
-                ((py > 7 && py < 35) || (py > -35 && py < -7)) &&
-                px > -7 && px < 7;
+                ((py > 7 && py < 35) || (py > -35 && py < -7)) && px > -7 && px < 7;
             if (horizontal)
-                operation = 3;
+                operation = ViewportToolAction::BoneRotateHorizontal;
             else if (vertical)
-                operation = 4;
+                operation = ViewportToolAction::BoneRotateVertical;
             else {
                 const int radius2 = px * px + py * py;
                 if (radius2 > 1225 && radius2 < 2025)
-                    operation = 5;
+                    operation = ViewportToolAction::BoneRotateRing;
             }
-        } else if (operation == 0 &&
-                   app->EditMode() == ViewportEditMode::Light) {
+        } else if (operation == ViewportToolAction::None &&
+                   app->EditMode() == ViewportEditMode::Move) {
             const int px = x - app->ViewportToolCenterX();
             const int py = y - app->ViewportToolCenterY();
             if (px > 41 && px < 61 && py > -8 && py < 8)
-                operation = 6;
+                operation = ViewportToolAction::BoneMoveHorizontalHandle;
             else if (px > -13 && px < 8 && py > -61 && py < -42)
-                operation = 7;
+                operation = ViewportToolAction::BoneMoveVerticalHandle;
             else if (px > -13 && px < 11 && py > -16 && py < 8)
-                operation = 8;
+                operation = ViewportToolAction::BoneMovePlaneHandle;
         }
 
-        if (operation == 0 &&
+        if (operation == ViewportToolAction::None &&
             app->InteractionDragMode() == ViewportDragMode::None) {
             const float coordLeft = view.right - 120.0f * scale;
             const float coordTop = view.bottom - 105.0f * scale;
-            if (fx > coordLeft && fx < coordLeft + 25.0f * scale &&
-                fy > coordTop && fy < coordTop + 25.0f * scale)
-                operation = 21;
+            if (fx > coordLeft && fx < coordLeft + 25.0f * scale && fy > coordTop &&
+                fy < coordTop + 25.0f * scale)
+                operation = ViewportToolAction::CycleCoordinateSystem;
         }
     }
 
-    if (operation != 0) {
+    if (operation != ViewportToolAction::None) {
         app->ViewportToolHovered() = 1;
-        app->ViewportToolOperation() =
-            static_cast<ViewportToolAction>(operation);
+        app->ViewportToolOperation() = operation;
     }
     return operation;
 }
@@ -241,7 +229,7 @@ HWND ViewportWindow(MMDApp* app) {
 
 float ViewportScale(MMDApp* app) {
     D3DRenderer* r = app->Renderer();
-    const float scale = r != nullptr ? r->viewScale : 1.0f;  // +120048
+    const float scale = r != nullptr ? r->viewScale : 1.0f; // +120048
     return scale > 0.0f ? scale : 1.0f;
 }
 
@@ -254,39 +242,48 @@ void WarpCursor(MMDApp* app, POINT point) {
     app->state.separateWindowMouseSeen = 1;
 }
 
-void BeginCenteredDrag(MMDApp* app, int operation) {
+void BeginCenteredDrag(MMDApp* app, ViewportToolAction operation) {
     const RECT view = app->ViewportRect();
-    POINT point{(view.left + view.right) / 2,
-                (view.top + view.bottom) / 2};
+    POINT point{(view.left + view.right) / 2, (view.top + view.bottom) / 2};
     app->MouseX() = point.x;
     app->MouseY() = point.y;
     app->PreviousMouseX() = point.x;
     app->PreviousMouseY() = point.y;
-    app->ViewToolDragOperation() =
-        static_cast<ViewportToolAction>(operation);
+    app->ViewToolDragOperation() = operation;
     app->state.mouseJumped = 0;
     WarpCursor(app, point);
     while (ShowCursor(FALSE) >= 0) {}
 }
 
-void RestoreViewportToolCursor(MMDApp* app, int operation) {
+void RestoreViewportToolCursor(MMDApp* app, ViewportToolAction operation) {
     const RECT view = app->ViewportRect();
     const float scale = ViewportScale(app);
     POINT point{};
-    if (operation == 1 || operation == 2) {
+    if (operation == ViewportToolAction::CameraOrbit ||
+        operation == ViewportToolAction::CameraPan) {
         HWND mainWindow = app->state.hwnd;
         RECT client{};
         GetClientRect(mainWindow, &client);
-        point.x = client.right - (operation == 1 ? 48 : 18);
+        point.x = client.right - (operation == ViewportToolAction::CameraOrbit ? 48 : 18);
         point.y = view.top - 12;
     } else {
-        const int column = operation == 9 || operation == 12 ||
-                           operation == 15 || operation == 18 ? 0
-                         : operation == 10 || operation == 13 ||
-                           operation == 16 || operation == 19 ? 1 : 2;
-        const bool upper = operation == 9 || operation == 10 ||
-                           operation == 11 || operation == 18 ||
-                           operation == 19 || operation == 20;
+        const int column = operation == ViewportToolAction::TransformAxisX ||
+                                   operation == ViewportToolAction::PhysicsAxisX ||
+                                   operation == ViewportToolAction::CameraAdjustX ||
+                                   operation == ViewportToolAction::AngleAdjustX
+                               ? 0
+                           : operation == ViewportToolAction::TransformAxisY ||
+                                   operation == ViewportToolAction::PhysicsAxisY ||
+                                   operation == ViewportToolAction::CameraAdjustY ||
+                                   operation == ViewportToolAction::AngleAdjustY
+                               ? 1
+                               : 2;
+        const bool upper = operation == ViewportToolAction::TransformAxisX ||
+                           operation == ViewportToolAction::TransformAxisY ||
+                           operation == ViewportToolAction::TransformAxisZ ||
+                           operation == ViewportToolAction::AngleAdjustX ||
+                           operation == ViewportToolAction::AngleAdjustY ||
+                           operation == ViewportToolAction::AngleAdjustZ;
         static constexpr float kCenterX[3] = {110.0f, 70.0f, 30.0f};
         point.x = view.right - static_cast<int>(kCenterX[column] * scale);
         point.y = view.bottom - static_cast<int>((upper ? 65.0f : 25.0f) * scale);
@@ -295,103 +292,101 @@ void RestoreViewportToolCursor(MMDApp* app, int operation) {
     while (ShowCursor(TRUE) < 0) {}
 }
 
-unsigned char* ActiveBoneModel(MMDApp* app) {
-    return app->ModelSlot(app->state.slotIdx);
+mdl::ModelRecord* ActiveBoneModel(MMDApp* app) {
+    return app->SelectedModel();
 }
 
 void PickBoneAtCursor(MMDApp* app) {
-    auto* model = mdl::Mdl(ActiveBoneModel(app));
-    if (model && PickBoneAtPoint(*model, app->MouseX(), app->MouseY(),
-                                app->PlaybackPhysicsMode(), app->ShiftModifierActive())) {
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+    auto* model = ActiveBoneModel(app);
+    if (model) {
+        PickBoneAtPoint(*model, app->MouseX(), app->MouseY(), app->PlaybackPhysicsMode(),
+                        app->ShiftModifierActive());
+        // The original refreshes the panel even when the click misses.
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
     }
 }
 
 void UpdateBoneBoxSelection(MMDApp* app) {
     if (app->BoneBoxSelectionActive() == 0)
         return;
-    unsigned char* model = ActiveBoneModel(app);
+    mdl::ModelRecord* model = ActiveBoneModel(app);
     if (model == nullptr)
         return;
-    auto* bones = mikudancestudio::mdl::Bones(model);
-    auto* selected = mikudancestudio::mdl::Mdl(model)->boneSelection;
-    const int count = mikudancestudio::mdl::Mdl(model)->boneCount;
-    if (bones == nullptr || selected == nullptr || count <= 0)
-        return;
-
-    const int left = std::min(app->BoneBoxStartX(),
-                              app->MouseX());
-    const int right = std::max(app->BoneBoxStartX(),
-                               app->MouseX());
-    const int top = std::min(app->BoneBoxStartY(),
-                             app->MouseY());
-    const int bottom = std::max(app->BoneBoxStartY(),
-                                app->MouseY());
-    const bool additive = app->ShiftModifierActive();
-    bool changed = false;
-    for (int i = 0; i < count; ++i) {
-        const mdl::BoneRecord& bone = bones[i];
-        const mdl::BoneType type = bone.type;
-        const bool eligible =
-            type <= mdl::BoneType::Effector ||
-            type == mdl::BoneType::FixedAxis;
-        const int x = bone.selState;
-        const int y = bone.selState2;
-        const bool inside = eligible && x > left && x < right &&
-                            y > top && y < bottom;
-        const std::uint8_t next = inside ? 1 : (additive ? selected[i] : 0);
-        changed |= selected[i] != next;
-        selected[i] = next;
-    }
-    if (changed)
-        PostLanguageSweep(app);
+    const int left = std::min(app->BoneBoxStartX(), app->MouseX());
+    const int right = std::max(app->BoneBoxStartX(), app->MouseX());
+    const int top = std::min(app->BoneBoxStartY(), app->MouseY());
+    const int bottom = std::max(app->BoneBoxStartY(), app->MouseY());
+    SelectBonesInScreenRect(*model, left, top, right, bottom, app->ShiftModifierActive());
+    // Selection bytes update while held; the panel refresh belongs to release.
 }
 
-void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
+} // namespace
+
+void BeginOrEndViewportToolDrag(MMDApp* app, ViewportToolAction operation) {
     const int leftState = app->LeftMouseButtonState();
     if (leftState == 1) {
-        if (operation == 1 || operation == 2) {
+        if (operation == ViewportToolAction::CameraOrbit ||
+            operation == ViewportToolAction::CameraPan) {
             BeginCenteredDrag(app, operation);
             return;
         }
-        static constexpr std::uint8_t kDragMode[21] = {
-            0, 0, 0, 1, 2, 3, 7, 8, 9, 4, 5, 6,
-            10, 11, 12, 13, 14, 15, 16, 17, 18};
-        if (operation >= 3 && operation <= 20) {
-            const int mode = kDragMode[operation];
-            if (operation >= 9)
+        static constexpr ViewportDragMode kDragMode[] = {ViewportDragMode::None,
+                                                         ViewportDragMode::None,
+                                                         ViewportDragMode::None,
+                                                         ViewportDragMode::ViewAxisRotateX,
+                                                         ViewportDragMode::ViewAxisRotateY,
+                                                         ViewportDragMode::ViewAxisRotateZ,
+                                                         ViewportDragMode::BoneMoveHorizontal,
+                                                         ViewportDragMode::BoneMoveVertical,
+                                                         ViewportDragMode::BoneMoveScreenPlane,
+                                                         ViewportDragMode::AxisRotateX,
+                                                         ViewportDragMode::AxisRotateY,
+                                                         ViewportDragMode::AxisRotateZ,
+                                                         ViewportDragMode::PhysicsAxisX,
+                                                         ViewportDragMode::PhysicsAxisY,
+                                                         ViewportDragMode::PhysicsAxisZ,
+                                                         ViewportDragMode::CameraAdjustX,
+                                                         ViewportDragMode::CameraAdjustY,
+                                                         ViewportDragMode::CameraAdjustZ,
+                                                         ViewportDragMode::AngleAdjustX,
+                                                         ViewportDragMode::AngleAdjustY,
+                                                         ViewportDragMode::AngleAdjustZ};
+        if (operation >= ViewportToolAction::BoneRotateHorizontal &&
+            operation <= ViewportToolAction::AngleAdjustZ) {
+            const ViewportDragMode mode = kDragMode[static_cast<int>(operation)];
+            if (operation >= ViewportToolAction::TransformAxisX)
                 BeginCenteredDrag(app, operation);
-            app->InteractionDragMode() = static_cast<ViewportDragMode>(mode);
-            if (operation == 5) {
+            app->InteractionDragMode() = mode;
+            if (operation == ViewportToolAction::BoneRotateRing) {
                 app->ViewportToolDragOriginX() = app->ViewportToolCenterX();
                 app->ViewportToolDragOriginY() = app->ViewportToolCenterY();
             }
-            if (operation <= 8) {
+            if (operation <= ViewportToolAction::BoneMovePlaneHandle) {
                 app->EditMode() = ViewportEditMode::ToolDrag;
                 PushBoneEditUndo(app);
-            } else if (operation <= 14) {
+            } else if (operation <= ViewportToolAction::PhysicsAxisZ) {
                 PushBoneEditUndo(app);
                 app->state.a06B5 = 1;
             } else {
                 const int target = app->state.coordinateSystem;
-                RefreshRequest(target == 2
-                    ? app->state.selectedObjectSlot : -1);
+                if (target == 2)
+                    SelectAccessoryTimelineTrack(app->state.selectedObjectSlot);
+                else
+                    SelectTimelineTrack(GlobalTimelineTrack::Camera);
                 app->state.a06B5 = 1;
             }
-        } else if (operation == 21) {
+        } else if (operation == ViewportToolAction::CycleCoordinateSystem) {
             int& target = app->state.coordinateSystem;
-            const int limit = app->state.optflag[0] != 0 ? 3 : 2;
+            const int limit = app->CameraMode() != 0 ? 3 : 2;
             if (++target >= limit)
                 target = 0;
-            PostLanguageSweep(app);
-        } else if (operation == 0 &&
-                   app->PlaybackActive() == 0) {
+            RebuildTimelineTrackPanel(app);
+        } else if (operation == ViewportToolAction::None && app->PlaybackActive() == 0) {
             const RECT view = app->ViewportRect();
             const int x = app->MouseX();
             const int y = app->MouseY();
-            if (x > view.left && x < view.right &&
-                y > view.top && y < view.bottom) {
+            if (x > view.left && x < view.right && y > view.top && y < view.bottom) {
                 const ViewportEditMode panelMode = app->EditMode();
                 if (panelMode == ViewportEditMode::Bone)
                     PickBoneAtCursor(app);
@@ -403,34 +398,39 @@ void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
             }
         }
     } else if (leftState == 2) {
-        app->PendingTimelineSelectionRow() = TimelineSelectionRow::None;;
-        const int viewOperation =
-            static_cast<int>(app->ViewToolDragOperation());
-        const int mode = static_cast<int>(app->InteractionDragMode());
-        if (viewOperation == 1 || viewOperation == 2) {
+        app->DraggedInterpolationPoint() = InterpolationControlPoint::None;
+        const ViewportToolAction viewOperation = app->ViewToolDragOperation();
+        const ViewportDragMode mode = app->InteractionDragMode();
+        if (viewOperation == ViewportToolAction::CameraOrbit ||
+            viewOperation == ViewportToolAction::CameraPan) {
             RestoreViewportToolCursor(app, viewOperation);
             app->ViewToolDragOperation() = ViewportToolAction::None;
-        }
-        if (mode != 0) {
-            if (mode >= 1 && mode <= 3)
-                app->EditMode() = ViewportEditMode::Camera;
-            else if (mode >= 7 && mode <= 9)
-                app->EditMode() = ViewportEditMode::Light;
-            if (viewOperation >= 9 && viewOperation <= 20) {
+        } else if (mode != ViewportDragMode::None) {
+            if (mode >= ViewportDragMode::ViewAxisRotateX &&
+                mode <= ViewportDragMode::ViewAxisRotateZ)
+                app->EditMode() = ViewportEditMode::Rotate;
+            else if (mode >= ViewportDragMode::BoneMoveHorizontal &&
+                     mode <= ViewportDragMode::BoneMoveScreenPlane)
+                app->EditMode() = ViewportEditMode::Move;
+            if (viewOperation >= ViewportToolAction::TransformAxisX &&
+                viewOperation <= ViewportToolAction::AngleAdjustZ) {
                 RestoreViewportToolCursor(app, viewOperation);
                 app->ViewToolDragOperation() = ViewportToolAction::None;
             }
             app->InteractionDragMode() = ViewportDragMode::None;
             app->state.a06B5 = 0;
+        } else if (app->BoneBoxSelectionActive() != 0) {
+            app->BoneBoxSelectionActive() = 0;
+            if (auto* model = app->SelectedModel()) {
+                FinishBoneBoxSelection(*model, app->ShiftModifierActive());
+                RebuildTimelineTrackPanel(app);
+                InvalidateSelectionReadouts(app);
+            }
         }
-        app->BoneBoxSelectionActive() = 0;
     }
 }
 
-}  // namespace
-
-bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y,
-                     int physicsMode, bool additive) {
+bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y, int physicsMode, bool additive) {
     if (!model.boneTable || !model.boneSelection || model.boneCount == 0)
         return false;
     int first = -1;
@@ -441,13 +441,13 @@ bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y,
         // Original x64 0x7FF7CB451B92..0x7FF7CB451BFE: the physics
         // gate reads hasRigidBody, independently of the bone type byte.
         if (!(bone.flags & mdl::kBoneFlagVisible) ||
-            !(bone.type < mdl::BoneType::InertTip || bone.type == mdl::BoneType::FixedAxis))
+            !(static_cast<std::int8_t>(bone.type) < static_cast<int>(mdl::BoneType::InertTip) ||
+              bone.type == mdl::BoneType::FixedAxis))
             continue;
-        if (bone.hasRigidBody &&
-            (physicsMode == 1 || (physicsMode == 2 && !bone.physicsDisabled)))
+        if (bone.hasRigidBody && (physicsMode == 1 || (physicsMode == 2 && !bone.physicsDisabled)))
             continue;
-        const int dx = bone.selState - x;
-        const int dy = bone.selState2 - y;
+        const int dx = bone.screenX - x;
+        const int dy = bone.screenY - y;
         if (dx * dx + dy * dy >= 64)
             continue;
         if (additive) {
@@ -458,7 +458,8 @@ bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y,
                 model.selectedBone = -1;
             changed = true;
         } else {
-            if (first < 0) first = static_cast<int>(i);
+            if (first < 0)
+                first = static_cast<int>(i);
             // Repeated clicks cycle through overlapping markers, then wrap.
             if (static_cast<int>(i) > model.selectedBone) {
                 candidate = static_cast<int>(i);
@@ -467,7 +468,8 @@ bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y,
         }
     }
     if (!additive) {
-        if (candidate < 0) candidate = first;
+        if (candidate < 0)
+            candidate = first;
         if (candidate >= 0) {
             std::memset(model.boneSelection, 0, model.boneCount);
             model.boneSelection[candidate] = 1;
@@ -478,43 +480,82 @@ bool PickBoneAtPoint(mdl::ModelRecord& model, int x, int y,
     return changed;
 }
 
+void SelectBonesInScreenRect(mdl::ModelRecord& model, int left, int top, int right, int bottom,
+                             bool additive) {
+    if (!model.boneTable || !model.boneSelection)
+        return;
+    for (std::uint32_t i = 0; i < model.boneCount; ++i) {
+        const auto& bone = model.boneTable[i];
+        // x64 452EA6..452EC4: unlike clicking, box selection includes hidden
+        // types <= 6 and fixed-axis bones, without the rigid-body gate.
+        const bool eligible =
+            static_cast<std::int8_t>(bone.type) <= static_cast<int>(mdl::BoneType::Effector) ||
+            bone.type == mdl::BoneType::FixedAxis;
+        if (eligible && bone.screenX > left && bone.screenX < right && bone.screenY > top &&
+            bone.screenY < bottom)
+            model.boneSelection[i] = 1;
+        else if (!additive)
+            model.boneSelection[i] = 0;
+    }
+}
+
+void FinishBoneBoxSelection(mdl::ModelRecord& model, bool additive) {
+    if (!model.boneSelection || model.boneCount == 0)
+        return;
+    // x64 452136..4521F7: preserve the active bone if it remains selected.
+    if (model.selectedBone < 0 || !model.boneSelection[model.selectedBone]) {
+        if (!additive)
+            model.selectedBone = -1;
+        if (model.boneSelection[0])
+            model.selectedBone = 0;
+    }
+    int count = 0, last = -1;
+    for (std::uint32_t i = 0; i < model.boneCount; ++i)
+        if (model.boneSelection[i]) {
+            ++count;
+            last = static_cast<int>(i);
+        }
+    if (count == 1)
+        model.selectedBone = last;
+}
+
 void MouseInteractionBegin(MMDApp* app) {
     // 0x46FF02 -> 0x42D3A0 -> 0x40E3D0.  State values are exactly
     // 0 idle, 1 pressed, 2 released, 3 held.
-    struct KeySlot { int key; std::int32_t MMDAppState::* state; };
+    struct KeySlot {
+        int key;
+        std::int32_t MMDAppState::* state;
+    };
     static constexpr KeySlot kKeySlots[] = {
-        {VK_UP, &MMDAppState::upKeyState},
-        {VK_DOWN, &MMDAppState::downKeyState},
-        {VK_LEFT, &MMDAppState::leftKeyState},
-        {VK_RIGHT, &MMDAppState::rightKeyState},
-        {VK_SPACE, &MMDAppState::spaceKeyState},
-        {VK_DELETE, &MMDAppState::deleteKeyState},
-        {VK_ESCAPE, &MMDAppState::escKeyState},
-        {VK_TAB, &MMDAppState::tabKeyState},
-        {VK_RETURN, &MMDAppState::enterKeyState},
-        {VK_MENU, &MMDAppState::menuKeyState},
-        {221, &MMDAppState::keyState221},
-        {226, &MMDAppState::keyState226},
+        {VK_UP, &MMDAppState::upKeyState},        {VK_DOWN, &MMDAppState::downKeyState},
+        {VK_LEFT, &MMDAppState::leftKeyState},    {VK_RIGHT, &MMDAppState::rightKeyState},
+        {VK_SPACE, &MMDAppState::spaceKeyState},  {VK_DELETE, &MMDAppState::deleteKeyState},
+        {VK_ESCAPE, &MMDAppState::escKeyState},   {VK_TAB, &MMDAppState::tabKeyState},
+        {VK_RETURN, &MMDAppState::enterKeyState}, {VK_MENU, &MMDAppState::menuKeyState},
+        {221, &MMDAppState::keyState221},         {226, &MMDAppState::keyState226},
     };
     for (const KeySlot& slot : kKeySlots)
         PollKey(app, app->state.*slot.state, slot.key);
 
     // Letter hotkeys share the dialog re-entry guard ints (see
-    // MMDAppState::dialogFlags): lowercase and uppercase VK pairs fold
+    // MMDAppState::letterKeyState): lowercase and uppercase VK pairs fold
     // onto the same slot.
-    static constexpr struct { int key; int flagIndex; } kLetterKeys[] = {
-        {'x', 0}, {'X', 0}, {'z', 1}, {'Z', 1},
-        {'c', 2}, {'C', 2}, {'v', 3}, {'V', 3},
-        {'d', 4}, {'D', 4}, {'a', 5}, {'A', 5},
-        {'b', 6}, {'B', 6}, {'g', 7}, {'G', 7},
-        {'s', 8}, {'S', 8}, {'i', 9}, {'I', 9},
-        {'h', 10}, {'H', 10}, {'k', 11}, {'K', 11},
-        {'p', 12}, {'P', 12}, {'u', 13}, {'U', 13},
-        {'j', 14}, {'J', 14}, {'f', 15}, {'F', 15},
-        {'r', 16}, {'R', 16}, {'l', 17}, {'L', 17},
+    static constexpr struct {
+        int key;
+        LetterKey letterKey;
+    } kLetterKeys[] = {
+        {'x', LetterKey::X}, {'X', LetterKey::X}, {'z', LetterKey::Z}, {'Z', LetterKey::Z},
+        {'c', LetterKey::C}, {'C', LetterKey::C}, {'v', LetterKey::V}, {'V', LetterKey::V},
+        {'d', LetterKey::D}, {'D', LetterKey::D}, {'a', LetterKey::A}, {'A', LetterKey::A},
+        {'b', LetterKey::B}, {'B', LetterKey::B}, {'g', LetterKey::G}, {'G', LetterKey::G},
+        {'s', LetterKey::S}, {'S', LetterKey::S}, {'i', LetterKey::I}, {'I', LetterKey::I},
+        {'h', LetterKey::H}, {'H', LetterKey::H}, {'k', LetterKey::K}, {'K', LetterKey::K},
+        {'p', LetterKey::P}, {'P', LetterKey::P}, {'u', LetterKey::U}, {'U', LetterKey::U},
+        {'j', LetterKey::J}, {'J', LetterKey::J}, {'f', LetterKey::F}, {'F', LetterKey::F},
+        {'r', LetterKey::R}, {'R', LetterKey::R}, {'l', LetterKey::L}, {'L', LetterKey::L},
     };
     for (const auto& slot : kLetterKeys)
-        PollKey(app, app->state.dialogFlags[slot.flagIndex], slot.key);
+        PollKey(app, app->LetterKeyState(slot.letterKey), slot.key);
 
     for (int i = 0; i < 10; ++i)
         PollKey(app, app->state.numpadKeyState[i], VK_NUMPAD0 + i);
@@ -531,9 +572,8 @@ void MouseInteractionBegin(MMDApp* app) {
     HWND active = app->FloatingWindow();
     if (active == nullptr)
         active = app->state.hwnd;
-    app->ViewportInputActive() = static_cast<std::uint8_t>(
-        GetForegroundWindow() == active);
-    const int operation = ViewportToolAtPoint(app);
+    app->ViewportInputActive() = static_cast<std::uint8_t>(GetForegroundWindow() == active);
+    const ViewportToolAction operation = ViewportToolAtPoint(app);
     BeginOrEndViewportToolDrag(app, operation);
     if (app->ViewportInputActive() == 0)
         return;
@@ -550,7 +590,7 @@ void MouseInteractionBegin(MMDApp* app) {
             app->CameraDistance() -= static_cast<float>(dy) * 0.1f;
             ViewRefreshGate(app);
         } else if (viewMode == ViewportToolAction::CameraPan) {
-            if (app->state.optflag[0] != 0)
+            if (app->CameraMode() != 0)
                 PanCameraPosition(app, dx, dy);
             else {
                 app->ViewOffsetX() -= static_cast<float>(dx) * DragScale(app);
@@ -574,8 +614,8 @@ void MouseInteractionEnd(MMDApp* app) {
 // runtime-initialized in the original (.rdata image differs); the
 // registry-echo conversion pair 0x52B760/0x52B768 turns the stored radian
 // value into the "%3.4f" display figure (best evidence: PI/180 divisor)
-double g_AngleDegreesScale = 180.0;               // VA 0x0052B760
-double g_AnglePiTruncated = 3.141592025756836;   // VA 0x0052B768
+double g_AngleDegreesScale = 180.0;            // VA 0x0052B760
+double g_AnglePiTruncated = 3.141592025756836; // VA 0x0052B768
 
 // ---- light/camera/registry chains (raw listing 10776..11260) --------------
 // Common shape per axis mode (selector A=this+0x24==3, B=this+0xC0==3):
@@ -606,29 +646,38 @@ int DyOf(MMDApp* s) {
     return s->MouseY() - s->PreviousMouseY();
 }
 
-bool SelA3(MMDApp* s) { return s->ShiftModifierActive(); }
-bool SelB3(MMDApp* s) { return s->CtrlModifierActive(); }
+bool SelA3(MMDApp* s) {
+    return s->ShiftModifierActive();
+}
+bool SelB3(MMDApp* s) {
+    return s->CtrlModifierActive();
+}
 
 void EchoEdit(MMDApp* s, int dlgItem, const char* text) {
     HWND window = static_cast<HWND>(s->Hwnd());
     SetWindowTextA(GetDlgItem(window, dlgItem), text);
 }
 
-}  // namespace
+} // namespace
 
 void ModeCameraAdjust(MMDApp* app, int axis) {
     // 0x4786FB..0x4790DF, modes 13..15.  The same operation widgets edit
     // either the camera target or the selected accessory position.
-    static const int kEdit[3] = {0x1DE, 0x1DF, 0x1E0};
-    if (axis < 0 || axis > 2) { ViewRefreshGate(app); return; }
+    static const int kEdit[3] = {panel::kAccPosXEdit, panel::kAccPosYEdit, panel::kAccPosZEdit};
+    if (axis < 0 || axis > 2) {
+        ViewRefreshGate(app);
+        return;
+    }
     const int target = app->state.coordinateSystem;
     const int dy = DyOf(app);
     PanelDragScalar scale;
-    if (SelA3(app)) scale = kPositionDragCoarse;
-    else if (SelB3(app)) scale = kPositionDragFine;
-    else scale = kPositionDragNormal;
-    if (target == 2 &&
-        app->state.optflag[0] != 0) {
+    if (SelA3(app))
+        scale = kPositionDragCoarse;
+    else if (SelB3(app))
+        scale = kPositionDragFine;
+    else
+        scale = kPositionDragNormal;
+    if (target == 2 && app->CameraMode() != 0) {
         auto* accessory = app->AccessorySlot(app->state.selectedObjectSlot);
         if (accessory != nullptr) {
             float& value = accessory->position[axis];
@@ -639,9 +688,9 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
             EchoEdit(app, kEdit[axis], buf);
         }
     } else if (app->state.cameraParentModel >= 0 || target == 1) {
-        app->CameraPosition()[axis] = static_cast<float>(
-            static_cast<PanelDragScalar>(app->CameraPosition()[axis]) +
-            static_cast<PanelDragScalar>(dy) * scale);
+        app->CameraPosition()[axis] =
+            static_cast<float>(static_cast<PanelDragScalar>(app->CameraPosition()[axis]) +
+                               static_cast<PanelDragScalar>(dy) * scale);
     } else {
         auto& api = d3dx::Get();
         d3dx::D3DXMATRIXF rx{}, ry{}, rz{}, rotation{};
@@ -664,14 +713,20 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
 void ModeAngleAdjust(MMDApp* app, int axis) {
     // 0x4790E0..0x4798xx, modes 16..18.  Stored angles are radians;
     // accessory edit controls display degrees.
-    static const int kEdit[3] = {0x1E1, 0x1E2, 0x1E3};
-    if (axis < 0 || axis > 2) { ViewRefreshGate(app); return; }
+    static const int kEdit[3] = {panel::kAccRotXEdit, panel::kAccRotYEdit, panel::kAccRotZEdit};
+    if (axis < 0 || axis > 2) {
+        ViewRefreshGate(app);
+        return;
+    }
     const int target = app->state.coordinateSystem;
     const int dy = DyOf(app);
     PanelDragScalar scale;
-    if (SelA3(app)) scale = kAngleDragCoarse;
-    else if (SelB3(app)) scale = kAngleDragFine;
-    else scale = kAngleDragNormal;
+    if (SelA3(app))
+        scale = kAngleDragCoarse;
+    else if (SelB3(app))
+        scale = kAngleDragFine;
+    else
+        scale = kAngleDragNormal;
     // Unlike position dragging, the angle target does not depend on the
     // camera radio flag (x64 456788/456933/456A78; x86 479153).
     if (target == 2) {
@@ -681,14 +736,13 @@ void ModeAngleAdjust(MMDApp* app, int axis) {
             value = static_cast<float>(static_cast<PanelDragScalar>(value) +
                                        static_cast<PanelDragScalar>(dy) * scale);
             char buf[0x100];
-            sprintf_s(buf, 0x100, "%3.4f",
-                      value / kDisplayPi * kHalfTurnDegrees);
+            sprintf_s(buf, 0x100, "%3.4f", value / kDisplayPi * kHalfTurnDegrees);
             EchoEdit(app, kEdit[axis], buf);
         }
     } else {
-        app->CameraRotation()[axis] = static_cast<float>(
-            static_cast<PanelDragScalar>(app->CameraRotation()[axis]) +
-            static_cast<PanelDragScalar>(dy) * scale);
+        app->CameraRotation()[axis] =
+            static_cast<float>(static_cast<PanelDragScalar>(app->CameraRotation()[axis]) +
+                               static_cast<PanelDragScalar>(dy) * scale);
     }
     ViewRefreshGate(app);
 }
@@ -756,39 +810,30 @@ void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode) {
     api.rotZ(&rz, app->CameraRoll());
     api.multiply(&rot, &rot, &rz);
     if (app->CameraParentModel() >= 0)
-        api.multiply(&rot,
-                     reinterpret_cast<d3dx::D3DXMATRIXF*>(
-                         &app->CameraAttachmentBasis()),
+        api.multiply(&rot, reinterpret_cast<d3dx::D3DXMATRIXF*>(&app->CameraAttachmentBasis()),
                      &rot);
 
-    unsigned char* model = app->SelectedModel();
-    auto* bones = mikudancestudio::mdl::Bones(model);
+    mdl::ModelRecord* model = app->SelectedModel();
+    auto* bones = model->boneTable;
 
     auto modeOrigin = [&](int modeValue, d3dx::D3DXMATRIXF* out) {
-        if (modeValue == 1) {                                  // 0x41AD79
-            const mdl::BoneRecord& rec =
-                bones[mdl::Mdl(model)->centerBone];
+        if (modeValue == 1) { // 0x41AD79
+            const mdl::BoneRecord& rec = bones[model->centerBone];
             const float tx = -rec.matInit[12];
             const float ty = -rec.matInit[13];
             const float tz = -rec.matInit[14];
             api.translation(out, tx, ty, tz);
-        } else if (modeValue == 2) {                           // 0x41ADC6
-            std::int32_t idx = mikudancestudio::mdl::Mdl(model)->selectedBone;
+        } else if (modeValue == 2) { // 0x41ADC6
+            std::int32_t idx = model->selectedBone;
             if (idx < 0)
                 idx = 0;
             const mdl::BoneRecord& rec = bones[idx];
-            const float z = rec.matInit[2] * rec.position[0] +
-                            rec.matInit[6] * rec.position[1] +
-                            rec.matInit[10] * rec.position[2] +
-                            rec.matInit[14];
-            const float y = rec.matInit[1] * rec.position[0] +
-                            rec.matInit[5] * rec.position[1] +
-                            rec.matInit[9] * rec.position[2] +
-                            rec.matInit[13];
-            const float x = rec.matInit[0] * rec.position[0] +
-                            rec.matInit[4] * rec.position[1] +
-                            rec.matInit[8] * rec.position[2] +
-                            rec.matInit[12];
+            const float z = rec.matInit[2] * rec.position[0] + rec.matInit[6] * rec.position[1] +
+                            rec.matInit[10] * rec.position[2] + rec.matInit[14];
+            const float y = rec.matInit[1] * rec.position[0] + rec.matInit[5] * rec.position[1] +
+                            rec.matInit[9] * rec.position[2] + rec.matInit[13];
+            const float x = rec.matInit[0] * rec.position[0] + rec.matInit[4] * rec.position[1] +
+                            rec.matInit[8] * rec.position[2] + rec.matInit[12];
             api.translation(out, -x, -y, -z);
         } else {
             api.translation(out, 0.0f, 0.0f, 0.0f);
@@ -796,13 +841,13 @@ void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode) {
     };
 
     d3dx::D3DXMATRIXF tOld{}, tNew{};
-    modeOrigin(oldMode, &tOld);                       // a2 (old mode)
+    modeOrigin(oldMode, &tOld); // a2 (old mode)
     modeOrigin(static_cast<int>(app->CameraReferenceMode()), &tNew);
-    api.multiply(&tOld, &tOld, &rot);                 // 0x41B005
-    api.multiply(&tNew, &tNew, &rot);                 // 0x41B01A
+    api.multiply(&tOld, &tOld, &rot); // 0x41B005
+    api.multiply(&tNew, &tNew, &rot); // 0x41B01A
     app->ViewOffsetX() -= tOld.m[3][0] - tNew.m[3][0];
     app->ViewOffsetY() -= tOld.m[3][1] - tNew.m[3][1];
     app->CameraDistance() -= tOld.m[3][2] - tNew.m[3][2];
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

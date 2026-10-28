@@ -77,15 +77,15 @@ void ComparePmxRuntime(IDirect3DDevice9* device, HWND window) {
     Check(_lseek(file, 3, SEEK_SET) == 3, "PMX signature offset");
     auto renderer = std::make_unique<mikudancestudio::D3DRenderer>();
     renderer->device = device;
-    std::vector<unsigned char> storage(mikudancestudio::mdl::kSize, 0);
-    mikudancestudio::ModelInitDefaults(storage.data());
-    auto& runtime = *mikudancestudio::mdl::Mdl(storage.data());
+    auto storage = std::make_unique<mikudancestudio::mdl::ModelRecord>();
+    mikudancestudio::ModelInitDefaults(storage.get());
+    auto& runtime = *storage.get();
     runtime.hwnd = window;
     runtime.physicsFlags = 1;
     mikudancestudio::PathResolutionWorkspace paths{};
     std::fprintf(stderr, "PMX: runtime load\n");
     const bool loaded = mikudancestudio::LoadPMX(
-        storage.data(), renderer.get(), 0, 1, paths, file);
+        storage.get(), renderer.get(), 0, 1, paths, file);
     DeleteFileW(path);
     Check(loaded, "Windows PMX load");
     std::fprintf(stderr, "PMX: compare\n");
@@ -98,7 +98,7 @@ void ComparePmxRuntime(IDirect3DDevice9* device, HWND window) {
           "runtime material diffuse");
     Check(runtime.pmxVertices[0].position[0] == disk.pmx.vertices[0].position[0],
           "runtime vertex position");
-    Check(mikudancestudio::mdl::PmxIndices(storage.data())[0] ==
+    Check(runtime.indices[0] ==
           disk.pmx.indices[0], "runtime face index");
     Check(runtime.materials[0].faceVertexCount ==
           disk.pmx.materials[0].fields.faceVertexCount, "runtime material faces");
@@ -111,7 +111,7 @@ void ComparePmxRuntime(IDirect3DDevice9* device, HWND window) {
     Check(runtime.displayRootBone == disk.pmx.frames[0].entries[0].index,
           "runtime root display bone");
     std::fprintf(stderr, "PMX: model dispose\n");
-    mikudancestudio::ModelDispose(storage.data());
+    mikudancestudio::ModelDispose(storage.get());
     std::fprintf(stderr, "PMX: done\n");
 }
 void ComparePmdRuntime(IDirect3DDevice9* device, HWND window) {
@@ -124,20 +124,20 @@ void ComparePmdRuntime(IDirect3DDevice9* device, HWND window) {
     _close(file);
     auto renderer = std::make_unique<mikudancestudio::D3DRenderer>();
     renderer->device = device;
-    std::vector<unsigned char> storage(mikudancestudio::mdl::kSize, 0);
-    mikudancestudio::ModelInitDefaults(storage.data());
+    auto storage = std::make_unique<mikudancestudio::mdl::ModelRecord>();
+    mikudancestudio::ModelInitDefaults(storage.get());
     mikudancestudio::PathResolutionWorkspace paths{};
     wchar_t originalDirectory[MAX_PATH]{};
     Check(GetCurrentDirectoryW(MAX_PATH, originalDirectory) != 0,
           "current directory");
     std::fprintf(stderr, "PMD: runtime load\n");
     const bool loaded = mikudancestudio::ModelLoadPMD(
-        storage.data(), window, path, renderer.get(), 0, 0, 1, nullptr, paths);
+        storage.get(), window, path, renderer.get(), 0, 0, 1, nullptr, paths);
     SetCurrentDirectoryW(originalDirectory);
     DeleteFileW(path);
     Check(loaded, "Windows PMD load");
     std::fprintf(stderr, "PMD: compare\n");
-    auto& runtime = *mikudancestudio::mdl::Mdl(storage.data());
+    auto& runtime = *storage.get();
     Check(runtime.vertexCount == disk.pmd.vertices.size(), "PMD runtime vertices");
     Check(runtime.indexCount == disk.pmd.indices.size(), "PMD runtime indices");
     Check(runtime.materialCount == disk.pmd.materials.size(), "PMD runtime materials");
@@ -150,7 +150,7 @@ void ComparePmdRuntime(IDirect3DDevice9* device, HWND window) {
     Check(runtime.morphs[0].vertexEntries[0].offset[0] ==
           disk.pmd.morphs[0].offsets[0].offset[0], "PMD runtime morph");
     std::fprintf(stderr, "PMD: model dispose\n");
-    mikudancestudio::ModelDispose(storage.data());
+    mikudancestudio::ModelDispose(storage.get());
     std::fprintf(stderr, "PMD: done\n");
 }
 void ComparePmxPhysicsRuntime(IDirect3DDevice9* device, HWND window) {
@@ -165,21 +165,21 @@ void ComparePmxPhysicsRuntime(IDirect3DDevice9* device, HWND window) {
     renderer->device = device;
     mikudancestudio::PhysicsScene scene{};
     Check(mikudancestudio::SceneConstruct(&scene, renderer.get()), "PMX physics scene");
-    std::vector<unsigned char> storage(mikudancestudio::mdl::kSize, 0);
-    mikudancestudio::ModelInitDefaults(storage.data());
-    auto& runtime = *mikudancestudio::mdl::Mdl(storage.data());
+    auto storage = std::make_unique<mikudancestudio::mdl::ModelRecord>();
+    mikudancestudio::ModelInitDefaults(storage.get());
+    auto& runtime = *storage.get();
     runtime.hwnd = window;
     runtime.scenePtr = &scene;
     runtime.physicsFlags = 1;
     mikudancestudio::PathResolutionWorkspace paths{};
-    Check(mikudancestudio::LoadPMX(storage.data(), renderer.get(), 0, 1, paths, file),
+    Check(mikudancestudio::LoadPMX(storage.get(), renderer.get(), 0, 1, paths, file),
           "Windows PMX physics load");
     DeleteFileW(path);
     Check(runtime.rigidCount == disk.pmx.rigids.size() &&
           runtime.jointCount == disk.pmx.joints.size() &&
           runtime.jointTable[0].rigidA == disk.pmx.joints[0].fields.rigidA,
           "PMX physics runtime fields");
-    mikudancestudio::ModelDispose(storage.data());
+    mikudancestudio::ModelDispose(storage.get());
     mikudancestudio::DisposePhysicsWorld(&scene);
 }
 }

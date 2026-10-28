@@ -27,7 +27,7 @@ struct Model {
             Identity(bone.matInit); Identity(bone.matLocal); Identity(bone.matWorld); Identity(bone.matExtra);
         }
     }
-    unsigned char* Raw() { return reinterpret_cast<unsigned char*>(record.get()); }
+    mdl::ModelRecord* Raw() { return record.get(); }
 };
 struct MotionState : btDefaultMotionState {
     std::vector<float> writes;
@@ -40,7 +40,7 @@ int main() {
     // Highest slot, distinct display orders and tied orders must work without
     // MMDApp, a native window, or any GPU bootstrap. External parents make a
     // changed evaluation order observable in the resulting matrices.
-    std::array<unsigned char*,255> slots{};
+    std::array<mdl::ModelRecord*,255> slots{};
     Model source, attached, chained;
     slots[254]=source.Raw(); slots[0]=attached.Raw(); slots[1]=chained.Raw();
     source.record->comboSelIndex2=0; source.bones[0].trans[0]=3;
@@ -77,9 +77,9 @@ int main() {
     entry.translation[0]=4; entry.rotation[3]=1; morph.type=2; morph.value=.5f;
     morph.boneCount=1; morph.boneEntries=&entry;
     pmx.record->morphCount=1; pmx.record->morphs=&morph;
-    mdl::BoneMorphOffsetCount(pmx.Raw())=1; mdl::BoneMorphOffsets(pmx.Raw())=&work;
-    mdl::MaterialMorphAdd(pmx.Raw())=mdl::MaterialMorphMul(pmx.Raw())=&unused;
-    std::array<unsigned char*,1> one{pmx.Raw()};
+    (pmx.Raw())->boneMorphCount=1; (pmx.Raw())->boneMorphTable=&work;
+    pmx.Raw()->materialMorphPools.additive=pmx.Raw()->materialMorphPools.multiplicative=&unused;
+    std::array<mdl::ModelRecord*,1> one{pmx.Raw()};
     RunCpuModelPosePass({one.data(),1},CpuPosePhase::BeforePhysics,0);
     CHECK(pmx.bones[0].matInit[12]==5);
     RunCpuModelPosePass({one.data(),1},CpuPosePhase::BeforePhysics,0);

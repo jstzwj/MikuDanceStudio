@@ -10,11 +10,11 @@
 
 using namespace mikudancestudio;
 namespace mikudancestudio {
-void ModelApplyMorphs(unsigned char*);
-void SetPhysicsMode(unsigned char*,int,unsigned char* const*,int);
-void ModelKinematicSync(unsigned char*);
-void ModelDynamicReseat(unsigned char*);
-void ModelPhysicsReadback(unsigned char*);
+void ModelApplyMorphs(mdl::ModelRecord*);
+void SetPhysicsMode(mdl::ModelRecord*,int,mdl::ModelRecord* const*,int);
+void ModelKinematicSync(mdl::ModelRecord*);
+void ModelDynamicReseat(mdl::ModelRecord*);
+void ModelPhysicsReadback(mdl::ModelRecord*);
 }
 #define CHECK(x) do { if(!(x)) { std::fprintf(stderr,"line %d: %s\n",__LINE__,#x);return 1; } } while(0)
 namespace {
@@ -28,7 +28,7 @@ struct Model {
     mdl::PmxBoneMorphEntry morphEntry{};
     mdl::MorphRecord morph{};
     mdl::MaterialMorphPool unused{};
-    unsigned char* Raw() { return reinterpret_cast<unsigned char*>(record.get()); }
+    mdl::ModelRecord* Raw() { return record.get(); }
     Model() {
         record->boneCount=4;record->boneTable=bones.data();record->boneOrderCount=1;
         record->boneOrderTable=&selector;selector.linkedModel=-1;
@@ -48,10 +48,10 @@ struct Model {
         record->physicsMode=2;record->morphCount=1;record->morphs=&morph;
         morph.type=2;morph.boneCount=1;morph.boneEntries=&morphEntry;
         morphEntry.boneIndex=3;morphEntry.translation[1]=.25f;morphEntry.rotation[3]=1;
-        mdl::BoneMorphOffsetCount(Raw())=4;
+        (Raw())->boneMorphCount=4;
         // This fixture only morphs one bone, but the restoration workspace is
         // indexed by all bones. Supply it separately below.
-        mdl::MaterialMorphAdd(Raw())=mdl::MaterialMorphMul(Raw())=&unused;
+        Raw()->materialMorphPools.additive=Raw()->materialMorphPools.multiplicative=&unused;
     }
 };
 struct World {
@@ -62,7 +62,7 @@ struct World {
     btRigidBody body0{{0,&motion0,&shape}},body1{{1,&motion1,&shape,btVector3(.016f,.016f,.016f)}};
     Model first,second;
     std::array<mdl::BoneMorphOffsetRecord,4> morph0{},morph1{};
-    std::array<unsigned char*,255> slots{};
+    std::array<mdl::ModelRecord*,255> slots{};
     explicit World(bool pmx) {
         slots[0]=second.Raw();slots[254]=first.Raw();
         first.record->comboSelIndex2=0;second.record->comboSelIndex2=1;
@@ -73,7 +73,7 @@ struct World {
         body0.setActivationState(DISABLE_DEACTIVATION);
         body1.setLinearVelocity(btVector3(.5f,-1,.3f));body1.setAngularVelocity(btVector3(.1f,.2f,.3f));
         world.addRigidBody(&body0);world.addRigidBody(&body1);world.getSolverInfo().m_solverMode&=~1;
-        if(pmx) { first.Pmx();second.Pmx();mdl::BoneMorphOffsets(first.Raw())=morph0.data();mdl::BoneMorphOffsets(second.Raw())=morph1.data();
+        if(pmx) { first.Pmx();second.Pmx();(first.Raw())->boneMorphTable=morph0.data();(second.Raw())->boneMorphTable=morph1.data();
             for(int n=0;n<4;++n) morph0[n].boneIndex=morph1[n].boneIndex=n; }
     }
     ~World() { world.removeRigidBody(&body1);world.removeRigidBody(&body0); }
@@ -85,7 +85,7 @@ struct World {
                 for(std::size_t order=0;order<slots.count;++order)
                     for(std::size_t slot=0;slot<slots.count;++slot) {
                         auto* model=slots.data[slot];
-                        if(!model || int(slot)==skip || mdl::Mdl(model)->comboSelIndex2!=order) continue;
+                        if(!model || int(slot)==skip || model->comboSelIndex2!=order) continue;
                         ModelApplyMorphs(model);SetPhysicsMode(model,phase==CpuPosePhase::AfterPhysics ? 1 : 0,slots.data,mode);
                     }
             };

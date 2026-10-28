@@ -114,7 +114,13 @@ void btManifoldResult::addContactPoint(const btVector3& normalOnBInWorld,const b
 
 	btVector3 localA;
 	btVector3 localB;
-	
+
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xFAB90 uses (x+y)+z for both inverse transforms.
+	// The x86 path below has distinct dot-product orders for each branch.
+	localA = (isSwapped ? m_rootTransB : m_rootTransA).invXform(pointA);
+	localB = (isSwapped ? m_rootTransA : m_rootTransB).invXform(pointInWorld);
+#else
 	if (isSwapped)
 	{
 		// VC9 instruction order at MMD 0x4D7D37..0x4D7EAD.
@@ -130,6 +136,7 @@ void btManifoldResult::addContactPoint(const btVector3& normalOnBInWorld,const b
 		localB = mmdManifoldInvXform(m_rootTransB,pointInWorld,
 			MMD_DOT_XZY,MMD_DOT_ZYX,MMD_DOT_ZYX);
 	}
+#endif
 
 	btManifoldPoint newPt(localA,localB,normalOnBInWorld,depth);
 	newPt.m_positionWorldOnA = pointA;

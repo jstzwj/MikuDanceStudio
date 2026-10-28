@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -392,6 +393,28 @@ void CheckBrokenCameraLink() {
 }
 }
 int main() {
+    // Reference x86 double accumulation and x64 mulss/addss differ by one
+    // bit for this input. Preserve the architecture and signed zero.
+    PmmBoneKey roundingLeft, roundingRight;
+    roundingRight.frame = 10;
+    roundingLeft.position = {0.1f, -0.0f, 0.0f};
+    roundingRight.position = {0.2f, 0.0f, 0.0f};
+    PmmEvaluatedBone rounded;
+    Check(InterpolatePmmBoneSegment(roundingLeft, roundingRight, 3, rounded));
+    std::uint32_t positionBits = 0, zeroBits = 0;
+    std::memcpy(&positionBits, &rounded.translation[0], sizeof positionBits);
+    std::memcpy(&zeroBits, &rounded.translation[1], sizeof zeroBits);
+#if defined(_M_IX86)
+    Check(positionBits == 0x3E051EB9 && zeroBits == 0x80000000);
+#else
+    Check(positionBits == 0x3E051EB8 && zeroBits == 0x80000000);
+#endif
+    PmmEvaluatedSelector endAtNext;
+    endAtNext.windowEnd = 10;
+    Check(SelectPmmBoneSegmentPose(0, 10, 5, endAtNext) ==
+          PmmBoneSelectorResult::PreviousKey);
+    Check(SelectPmmBoneSegmentPose(3, 10, 1, endAtNext) ==
+          PmmBoneSelectorResult::PreviousKey);
     {auto scene=Fixture();std::array<float,6> light{},expected{};
         const auto& a=scene.lightKeys.dense[0];const auto& b=scene.lightKeys.sparse[0].value;
         Check(EvaluatePmmLightTrack(scene.lightKeys,3.25,PmmLightInterpolation::Playback,light));

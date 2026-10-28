@@ -129,12 +129,10 @@ void btGeneric6DofSpringConstraint::internalUpdateSprings(btConstraintInfo2* inf
 	FILE* dump = mmdSpringEnabled() ? mmdSpringStream() : 0;
 	int bodyA_id = 0, bodyB_id = 0;
 	if (dump) {
-		// MMD-ABI rigid ids: btTypedConstraint m_rbA/m_rbB (+32/+36,
-		// probe-verified layout) -> btRigidBody m_debugBodyId (+0x224).
-		void* rbA = *(void**)((char*)this + 32);
-		void* rbB = *(void**)((char*)this + 36);
-		if (rbA) bodyA_id = *(int*)((char*)rbA + 0x224);
-		if (rbB) bodyB_id = *(int*)((char*)rbB + 0x224);
+		// Observe the same bodies used by the solver. Their native layout
+		// differs between x86 and x64; diagnostics must not assume an ABI.
+		bodyA_id = m_rbA.m_debugBodyId;
+		bodyB_id = m_rbB.m_debugBodyId;
 	}
 	for(i = 0; i < 3; i++)
 	{
@@ -208,20 +206,17 @@ void btGeneric6DofSpringConstraint::internalUpdateSprings(btConstraintInfo2* inf
 	}
 	if (dump)
 	{
-		// Absolute body velocities (the rhs chain reads these directly,
-		// not the solverBody deltas): linear @+0x140, angular @+0x150.
-		const char* rbA = *(const char**)((const char*)static_cast<const void*>(this) + 32);
-		const char* rbB = *(const char**)((const char*)static_cast<const void*>(this) + 36);
-		if (rbA && rbB) {
-			const unsigned* la = reinterpret_cast<const unsigned*>(rbA + 0x140);
-			const unsigned* aa = reinterpret_cast<const unsigned*>(rbA + 0x150);
-			const unsigned* lb = reinterpret_cast<const unsigned*>(rbB + 0x140);
-			const unsigned* ab = reinterpret_cast<const unsigned*>(rbB + 0x150);
-			fprintf(dump, "vel uid=%d ba=%d bb=%d Al=%08X %08X %08X Aa=%08X %08X %08X Bl=%08X %08X %08X Bb=%08X %08X %08X\n",
-			        getUid(), bodyA_id, bodyB_id,
-			        la[0], la[1], la[2], aa[0], aa[1], aa[2],
-			        lb[0], lb[1], lb[2], ab[0], ab[1], ab[2]);
-		}
+		// Absolute body velocities read by the rhs chain, not solver deltas.
+		const btVector3& la = m_rbA.getLinearVelocity();
+		const btVector3& aa = m_rbA.getAngularVelocity();
+		const btVector3& lb = m_rbB.getLinearVelocity();
+		const btVector3& ab = m_rbB.getAngularVelocity();
+		fprintf(dump, "vel uid=%d ba=%d bb=%d Al=%08X %08X %08X Aa=%08X %08X %08X Bl=%08X %08X %08X Bb=%08X %08X %08X\n",
+		        getUid(), bodyA_id, bodyB_id,
+		        mmdSpringBits(la[0]), mmdSpringBits(la[1]), mmdSpringBits(la[2]),
+		        mmdSpringBits(aa[0]), mmdSpringBits(aa[1]), mmdSpringBits(aa[2]),
+		        mmdSpringBits(lb[0]), mmdSpringBits(lb[1]), mmdSpringBits(lb[2]),
+		        mmdSpringBits(ab[0]), mmdSpringBits(ab[1]), mmdSpringBits(ab[2]));
 	}
 	if (dump)
 	{

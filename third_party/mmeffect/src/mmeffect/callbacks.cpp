@@ -245,8 +245,8 @@ void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
                     }
                 }
                 if (swallowOffscreenDraw) {
-                    // [0x18005a270/0x18005a2a4] 查找返回 0：不调绘制回调，
-                    // 该次绘制整体吞掉（不走效果、也不走裸 DIP）。
+                    // [0x18005a270/0x18005a2a4] Lookup returns 0: do not call the draw callback;
+                    // swallow the entire draw (neither the effect nor a raw DIP runs).
                     return;
                 }
                 D3DXHANDLE technique = nullptr;

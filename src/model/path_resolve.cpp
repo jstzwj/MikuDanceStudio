@@ -53,12 +53,7 @@
 namespace mikudancestudio {
 namespace {
 
-// minimal D3DX constants/struct for the dynamic loader (no SDK headers)
 constexpr UINT kD3dxDefault = 0xFFFFFFFFu;
-struct ImgInfo {                    // first fields of D3DXIMAGE_INFO
-    UINT Width, Height, Depth, MipLevels;
-    UINT rest[16];
-};
 
 bool WsOpenOk(const wchar_t* path) {
     int fh = -1;
@@ -69,10 +64,10 @@ bool WsOpenOk(const wchar_t* path) {
     return false;
 }
 
-}  // namespace
+} // namespace
 
 const wchar_t* ResolveUserFilePath(PathResolutionWorkspace& workspace,
-                                   const wchar_t* path) {      // 0x4089F0
+                                   const wchar_t* path) { // 0x4089F0
     wchar_t* out = workspace.resolvedPath;
     const wchar_t* dirBase = workspace.executableDirectory;
     wchar_t tmp[256];
@@ -84,10 +79,8 @@ const wchar_t* ResolveUserFilePath(PathResolutionWorkspace& workspace,
     if (uf != nullptr) {
         swprintf_s(tmp, 0x100, L"%s%s", dirBase, uf);
         bool ok = WsOpenOk(tmp);
-        if (!ok &&
-            workspace.projectDirectory[0] != L'\0') {
-        swprintf_s(tmp, 0x100, L"%s%s",
-                       workspace.projectDirectory, uf);
+        if (!ok && workspace.projectDirectory[0] != L'\0') {
+            swprintf_s(tmp, 0x100, L"%s%s", workspace.projectDirectory, uf);
             ok = WsOpenOk(tmp);
         }
         if (ok) {
@@ -105,13 +98,10 @@ const wchar_t* ResolveUserFilePath(PathResolutionWorkspace& workspace,
     const wchar_t* sub = nullptr;
     if (wcscmp(scan, L"pmd") == 0 || wcscmp(scan, L"PMD") == 0)
         sub = L"UserFile\\Model";
-    else if (wcscmp(&path[len - 3], L"wav") == 0 ||
-             wcscmp(&path[len - 3], L"WAV") == 0)
+    else if (wcscmp(&path[len - 3], L"wav") == 0 || wcscmp(&path[len - 3], L"WAV") == 0)
         sub = L"UserFile\\Wave";
-    else if ((wcscmp(&path[len - 3], L"x") == 0 ||
-              wcscmp(&path[len - 3], L"X") == 0) ||
-             (wcscmp(&path[len - 3], L"vac") == 0 ||
-              wcscmp(&path[len - 3], L"VAC") == 0))
+    else if ((wcscmp(&path[len - 3], L"x") == 0 || wcscmp(&path[len - 3], L"X") == 0) ||
+             (wcscmp(&path[len - 3], L"vac") == 0 || wcscmp(&path[len - 3], L"VAC") == 0))
         sub = L"UserFile\\Accessory";
     if (sub == nullptr) {
         out[0] = L'\0';
@@ -134,9 +124,9 @@ const wchar_t* ResolveUserFilePath(PathResolutionWorkspace& workspace,
     return out;
 }
 
-bool ResolveAnsiUserFile(unsigned char* sub, const char* mbName,
-                         wchar_t* wideOut, rsize_t sizeWords,
-                         PathResolutionWorkspace& paths) {     // 0x407BA0
+bool ResolveAnsiUserFile(D3DRenderer* renderer, const char* mbName, wchar_t* wideOut,
+                         rsize_t sizeWords,
+                         PathResolutionWorkspace& paths) { // 0x407BA0
     wcscpy_s(wideOut, sizeWords, L"");
     if (mbName == nullptr || mbName[0] == '\0')
         return false;
@@ -148,22 +138,20 @@ bool ResolveAnsiUserFile(unsigned char* sub, const char* mbName,
         wcsncpy_s(wideOut, sizeWords, value, _TRUNCATE);
         return true;
     };
-    MultiByteToWideChar(CP_ACP, 0, mbName, -1, candidate,
-                        static_cast<int>(sizeWords));
+    MultiByteToWideChar(CP_ACP, 0, mbName, -1, candidate, static_cast<int>(sizeWords));
     if (resolve())
         return true;
     for (int i = 0; i < 4; ++i) {
-        _mbstowcs_s_l(nullptr, candidate, sizeWords, mbName, _TRUNCATE,
-            reinterpret_cast<D3DRenderer*>(sub)->localeTable[i]);
+        _mbstowcs_s_l(nullptr, candidate, sizeWords, mbName, _TRUNCATE, renderer->localeTable[i]);
         if (resolve())
             return true;
     }
     return false;
 }
 
-errno_t ConvertMaterialName(unsigned char* sub, const char* mbName,
-                            wchar_t* wideOut, rsize_t sizeWords,
-                            const wchar_t* dirW) {             // 0x407DA0
+errno_t ConvertMaterialName(D3DRenderer* renderer, const char* mbName, wchar_t* wideOut,
+                            rsize_t sizeWords,
+                            const wchar_t* dirW) { // 0x407DA0
     wchar_t probe[512];
     errno_t result = wcscpy_s(wideOut, sizeWords, L"");
     if (mbName[0] == '\0')
@@ -171,13 +159,14 @@ errno_t ConvertMaterialName(unsigned char* sub, const char* mbName,
 
     // A CPU-only importer has no renderer-owned locale table. PMD filenames
     // are Shift-JIS; legacy callers retain their original ACP/locale probes.
-    const unsigned codePage=sub?0:932;
+    const unsigned codePage = renderer ? 0 : 932;
     int cw = MultiByteToWideChar(codePage, 0, mbName, -1, nullptr, 0);
-    if(cw<=0)return EILSEQ;
+    if (cw <= 0)
+        return EILSEQ;
     wchar_t* tmp = static_cast<wchar_t*>(malloc(2 * cw));
-    if(!tmp)return ENOMEM;
-    if (MultiByteToWideChar(codePage, 0, mbName,
-                            static_cast<int>(strlen(mbName)) + 1, tmp, cw))
+    if (!tmp)
+        return ENOMEM;
+    if (MultiByteToWideChar(codePage, 0, mbName, static_cast<int>(strlen(mbName)) + 1, tmp, cw))
         wcsncpy_s(wideOut, sizeWords, tmp, _TRUNCATE);
     free(tmp);
 
@@ -186,18 +175,19 @@ errno_t ConvertMaterialName(unsigned char* sub, const char* mbName,
         swprintf_s(probe, 0x200, L"%s%s", dirW, wideOut);
         if (WsOpenOk(probe))
             return 0;
-        if (!sub)break;
+        if (!renderer)
+            break;
         if (li < 4)
             _mbstowcs_s_l(nullptr, wideOut, sizeWords, mbName, _TRUNCATE,
-                reinterpret_cast<D3DRenderer*>(sub)->localeTable[li]);
+                          renderer->localeTable[li]);
     }
     return result;
 }
 
-int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
+int LoadTextureShared(D3DRenderer* renderer, wchar_t* path) { // 0x407490
     if (path[0] == L'\0')
         return 0;
-    D3DRenderer* r = reinterpret_cast<D3DRenderer*>(sub);
+    D3DRenderer* r = renderer;
     IDirect3DDevice9* dev = r->device;
     // Cache = the wrapper's 10000-entry resourcePool (12-byte stride,
     // original write base sub+0 at 0x40750A): heapBuffer holds the name*,
@@ -210,8 +200,7 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
     // runtime testing with Luka_Megurine.pmd, docs/ARCHITECTURE.md §8.)
     int used = 0;
     while (used < 10000) {
-        wchar_t* nm = static_cast<wchar_t*>(
-            r->resourcePool[used].heapBuffer);
+        wchar_t* nm = static_cast<wchar_t*>(r->resourcePool[used].heapBuffer);
         if (nm == nullptr)
             break;
         if (wcscmp(nm, path) == 0)
@@ -227,33 +216,27 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
     // The RGB sample occupies the low three bytes of this entry's tag.
     // Do not retain the original x86 wrapper-relative +0xC/+0xE offsets:
     // x64 pointer widening would otherwise overwrite the next cache entry.
-    unsigned char* tagBytes =
-        reinterpret_cast<unsigned char*>(&r->resourcePool[used].tag);
-    auto* entryTex = reinterpret_cast<IDirect3DTexture9**>(
-        &r->resourcePool[used].comObject);
-    auto* entryName = reinterpret_cast<wchar_t**>(
-        &r->resourcePool[used].heapBuffer);
-    ImgInfo info = {};
+    unsigned char* tagBytes = reinterpret_cast<unsigned char*>(&r->resourcePool[used].tag);
+    auto* entryTex = reinterpret_cast<IDirect3DTexture9**>(&r->resourcePool[used].comObject);
+    auto* entryName = reinterpret_cast<wchar_t**>(&r->resourcePool[used].heapBuffer);
+    D3DXIMAGE_INFO info{};
     HRESULT hr;
     auto* d3dx = &d3dx::Get();
-    hr = d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 1024,
-                           D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, kD3dxDefault,
-                           kD3dxDefault, 0, &info, nullptr, entryTex);
+    hr =
+        d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 1024, D3DFMT_A8R8G8B8,
+                          D3DPOOL_MANAGED, kD3dxDefault, kD3dxDefault, 0, &info, nullptr, entryTex);
     if (info.Width == 1 && info.Height == 1 && hr == 0) {
         if (*entryTex != nullptr) {
             (*entryTex)->Release();
             *entryTex = nullptr;
         }
-        hr = d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 0,
-                               D3DFMT_A8R8G8B8, D3DPOOL_MANAGED,
-                               kD3dxDefault, kD3dxDefault, 0, &info, nullptr,
+        hr = d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 0, D3DFMT_A8R8G8B8,
+                               D3DPOOL_MANAGED, kD3dxDefault, kD3dxDefault, 0, &info, nullptr,
                                entryTex);
     }
-    if (FAILED(hr) &&
-        FAILED(d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 0,
-                                 D3DFMT_A8R8G8B8, D3DPOOL_MANAGED,
-                                 kD3dxDefault, kD3dxDefault, 0, &info,
-                                 nullptr, entryTex))) {
+    if (FAILED(hr) && FAILED(d3dx->fromFileExW(dev, path, kD3dxDefault, kD3dxDefault, 1, 0,
+                                               D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, kD3dxDefault,
+                                               kD3dxDefault, 0, &info, nullptr, entryTex))) {
         *entryTex = nullptr;
         return 0;
     }
@@ -261,24 +244,22 @@ int LoadTextureShared(unsigned char* sub, wchar_t* path) {     // 0x407490
     *entryName = static_cast<wchar_t*>(malloc(2 * plen));
     wcscpy_s(*entryName, plen, path);
 
-    // 内置 MMEffect：按路径登记新纹理（对应原版对
-    // D3DXCreateTextureFromFileExW 的 hook 记录；toonNN.bmp 裸名别名由
-    // MME 侧自动登记）。
+    // Embedded MMEffect: register new textures by path (corresponding to original
+    // D3DXCreateTextureFromFileExW hook records; bare toonNN.bmp aliases are
+    // registered automatically by MME).
     mme::RecordTexture(path, *entryTex);
 
     D3DLOCKED_RECT lr;
     // bottom-row probe locks read-only (x64 0x7FF7CB428E31 passes 0x10)
-    if (SUCCEEDED((*entryTex)->LockRect(0, &lr, nullptr,
-                                        D3DLOCK_READONLY))) {
-        const unsigned char* px =
-            static_cast<const unsigned char*>(lr.pBits) +
-            lr.Pitch * (info.Height ? info.Height - 1 : 0);
-        tagBytes[2] = px[0];  // blue
-        tagBytes[1] = px[1];  // green
-        tagBytes[0] = px[2];  // red
+    if (SUCCEEDED((*entryTex)->LockRect(0, &lr, nullptr, D3DLOCK_READONLY))) {
+        const unsigned char* px = static_cast<const unsigned char*>(lr.pBits) +
+                                  lr.Pitch * (info.Height ? info.Height - 1 : 0);
+        tagBytes[2] = px[0]; // blue
+        tagBytes[1] = px[1]; // green
+        tagBytes[0] = px[2]; // red
         (*entryTex)->UnlockRect(0);
     }
     return 1;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -195,30 +195,30 @@ void MmeComposeMaterialColor(ModelData* model, const RenderSnapshot& snap, int s
     *power = material.Power;
 }
 
-// [0x1800B2550] sub_180056C30 的 QI 目标：IID_IDirect3DTexture9（字节与
-// sas_exec.cpp 的 kIidD3DTexture9 一致）。本地定义，链接不依赖 dxguid.lib。
+// [0x1800B2550] QI target in sub_180056C30: IID_IDirect3DTexture9 (same bytes as
+// sas_exec.cpp's kIidD3DTexture9). Defined locally to avoid a dxguid.lib link dependency.
 static const GUID kToonIidD3DTexture9 = {
     0x85c31227, 0x3de5, 0x4f00, {0x9b, 0x3a, 0xf1, 0x1a, 0xc3, 0x8c, 0x18, 0xb5}};
 
-// [sub_180056C30 0x180056c30] FUN_180056c30 - 固定函数路径 TOONCOLOR 的取色。
-// 先按纹理指针查一张静态记忆化哈希表（原版 16 桶起步、节点内缓存 64 位
-// 混合哈希的单链侵入式表：插入 sub_180061780、扩容 sub_1800622D0、
-// atexit(sub_1800A3A10 -> sub_180062000) 时统一释放）。对表全局变量的全部
-// 交叉引用仅这组函数：进程生命期内没有任何清除/失效路径，设备 Reset 也
-// 不清表——正确性完全依赖指针身份，Reset 后新纹理得到新指针，旧条目只是
-// 留驻内存。移植用 unordered_map 等价表达（哈希函数不影响语义，不复刻）。
-// 未命中时从纹理内容取色：
-//   QueryInterface(IID_IDirect3DTexture9) -> GetSurfaceLevel(0)（最高分辨率
-//   级别，v表+0x90）-> GetDesc（v表+0x60），Format 仅接受 D3DFMT_R8G8B8
+// [sub_180056C30 0x180056c30] FUN_180056c30 - TOONCOLOR sampling in the fixed-function path.
+// First look up the texture pointer in a static memoization hash table (the original starts with 16 buckets and uses singly
+// linked intrusive nodes caching a mixed 64-bit hash; insertion sub_180061780, growth sub_1800622D0,
+// bulk release at atexit(sub_1800A3A10 -> sub_180062000)). All cross-references to the table globals
+// belong to this function family: no clearing/invalidation occurs during process lifetime, even on device Reset.
+// Correctness relies entirely on pointer identity; new textures get new pointers after Reset, while old entries merely
+// remain in memory. The port expresses this with unordered_map (the hash function does not affect semantics and is not replicated).
+// On a miss, sample the texture contents:
+//   QueryInterface(IID_IDirect3DTexture9) -> GetSurfaceLevel(0) (highest-resolution
+//   level, vtable+0x90) -> GetDesc (vtable+0x60); Format accepts only D3DFMT_R8G8B8
 //   (20) / D3DFMT_A8R8G8B8 (21) / D3DFMT_X8R8G8B8 (22) [0x180056e53]；
-//   LockRect(RECT{0, Height-1, 1, Height}, D3DLOCK_READONLY=0x10) [v表+0x68]
-//   只锁第 0 列最底行的单个像素（toon ramp 受光最强的一端），随后
-//   UnlockRect [v表+0x70]。内存字节序 B,G,R(,A)：r=pBits[2]、g=pBits[1]、
-//   b=pBits[0] 各 /255 [0x180056ea6-0x180056ecd]；a 仅 A8R8G8B8 取
-//   pBits[3]/255 [0x180056ed6-0x180056ee7]，R8G8B8/X8R8G8B8 固定 1.0。
-// 任何一步失败（QI、GetSurfaceLevel、格式不符、LockRect）保持回退
-// (1,1,1,1)（初值 0x180056dac）；除纹理为 null 外，失败结果同样写入记忆
-// 化表（null 在插入路径之前提前返回，0x180056dc3）。
+//   LockRect(RECT{0, Height-1, 1, Height}, D3DLOCK_READONLY=0x10) [vtable+0x68]
+//   locks only the bottom-row pixel in column 0 (the brightest end of the toon ramp), then
+//   UnlockRect [vtable+0x70]. Memory byte order is B,G,R(,A): r=pBits[2], g=pBits[1],
+//   b=pBits[0], each /255 [0x180056ea6-0x180056ecd]; alpha uses pBits[3]/255 only for A8R8G8B8
+//   [0x180056ed6-0x180056ee7], and is fixed at 1.0 for R8G8B8/X8R8G8B8.
+// Any failure (QI, GetSurfaceLevel, unsupported format, LockRect) retains fallback
+// (1,1,1,1) (initial value at 0x180056dac). Failures are memoized too, except for a null texture
+// (null returns before insertion at 0x180056dc3).
 void MmeComputeFixedFunctionToonColor(float out[4], IDirect3DBaseTexture9* texture)
 {
     struct ToonColorEntry { float c[4]; };
@@ -226,7 +226,7 @@ void MmeComputeFixedFunctionToonColor(float out[4], IDirect3DBaseTexture9* textu
 
     std::unordered_map<IDirect3DBaseTexture9*, ToonColorEntry>::const_iterator it =
         cache.find(texture);
-    if (it != cache.end()) {                          // 命中：直接回缓存值
+    if (it != cache.end()) {                          // Hit: return the cached value directly
         out[0] = it->second.c[0];
         out[1] = it->second.c[1];
         out[2] = it->second.c[2];
@@ -234,7 +234,7 @@ void MmeComputeFixedFunctionToonColor(float out[4], IDirect3DBaseTexture9* textu
         return;
     }
 
-    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;     // 回退初值 [0x180056dac]
+    float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;     // Initial fallback value [0x180056dac]
     if (texture != nullptr) {
         IDirect3DTexture9* tex9 = nullptr;
         if (SUCCEEDED(texture->QueryInterface(kToonIidD3DTexture9,
@@ -249,7 +249,7 @@ void MmeComputeFixedFunctionToonColor(float out[4], IDirect3DBaseTexture9* textu
                 if (desc.Format == D3DFMT_R8G8B8 ||     // 20 [0x180056e53]
                     desc.Format == D3DFMT_A8R8G8B8 ||   // 21
                     desc.Format == D3DFMT_X8R8G8B8) {   // 22
-                    // 只锁 (0, Height-1) 单像素：left=0, top=H-1, right=1,
+                    // Lock only pixel (0, Height-1): left=0, top=H-1, right=1,
                     // bottom=H [0x180056e59-0x180056e6c]。
                     RECT rc;
                     rc.left = 0;
@@ -276,7 +276,7 @@ void MmeComputeFixedFunctionToonColor(float out[4], IDirect3DBaseTexture9* textu
             }
             tex9->Release();                          // [0x180056f4a]
         }
-        // 失败回退值同样入表（原版插入在 null 检查之后无条件执行）。
+        // Cache failure fallbacks too (original insertion is unconditional after the null check).
         ToonColorEntry entry = { { r, g, b, a } };
         cache[texture] = entry;
     }
@@ -415,12 +415,10 @@ static unsigned int MmeTechniquePassCount(const SasEffect* sas, D3DXHANDLE handl
 // [sub_18001DD20] the load-time selection-table precompute. Scene-class
 // effects (ScriptClass scene) and any pre/post-process order clamp the
 // subset count to one, and pre/post effects build ONLY the object-mode
-// table [0x18001ddab-0x18001ddbe / 0x18001de1d]. The original's trailing
-// "Error: some techniques cannot run on this hardware:" report is dead code
-// in the shipped binary (its flag is only ever cleared - 0x18001DDBE /
-// 0x18001E2E8 / 0x18001E3C8 - so sub_18001DD20 always returns 0 and never
-// fails the load); a selection that resolves only to an invalid technique is
-// still stored and drawn. The same applies here.
+// table [0x18001ddab-0x18001ddbe / 0x18001de1d]. The engine validates the
+// selections before returning an effect for this model. The native error
+// report is reachable: its local counter is the invalid-handle set's size,
+// incremented by sub_18003BF10 (x86 sub_10003590).
 static void MmeBuildDrawTechniqueTable(MaterialBinding* binding, SasEffect* sas,
                                        ModelData* model)
 {
@@ -521,16 +519,16 @@ void MmeSelectMaterialEffectBinding(ModelData* model, void* bindingContext,
     }
 
     // [kit L25-27 / 0x18005a252] count = bindingContext ?
-    // *(u32*)(bindingContext+0x38) : 0 —— 原版 bindingContext 是 0x48 回合
-    // 包装（wrapper），+0x38（=56）是【当前 turn id】而非 materialCount：
-    // 基回合 wrapper == null → 0（场景键 0），离屏回合 → 该回合的 owner id
-    // （模型自身的 (0, model, *) 条目对它不可见）。本移植没有数值 turn id，
-    // 且离屏回合内的查找已由 MmeFindMaterialBinding 的离屏短路接管
-    // （carrier / DefaultEffect 行），manager-map 键只余基回合成分——恒 0。
-    // 旧实现把 bindingContext 当 ModelData* 读 materialCount()，在
-    // ScriptExternal 挂起窗口内 carrier 的 materialCount != 0 时会以
-    // (materialCount, model, subset) 错键查找（查到或撞错 owner 条目），
-    // 与原版 (turnId, model, subset) 语义不符——2026-09 修正。
+    // *(u32*)(bindingContext+0x38) : 0 - original bindingContext is a 0x48-byte turn
+    // wrapper; +0x38 (=56) is the current turn ID, not materialCount:
+    // base-turn wrapper == null -> 0 (scene key 0), offscreen turn -> its owner ID
+    // (the model's own (0, model, *) entries are invisible to it). This port has no numeric turn IDs,
+    // and MmeFindMaterialBinding's offscreen shortcut already handles lookups within offscreen turns
+    // (carrier / DefaultEffect rows), leaving only the base-turn component in manager-map keys: always 0.
+    // The old implementation treated bindingContext as ModelData* and read materialCount();
+    // when the carrier's materialCount != 0 during a ScriptExternal suspension window, this looked up
+    // the wrong (materialCount, model, subset) key (missing or colliding with an unrelated owner entry),
+    // violating original (turnId, model, subset) semantics; corrected in 2026-09.
     const unsigned int count = 0;
 
     // [kit L56-58] re-apply the existing binding for the snapshot subset.
@@ -573,11 +571,11 @@ void MmeApplyModelRenderSnapshot(ModelData* model, void* bindingContext,
     }
 
     // [kit L25-33] count from the binding context (+0x38, 0 when null).
-    // 同 MmeSelectMaterialEffectBinding 的键语义核验：原版 wrapper+0x38 是
-    // 【turn id】（基回合 0），不是 materialCount——离屏回合的 owner 键
-    // 查找由 MmeFindMaterialBinding 的离屏短路接管（carrier / DefaultEffect
-    // 行展开），这里只剩基回合的场景键 0。旧实现以 carrier 的
-    // materialCount() 构键，ScriptExternal 挂起窗口内键位错开（P2，修正）。
+    // Same key-semantics verification as MmeSelectMaterialEffectBinding: original wrapper+0x38 is
+    // turn ID (base turn 0), not materialCount. MmeFindMaterialBinding's offscreen shortcut handles
+    // offscreen owner-key lookups (carrier / DefaultEffect row expansion),
+    // leaving only base-turn scene key 0 here. The old implementation keyed by the carrier's
+    // materialCount(), producing incorrect keys during ScriptExternal suspension windows (P2, corrected).
     (void)bindingContext;
     const unsigned int count = 0;
 
@@ -591,12 +589,12 @@ void MmeApplyModelRenderSnapshot(ModelData* model, void* bindingContext,
         // not run: the owner-keyed entry exists as a null/empty binding and
         // the draw replays through the host pipeline (the draw wrapper's
         // raw forward), never through the main effect.
-        // [2026-09 P1] 窗口判定同步扩为"离屏渲染回合"（原版 wrapper 非
-        // null）：无 DefaultEffect 行的回合里 owner 键同样 miss（原版
-        // sub_18002D910 返回 0、sub_18005A1E0 不调 FUN_18001b940），模型
-        // 自身的 (0, model, -1) 绑定不可见——lazy resolve 同样不得运行
-        // （否则会把自身效果带给离屏目标）。carrier 的窗口查找在
-        // MmeFindMaterialBinding 的短路内已返回自身绑定，不会走到这里。
+        // [2026-09 P1] Also expand the window test to "offscreen render turn" (original wrapper non-
+        // null): turns without DefaultEffect rows also miss the owner key (original
+        // sub_18002D910 returns 0; sub_18005A1E0 does not call FUN_18001b940). The model's
+        // own (0, model, -1) binding is invisible, so lazy resolve must not run either
+        // (or it would apply the model's own effect to the offscreen target). Carrier-window lookup in
+        // MmeFindMaterialBinding's shortcut already returns its binding and never reaches this point.
         MmeContext* windowCtx = g_context;
         if (windowCtx != nullptr && MmeInOffscreenRenderTurn()) {
             return;
@@ -668,7 +666,7 @@ MaterialBinding* MmeResolveModelEffectBinding(ModelData* model)
     }
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = (ctx != nullptr) ? ctx->device : nullptr;
-    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, path);
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, path, model->materialCount());
     if (loaded == nullptr || loaded->effect == nullptr) {
         return nullptr;
     }
@@ -723,14 +721,14 @@ MaterialBinding* MmeActiveModelBinding(ModelData* model)
 bool MmeInOffscreenRenderTurn()
 {
     // [sub_18005A1E0 0x18005a24c-0x18005a268 / FUN_18005d130 L74740-74745]
-    // 原版离屏回合判定是 ctx+0x168 的 0x48 回合包装（wrapper）非空：
-    // wrapper+0x38 即绘制查找的 owner turn id（基回合 wrapper == null →
-    // 键 0）。移植的 ctx->currentBindingOffscreen 是 wrapper 的资源身份
-    // 对应物——pass_planner 在回合应用时按
-    // renderPassList[lastRepeatCount-1] 设置，基回合（lastRepeatCount < 1）
-    // 与回合切换的清空点写 null，非 null 即窗口。行 staging
-    // （ctx->offscreenDefaultEffect）只覆盖"行存在"的子集，不再作为窗口
-    // 判定：无 DefaultEffect 行的离屏目标同样处于窗口内。
+    // Original offscreen-turn detection checks whether ctx+0x168's 0x48-byte turn wrapper is non-null:
+    // wrapper+0x38 is the owner turn ID for draw lookups (base-turn wrapper == null ->
+    // key 0). The port's ctx->currentBindingOffscreen represents the wrapper's resource identity:
+    // pass_planner sets it when applying a turn from
+    // renderPassList[lastRepeatCount-1]; base turns (lastRepeatCount < 1)
+    // and turn-switch clearing points set null. Non-null means inside the window. Row staging
+    // (ctx->offscreenDefaultEffect) covers only the subset where a row exists, so it no longer determines the window:
+    // offscreen targets without DefaultEffect rows are inside the window too.
     MmeContext* ctx = g_context;
     return ctx != nullptr && ctx->currentBindingOffscreen != nullptr;
 }
@@ -738,13 +736,19 @@ bool MmeInOffscreenRenderTurn()
 MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex,
                                                 const std::string& effectPath)
 {
-    if (model == nullptr || subsetIndex < 0 || effectPath.empty()) {
+    if (model == nullptr || subsetIndex < 0) {
         return nullptr;
+    }
+    // FUN_18002CA80 retains an explicit subset record for "none". A null
+    // effect draws with the standard shader and blocks whole-object fallback.
+    if (effectPath.empty()) {
+        return MmeEnsureMaterialBinding(0, model, subsetIndex, nullptr,
+                                        std::string(), nullptr);
     }
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = ctx != nullptr ? ctx->device : nullptr;
     std::shared_ptr<LoadedEffect> loaded =
-        MmeEngineLoadEffectFile(device, effectPath);
+        MmeEngineLoadEffectFile(device, effectPath, model->materialCount());
     if (loaded == nullptr || loaded->effect == nullptr) {
         return nullptr;
     }
@@ -1046,7 +1050,8 @@ MaterialBinding* MmeResolveTurnEffectBinding(unsigned int turnId,
         }
         if (path.empty()) return nullptr;
     }
-    auto loaded = MmeEngineLoadEffectFile(g_context ? g_context->device : nullptr, path);
+    auto loaded = MmeEngineLoadEffectFile(g_context ? g_context->device : nullptr, path,
+                                         model->materialCount());
     if (!loaded || !loaded->effect) return nullptr;
     auto* binding = MmeEnsureMaterialBinding(turnId, model, subsetIndex,
         loaded->effect, path, loaded);
@@ -1117,8 +1122,8 @@ void MmeBindMaterialParameter(ModelData* model, ID3DXEffect* effect, int semanti
                 value[0] = value[1] = value[2] = value[3] = 1.0f;
             }
         } else if (model->kind() == 1 && snap.draw_type == 1) {
-            // [0x18005f069-0x18005f0ae] 无宿主 .fx 的固定函数分支：stage-0
-            // 纹理交给 FUN_180056c30 的移植取色后 Release。
+            // [0x18005f069-0x18005f0ae] Fixed-function branch without a host .fx: sample the stage-0
+            // texture through the port of FUN_180056c30, then Release it.
             IDirect3DDevice9* device = model->device();
             IDirect3DBaseTexture9* texture = nullptr;
             if (device != nullptr) {
@@ -1645,7 +1650,7 @@ bool SemanticEquals(const std::string& sem, const char* name)
 }
 
 // ---------------------------------------------------------------------------
-// [零分配热路径] The per-semantic dispatch classification, resolved ONCE per
+// [Allocation-free hot path] The per-semantic dispatch classification, resolved ONCE per
 // binding (the resolve pass of MmeBindSemanticParameters) and consumed by the
 // per-pass switch. The kind/base/flags/light encoding mirrors the original's
 // string dispatch order exactly: suffix decode (INVERSETRANSPOSE → TRANSPOSE
@@ -1769,12 +1774,12 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
         return;
     }
     ID3DXEffect* effect = binding->effect;
-    // [零分配热路径] 首次绑定把每个语义参数的分发决策定型进 semanticFast
-    // （kind/base/flags/light），此后每 pass 只走 switch——本函数在 rayMMD
-    // 下每帧被调用 300+ 次（~31 pass × 10 轮），原版 sub_18001B5B0 的预编
-    // 译 id 表是零分配的，任何每调用的 std::string/注解读取都会把渲染线程
-    // 变成每秒数十万次 malloc/free 的堆竞争源（曾在 free() 的堆锁上死锁，
-    // 见 2026-09-18 rayMMD 冻结分析）。
+    // [Allocation-free hot path] On first binding, cache each semantic parameter's dispatch decision in semanticFast
+    // (kind/base/flags/light); later passes only switch. Under rayMMD this function runs
+    // 300+ times per frame (~31 passes x 10 turns); original sub_18001B5B0's precompiled
+    // ID table is allocation-free. Per-call std::string/annotation reads would turn the rendering thread into
+    // a source of hundreds of thousands of malloc/free operations per second and heap contention (previously deadlocked on free()'s heap lock;
+    // see the 2026-09-18 rayMMD freeze analysis).
     if (!binding->semanticsResolved) {
         binding->semanticsResolved = true;
         D3DXEFFECT_DESC effectDesc{};
@@ -1789,8 +1794,8 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
                 binding->semanticHandles.push_back(h);
                 MaterialBinding::SemanticBind sb{};
                 sb.handle = h;
-                // kind/base/flags/light 的定型逻辑与下方分发一一对应（沿
-                // 用原实现的字符串语义，仅在首次执行）。
+                // kind/base/flags/light classification corresponds exactly to the dispatch below (reuse
+                // the original string semantics, only on first execution).
                 ClassifySemantic(effect, h, pd, &sb);
                 binding->semanticFast.push_back(sb);
             }
@@ -1856,7 +1861,7 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
             }
             D3DXMATRIX value = (sb.flags & 1) ? InverseOf(*matrix) : *matrix;
             if (sb.flags & 2) {
-                // [子项3; sub_18005EA40] the transpose runs IN PLACE
+                // [Subitem 3; sub_18005EA40] the transpose runs IN PLACE
                 // (D3DXMatrixTranspose(&v11, &v11) at 0x18005eba4), after the
                 // optional Inverse (0x18005eb90) and before SetMatrix
                 // (vtbl+304). The flags are NOT annotations: sub_18001B340
@@ -1966,7 +1971,7 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
             }
             continue;
         case kSemTextureSlot: {
-            // [子项1; sub_18005F7C0] the material texture semantics bind BY
+            // [Subitem 1; sub_18005F7C0] the material texture semantics bind BY
             // SEMANTIC to the snapshot texture slots; the SetTexture is
             // unconditional (a null texture clears the sampler).
             switch (sb.base) {
@@ -1977,7 +1982,7 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
             continue;
         }
         case kSemMouseDown: {
-            // [子项2; sub_180058340] the mouse button semantics are float4s
+            // [Subitem 2; sub_180058340] the mouse button semantics are float4s
             // frozen at the press; the port's g_mouseClick* arrays keep the
             // original's slot order (left, right, middle).
             setVector(g_mouseClickPos[sb.base][0], g_mouseClickPos[sb.base][1],
@@ -1985,7 +1990,7 @@ void MmeBindSemanticParameters(ModelData* model, MaterialBinding* binding,
             continue;
         }
         case kSemTextureModulation: {
-            // [子项2; sub_18005F830] the texture modulation semantics are
+            // [Subitem 2; sub_18005F830] the texture modulation semantics are
             // the SEMANTIC twins of the TexCAdd/TexCMul/SphCAdd/SphCMul
             // names and read the SAME snapshot slots. When the effect path
             // is unused or the object is not a PMD model the Add twins

@@ -31,7 +31,9 @@
 #pragma once
 
 #include <memory>
+#include <map>
 #include <string>
+#include <utility>
 
 #include <d3d9.h>
 #include <d3dx9.h>
@@ -51,24 +53,27 @@ struct LoadedEffect {
     std::string   errorText;          // last load error (logged by the apply path)
     unsigned long fileStamp = 0;      // FUN_18000B7F0 validity token (0 = invalid)
     SasEffect*    sas = nullptr;      // [FUN_18000c470] parsed SAS model (null when absent/invalid)
+    // Validation uses immutable parsed technique flags. Cache it per model
+    // material range and SkipValidation policy, outside the per-draw path.
+    std::map<std::pair<int, bool>, std::string> techniqueValidation;
     bool          doneLogged = false; // [0x18000bc10] sub_18000B880's "done.\n\n" latch:
                                       // written once per actual load/reload of this
                                       // file (v11 && *a1), not on cache hits (the
                                       // stamp-unchanged path keeps v11 clear).
 
-    // [0x18000b210] FUN_18000B210 - 条目"卸载"语义的完整承载。原版在缓存条目
-    // 的最后一个持有者（绑定对象 +0x08/+0x10 的 boost::shared_ptr 控制块，
-    // 0x18000b5e9-0x18000b611 的 InterlockedDecrement 链）死亡时执行：
-    //   1. [0x18000b24b-0x18000b316] effect(+0x00) 非空 → 先记日志
-    //      "Unload effect file: <path>\n\n"（在一切资源释放之前；失败条目
-    //      effect==null 静默卸载）；
-    //   2. [0x18000b31b-0x18000b5de] 逐语义资源释放（0x26/0x27/0x28/0x2C/
-    //      0x2D/0x2E/0x33：资源对象、offscreen 深度、动画纹理 vtable 释放，
-    //      容器逐节点 erase）——移植等价物 = SasUnload(sas)；
+    // [0x18000b210] FUN_18000B210 - complete entry unload semantics. The original executes this when a cache entry's
+    // final holder (boost::shared_ptr control block at binding +0x08/+0x10,
+    // InterlockedDecrement chain at 0x18000b5e9-0x18000b611) dies:
+    //   1. [0x18000b24b-0x18000b316] If effect(+0x00) is non-null, first log
+    //      "Unload effect file: <path>\n\n" (before releasing any resource; failed entries with
+    //      effect==null unload silently);
+    //   2. [0x18000b31b-0x18000b5de] Release semantic resources (0x26/0x27/0x28/0x2C/
+    //      0x2D/0x2E/0x33: resource objects, offscreen depth, animated textures via vtable,
+    //      erase containers node by node); port equivalent = SasUnload(sas);
     //   3. [0x18000b614-0x18000b623] ID3DXEffect::Release()（IUnknown
-    //      vtable+0x10）并置空。
-    // 移植把这套语义放进最后一个 shared_ptr 引用死亡时的析构函数，引用
-    // 计数时序与原版控制块 1:1（cache 与 MaterialBinding 各持一份引用）。
+    //      vtable+0x10) and clear the pointer.
+    // The port places these semantics in the destructor invoked when the final shared_ptr reference dies; reference
+    // timing exactly matches the original control block (cache and MaterialBinding each hold one reference).
     ~LoadedEffect();
 };
 
@@ -107,24 +112,31 @@ unsigned long MmeEngineQueryFileStamp(const std::string& pathAnsi);
 // the _INDEX/PSIZE15/MME_MIPMAP defines through the shared effect pool, and
 // records compile errors into the entry. Returns the cache entry; on failure
 // the entry's `effect` stays null and `errorText` carries the reason.
+// Validate the five draw tables for materialCount subsets on cache hits too;
+// a selection failure returns a null-effect diagnostic without changing the
+// compiled source or other assignments sharing it.
 std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
-                                                      const std::string& pathAnsi);
+                                                      const std::string& pathAnsi,
+                                                      int materialCount = 0);
 std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     IDirect3DDevice9* device, const std::shared_ptr<LoadedEffect>& source);
 
 // [0x18000b210] FUN_18000b210: drop the cache entry for `pathAnsi`, logging
 // "Unload effect file: <path>\n\n" first. No-op when the file is not cached.
-void MmeEngineUnloadEffectFile(const std::string& pathAnsi);
+// A failure releases only its own entry, never another assignment's cached
+// source. Omitting expected retains explicit file invalidation semantics.
+void MmeEngineUnloadEffectFile(const std::string& pathAnsi,
+    const std::shared_ptr<LoadedEffect>& expected = nullptr);
 
-// [0x18000a990] sub_18000A990（40004 Reload All = FUN_18002DEF0 的缓存侧）：
-// 清空效果缓存与纹理缓存两棵树（原版表头 0x1800D9C68 / 0x1800D9C88，逐节点
-// 销毁走 sub_1800203F0 / sub_180020580）。只丢弃缓存侧引用——仍被
-// MaterialBinding::owner 持有的条目活到该绑定重解析切换引用，最后一个引用
-// 死亡时经 ~LoadedEffect（FUN_18000B210 语义：Unload 日志 / SasUnload /
-// effect->Release）；无引用的条目当场死亡。缓存键差异说明：原版 DXEffectCache
-// 按 (path, stamp) 键控（sub_18000AB40 的查找键含 stamp，stamp 变化即失配
-// 重编译，旧条目滞留缓存直到本清理——原版的累积泄漏），移植按 path 键控、
-// 由卸载方显式 erase 补偿，可观察行为（变化即重载、Reload All 全清）一致。
+// [0x18000a990] sub_18000A990 (cache side of 40004 Reload All = FUN_18002DEF0):
+// clear the effect-cache and texture-cache trees (original heads 0x1800D9C68 / 0x1800D9C88, per-node
+// destruction through sub_1800203F0 / sub_180020580). Drop only cache references; entries still held by
+// MaterialBinding::owner survive until binding resolution switches references. Once the last reference
+// dies, ~LoadedEffect runs FUN_18000B210 semantics (Unload log / SasUnload /
+// effect->Release); unreferenced entries die immediately. Cache-key difference: original DXEffectCache
+// keys by (path, stamp) (sub_18000AB40 lookup includes stamp; a changed stamp misses and
+// recompiles, retaining old cache entries until this cleanup, an original accumulating leak). The port keys by path,
+// compensated by explicit erase on unload, preserving observable behavior (reload on changes, clear all on Reload All).
 void MmeEngineClearCaches();
 
 // Texture-cache probe (the DXTextureCache half). Returns the cached texture or

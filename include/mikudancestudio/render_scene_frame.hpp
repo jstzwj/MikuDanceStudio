@@ -8,19 +8,20 @@ namespace mikudancestudio::render {
 struct SceneFrameDesc {
     rhi::HistoryDesc target;
     rhi::ClearColor clear;
-    std::uint64_t scene=1,frame=0;
+    std::uint64_t scene = 1, frame = 0;
     std::optional<rhi::ModelViewport> initializedRegion;
 };
 struct SceneFrameStats {
-    std::size_t draws=0,resources=0,residentBytes=0,identityCount=0;
-    std::size_t stagedResourceBytes=0;
-    std::uint64_t publications=0;
+    std::size_t draws = 0, resources = 0, residentBytes = 0, identityCount = 0;
+    std::size_t stagedResourceBytes = 0;
+    std::uint64_t publications = 0;
 };
 class CpuSceneFrameAssembler {
 public:
-    CpuSceneFrameAssembler();~CpuSceneFrameAssembler();
-    CpuSceneFrameAssembler(const CpuSceneFrameAssembler&)=delete;
-    CpuSceneFrameAssembler& operator=(const CpuSceneFrameAssembler&)=delete;
+    CpuSceneFrameAssembler();
+    ~CpuSceneFrameAssembler();
+    CpuSceneFrameAssembler(const CpuSceneFrameAssembler&) = delete;
+    CpuSceneFrameAssembler& operator=(const CpuSceneFrameAssembler&) = delete;
     void Begin(const SceneFrameDesc&);
     bool Recording() const;
     void Append(SceneDrawReplacement);
@@ -31,7 +32,9 @@ public:
     rhi::ModelReplayResult Finish(rhi::ModelReplayStream&);
     void Reset(); // call with SceneRenderer::Unload before namespace reuse
     SceneFrameStats Stats() const;
+
 private:
-    struct Impl;std::unique_ptr<Impl> impl;
+    struct Impl;
+    std::unique_ptr<Impl> impl;
 };
 }

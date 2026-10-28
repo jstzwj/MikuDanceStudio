@@ -5,8 +5,16 @@
 #include <vector>
 namespace mikudancestudio::format {
 using ReadPmmBytes = bool (*)(void*, void*, std::size_t);
-enum class PmmVersion { V1, V2 };
-enum class PmmHeaderStatus { Ok, Truncated, InvalidSignature, UnsupportedVersion };
+enum class PmmVersion {
+    V1,
+    V2
+};
+enum class PmmHeaderStatus {
+    Ok,
+    Truncated,
+    InvalidSignature,
+    UnsupportedVersion
+};
 struct PmmHeader {
     PmmVersion version = PmmVersion::V1;
     std::size_t signatureOffset = 0;
@@ -27,7 +35,10 @@ struct PmmWaveReference {
     std::uint8_t enabled = 0;
     std::array<char, 256> pathBytes{};
 };
-enum class PmmBackgroundKind { Avi, Picture };
+enum class PmmBackgroundKind {
+    Avi,
+    Picture
+};
 struct PmmBackgroundReference {
     std::int32_t offsetX = 0, offsetY = 0;
     float scale = 0;
@@ -61,19 +72,13 @@ PmmHeaderStatus ParsePmmHeader(const std::array<char, 30>& bytes, PmmHeader& hea
 PmmHeaderStatus ReadPmmHeader(ReadPmmBytes read, void* context, PmmHeader& header);
 bool ReadPmmSceneSettings(ReadPmmBytes read, void* context, PmmVersion version,
                           PmmSceneSettings& settings);
-bool ReadPmmTimelineSettings(ReadPmmBytes read, void* context,
-                             PmmTimelineSettings& settings);
-bool ReadPmmWaveReference(ReadPmmBytes read, void* context,
-                          PmmWaveReference& reference);
-bool ReadPmmBackgroundReference(ReadPmmBytes read, void* context,
-                                PmmBackgroundKind kind,
+bool ReadPmmTimelineSettings(ReadPmmBytes read, void* context, PmmTimelineSettings& settings);
+bool ReadPmmWaveReference(ReadPmmBytes read, void* context, PmmWaveReference& reference);
+bool ReadPmmBackgroundReference(ReadPmmBytes read, void* context, PmmBackgroundKind kind,
                                 PmmBackgroundReference& reference);
-bool ReadPmmViewSettings(ReadPmmBytes read, void* context,
-                         PmmViewSettings& settings);
-bool ReadPmmPhysicsSettings(ReadPmmBytes read, void* context,
-                            PmmPhysicsSettings& settings);
-bool ReadPmmSceneAppearance(ReadPmmBytes read, void* context,
-                            PmmSceneAppearance& appearance);
+bool ReadPmmViewSettings(ReadPmmBytes read, void* context, PmmViewSettings& settings);
+bool ReadPmmPhysicsSettings(ReadPmmBytes read, void* context, PmmPhysicsSettings& settings);
+bool ReadPmmSceneAppearance(ReadPmmBytes read, void* context, PmmSceneAppearance& appearance);
 struct PmmBoneKey {
     std::uint32_t frame = 0, previous = 0, next = 0;
     std::array<std::uint8_t, 16> interpolation{};
@@ -142,20 +147,17 @@ struct PmmModelSelection {
     std::vector<std::uint8_t> groupFlags;
     std::uint32_t maxFrame = 0;
 };
-bool ReadPmmBoneKey(ReadPmmBytes read, void* context, PmmVersion version,
-                    PmmBoneKey& key);
+bool ReadPmmBoneKey(ReadPmmBytes read, void* context, PmmVersion version, PmmBoneKey& key);
 bool ReadPmmMorphKey(ReadPmmBytes read, void* context, PmmMorphKey& key);
-bool ReadPmmCameraKey(ReadPmmBytes read, void* context, PmmVersion version,
-                      PmmCameraKey& key);
+bool ReadPmmCameraKey(ReadPmmBytes read, void* context, PmmVersion version, PmmCameraKey& key);
 bool ReadPmmLightKey(ReadPmmBytes read, void* context, PmmLightKey& key);
 bool ReadPmmSelfShadowKey(ReadPmmBytes read, void* context, PmmSelfShadowKey& key);
 bool ReadPmmGravityKey(ReadPmmBytes read, void* context, PmmGravityKey& key);
 bool ReadPmmAccessoryKey(ReadPmmBytes read, void* context, PmmAccessoryKey& key);
-bool ReadPmmAccessoryState(ReadPmmBytes read, void* context,
-                           PmmVersion version, PmmAccessoryState& state);
-bool ReadPmmDisplayKey(ReadPmmBytes read, void* context, PmmVersion version,
-                       std::uint32_t ikCount, std::uint32_t rigidCount,
-                       PmmDisplayKey& key);
+bool ReadPmmAccessoryState(ReadPmmBytes read, void* context, PmmVersion version,
+                           PmmAccessoryState& state);
+bool ReadPmmDisplayKey(ReadPmmBytes read, void* context, PmmVersion version, std::uint32_t ikCount,
+                       std::uint32_t rigidCount, PmmDisplayKey& key);
 bool ReadPmmModelSelection(ReadPmmBytes read, void* context, PmmVersion version,
-                            std::uint8_t v2GroupCount, PmmModelSelection& selection);
+                           std::uint8_t v2GroupCount, PmmModelSelection& selection);
 }

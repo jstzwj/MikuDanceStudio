@@ -36,19 +36,19 @@ LONG WINAPI CrashReport(EXCEPTION_POINTERS* exception){
 int Read(void* p,void* data,std::size_t size){auto& file=*static_cast<std::istream*>(p);file.read(static_cast<char*>(data),size);return int(file.gcount());}
 struct Reference {
     PhysicsScene physics{};SceneSession session;CpuSimulationState state;bool playing=false;
-    std::array<std::vector<unsigned char>,255> models;
-    std::array<unsigned char*,255> slots{};
-    ~Reference(){for(auto i=models.rbegin();i!=models.rend();++i)if(!i->empty())ModelDispose(i->data());DisposePhysicsWorld(&physics);}
+    std::array<std::unique_ptr<mdl::ModelRecord>,255> models;
+    std::array<mdl::ModelRecord*,255> slots{};
+    ~Reference(){for(auto i=models.rbegin();i!=models.rend();++i)if(*i)ModelDispose(i->get());DisposePhysicsWorld(&physics);}
     CpuSimulationContext Context(){return {{slots.data(),slots.size()},physics.world,LegacyCpuSimulationOps()};}
     bool Load(const SceneSession& source,const std::map<std::uint8_t,std::filesystem::path>& paths,std::string& reason){
         session=source;if(!SceneConstruct(&physics,nullptr))return false;
         state.physicsMode=session.Document().physics.playbackMode;
-        for(const auto& source:session.Document().models){auto& bytes=models[source.slot];bytes.resize(mdl::kSize);auto* raw=bytes.data();ModelInitDefaults(raw);PathResolutionWorkspace workspace{};
+        for(const auto& source:session.Document().models){auto& record=models[source.slot];record=std::make_unique<mdl::ModelRecord>();auto* raw=record.get();ModelInitDefaults(raw);PathResolutionWorkspace workspace{};
             if(!ModelLoadPMD(raw,nullptr,paths.at(source.slot).c_str(),nullptr,0,0,1,&physics,workspace,ModelResourceMode::CpuOnly) ||
                !PublishCpuPmmTracks(raw,source,session.Document().envelope.header.version,reason))return false;
             slots[source.slot]=raw;
             // Independent assertions of disk-to-native link/payload publication.
-            const auto& m=*mdl::Mdl(raw);
+            const auto& m=*raw;
             for(std::size_t n=0;n<source.boneKeys.dense.size();++n)if(m.boneKeys[n].next!=source.boneKeys.dense[n].next)return false;
             for(const auto& key:source.boneKeys.sparse)if(m.boneKeys[key.index].physicsDisabled!=key.value.physicsDisabled ||
                 std::memcmp(m.boneKeys[key.index].position,key.value.position.data(),12))return false;
@@ -59,7 +59,7 @@ struct Reference {
         if(!ApplyMappedCpuPmmPose(slots[pose.slot],session.Document().models[n],pose,session.Document().envelope.header.version))return false;}return true;}
     void Gravity(){const auto& g=session.Pose().gravity;state.gravityMagnitude=g.acceleration;state.gravityDirection=g.direction;state.gravityNoise=g.noise;state.gravityNoiseEnabled=g.noiseEnabled;}
     bool Seek(unsigned frame){if(!session.Seek(frame))return false;playing=false;
-        for(auto* raw:slots)if(raw)SeekModelFrame(raw,int(frame),state.physicsMode);
+        for(auto* raw:slots)if(raw)SeekModelFrame(*raw,int(frame),state.physicsMode);
         if(!Apply())return false;Gravity();state.cursorSeconds=float(frame)/30;state.remainingSeconds=0;state.resetPending=1;
         cpu_reference::Frame(state,Context(),{});return true;}
     bool Start(){if(!session.StartPlayback() || !session.Advance(state.cursorSeconds))return false;
@@ -71,7 +71,7 @@ struct Reference {
     void Advance(float target,float delta){state.remainingSeconds=delta;cpu_reference::Catchup(state,Context(),target,-1,{this,AdvanceTracks,nullptr});
         CpuSimulationFrame frame;frame.deltaSeconds=delta;frame.playbackActive=playing;cpu_reference::Frame(state,Context(),frame);}
     bool Equal(const RuntimeCpuScene& scene,unsigned checkpoint){
-        for(const auto& source:session.Document().models){CpuSolvedModel actual;if(!scene.Snapshot(source.slot,actual))return false;const auto& m=*mdl::Mdl(slots[source.slot]);
+        for(const auto& source:session.Document().models){CpuSolvedModel actual;if(!scene.Snapshot(source.slot,actual))return false;const auto& m=*slots[source.slot];
             if(actual.visible!=m.loadComplete || actual.displayCursor!=m.displayKeyCursor || actual.displayActive!=m.displayTrackActive)return false;
             for(unsigned n=0;n<m.boneCount;++n){const auto& x=actual.bones[n];const auto& y=m.boneTable[n];
                 d3dx::D3DXMATRIXF rest,skin,expected;auto& math=d3dx::Get();

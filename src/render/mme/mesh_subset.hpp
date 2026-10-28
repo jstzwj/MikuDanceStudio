@@ -10,11 +10,10 @@ namespace mikudancestudio::mme {
 // D3DX's 32-bit mesh Resize selects its UP fallback using buffer capacity,
 // not the current subset or live vertex/face count. Keep that path inside
 // D3DX: the original MME wrapper forwards DrawPrimitiveUP unchanged.
-template <typename Mesh, typename Device, typename VertexBuffer,
-          typename IndexBuffer, typename IndexedDraw>
-HRESULT DrawMeshSubsetWithFallback(Mesh& mesh, Device& device,
-                                  VertexBuffer& vertices, IndexBuffer& indices,
-                                  DWORD attribute, IndexedDraw indexedDraw) {
+template <typename Mesh, typename Device, typename VertexBuffer, typename IndexBuffer,
+          typename IndexedDraw>
+HRESULT DrawMeshSubsetWithFallback(Mesh& mesh, Device& device, VertexBuffer& vertices,
+                                   IndexBuffer& indices, DWORD attribute, IndexedDraw indexedDraw) {
     constexpr DWORD mesh32Bit = 0x001; // D3DXMESH_32BIT from the D3DX9 SDK.
     if ((mesh.GetOptions() & mesh32Bit) != 0) {
         D3DCAPS9 caps{};
@@ -32,8 +31,7 @@ HRESULT DrawMeshSubsetWithFallback(Mesh& mesh, Device& device,
         const DWORD stride = mesh.GetNumBytesPerVertex();
         if (stride == 0)
             return D3DERR_INVALIDCALL;
-        if (caps.MaxVertexIndex <= 0xffffu ||
-            caps.MaxVertexIndex < vertexDesc.Size / stride ||
+        if (caps.MaxVertexIndex <= 0xffffu || caps.MaxVertexIndex < vertexDesc.Size / stride ||
             caps.MaxPrimitiveCount < indexDesc.Size / (3 * sizeof(DWORD)))
             return mesh.DrawSubset(attribute);
     }
@@ -50,8 +48,7 @@ struct MeshSubsetPlan {
 // It prefers table[attribute] when that entry has the requested id, then
 // scans for the first match. Do not merge or draw duplicate table entries.
 // Evidence: GXTri3Mesh<ushort>::DrawSubset 18006AB3C and <uint> 18006C854.
-template <typename Mesh>
-HRESULT PlanMeshSubset(Mesh& mesh, DWORD attribute, MeshSubsetPlan& plan) {
+template <typename Mesh> HRESULT PlanMeshSubset(Mesh& mesh, DWORD attribute, MeshSubsetPlan& plan) {
     plan = {};
     DWORD count = 0;
     HRESULT hr = mesh.GetAttributeTable(nullptr, &count);
@@ -118,16 +115,15 @@ HRESULT PlanMeshSubset(Mesh& mesh, DWORD attribute, MeshSubsetPlan& plan) {
 }
 
 template <typename Draw>
-HRESULT DrawMeshSubsetPlan(const MeshSubsetPlan& plan, DWORD totalFaces,
-                          bool indices32Bit, Draw draw) {
+HRESULT DrawMeshSubsetPlan(const MeshSubsetPlan& plan, DWORD totalFaces, bool indices32Bit,
+                           Draw draw) {
     HRESULT hr = S_OK;
     for (const auto& range : plan.ranges) {
         const HRESULT drawn = draw(range);
         // The 16-bit unoptimized implementation ignores intermediate run
         // HRESULTs; only a matching run at the final face returns its HRESULT.
         // The 32-bit implementation stops on any draw failure.
-        if (plan.attributeTable || indices32Bit ||
-            range.FaceStart + range.FaceCount == totalFaces)
+        if (plan.attributeTable || indices32Bit || range.FaceStart + range.FaceCount == totalFaces)
             hr = drawn;
         if (indices32Bit && FAILED(drawn))
             break;

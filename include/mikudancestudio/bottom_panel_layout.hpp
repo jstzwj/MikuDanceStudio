@@ -17,20 +17,13 @@ struct BottomPanelLayout {
 };
 
 inline BottomPanelLayout ComputeBottomPanelLayout(const MMDApp* app) {
-    const bool camera =
-        app->state.optflag[0] != 0;
-    const bool cameraExpanded =
-        app->state.optflag[1] != 0;
-    const bool lightExpanded =
-        app->state.optflag[2] != 0;
-    const bool accessoryExpanded =
-        app->state.optflag[3] != 0;
-    const bool boneExpanded =
-        app->state.optflag[4] != 0;
-    const bool facialExpanded =
-        app->state.optflag[5] != 0;
-    const bool shadowExpanded =
-        app->state.optflag[6] != 0;
+    const bool camera = app->CameraMode() != 0;
+    const bool cameraExpanded = app->PanelExpanded(UiPanel::Camera) != 0;
+    const bool lightExpanded = app->PanelExpanded(UiPanel::Light) != 0;
+    const bool accessoryExpanded = app->PanelExpanded(UiPanel::Accessory) != 0;
+    const bool boneExpanded = app->PanelExpanded(UiPanel::Bone) != 0;
+    const bool facialExpanded = app->PanelExpanded(UiPanel::Morph) != 0;
+    const bool shadowExpanded = app->PanelExpanded(UiPanel::SelfShadow) != 0;
 
     BottomPanelLayout result{};
     if (camera)
@@ -50,9 +43,7 @@ inline BottomPanelLayout ComputeBottomPanelLayout(const MMDApp* app) {
     if (camera && !shadowExpanded)
         result.afterSelfShadow += 159;
 
-    result.accessory = camera
-        ? result.afterSelfShadow - 180
-        : result.afterSelfShadow;
+    result.accessory = camera ? result.afterSelfShadow - 180 : result.afterSelfShadow;
     result.final = result.accessory;
     if (camera && !accessoryExpanded)
         result.final += 178;
@@ -61,4 +52,4 @@ inline BottomPanelLayout ComputeBottomPanelLayout(const MMDApp* app) {
     return result;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

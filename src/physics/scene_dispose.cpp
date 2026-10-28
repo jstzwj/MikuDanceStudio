@@ -3,14 +3,13 @@
 
 namespace mikudancestudio {
 namespace {
-template <typename T>
-void ReleaseOwned(T*& value) {
+template <typename T> void ReleaseOwned(T*& value) {
     if (value != nullptr) {
         value->Release();
         value = nullptr;
     }
 }
-}  // namespace
+} // namespace
 
 void DisposePhysicsWorld(PhysicsScene* scene) {
     PhysicsWorldState physics;
@@ -40,4 +39,4 @@ void DisposePhysicsWorld(PhysicsScene* scene) {
     ReleaseOwned(scene->gizmoBoxSelIB);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

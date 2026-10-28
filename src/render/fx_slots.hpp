@@ -18,19 +18,16 @@ inline HRESULT SetTechnique(void* effect, const char* technique) {
 inline HRESULT SetBool(void* effect, const char* parameter, int value) {
     return Effect(effect)->SetBool(parameter, value);
 }
-inline HRESULT SetFloatArray(void* effect, const char* parameter,
-                             const float* values, UINT count) {
+inline HRESULT SetFloatArray(void* effect, const char* parameter, const float* values, UINT count) {
     return Effect(effect)->SetFloatArray(parameter, values, count);
 }
-inline HRESULT SetMatrix(void* effect, const char* parameter,
-                         const d3dx::D3DXMATRIXF* matrix) {
+inline HRESULT SetMatrix(void* effect, const char* parameter, const d3dx::D3DXMATRIXF* matrix) {
     D3DMATRIX value;
     static_assert(sizeof(value) == sizeof(*matrix), "D3DX matrix ABI");
     std::memcpy(&value, matrix, sizeof(value));
     return Effect(effect)->SetMatrix(parameter, &value);
 }
-inline HRESULT GetMatrix(void* effect, const char* parameter,
-                         d3dx::D3DXMATRIXF* matrix) {
+inline HRESULT GetMatrix(void* effect, const char* parameter, d3dx::D3DXMATRIXF* matrix) {
     D3DMATRIX value;
     std::memcpy(&value, matrix, sizeof(value));
     const HRESULT hr = Effect(effect)->GetMatrix(parameter, &value);

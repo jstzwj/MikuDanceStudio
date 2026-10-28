@@ -1019,13 +1019,13 @@ static HRESULT SasApplyCommandImpl(SasEffect* sas, const SasScriptCmd& cmd,
                     owned = true;
                 }
             }
-            // [FUN_18001c760 0x18001c7dc-0x18001c9c0] saved 只在 run state
-            // 构造期（FUN_18001b7b0 0x18001b818-0x18001b83c）一次性定格，
-            // 命令实施器的 bind 路径从不 GetRenderTarget 回读当前目标。
-            // 这里绝不重捕获：MRT1..3 的 saved 合法定格值就是 nullptr（宿主
-            // 未绑多目标），若在 redirect 时现抓，会把前一个 pass 留下的
-            // 中间渲染目标写进 saved，LABEL_13 恢复（0x18001bd5a 起）就会
-            // 恢复到错误目标（ray-MMD 每 pass 重设 MRT 必踩）。
+            // [FUN_18001c760 0x18001c7dc-0x18001c9c0] saved is captured only once during run-state
+            // construction (FUN_18001b7b0 0x18001b818-0x18001b83c);
+            // the command executor's bind path never reads the current target back with GetRenderTarget.
+            // Never recapture here: nullptr is the valid saved value for MRT1..3 (the host
+            // has no multiple targets bound). Capturing during redirect would store the intermediate render target
+            // left by the previous pass in saved, causing LABEL_13 restoration (from 0x18001bd5a)
+            // to restore the wrong target (inevitable when ray-MMD resets MRT each pass).
             hr = device->SetRenderTarget(static_cast<UINT>(slot), surf);
             if (hr != S_OK) {
                 // [LABEL_44] failure: the redirect bit, the active-target
@@ -1110,9 +1110,9 @@ static HRESULT SasApplyCommandImpl(SasEffect* sas, const SasScriptCmd& cmd,
                 }
                 tex->Release();      // [case 5 tail] the GetTexture reference
             }
-            // [FUN_18001c760 case 5 0x18001d2f4-0x18001d3b5] 与 color 路径
-            // 同理：savedDepth 只在构造期（0x18001b86a）定格，bind 路径无
-            // GetDepthStencilSurface 回读；redirect 时不得现抓当前深度面。
+            // [FUN_18001c760 case 5 0x18001d2f4-0x18001d3b5] As with the color path,
+            // savedDepth is captured only at construction (0x18001b86a); the bind path never reads back with
+            // GetDepthStencilSurface. Do not capture the current depth surface during redirect.
             hr = device->SetDepthStencilSurface(surf);
             if (hr != S_OK) {
                 // [LABEL_160] failure: the redirect bit and the active-depth
@@ -1266,10 +1266,10 @@ HRESULT SasRunPassCommands(SasEffect* sas, SasTechnique* tech, SasPass* pass,
         }
         return finalHr;
     }
-    // [FUN_18001bf80 0x18001bfef / 0x18001c047] hasScript 为真时命令表为空
-    // （(end-begin)/24==0）→ 直接 return 0，不绘制：一个带空脚本的 pass
-    // 不是默认 host 绘制（只有无 Script 注解的 pass 才默认绘制）。
-    // 下面的命令循环对空表自然空转返回 S_OK，与原版一致。
+    // [FUN_18001bf80 0x18001bfef / 0x18001c047] When hasScript is true and the command list is empty
+    // ((end-begin)/24==0), return 0 immediately without drawing: a pass with an empty script
+    // does not use default host drawing (only passes without a Script annotation draw by default).
+    // The command loop below naturally does nothing for an empty list and returns S_OK, matching the original.
     for (size_t i = 0; i < pass->cmds.size(); ++i) {
         HRESULT hr = SasApplyCommandImpl(sas, pass->cmds[i], device, state,
                                          tech != nullptr ? tech->handle : nullptr,

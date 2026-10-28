@@ -5,6 +5,9 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -15,6 +18,7 @@
 #include <cstring>
 
 #include "fx_slots.hpp"
+#include "model_materials.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -43,8 +47,7 @@ MaterialStateCapture g_materialCapture;
 
 bool IsRegularCaptureFile(const char* path) {
     const DWORD attributes = GetFileAttributesA(path);
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
 void WriteWideHex(FILE* stream, const wchar_t* value, std::size_t limit) {
@@ -62,19 +65,18 @@ bool BeginMaterialStateCapture() {
         return false;
 
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return false;
 
     char stable[2]{};
-    if (GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_STABLE_CAPTURE", stable,
-                                sizeof(stable)) == 1 && stable[0] == '1') {
+    if (GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_STABLE_CAPTURE", stable, sizeof(stable)) == 1 &&
+        stable[0] == '1') {
         char requireLine[2]{};
-        const bool refreshed =
-            GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_REQUIRE_LINE", requireLine,
-                                    sizeof(requireLine)) == 1 &&
-            requireLine[0] == '1';
+        const bool refreshed = GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_REQUIRE_LINE",
+                                                       requireLine, sizeof(requireLine)) == 1 &&
+                               requireLine[0] == '1';
         char gate[MAX_PATH]{};
         std::snprintf(gate, sizeof(gate), "%s\\%s", directory,
                       refreshed ? "vb.capture.active" : "vb.capture.ready");
@@ -91,20 +93,17 @@ bool BeginMaterialStateCapture() {
         return false;
     g_materialCapture.first = true;
     g_materialCapture.sequence = 0;
-    std::fputs("{\"schema\":1,\"renderer\":\"fixed\",\"materials\":[\n",
-               g_materialCapture.stream);
+    std::fputs("{\"schema\":1,\"renderer\":\"fixed\",\"materials\":[\n", g_materialCapture.stream);
     return true;
 }
 
-DWORD TextureStageState(IDirect3DDevice9* device, DWORD stage,
-                        D3DTEXTURESTAGESTATETYPE type) {
+DWORD TextureStageState(IDirect3DDevice9* device, DWORD stage, D3DTEXTURESTAGESTATETYPE type) {
     DWORD value = 0;
     device->GetTextureStageState(stage, type, &value);
     return value;
 }
 
-DWORD SamplerState(IDirect3DDevice9* device, DWORD stage,
-                   D3DSAMPLERSTATETYPE type) {
+DWORD SamplerState(IDirect3DDevice9* device, DWORD stage, D3DSAMPLERSTATETYPE type) {
     DWORD value = 0;
     device->GetSamplerState(stage, type, &value);
     return value;
@@ -116,9 +115,9 @@ DWORD RenderState(IDirect3DDevice9* device, D3DRENDERSTATETYPE type) {
     return value;
 }
 
-void DumpMaterialState(MMDApp* app, IDirect3DDevice9* device,
-                       unsigned char* model, unsigned char* material,
-                       UINT materialIndex, UINT firstIndex) {
+void DumpMaterialState(MMDApp* app, IDirect3DDevice9* device, const mdl::ModelRecord* model,
+                       const mdl::ModelMaterialRecord& record, UINT materialIndex,
+                       UINT firstIndex) {
     FILE* stream = g_materialCapture.stream;
     if (stream == nullptr)
         return;
@@ -131,23 +130,20 @@ void DumpMaterialState(MMDApp* app, IDirect3DDevice9* device,
             break;
         }
     }
-    const mdl::ModelMaterialRecord& record = mdl::Material(material);
     DWORD alphaBits = 0;
     std::memcpy(&alphaBits, &record.diffuse[3], sizeof(alphaBits));
     std::fprintf(stream,
-        "%s{\"sequence\":%u,\"model_slot\":%d,\"model_order\":%u,"
-        "\"material\":%u,\"first_index\":%u,\"index_count\":%u,"
-        "\"model_format\":%u,\"alpha_bits\":\"%08X\","
-        "\"toon_index\":%d,\"edge_flag\":%u,\"pmx_flags\":%u,"
-        "\"sphere_mode\":%u,\"main_path_utf16\":",
-        g_materialCapture.first ? "" : ",\n", g_materialCapture.sequence++,
-        slot, static_cast<unsigned>(mdl::Mdl(model)->comboSelIndex), materialIndex, firstIndex,
-        record.faceVertexCount, static_cast<unsigned>(mdl::Mdl(model)->physicsMode),
-        alphaBits, static_cast<int>(
-            static_cast<std::int8_t>(record.toonReference)),
-        static_cast<unsigned>(record.doubleSided),
-        static_cast<unsigned>(record.flags),
-        static_cast<unsigned>(record.sphereMode));
+                 "%s{\"sequence\":%u,\"model_slot\":%d,\"model_order\":%u,"
+                 "\"material\":%u,\"first_index\":%u,\"index_count\":%u,"
+                 "\"model_format\":%u,\"alpha_bits\":\"%08X\","
+                 "\"toon_index\":%d,\"edge_flag\":%u,\"pmx_flags\":%u,"
+                 "\"sphere_mode\":%u,\"main_path_utf16\":",
+                 g_materialCapture.first ? "" : ",\n", g_materialCapture.sequence++, slot,
+                 static_cast<unsigned>(model->comboSelIndex), materialIndex, firstIndex,
+                 record.faceVertexCount, static_cast<unsigned>(model->physicsMode), alphaBits,
+                 static_cast<int>(static_cast<std::int8_t>(record.toonReference)),
+                 static_cast<unsigned>(record.doubleSided), static_cast<unsigned>(record.flags),
+                 static_cast<unsigned>(record.sphereMode));
     WriteWideHex(stream, record.texturePath, 280);
     std::fputs(",\"sphere_path_utf16\":", stream);
     WriteWideHex(stream, record.spherePath, 280);
@@ -160,50 +156,47 @@ void DumpMaterialState(MMDApp* app, IDirect3DDevice9* device,
         if (texture != nullptr)
             texture->Release();
         D3DMATRIX transform{};
-        device->GetTransform(static_cast<D3DTRANSFORMSTATETYPE>(
-                                 D3DTS_TEXTURE0 + stage), &transform);
+        device->GetTransform(static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_TEXTURE0 + stage),
+                             &transform);
         DWORD matrixBits[16]{};
         std::memcpy(matrixBits, &transform, sizeof(matrixBits));
         std::fprintf(stream,
-            "%s{\"stage\":%u,\"role\":\"%s\",\"bound\":%s,"
-            "\"color_op\":%u,\"color_arg1\":%u,\"color_arg2\":%u,"
-            "\"alpha_op\":%u,\"alpha_arg1\":%u,\"alpha_arg2\":%u,"
-            "\"texcoord_index\":%u,\"transform_flags\":%u,"
-            "\"address_u\":%u,\"address_v\":%u,\"mag_filter\":%u,"
-            "\"min_filter\":%u,\"mip_filter\":%u,\"transform_bits\":[",
-            stage == 0 ? "" : ",", stage,
-            stage == 0 ? "toon" : stage == 1 ? "cascade1" : "cascade2",
-            bound ? "true" : "false",
-            TextureStageState(device, stage, D3DTSS_COLOROP),
-            TextureStageState(device, stage, D3DTSS_COLORARG1),
-            TextureStageState(device, stage, D3DTSS_COLORARG2),
-            TextureStageState(device, stage, D3DTSS_ALPHAOP),
-            TextureStageState(device, stage, D3DTSS_ALPHAARG1),
-            TextureStageState(device, stage, D3DTSS_ALPHAARG2),
-            TextureStageState(device, stage, D3DTSS_TEXCOORDINDEX),
-            TextureStageState(device, stage, D3DTSS_TEXTURETRANSFORMFLAGS),
-            SamplerState(device, stage, D3DSAMP_ADDRESSU),
-            SamplerState(device, stage, D3DSAMP_ADDRESSV),
-            SamplerState(device, stage, D3DSAMP_MAGFILTER),
-            SamplerState(device, stage, D3DSAMP_MINFILTER),
-            SamplerState(device, stage, D3DSAMP_MIPFILTER));
+                     "%s{\"stage\":%u,\"role\":\"%s\",\"bound\":%s,"
+                     "\"color_op\":%u,\"color_arg1\":%u,\"color_arg2\":%u,"
+                     "\"alpha_op\":%u,\"alpha_arg1\":%u,\"alpha_arg2\":%u,"
+                     "\"texcoord_index\":%u,\"transform_flags\":%u,"
+                     "\"address_u\":%u,\"address_v\":%u,\"mag_filter\":%u,"
+                     "\"min_filter\":%u,\"mip_filter\":%u,\"transform_bits\":[",
+                     stage == 0 ? "" : ",", stage,
+                     stage == 0   ? "toon"
+                     : stage == 1 ? "cascade1"
+                                  : "cascade2",
+                     bound ? "true" : "false", TextureStageState(device, stage, D3DTSS_COLOROP),
+                     TextureStageState(device, stage, D3DTSS_COLORARG1),
+                     TextureStageState(device, stage, D3DTSS_COLORARG2),
+                     TextureStageState(device, stage, D3DTSS_ALPHAOP),
+                     TextureStageState(device, stage, D3DTSS_ALPHAARG1),
+                     TextureStageState(device, stage, D3DTSS_ALPHAARG2),
+                     TextureStageState(device, stage, D3DTSS_TEXCOORDINDEX),
+                     TextureStageState(device, stage, D3DTSS_TEXTURETRANSFORMFLAGS),
+                     SamplerState(device, stage, D3DSAMP_ADDRESSU),
+                     SamplerState(device, stage, D3DSAMP_ADDRESSV),
+                     SamplerState(device, stage, D3DSAMP_MAGFILTER),
+                     SamplerState(device, stage, D3DSAMP_MINFILTER),
+                     SamplerState(device, stage, D3DSAMP_MIPFILTER));
         for (int word = 0; word < 16; ++word)
-            std::fprintf(stream, "%s\"%08X\"", word == 0 ? "" : ",",
-                         matrixBits[word]);
+            std::fprintf(stream, "%s\"%08X\"", word == 0 ? "" : ",", matrixBits[word]);
         std::fputs("]}", stream);
     }
     std::fprintf(stream,
-        "],\"render_states\":{\"cull_mode\":%u,\"z_func\":%u,"
-        "\"alpha_blend\":%u,\"alpha_test\":%u,\"src_blend\":%u,"
-        "\"dest_blend\":%u,\"lighting\":%u},"
-        "\"light_bits\":[",
-        RenderState(device, D3DRS_CULLMODE),
-        RenderState(device, D3DRS_ZFUNC),
-        RenderState(device, D3DRS_ALPHABLENDENABLE),
-        RenderState(device, D3DRS_ALPHATESTENABLE),
-        RenderState(device, D3DRS_SRCBLEND),
-        RenderState(device, D3DRS_DESTBLEND),
-        RenderState(device, D3DRS_LIGHTING));
+                 "],\"render_states\":{\"cull_mode\":%u,\"z_func\":%u,"
+                 "\"alpha_blend\":%u,\"alpha_test\":%u,\"src_blend\":%u,"
+                 "\"dest_blend\":%u,\"lighting\":%u},"
+                 "\"light_bits\":[",
+                 RenderState(device, D3DRS_CULLMODE), RenderState(device, D3DRS_ZFUNC),
+                 RenderState(device, D3DRS_ALPHABLENDENABLE),
+                 RenderState(device, D3DRS_ALPHATESTENABLE), RenderState(device, D3DRS_SRCBLEND),
+                 RenderState(device, D3DRS_DESTBLEND), RenderState(device, D3DRS_LIGHTING));
     // Emit the actual typed light record.  Reading this as independent x86
     // dwords bypassed the x64 state-layout translation and made the capture
     // itself report unrelated values.
@@ -211,14 +204,13 @@ void DumpMaterialState(MMDApp* app, IDirect3DDevice9* device,
     const D3DLIGHT9& sceneLight = app->SceneLight();
     std::memcpy(lightBits, &sceneLight, sizeof(lightBits));
     for (int word = 0; word < 24; ++word) {
-        std::fprintf(stream, "%s\"%08X\"", word == 0 ? "" : ",",
-                     lightBits[word]);
+        std::fprintf(stream, "%s\"%08X\"", word == 0 ? "" : ",", lightBits[word]);
     }
     std::fputs("],\"toon_ptrs\":[", stream);
     for (int slot = 0; slot < 11; ++slot) {
-        std::fprintf(stream, "%s\"%08X\"", slot == 0 ? "" : ",",
-                     static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(
-                         app->ToonTexture(slot))));
+        std::fprintf(
+            stream, "%s\"%08X\"", slot == 0 ? "" : ",",
+            static_cast<unsigned>(reinterpret_cast<std::uintptr_t>(app->ToonTexture(slot))));
     }
     std::fputs("]}", stream);
     g_materialCapture.first = false;
@@ -232,10 +224,14 @@ void EndMaterialStateCapture() {
     g_materialCapture.stream = nullptr;
 }
 #else
-inline bool BeginMaterialStateCapture() { return false; }
-inline void DumpMaterialState(MMDApp*, IDirect3DDevice9*, unsigned char*,
-                              unsigned char*, UINT, UINT) {}
-inline void EndMaterialStateCapture() {}
+inline bool BeginMaterialStateCapture() {
+    return false;
+}
+inline void DumpMaterialState(MMDApp*, IDirect3DDevice9*, const mdl::ModelRecord*,
+                              const mdl::ModelMaterialRecord&, UINT, UINT) {
+}
+inline void EndMaterialStateCapture() {
+}
 #endif
 
 // Effect calls go through the shared slot-numbered helpers in
@@ -271,13 +267,11 @@ IDirect3DTexture9* FindCachedTexture(D3DRenderer* sub, const wchar_t* path) {
     if (path == nullptr || path[0] == L'\0')
         return nullptr;
     for (int i = 0; i < 10000; ++i) {
-        wchar_t* name = static_cast<wchar_t*>(
-            sub->resourcePool[i].heapBuffer);
+        wchar_t* name = static_cast<wchar_t*>(sub->resourcePool[i].heapBuffer);
         if (name == nullptr)
             return nullptr;
         if (wcscmp(name, path) == 0)
-            return reinterpret_cast<IDirect3DTexture9*>(
-                sub->resourcePool[i].comObject);
+            return reinterpret_cast<IDirect3DTexture9*>(sub->resourcePool[i].comObject);
     }
     return nullptr;
 }
@@ -287,15 +281,14 @@ void CachedTextureColor(D3DRenderer* sub, const wchar_t* path, float out[4]) {
     if (path == nullptr || path[0] == L'\0')
         return;
     for (int i = 0; i < 10000; ++i) {
-        const wchar_t* name = static_cast<const wchar_t*>(
-            sub->resourcePool[i].heapBuffer);
+        const wchar_t* name = static_cast<const wchar_t*>(sub->resourcePool[i].heapBuffer);
         if (name == nullptr)
             return;
         if (wcscmp(name, path) == 0) {
             // pool entry tag (wrapper + 12 + 12*i): low three bytes carry
             // the cached average colour
-            const unsigned char* tag = reinterpret_cast<const unsigned char*>(
-                &sub->resourcePool[i].tag);
+            const unsigned char* tag =
+                reinterpret_cast<const unsigned char*>(&sub->resourcePool[i].tag);
             out[0] = tag[0] * (1.0f / 256.0f);
             out[1] = tag[1] * (1.0f / 256.0f);
             out[2] = tag[2] * (1.0f / 256.0f);
@@ -304,69 +297,77 @@ void CachedTextureColor(D3DRenderer* sub, const wchar_t* path, float out[4]) {
     }
 }
 
-void ModelVertexFormat(unsigned char* model, DWORD* fvf, UINT* stride) {
-    switch (mdl::Mdl(model)->pmxAdditionalUvCount) {
-    case 1: *fvf = 524818;   *stride = 48; break;
-    case 2: *fvf = 2622226;  *stride = 64; break;
-    case 3: *fvf = 11011090; *stride = 80; break;
-    case 4: *fvf = 44565778; *stride = 96; break;
-    default: *fvf = 274;     *stride = 32; break;
+void ModelVertexFormat(const mdl::ModelRecord* model, DWORD* fvf, UINT* stride) {
+    switch (model->pmxAdditionalUvCount) {
+    case 1:
+        *fvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX2 | D3DFVF_TEXCOORDSIZE4(1);
+        *stride = sizeof(mdl::SkinnedVertex<1>);
+        break;
+    case 2:
+        *fvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX3 | D3DFVF_TEXCOORDSIZE4(1) |
+               D3DFVF_TEXCOORDSIZE4(2);
+        *stride = sizeof(mdl::SkinnedVertex<2>);
+        break;
+    case 3:
+        *fvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX4 | D3DFVF_TEXCOORDSIZE4(1) |
+               D3DFVF_TEXCOORDSIZE4(2) | D3DFVF_TEXCOORDSIZE4(3);
+        *stride = sizeof(mdl::SkinnedVertex<3>);
+        break;
+    case 4:
+        *fvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX5 | D3DFVF_TEXCOORDSIZE4(1) |
+               D3DFVF_TEXCOORDSIZE4(2) | D3DFVF_TEXCOORDSIZE4(3) | D3DFVF_TEXCOORDSIZE4(4);
+        *stride = sizeof(mdl::SkinnedVertex<4>);
+        break;
+    default:
+        *fvf = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1;
+        *stride = sizeof(mdl::SkinnedVertexBase);
+        break;
     }
 }
 
-IDirect3DTexture9* ToonTexture(MMDApp* app, D3DRenderer* sub,
-                               unsigned char* model,
-                               unsigned char* material) {
+IDirect3DTexture9* ToonTexture(MMDApp* app, D3DRenderer* sub, const mdl::ModelRecord* model,
+                               const mdl::ModelMaterialRecord& record) {
     // 0x491E8B..0x492163: toonReference == -1 -> shared table slot 0; a
     // model whose indexed toon file name IS "toonNN.bmp" -> slot N+1; any
     // other name resolves the texture itself (PMX: the material toon path
     // at +0x4C0; PMD: modelDirectory + converted file name).
-    const int index = static_cast<std::int8_t>(
-        mdl::Material(material).toonReference);
+    const int index = static_cast<std::int8_t>(record.toonReference);
     if (index == -1)
         return app->ToonTexture(0);
     if (index >= 0 && index < 10) {
-        static const char* names[10] = {
-            "toon01.bmp", "toon02.bmp", "toon03.bmp", "toon04.bmp",
-            "toon05.bmp", "toon06.bmp", "toon07.bmp", "toon08.bmp",
-            "toon09.bmp", "toon10.bmp"};
-        if (strcmp(mdl::PmdToonFileNames(model)[index],
-                   names[index]) == 0)
+        static const char* names[10] = {"toon01.bmp", "toon02.bmp", "toon03.bmp", "toon04.bmp",
+                                        "toon05.bmp", "toon06.bmp", "toon07.bmp", "toon08.bmp",
+                                        "toon09.bmp", "toon10.bmp"};
+        if (strcmp(model->pmdToonFileNames[index], names[index]) == 0)
             return app->ToonTexture(index + 1);
     }
-    if (mdl::Mdl(model)->physicsMode == 2) {
+    if (model->physicsMode == 2) {
         // PMX custom toon (0x4920D7): cached texture for material+0x4C0.
-        return FindCachedTexture(sub,
-                                 mdl::Material(material).toonPath);
+        return FindCachedTexture(sub, record.toonPath);
     }
     if (index >= 0 && index < 10) {
         // PMD custom toon (0x492111..0x492157): model directory + the
         // converted (SJIS -> wide) toon file name.
         wchar_t converted[256] = {};
         wchar_t path[256] = {};
-        ConvertAnsiToWide(reinterpret_cast<D3DRenderer*>(sub), mdl::PmdToonFileNames(model)[index],
+        ConvertAnsiToWide(reinterpret_cast<D3DRenderer*>(sub), model->pmdToonFileNames[index],
                           converted, 0x100);
-        swprintf_s(path, 0x100, L"%s%s",
-                   mdl::Mdl(model)->modelDirectory, converted);
+        swprintf_s(path, 0x100, L"%s%s", model->modelDirectory, converted);
         return FindCachedTexture(sub, path);
     }
     return app->ToonTexture(0);
 }
 
-bool HasSuffix(const wchar_t* value, const wchar_t* lower,
-               const wchar_t* upper);
-
+bool ContainsTextureMarker(const wchar_t* value, const wchar_t* lower, const wchar_t* upper);
 
 void BuildToonTransform(MMDApp* app, Matrix* result) {
     auto& api = d3dx::Get();
     const D3DVECTOR& lightDirection = app->SceneLight().Direction;
-    float direction[3] = {
-        -lightDirection.x, -lightDirection.y, -lightDirection.z};
+    float direction[3] = {-lightDirection.x, -lightDirection.y, -lightDirection.z};
     api.vec3Normalize(direction, direction);
 
-    const float vertical[3] = {
-        0.0f, direction[0] == 0.0f && direction[2] == 0.0f ? 0.0f : 1.0f,
-        direction[0] == 0.0f && direction[2] == 0.0f ? -1.0f : 0.0f};
+    const float vertical[3] = {0.0f, direction[0] == 0.0f && direction[2] == 0.0f ? 0.0f : 1.0f,
+                               direction[0] == 0.0f && direction[2] == 0.0f ? -1.0f : 0.0f};
     float horizontal[3]{};
     LegacyModelCross3(horizontal, vertical, direction);
     api.vec3Normalize(horizontal, horizontal);
@@ -392,10 +393,9 @@ void BuildToonTransform(MMDApp* app, Matrix* result) {
     // is accepted in constant expressions, so the static_assert pins the
     // literal to the original .rdata bit pattern.
     constexpr float kRotationAngle = -(3.141592f * 0.5f);
-    static_assert(__builtin_bit_cast(std::uint32_t, kRotationAngle) ==
-                      0xBFC90FD8u,
+    static_assert(__builtin_bit_cast(std::uint32_t, kRotationAngle) == 0xBFC90FD8u,
                   "flt_530E00 bit-exact");
-    float rotationAngle = kRotationAngle;                 // 0x530E00
+    float rotationAngle = kRotationAngle; // 0x530E00
     api.rotX(&rotation, rotationAngle);
     api.scaling(&scaling, 0.5f, -0.5f, 1.0f);
     api.translation(&translation, 0.5f, 0.5f, 0.0f);
@@ -432,23 +432,20 @@ void DisableSphereTextureStage(IDirect3DDevice9* device) {
     device->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
 }
 
-void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
-                             IDirect3DDevice9* device,
-                             unsigned char* model,
-                             unsigned char* material) {
-    const mdl::ModelMaterialRecord& record = mdl::Material(material);
+void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* device,
+                             const mdl::ModelRecord* model,
+                             const mdl::ModelMaterialRecord& record) {
     const wchar_t* mainPath = record.texturePath;
     const wchar_t* spherePath = record.spherePath;
     DisableSphereTextureStage(device);
 
-    if (mdl::Mdl(model)->physicsMode == 2) {
+    if (model->physicsMode == 2) {
         // half-texel / identity stage transforms (v103 / v79 at 0x491353..)
         const Matrix halfTexel = HalfTexelMatrix();
         Matrix identityTexel;
         Identity(&identityTexel);
         const auto setStageTransform = [&](DWORD stage, const Matrix& m) {
-            device->SetTransform(static_cast<D3DTRANSFORMSTATETYPE>(
-                                     D3DTS_TEXTURE0 + stage),
+            device->SetTransform(static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_TEXTURE0 + stage),
                                  reinterpret_cast<const D3DMATRIX*>(&m));
         };
         if (mainPath[0] != L'\0') {
@@ -463,35 +460,24 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
                 switch (sphereMode) {
                 case 1:
                     setStageTransform(2, halfTexel);
-                    device->SetTextureStageState(2, D3DTSS_COLOROP,
-                                                 D3DTOP_MODULATE);
-                    device->SetTextureStageState(2,
-                                                 D3DTSS_TEXTURETRANSFORMFLAGS,
-                                                 D3DTTFF_COUNT2);
-                    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
-                                                 0x10000);
+                    device->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_MODULATE);
+                    device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+                    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
                     break;
                 case 2:
                     setStageTransform(2, halfTexel);
-                    device->SetTextureStageState(2, D3DTSS_COLOROP,
-                                                 D3DTOP_ADD);
-                    device->SetTextureStageState(2,
-                                                 D3DTSS_TEXTURETRANSFORMFLAGS,
-                                                 D3DTTFF_COUNT2);
-                    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
-                                                 0x10000);
+                    device->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_ADD);
+                    device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+                    device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
                     break;
                 case 3:
                     setStageTransform(2, identityTexel);
-                    device->SetTextureStageState(2, D3DTSS_COLOROP,
-                                                 D3DTOP_MODULATE);
-                    device->SetTextureStageState(2,
-                                                 D3DTSS_TEXTURETRANSFORMFLAGS,
-                                                 D3DTTFF_COUNT2);
+                    device->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_MODULATE);
+                    device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
                     device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 1);
                     break;
                 default:
-                    break;  // 0x491558 default: bind only, no stage change
+                    break; // 0x491558 default: bind only, no stage change
                 }
                 device->SetTexture(2, FindCachedTexture(sub, spherePath));
             }
@@ -501,27 +487,20 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
             switch (sphereMode) {
             case 1:
                 setStageTransform(1, halfTexel);
-                device->SetTextureStageState(1, D3DTSS_COLOROP,
-                                             D3DTOP_MODULATE);
-                device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                             D3DTTFF_COUNT2);
-                device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
-                                             0x10000);
+                device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_MODULATE);
+                device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+                device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
                 break;
             case 2:
                 setStageTransform(1, halfTexel);
                 device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_ADD);
-                device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                             D3DTTFF_COUNT2);
-                device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
-                                             0x10000);
+                device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+                device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
                 break;
             case 3:
                 setStageTransform(1, identityTexel);
-                device->SetTextureStageState(1, D3DTSS_COLOROP,
-                                             D3DTOP_MODULATE);
-                device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                             D3DTTFF_COUNT2);
+                device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_MODULATE);
+                device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
                 device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1);
                 break;
             default:
@@ -535,17 +514,15 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
         // PMD empty main path: 0x491A78 disables stage 1 and keeps whatever
         // texture is still bound (stale binding, inert under COLOROP).
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    } else if (HasSuffix(mainPath, L".sph", L".SPH")) {
+    } else if (ContainsTextureMarker(mainPath, L".sph", L".SPH")) {
         // 0x4919BC + common tail 0x4919D3..0x4918C0
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_MODULATE);
-        device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                     D3DTTFF_COUNT2);
+        device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
         device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTexture(1, FindCachedTexture(sub, mainPath));
-    } else if (HasSuffix(mainPath, L".spa", L".SPA")) {
+    } else if (ContainsTextureMarker(mainPath, L".spa", L".SPA")) {
         device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_ADD);
-        device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                     D3DTTFF_COUNT2);
+        device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
         device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTexture(1, FindCachedTexture(sub, mainPath));
     } else {
@@ -565,16 +542,14 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
     // then binds the half-texel matrix to TEXTURE2 ahead of the COUNT2/TCI
     // tail.  With no sphere texture the original ONLY disables stage 2
     // COLOROP - TCI/TF keep their InitRenderStates values.
-    if (mdl::Mdl(model)->physicsMode != 2) {
+    if (model->physicsMode != 2) {
         if (spherePath[0] != L'\0') {
-            device->SetTextureStageState(2, D3DTSS_COLOROP,
-                HasSuffix(spherePath, L".sph", L".SPH") ? D3DTOP_MODULATE
-                                                        : D3DTOP_ADD);
+            device->SetTextureStageState(
+                2, D3DTSS_COLOROP,
+                ContainsTextureMarker(spherePath, L".sph", L".SPH") ? D3DTOP_MODULATE : D3DTOP_ADD);
             const Matrix halfTexel = HalfTexelMatrix();
-            device->SetTransform(D3DTS_TEXTURE2,
-                                 reinterpret_cast<const D3DMATRIX*>(&halfTexel));
-            device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                         D3DTTFF_COUNT2);
+            device->SetTransform(D3DTS_TEXTURE2, reinterpret_cast<const D3DMATRIX*>(&halfTexel));
+            device->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
             device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
             device->SetTexture(2, FindCachedTexture(sub, spherePath));
         }
@@ -583,30 +558,25 @@ void ConfigureMaterialStages(MMDApp* app, D3DRenderer* sub,
     // Toon stage 0 (LABEL_46): 0x491E41..0x492163
     Matrix toonTransform;
     BuildToonTransform(app, &toonTransform);
-    device->SetTransform(D3DTS_TEXTURE0,
-                          reinterpret_cast<const D3DMATRIX*>(&toonTransform));
-    device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                 D3DTTFF_COUNT2);
+    device->SetTransform(D3DTS_TEXTURE0, reinterpret_cast<const D3DMATRIX*>(&toonTransform));
+    device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
     device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0x10000);
     device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
     device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
-    device->SetTexture(0, ToonTexture(app, sub, model, material));
+    device->SetTexture(0, ToonTexture(app, sub, model, record));
 }
 
 // Loop-tail stage-1 reset for ".sp*" main paths: 0x4925CE..0x4925E5.
-void ResetSphereStageAfterDraw(IDirect3DDevice9* device,
-                               unsigned char* material) {
-    const wchar_t* mainPath = mdl::Material(material).texturePath;
-    if (HasSuffix(mainPath, L".sp", L".SP")) {
+void ResetSphereStageAfterDraw(IDirect3DDevice9* device, const mdl::ModelMaterialRecord& record) {
+    const wchar_t* mainPath = record.texturePath;
+    if (ContainsTextureMarker(mainPath, L".sp", L".SP")) {
         device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, 0);
         device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0);
     }
 }
 
-bool HasSuffix(const wchar_t* value, const wchar_t* lower,
-               const wchar_t* upper) {
-    return value != nullptr &&
-           (wcsstr(value, lower) != nullptr || wcsstr(value, upper) != nullptr);
+bool ContainsTextureMarker(const wchar_t* value, const wchar_t* lower, const wchar_t* upper) {
+    return value != nullptr && (wcsstr(value, lower) != nullptr || wcsstr(value, upper) != nullptr);
 }
 
 void SetEffectColor(void* effect, const char* name, const float source[4]) {
@@ -616,9 +586,8 @@ void SetEffectColor(void* effect, const char* name, const float source[4]) {
     fx::SetFloatArray(effect, name, value, 4);
 }
 
-void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
-                        void* effect, unsigned char* material) {
-    const mdl::ModelMaterialRecord& record = mdl::Material(material);
+void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device, void* effect,
+                        const mdl::ModelMaterialRecord& record) {
     const wchar_t* mainPath = record.texturePath;
     const wchar_t* spherePath = record.spherePath;
     IDirect3DTexture9* mainTexture = FindCachedTexture(sub, mainPath);
@@ -627,10 +596,9 @@ void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
     device->SetTexture(1, mainTexture);
     device->SetTexture(2, nullptr);
     if (mainTexture != nullptr) {
-        IDirect3DTexture9* sphereTexture =
-            sphereMode != 0 && spherePath[0] != L'\0'
-                ? FindCachedTexture(sub, spherePath)
-                : nullptr;
+        IDirect3DTexture9* sphereTexture = sphereMode != 0 && spherePath[0] != L'\0'
+                                               ? FindCachedTexture(sub, spherePath)
+                                               : nullptr;
         if (sphereTexture != nullptr) {
             device->SetTexture(2, sphereTexture);
             if (sphereMode == 1 || sphereMode == 2) {
@@ -648,9 +616,7 @@ void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
     }
 
     IDirect3DTexture9* sphereTexture =
-        sphereMode != 0 && spherePath[0] != L'\0'
-            ? FindCachedTexture(sub, spherePath)
-            : nullptr;
+        sphereMode != 0 && spherePath[0] != L'\0' ? FindCachedTexture(sub, spherePath) : nullptr;
     if (sphereTexture == nullptr) {
         fx::SetTechnique(effect, "BufferShadowTec");
         return;
@@ -666,9 +632,8 @@ void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
     }
 }
 
-void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
-                        void* effect, unsigned char* material) {
-    const mdl::ModelMaterialRecord& record = mdl::Material(material);
+void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device, void* effect,
+                        const mdl::ModelMaterialRecord& record) {
     const wchar_t* mainPath = record.texturePath;
     const wchar_t* spherePath = record.spherePath;
     if (mainPath[0] == L'\0') {
@@ -678,15 +643,14 @@ void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
         return;
     }
 
-    if (HasSuffix(mainPath, L".sph", L".SPH") ||
-        HasSuffix(mainPath, L".spa", L".SPA")) {
+    if (ContainsTextureMarker(mainPath, L".sph", L".SPH") ||
+        ContainsTextureMarker(mainPath, L".spa", L".SPA")) {
         IDirect3DTexture9* sphereTexture = FindCachedTexture(sub, mainPath);
         device->SetTexture(1, sphereTexture);
         device->SetTexture(2, nullptr);
         if (sphereTexture != nullptr) {
             fx::SetTechnique(effect, "BShadowSphiaTec");
-            fx::SetBool(effect, "spadd",
-                     HasSuffix(mainPath, L".spa", L".SPA") ? 1 : 0);
+            fx::SetBool(effect, "spadd", ContainsTextureMarker(mainPath, L".spa", L".SPA") ? 1 : 0);
         } else {
             fx::SetTechnique(effect, "BufferShadowTec");
         }
@@ -700,37 +664,30 @@ void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device,
         fx::SetTechnique(effect, "BufferShadowTec");
         return;
     }
-    IDirect3DTexture9* sphereTexture = spherePath[0] != L'\0'
-        ? FindCachedTexture(sub, spherePath) : nullptr;
+    IDirect3DTexture9* sphereTexture =
+        spherePath[0] != L'\0' ? FindCachedTexture(sub, spherePath) : nullptr;
     if (sphereTexture != nullptr) {
         device->SetTexture(2, sphereTexture);
         fx::SetTechnique(effect, "BShadowSphiaTextureTec");
-        fx::SetBool(effect, "spadd",
-                 HasSuffix(spherePath, L".spa", L".SPA") ? 1 : 0);
+        fx::SetBool(effect, "spadd", ContainsTextureMarker(spherePath, L".spa", L".SPA") ? 1 : 0);
     } else {
         fx::SetTechnique(effect, "BShadowTextureTec");
     }
 }
 
-void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub,
-                             IDirect3DDevice9* device, void* effect,
-                             unsigned char* model,
-                             unsigned char* material, UINT materialIndex) {
-    const mdl::ModelMaterialRecord& record = mdl::Material(material);
+void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* device, void* effect,
+                             const mdl::ModelRecord* model, const mdl::ModelMaterialRecord& record,
+                             UINT materialIndex) {
     const float alpha = record.diffuse[3];
-    const float diffuse[4] = {record.diffuse[0], record.diffuse[1],
-                              record.diffuse[2], alpha};
+    const float diffuse[4] = {record.diffuse[0], record.diffuse[1], record.diffuse[2], alpha};
     const float ambient[4] = {record.diffuseMirror[0], record.diffuseMirror[1],
                               record.diffuseMirror[2], alpha};
-    const float emissive[4] = {record.ambient[0], record.ambient[1],
-                               record.ambient[2], alpha};
-    const float specular[4] = {record.specular[0], record.specular[1],
-                               record.specular[2], alpha};
+    const float emissive[4] = {record.ambient[0], record.ambient[1], record.ambient[2], alpha};
+    const float specular[4] = {record.specular[0], record.specular[1], record.specular[2], alpha};
     const D3DCOLORVALUE& lightAmbient = app->SceneLight().Ambient;
-    const float edge[4] = {
-        ambient[0] * lightAmbient.r + emissive[0],
-        ambient[1] * lightAmbient.g + emissive[1],
-        ambient[2] * lightAmbient.b + emissive[2], alpha};
+    const float edge[4] = {ambient[0] * lightAmbient.r + emissive[0],
+                           ambient[1] * lightAmbient.g + emissive[1],
+                           ambient[2] * lightAmbient.b + emissive[2], alpha};
     SetEffectColor(effect, "EgColor", edge);
     SetEffectColor(effect, "MatDifColor", diffuse);
     SetEffectColor(effect, "MatAmbColor", ambient);
@@ -742,12 +699,10 @@ void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub,
     if (toonIndex != -1) {
         bool standard = false;
         if (toonIndex >= 0 && toonIndex < 10) {
-            static const char* names[10] = {
-                "toon01.bmp", "toon02.bmp", "toon03.bmp", "toon04.bmp",
-                "toon05.bmp", "toon06.bmp", "toon07.bmp", "toon08.bmp",
-                "toon09.bmp", "toon10.bmp"};
-            standard = strcmp(mdl::PmdToonFileNames(model)[toonIndex],
-                              names[toonIndex]) == 0;
+            static const char* names[10] = {"toon01.bmp", "toon02.bmp", "toon03.bmp", "toon04.bmp",
+                                            "toon05.bmp", "toon06.bmp", "toon07.bmp", "toon08.bmp",
+                                            "toon09.bmp", "toon10.bmp"};
+            standard = strcmp(model->pmdToonFileNames[toonIndex], names[toonIndex]) == 0;
             if (standard) {
                 const float* table = app->state.toonEdgeTable;
                 toon[0] = table[3 * toonIndex + 0];
@@ -756,25 +711,23 @@ void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub,
             }
         }
         if (!standard) {
-            if (mdl::Mdl(model)->physicsMode == 2) {
+            if (model->physicsMode == 2) {
                 CachedTextureColor(sub, record.toonPath, toon);
             } else if (toonIndex >= 0 && toonIndex < 10) {
                 wchar_t converted[256] = {};
                 wchar_t path[256] = {};
-                ConvertAnsiToWide(reinterpret_cast<D3DRenderer*>(sub), mdl::PmdToonFileNames(model)[toonIndex],
-                                  converted, 0x100);
-                swprintf_s(path, 0x100, L"%s%s",
-                    mdl::Mdl(model)->modelDirectory,
-                    converted);
+                ConvertAnsiToWide(reinterpret_cast<D3DRenderer*>(sub),
+                                  model->pmdToonFileNames[toonIndex], converted, 0x100);
+                swprintf_s(path, 0x100, L"%s%s", model->modelDirectory, converted);
                 CachedTextureColor(sub, path, toon);
             }
         }
     }
-    if (mdl::Mdl(model)->physicsMode == 2) {
+    if (model->physicsMode == 2) {
         const mdl::MaterialMorphChannels& add =
-            mdl::MaterialMorphAdd(model)[materialIndex].channels;
+            model->materialMorphPools.additive[materialIndex].channels;
         const mdl::MaterialMorphChannels& mul =
-            mdl::MaterialMorphMul(model)[materialIndex].channels;
+            model->materialMorphPools.multiplicative[materialIndex].channels;
         for (int i = 0; i < 3; ++i)
             toon[i] = toon[i] * mul.toonTint[i] + add.toonTint[i];
         toon[3] = add.toonTint[3] + mul.toonTint[3];
@@ -782,53 +735,46 @@ void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub,
     fx::SetFloatArray(effect, "ToonColor", toon, 4);
 
     const D3DCOLORVALUE& lightSpecular = app->SceneLight().Specular;
-    float litSpecular[4] = {
-        specular[0] * lightSpecular.r, specular[1] * lightSpecular.g,
-        specular[2] * lightSpecular.b, record.specularPower};
+    float litSpecular[4] = {specular[0] * lightSpecular.r, specular[1] * lightSpecular.g,
+                            specular[2] * lightSpecular.b, record.specularPower};
     if (litSpecular[3] == 0.0f)
         litSpecular[3] = 0.1f;
     fx::SetFloatArray(effect, "SpcColor", litSpecular, 4);
 
     const float one[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    if (mdl::Mdl(model)->physicsMode == 2) {
+    if (model->physicsMode == 2) {
         const mdl::MaterialMorphChannels& add =
-            mdl::MaterialMorphAdd(model)[materialIndex].channels;
+            model->materialMorphPools.additive[materialIndex].channels;
         const mdl::MaterialMorphChannels& mul =
-            mdl::MaterialMorphMul(model)[materialIndex].channels;
-        fx::SetFloatArray(effect, "TexCAdd",
-                        add.textureTint, 4);
-        fx::SetFloatArray(effect, "TexCMul",
-                        mul.textureTint, 4);
-        fx::SetFloatArray(effect, "SphCAdd",
-                        add.sphereTint, 4);
-        fx::SetFloatArray(effect, "SphCMul",
-                        mul.sphereTint, 4);
-        SelectPmxTechnique(sub, device, effect, material);
+            model->materialMorphPools.multiplicative[materialIndex].channels;
+        fx::SetFloatArray(effect, "TexCAdd", add.textureTint, 4);
+        fx::SetFloatArray(effect, "TexCMul", mul.textureTint, 4);
+        fx::SetFloatArray(effect, "SphCAdd", add.sphereTint, 4);
+        fx::SetFloatArray(effect, "SphCMul", mul.sphereTint, 4);
+        SelectPmxTechnique(sub, device, effect, record);
     } else {
         fx::SetFloatArray(effect, "TexCAdd", zero, 4);
         fx::SetFloatArray(effect, "TexCMul", one, 4);
         fx::SetFloatArray(effect, "SphCAdd", zero, 4);
         fx::SetFloatArray(effect, "SphCMul", one, 4);
-        SelectPmdTechnique(sub, device, effect, material);
+        SelectPmdTechnique(sub, device, effect, record);
     }
 }
 
-void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
-                        bool shadowOnly) {
-    if (model == nullptr || mdl::Mdl(model)->loadComplete == 0)
+} // namespace
+
+void DrawModelMaterials(MMDApp* app, mdl::ModelRecord* model, bool effectPass, bool shadowOnly) {
+    if (model == nullptr || model->loadComplete == 0)
         return;
-    mdl::ModelRecord& state = *mdl::Mdl(model);
+    mdl::ModelRecord& state = *model;
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     auto* effect = sub->effect;
-    auto* materials = mdl::Materials(model);
-    auto* vertices = mdl::ResourceAs<IDirect3DVertexBuffer9>(
-        mdl::Mdl(model)->vertexBuffer);
-    auto* indices = mdl::ResourceAs<IDirect3DIndexBuffer9>(
-        mdl::Mdl(model)->indexBuffer);
-    if (device == nullptr || materials == nullptr || vertices == nullptr ||
-        indices == nullptr)
+    auto* materials = model->materials;
+    auto* vertices = mdl::ResourceAs<IDirect3DVertexBuffer9>(model->vertexBuffer);
+    auto* indices = mdl::ResourceAs<IDirect3DIndexBuffer9>(model->indexBuffer);
+    if (device == nullptr || materials == nullptr || vertices == nullptr || indices == nullptr)
         return;
 
     DWORD fvf;
@@ -844,19 +790,18 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
         // would leak into the next model's stage 1.
         device->SetRenderState(D3DRS_LIGHTING, TRUE);
         const Matrix halfTexel = HalfTexelMatrix();
-        device->SetTransform(D3DTS_TEXTURE1,
-                             reinterpret_cast<const D3DMATRIX*>(&halfTexel));
+        device->SetTransform(D3DTS_TEXTURE1, reinterpret_cast<const D3DMATRIX*>(&halfTexel));
     }
     UINT firstIndex = 0;
 #ifdef MIKUDANCESTUDIO_DIAG
-    if (!effectPass && !shadowOnly) BeginCpuModelMaterials(app,model);
+    if (!effectPass && !shadowOnly)
+        BeginCpuModelMaterials(app, model);
 #endif
-    state.toonShared = static_cast<std::uint32_t>(-1);
+    state.currentMaterial = static_cast<std::uint32_t>(-1);
     for (UINT i = 0; i < state.materialCount; ++i) {
-        unsigned char* material = reinterpret_cast<unsigned char*>(&materials[i]);
         const mdl::ModelMaterialRecord& record = materials[i];
         const UINT indexCount = static_cast<UINT>(record.faceVertexCount);
-        ++state.toonShared;
+        ++state.currentMaterial;
         if (indexCount == 0)
             continue;
 
@@ -864,18 +809,18 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
         if (shadowOnly) {
             // 0x4D8593: the gate reads edgeColor[3] (mat+1208, the same
             // float EgColor uploads as its 4th component), not edgeSize.
-            if (mdl::Mdl(model)->physicsMode == 2 && record.edgeColor[3] <= 0.0f)
+            if (model->physicsMode == 2 && record.edgeColor[3] <= 0.0f)
                 draw = false;
             if (record.diffuse[3] == 0.9800000190734863f)
                 draw = false;
             // 0x492925: PMX shadow-cast disable bit (bit 2 of material+2240)
             // skips the material in the shadow map when clear (PMX mode only).
-            if (mdl::Mdl(model)->physicsMode == 2 && (record.flags >> 2 & 1) == 0)
+            if (model->physicsMode == 2 && (record.flags >> 2 & 1) == 0)
                 draw = false;
         }
         if (draw) {
             D3DMATERIAL9 d3dMaterial{};
-            std::memcpy(&d3dMaterial, material, sizeof(d3dMaterial));
+            std::memcpy(&d3dMaterial, &record, sizeof(d3dMaterial));
             if (state.displayState != 0)
                 d3dMaterial.Diffuse.a = 0.5f;
 
@@ -892,29 +837,26 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                 //   opaque             -> cull untouched
                 device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
                 device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-                device->SetRenderState(D3DRS_DESTBLEND,
-                                       D3DBLEND_INVSRCALPHA);
-                ConfigureMaterialStages(app, sub, device, model, material);
+                device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+                ConfigureMaterialStages(app, sub, device, model, record);
                 device->SetFVF(fvf);
                 bool stateDumped = false;
                 const auto issueDraw = [&]() {
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
-                    SubmitLiveCpuModelInputs(app,model,i,firstIndex,indexCount,stride);
+                    SubmitLiveCpuModelInputs(app, model, i, firstIndex, indexCount, stride);
 #endif
                     device->SetStreamSource(0, vertices, 0, stride);
                     device->SetIndices(indices);
                     if (!stateDumped) {
-                        DumpMaterialState(app, device, model, material, i,
-                                          firstIndex);
+                        DumpMaterialState(app, device, model, record, i, firstIndex);
                         stateDumped = true;
                     }
                     if (!TryModelBatchAdapter(app, model, i, firstIndex, indexCount, stride))
                         mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
-                                              state.vertexCount,
-                                              firstIndex, indexCount / 3);
-                    CaptureModelHistoryResult(app,model,i);
+                                                  state.vertexCount, firstIndex, indexCount / 3);
+                    CaptureModelHistoryResult(app, model, i);
 #ifdef MIKUDANCESTUDIO_DIAG
-                    CaptureCpuMaterialHistory(app,model,i);
+                    CaptureCpuMaterialHistory(app, model, i);
 #endif
                 };
                 // 0x492203 compares the COPY's Diffuse.a (esp+0x138),
@@ -932,17 +874,12 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                         device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
                     }
                     issueDraw();
-                    device->SetRenderState(D3DRS_DESTBLEND,
-                                           D3DBLEND_INVSRCALPHA);
-                } else if (alpha < 1.0f ||
-                           (mdl::Mdl(model)->physicsMode == 2 &&
-                            (record.flags & 1) != 0)) {
+                    device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+                } else if (alpha < 1.0f || (model->physicsMode == 2 && (record.flags & 1) != 0)) {
                     // 0x4923D5..0x4924CE
                     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-                    device->SetRenderState(D3DRS_SRCBLEND,
-                                           D3DBLEND_SRCALPHA);
-                    device->SetRenderState(D3DRS_DESTBLEND,
-                                           D3DBLEND_INVSRCALPHA);
+                    device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+                    device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
                     device->SetMaterial(&d3dMaterial);
                     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
                     issueDraw();
@@ -951,17 +888,15 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                     device->SetMaterial(&d3dMaterial);
                     issueDraw();
                 }
-                ResetSphereStageAfterDraw(device, material);
+                ResetSphereStageAfterDraw(device, record);
             } else {
                 if (shadowOnly) {
                     // 0x492938..0x492952: per-material CULLMODE - the
                     // doubleSided flag (material+0x4A9) selects CCW(3) when
                     // clear, NONE(1) when set.  No SetMaterial here: the
                     // original shadow loop does not set one.
-                    device->SetRenderState(
-                        D3DRS_CULLMODE,
-                        record.doubleSided == 0 ? D3DCULL_CCW
-                                                : D3DCULL_NONE);
+                    device->SetRenderState(D3DRS_CULLMODE,
+                                           record.doubleSided == 0 ? D3DCULL_CCW : D3DCULL_NONE);
                     // 0x492954: BeginPass(effect, 0) per material; the
                     // enclosing fx::Begin was issued by RenderShadowMap
                     // before the model loop (its fx::End closes it).
@@ -981,37 +916,33 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                 }
                 if (effectPass && effect != nullptr && !shadowOnly) {
                     device->SetRenderState(D3DRS_CULLMODE,
-                        record.diffuse[3] >= 1.0f ||
-                                mdl::Mdl(model)->physicsMode == 2
-                            ? D3DCULL_CCW : D3DCULL_NONE);
-                    device->SetRenderState(D3DRS_DESTBLEND,
-                        state.postLoadFlag2 != 0 ? D3DBLEND_ONE
-                                          : D3DBLEND_INVSRCALPHA);
-                    if (mdl::Mdl(model)->physicsMode == 2 && (record.flags & 1) != 0)
+                                           record.diffuse[3] >= 1.0f || model->physicsMode == 2
+                                               ? D3DCULL_CCW
+                                               : D3DCULL_NONE);
+                    device->SetRenderState(D3DRS_DESTBLEND, state.postLoadFlag2 != 0
+                                                                ? D3DBLEND_ONE
+                                                                : D3DBLEND_INVSRCALPHA);
+                    if (model->physicsMode == 2 && (record.flags & 1) != 0)
                         device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-                    ConfigureEffectMaterial(app, sub, device, effect,
-                                            model, material, i);
+                    ConfigureEffectMaterial(app, sub, device, effect, model, record, i);
                     UINT passes = 0;
                     fx::Begin(effect, &passes);
-                    device->SetTexture(0,
-                        mdl::Mdl(model)->physicsMode == 2 && (record.flags & 8) == 0
-                            ? sub->spriteTexture
-                            : sub->hdrTexture);
+                    device->SetTexture(0, model->physicsMode == 2 && (record.flags & 8) == 0
+                                              ? sub->spriteTexture
+                                              : sub->hdrTexture);
                     fx::BeginPass(effect, 0);
                 }
                 device->SetFVF(fvf);
                 device->SetStreamSource(0, vertices, 0, stride);
                 device->SetIndices(indices);
-                mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
-                                          state.vertexCount, firstIndex,
-                                          indexCount / 3);
+                mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0, state.vertexCount,
+                                          firstIndex, indexCount / 3);
                 if (effectPass && effect != nullptr) {
                     fx::EndPass(effect);
                     if (!shadowOnly) {
                         fx::End(effect);
-                        if (mdl::Mdl(model)->physicsMode == 2 && (record.flags & 1) != 0)
-                            device->SetRenderState(D3DRS_CULLMODE,
-                                                   D3DCULL_CCW);
+                        if (model->physicsMode == 2 && (record.flags & 1) != 0)
+                            device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
                     }
                 }
             }
@@ -1019,48 +950,43 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
         firstIndex += indexCount;
     }
 #ifdef MIKUDANCESTUDIO_DIAG
-    if (!effectPass && !shadowOnly) EndCpuModelMaterials(app,model);
+    if (!effectPass && !shadowOnly)
+        EndCpuModelMaterials(app, model);
 #endif
-    state.toonShared = static_cast<std::uint32_t>(-1);
+    state.currentMaterial = static_cast<std::uint32_t>(-1);
     // 0x4925FD..0x49261D: terminate the fixed-function texture cascade at
     // stage 1 before outlines, accessories, or the next model are submitted.
     device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
 }
 
-void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
-                           bool projectedShadow) {
+void DrawModelEdgeGeometry(MMDApp* app, mdl::ModelRecord* model, bool projectedShadow) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
-    if (model == nullptr || mdl::Mdl(model)->loadComplete == 0 ||
-        mdl::Mdl(model)->displayState != 0)
+    if (model == nullptr || model->loadComplete == 0 || model->displayState != 0)
         return;
-    mdl::ModelRecord& state = *mdl::Mdl(model);
-    auto* vb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
-        mdl::Mdl(model)->vertexBuffer2);
-    auto* ib = mdl::ResourceAs<IDirect3DIndexBuffer9>(
-        mdl::Mdl(model)->indexBuffer);
-    auto* materials = mdl::Materials(model);
+    mdl::ModelRecord& state = *model;
+    auto* vb = mdl::ResourceAs<IDirect3DVertexBuffer9>(model->vertexBuffer2);
+    auto* ib = mdl::ResourceAs<IDirect3DIndexBuffer9>(model->indexBuffer);
+    auto* materials = model->materials;
     if (vb == nullptr || ib == nullptr || materials == nullptr)
         return;
 
     UINT firstIndex = 0;
-    state.toonShared = static_cast<std::uint32_t>(-1);
+    state.currentMaterial = static_cast<std::uint32_t>(-1);
     for (UINT i = 0; i < state.materialCount; ++i) {
-        auto* material = reinterpret_cast<unsigned char*>(&materials[i]);
         const mdl::ModelMaterialRecord& record = materials[i];
-        ++state.toonShared;
+        ++state.currentMaterial;
         const UINT count = static_cast<UINT>(record.faceVertexCount);
         bool draw = count != 0;
         if (!projectedShadow && record.doubleSided == 0)
             draw = false;
-        const bool pmx = mdl::Mdl(model)->physicsMode == 2;
+        const bool pmx = model->physicsMode == 2;
         if (pmx && projectedShadow && (record.flags & 2) == 0)
             draw = false;
         // 0x4D839E: same gate field as the shadow map - edgeColor[3]
         // (mat+1208), not edgeSize.
-        if (pmx && projectedShadow && sub->postProcessEnabled != 0 &&
-            record.edgeColor[3] <= 0.0f)
+        if (pmx && projectedShadow && sub->postProcessEnabled != 0 && record.edgeColor[3] <= 0.0f)
             draw = false;
         if (draw) {
             // x64 0x7FF7CB4D83AD gate: (physicsMode == 2) &&
@@ -1082,20 +1008,24 @@ void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
                 fx::SetFloatArray(effect, "EgColor", record.edgeColor, 4);
                 fx::BeginPass(effect, 0);
             }
-            device->SetFVF(66);
-            device->SetStreamSource(0, vb, 0, 16);
+            device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
+            device->SetStreamSource(0, vb, 0, sizeof(mdl::EdgeVertex));
             device->SetIndices(ib);
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
-            if(projectedShadow)StageCpuProjectedModelShadow(app,model,i,firstIndex,count);
-            else StageCpuModelOutline(app,model,i,firstIndex,count);
+            if (projectedShadow)
+                StageCpuProjectedModelShadow(app, model, i, firstIndex, count);
+            else
+                StageCpuModelOutline(app, model, i, firstIndex, count);
 #endif
-            mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
-                state.vertexCount, firstIndex, count / 3);
+            mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0, state.vertexCount,
+                                      firstIndex, count / 3);
         }
         firstIndex += count;
     }
-    state.toonShared = static_cast<std::uint32_t>(-1);
+    state.currentMaterial = static_cast<std::uint32_t>(-1);
 }
+
+namespace {
 
 void DrawModelsProjectedShadow(MMDApp* app) {
     // x64 inlined twin sub_7FF7CB4BFB20+0x4C0710..0x4C077A - the silhouette
@@ -1105,7 +1035,7 @@ void DrawModelsProjectedShadow(MMDApp* app) {
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
-            if (model == nullptr || mdl::Mdl(model)->comboSelIndex != order)
+            if (model == nullptr || model->comboSelIndex != order)
                 continue;
             app->ActiveRenderObject() = model;
             DrawModelEdgeGeometry(app, model, true);
@@ -1115,12 +1045,9 @@ void DrawModelsProjectedShadow(MMDApp* app) {
     }
 }
 
-bool BeginProjectedGroundShadow(MMDApp* app, IDirect3DDevice9* device,
-                                Matrix* base) {
-    const bool cameraGate = app->PlaybackActive() != 0 ||
-        app->UsesViewportTool();
-    if (app->GroundShadowEnabled() == 0 || !cameraGate ||
-        app->LightDirection()[1] >= 0.0f)
+bool BeginProjectedGroundShadow(MMDApp* app, IDirect3DDevice9* device, Matrix* base) {
+    const bool cameraGate = app->PlaybackActive() != 0 || app->UsesViewportTool();
+    if (app->GroundShadowEnabled() == 0 || !cameraGate || app->LightDirection()[1] >= 0.0f)
         return false;
     // Bit-level verdict (2026-09-14): this matrix reproduces the x64 binary
     // word for word; an earlier audit note claiming row2=(0,1,0,1) /
@@ -1152,39 +1079,32 @@ bool BeginProjectedGroundShadow(MMDApp* app, IDirect3DDevice9* device,
     Matrix projected;
     device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(base));
     projection.m[0][0] = 1.0f;
-    projection.m[1][0] = -app->LightDirection()[0] /
-                          app->LightDirection()[1];
-    projection.m[1][2] = -app->LightDirection()[2] /
-                          app->LightDirection()[1];
+    projection.m[1][0] = -app->LightDirection()[0] / app->LightDirection()[1];
+    projection.m[1][2] = -app->LightDirection()[2] / app->LightDirection()[1];
     projection.m[2][2] = 1.0f;
     projection.m[3][1] = 0.10000000149011612f;
     projection.m[3][3] = 1.0f;
     Multiply(&projected, &projection, base);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&projected));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&projected));
     // CULL/ZFUNC/texture-clear already issued by the caller
     // (0x426384..0x4263BC); the original does not repeat them here.
     app->ActiveRenderPass() = AccessoryRenderPass::ProjectedGroundShadow;
     return true;
 }
 
-void RenderProjectedGroundShadowPass(MMDApp* app,
-                                     IDirect3DDevice9* device) {
+void RenderProjectedGroundShadowPass(MMDApp* app, IDirect3DDevice9* device) {
     Matrix base;
     if (!BeginProjectedGroundShadow(app, device, &base))
         return;
     RenderAccessoriesProjectedGroundShadowGeometry(app);
     DrawModelsProjectedShadow(app);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&base));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&base));
 }
 
-void SetProjectedStencil(D3DRenderer* sub, IDirect3DDevice9* device,
-                         bool projectedPass) {
+void SetProjectedStencil(D3DRenderer* sub, IDirect3DDevice9* device, bool projectedPass) {
     if (sub->d3dInitialized == 0)
         return;
-    device->SetRenderState(D3DRS_STENCILFUNC,
-        projectedPass ? D3DCMP_GREATER : D3DCMP_ALWAYS);
+    device->SetRenderState(D3DRS_STENCILFUNC, projectedPass ? D3DCMP_GREATER : D3DCMP_ALWAYS);
     device->SetRenderState(D3DRS_STENCILREF, projectedPass ? 2 : 1);
     device->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_REPLACE);
 }
@@ -1192,9 +1112,9 @@ void SetProjectedStencil(D3DRenderer* sub, IDirect3DDevice9* device,
 void BeginProjectedShadowPass(D3DRenderer* sub, IDirect3DDevice9* device) {
     // Original frame trace: NORMALIZENORMALS is cleared by the preceding
     // accessory pass, then the projected geometry uses stencil value 2,
-    // no culling, and strict depth comparison.  x64 pass 起始段
-    // （0x7FF7CB4C0319..0x7FF7CB4C0402）不写 ALPHABLENDENABLE：混合态由配件
-    // 投射循环逐配件重写，循环收尾再按透明地面影开关统一重写。
+    // no culling, and strict depth comparison. The x64 pass preamble
+    // (0x7FF7CB4C0319..0x7FF7CB4C0402) does not write ALPHABLENDENABLE: the accessory
+    // projection loop rewrites blending per accessory, then its tail rewrites it from the transparent-ground-shadow toggle.
     device->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
     SetProjectedStencil(sub, device, true);
     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
@@ -1202,17 +1122,15 @@ void BeginProjectedShadowPass(D3DRenderer* sub, IDirect3DDevice9* device) {
     device->SetTexture(0, nullptr);
 }
 
-void RestoreModelMaterialPass(MMDApp* app, D3DRenderer* sub,
-                              IDirect3DDevice9* device) {
+void RestoreModelMaterialPass(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* device) {
     // Fixed-frame restore, x64 sub_7FF7CB4BFB20 @0x7FF7CB4C07B0..0x7FF7CB4C0875
     // (FILLMODE -> stencil trio -> CULLMODE -> ZFUNC; port collapses the
     // FILLMODE/stencil order).  The effect frame no longer routes through
     // here: sub_7FF7CB4C1E60 defers CULLMODE/ZFUNC past the fx::Set block and
     // adds ALPHABLENDENABLE, so RenderModelsEffect spells its restore inline.
     SetProjectedStencil(sub, device, false);
-    device->SetRenderState(D3DRS_FILLMODE,
-        app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID
-                                               : D3DFILL_WIREFRAME);
+    device->SetRenderState(
+        D3DRS_FILLMODE, app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
     device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
 }
@@ -1235,35 +1153,31 @@ void DrawModelOutlines(MMDApp* app, bool effectEdge) {
     // only by the effect frame's copy (0x7FF7CB4C3815, after the
     // edgeScale/postLoad/camera gates); the fixed frame's copy has no
     // reference to it anywhere in sub_7FF7CB4BFB20.
-    const bool suppressed = effectEdge &&
-        app->ModelNonDisplayMode() != 0;
+    const bool suppressed = effectEdge && app->ModelNonDisplayMode() != 0;
     for (int order = 0; order < kModelSlotCount; ++order) {
-        unsigned char* model = nullptr;
+        mdl::ModelRecord* model = nullptr;
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* candidate = app->ModelSlot(slot);
-            if (candidate != nullptr &&
-                mdl::Mdl(candidate)->comboSelIndex == order) {
+            if (candidate != nullptr && candidate->comboSelIndex == order) {
                 model = candidate;
                 break;
             }
         }
         if (model == nullptr)
             continue;
-        const mdl::ModelRecord& state = *mdl::Mdl(model);
+        const mdl::ModelRecord& state = *model;
         if (state.edgeScale <= 0.0f || state.postLoadFlag2 != 0)
             continue;
-        const bool cameraGate = app->PlaybackActive() != 0 ||
-            app->UsesViewportTool();
+        const bool cameraGate = app->PlaybackActive() != 0 || app->UsesViewportTool();
         if (!cameraGate)
             continue;
         if (suppressed)
             continue;
         app->ActiveRenderObject() = model;
         if (effectEdge) {
-            const float edge[4] = {
-                app->ModelOutlineColorRed() * (1.0f / 256.0f),
-                app->ModelOutlineColorGreen() * (1.0f / 256.0f),
-                app->ModelOutlineColorBlue() * (1.0f / 256.0f), 1.0f};
+            const float edge[4] = {app->ModelOutlineColorRed() * (1.0f / 256.0f),
+                                   app->ModelOutlineColorGreen() * (1.0f / 256.0f),
+                                   app->ModelOutlineColorBlue() * (1.0f / 256.0f), 1.0f};
             fx::SetFloatArray(effect, "EgColor", edge, 4);
             fx::BeginPass(effect, 0);
         }
@@ -1287,11 +1201,11 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
     if (vb != nullptr && ib != nullptr) {
         device->SetRenderState(D3DRS_LIGHTING, FALSE);
         device->SetTexture(0, nullptr);
-        device->SetFVF(66);
-        device->SetStreamSource(0, vb, 0, 16);
+        device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
+        device->SetStreamSource(0, vb, 0, sizeof(mdl::EdgeVertex));
         device->SetIndices(ib);
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
-        StageCpuGroundDraw(app,false);
+        StageCpuGroundDraw(app, false);
 #endif
         mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, 90, 0, 45);
     }
@@ -1306,7 +1220,7 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
         device->SetStreamSource(0, plane, 0, 16);
         device->SetFVF(66);
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
-        StageCpuGroundDraw(app,true);
+        StageCpuGroundDraw(app, true);
 #endif
         mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     }
@@ -1316,8 +1230,7 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
     device->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);
 }
 
-void DrawPreModelQuad(IDirect3DDevice9* device,
-                      IDirect3DTexture9* texture,
+void DrawPreModelQuad(IDirect3DDevice9* device, IDirect3DTexture9* texture,
                       IDirect3DVertexBuffer9* vertices) {
     if (texture == nullptr || vertices == nullptr)
         return;
@@ -1325,23 +1238,19 @@ void DrawPreModelQuad(IDirect3DDevice9* device,
     device->SetTexture(0, texture);
     device->SetStreamSource(0, vertices, 0, 28);
     device->SetFVF(324);
-    // 原版两处背景四边形均为 DrawPrimitive(TRIANGLELIST, 0, 2)（图片
-    // 0x7FF7CB4BFD24 / AVI 0x7FF7CB4BFDFA：edx=4、r8d=0、r9d=2，6 顶点 LIST
-    // 布局）；STRIP 只消费 4 顶点会漏画一半。
+    // Both original background quads use DrawPrimitive(TRIANGLELIST, 0, 2) (image
+    // 0x7FF7CB4BFD24 / AVI 0x7FF7CB4BFDFA: edx=4, r8d=0, r9d=2, six-vertex LIST
+    // layout); STRIP consumes only four vertices and misses half the image.
     mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     device->SetRenderState(D3DRS_ZENABLE, TRUE);
 }
 
 void DrawPreModelQuads(MMDApp* app, IDirect3DDevice9* device) {
     if (app->PictureBackgroundEnabled() != 0) {
-        DrawPreModelQuad(device,
-            app->PictureBackgroundTexture(),
-            app->PictureOverlayVertices());
+        DrawPreModelQuad(device, app->PictureBackgroundTexture(), app->PictureOverlayVertices());
     }
     if (app->AviBackgroundEnabled() == 1) {
-        DrawPreModelQuad(device,
-            app->AviBackgroundTexture(),
-            app->AviOverlayVertices());
+        DrawPreModelQuad(device, app->AviBackgroundTexture(), app->AviOverlayVertices());
     }
 }
 
@@ -1352,26 +1261,25 @@ bool EffectRenderEnabled(const MMDApp* app) {
     // The >= 2 comparison matters: editMode 1 (BoneBox) keeps the
     // fixed-function renderer, and UsesViewportTool implements exactly
     // "EditMode() >= ViewportEditMode::None (= 2)".
-    const bool cameraGate = app->PlaybackActive() != 0 ||
-        app->UsesViewportTool();
-    return cameraGate && app->state.selfShadowMode > 0 &&    // 0xA1DD0
-           app->state.selfShadowEnabled != 0;            // 0xA10F8
+    const bool cameraGate = app->PlaybackActive() != 0 || app->UsesViewportTool();
+    return cameraGate && app->state.selfShadowMode > 0 && // 0xA1DD0
+           app->state.selfShadowEnabled != 0;             // 0xA10F8
 }
 
-}  // namespace
+} // namespace
 
 bool UseEffectModelRenderer(MMDApp* app) {
     return EffectRenderEnabled(app);
 }
 
-void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
+void RenderModelsFixed(MMDApp* app) { // 0x425D20
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    // x64 帧头 0x7FF7CB4BFC08 仅一条 SetTextureStageState(2, TEXCOORDINDEX,
-    // 0x10000)（= D3DTSS_TCI_CAMERASPACENORMAL，原版立即数，与 accessory.cpp
-    // 一致写字面量）：不解绑纹理 2、不写 COLOROP/TTF。完整的球面贴图级联
-    // 关闭保留在 ConfigureMaterialStages 的逐材质循环里（0x491470.. 的逐材质
-    // 行为）。
+    // x64 frame head 0x7FF7CB4BFC08 issues only SetTextureStageState(2, TEXCOORDINDEX,
+    // 0x10000) (= D3DTSS_TCI_CAMERASPACENORMAL, the original immediate, written literally as in accessory.cpp):
+    // it does not unbind texture 2 or write COLOROP/TTF. Full sphere-map stage teardown
+    // remains inside ConfigureMaterialStages' per-material loop (per-material behavior at 0x491470..).
+    //
     device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);
     if (sub->d3dInitialized != 0) {
         device->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_ALWAYS);
@@ -1382,16 +1290,15 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     DrawPreModelQuads(app, device);
     SetHistoryReplayPass("ground");
     DrawGroundGeometry(app, device);
-    // FILLMODE 排在背景图/AVI 四边形与地面之后：x64 sub_7FF7CB4BFB20 先画
-    // 背景四边形（0x7FF7CB4BFC74 图片 / 0x7FF7CB4BFD4A AVI）、地面
-    // （0x7FF7CB4BFE20），然后才在 0x7FF7CB4BFE88..0x7FF7CB4BFEA8 按线框开关
-    // 写 RS(8) 并紧跟 RS(137)=1——线框模式下背景与地面仍实体填充。
-    device->SetRenderState(D3DRS_FILLMODE,
-        app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
+    // FILLMODE follows the background image/AVI quads and ground: x64 sub_7FF7CB4BFB20 first draws
+    // the background quads (0x7FF7CB4BFC74 image / 0x7FF7CB4BFD4A AVI), then ground
+    // (0x7FF7CB4BFE20), then writes RS(8) according to the wireframe toggle at 0x7FF7CB4BFE88..0x7FF7CB4BFEA8,
+    // immediately followed by RS(137)=1; backgrounds and ground remain solid in wireframe mode.
+    device->SetRenderState(
+        D3DRS_FILLMODE, app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
     device->SetRenderState(D3DRS_LIGHTING, TRUE);
 
-    const int accessorySplit = std::max(0, std::min(
-        app->AccessoryRenderSplitOrder(), 255));
+    const int accessorySplit = std::max(0, std::min(app->AccessoryRenderSplitOrder(), 255));
     SetHistoryReplayPass("accessory");
     RenderAccessoriesFixedRange(app, 0, accessorySplit);
     BeginProjectedShadowPass(sub, device);
@@ -1409,7 +1316,7 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
-            if (model == nullptr || mdl::Mdl(model)->comboSelIndex != order)
+            if (model == nullptr || model->comboSelIndex != order)
                 continue;
             app->ActiveRenderObject() = model;
             app->ActiveRenderPass() = AccessoryRenderPass::FixedFunction;
@@ -1473,10 +1380,8 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     Matrix worldView;
     Matrix wvp;
     const Matrix frame = *reinterpret_cast<const Matrix*>(frameMatrix);
-    device->GetTransform(D3DTS_VIEW,
-                         reinterpret_cast<D3DMATRIX*>(&view));
-    device->GetTransform(D3DTS_PROJECTION,
-                         reinterpret_cast<D3DMATRIX*>(&projection));
+    device->GetTransform(D3DTS_VIEW, reinterpret_cast<D3DMATRIX*>(&view));
+    device->GetTransform(D3DTS_PROJECTION, reinterpret_cast<D3DMATRIX*>(&projection));
     // 0x4275F9..0x42764B prepares app+A0228 as
     // (frame world * D3DTS_VIEW) * D3DTS_PROJECTION.  The previous port
     // skipped VIEW, so the effect vertex shader emitted clip-space geometry
@@ -1501,32 +1406,32 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     DrawPreModelQuads(app, device);
     DrawGroundGeometry(app, device);
 
-    float light[4] = {app->LightDirection()[0], app->LightDirection()[1],
-                      app->LightDirection()[2], 1.0f};
+    float light[4] = {app->LightDirection()[0], app->LightDirection()[1], app->LightDirection()[2],
+                      1.0f};
     d3dx::Get().vec3Normalize(light, light);
     light[3] = 1.0f;
     Matrix inverse;
-    float target[3] = {app->ViewOffsetX(), app->ViewOffsetY(),
-                       app->CameraDistance()};
+    float target[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
     float place[4] = {};
     d3dx::Get().inverse(&inverse, nullptr, &frame);
     d3dx::Get().vec3Transform(place, target, &inverse);
+    // x86 427B3C..427B71 and x64 4C226C..4C228E copy XYZ into the
+    // preceding LightDir vector, retaining its exact homogeneous W = 1.
+    place[3] = 1.0f;
     fx::SetFloatArray(effect, "LightDir", light, 4);
     fx::SetFloatArray(effect, "Place", place, 4);
     fx::SetMatrix(effect, "matWorldViewProj",
-                reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
+                  reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
     fx::SetMatrix(effect, "matLightViewProj",
-                reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
+                  reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
     fx::SetMatrix(effect, "matRotate",
-                reinterpret_cast<const Matrix*>(&app->ViewRotationTransform()));
+                  reinterpret_cast<const Matrix*>(&app->ViewRotationTransform()));
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    device->SetRenderState(D3DRS_FILLMODE,
-        app->WireframeRenderingEnabled() == 0
-            ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
+    device->SetRenderState(
+        D3DRS_FILLMODE, app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
     device->SetRenderState(D3DRS_LIGHTING, TRUE);
 
-    const int accessorySplit = std::max(0, std::min(
-        app->AccessoryRenderSplitOrder(), 255));
+    const int accessorySplit = std::max(0, std::min(app->AccessoryRenderSplitOrder(), 255));
     RenderAccessoriesEffectRange(app, 0, accessorySplit);
     BeginProjectedShadowPass(sub, device);
     RenderProjectedGroundShadowPass(app, device);
@@ -1542,15 +1447,14 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     // first set at 0x7FF7CB4C34E9 (not at the frame head), so the leading
     // accessory range runs with the previous frame's trailing zero.
     SetProjectedStencil(sub, device, false);
-    device->SetRenderState(D3DRS_FILLMODE,
-        app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID
-                                              : D3DFILL_WIREFRAME);
+    device->SetRenderState(
+        D3DRS_FILLMODE, app->WireframeRenderingEnabled() == 0 ? D3DFILL_SOLID : D3DFILL_WIREFRAME);
     device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1);
     device->SetTexture(0, sub->hdrTexture);
     fx::SetMatrix(effect, "matWorldViewProj",
-                reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
+                  reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
     fx::SetMatrix(effect, "matLightViewProj",
-                reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
+                  reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
     fx::SetBool(effect, "transp", app->state.characterTransparentMode != 0);
     device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
@@ -1562,12 +1466,12 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
-            if (model == nullptr || mdl::Mdl(model)->comboSelIndex != order)
+            if (model == nullptr || model->comboSelIndex != order)
                 continue;
             if (app->ModelNonDisplayMode() != 0)
                 break;
             app->ActiveRenderObject() = model;
-            if (mdl::Mdl(model)->toonFlag != 0) {
+            if (model->toonFlag != 0) {
                 app->ActiveRenderPass() = AccessoryRenderPass::Effect;
                 device->SetTexture(0, sub->hdrTexture);
                 DrawModelMaterials(app, model, true, false);
@@ -1621,7 +1525,7 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     app->ActiveRenderPass() = AccessoryRenderPass::None;
 }
 
-void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
+void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) { // 0x426CD0
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
@@ -1635,17 +1539,14 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     const UINT width = static_cast<UINT>(sub->renderTargetWidth);
     const UINT height = static_cast<UINT>(sub->renderTargetHeight);
     if (texture == nullptr &&
-        SUCCEEDED(api.createTexture(device, width, height, 1,
-            D3DUSAGE_RENDERTARGET, static_cast<D3DFORMAT>(114),
-            D3DPOOL_DEFAULT, &texture)))
+        SUCCEEDED(api.createTexture(device, width, height, 1, D3DUSAGE_RENDERTARGET,
+                                    static_cast<D3DFORMAT>(114), D3DPOOL_DEFAULT, &texture)))
         texture->GetSurfaceLevel(0, &surface);
     if (depth == nullptr)
-        device->CreateDepthStencilSurface(width, height,
-            static_cast<D3DFORMAT>(77), D3DMULTISAMPLE_NONE, 0, FALSE,
-            &depth, nullptr);
+        device->CreateDepthStencilSurface(width, height, static_cast<D3DFORMAT>(77),
+                                          D3DMULTISAMPLE_NONE, 0, FALSE, &depth, nullptr);
     if (sub->backbufferSurface == nullptr) {
-        device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
-            &sub->backbufferSurface);
+        device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &sub->backbufferSurface);
         device->GetDepthStencilSurface(&sub->depthStencilSurface);
     }
     if (surface == nullptr || depth == nullptr)
@@ -1655,11 +1556,9 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     Matrix view;
     Matrix projection;
     Matrix worldView;
-    device->GetTransform(D3DTS_VIEW,
-                         reinterpret_cast<D3DMATRIX*>(&view));
+    device->GetTransform(D3DTS_VIEW, reinterpret_cast<D3DMATRIX*>(&view));
     device->GetViewport(&oldViewport);
-    device->GetTransform(D3DTS_PROJECTION,
-                         reinterpret_cast<D3DMATRIX*>(&projection));
+    device->GetTransform(D3DTS_PROJECTION, reinterpret_cast<D3DMATRIX*>(&projection));
     fx::SetTechnique(effect, "ZValuePlotTec");
     device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1);
     device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2);
@@ -1668,25 +1567,20 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
 #endif
     device->SetRenderTarget(0, surface);
     device->SetDepthStencilSurface(depth);
-    device->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
-                  0xFFFFFFFFu, 1.0f, 0);
+    device->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xFFFFFFFFu, 1.0f, 0);
     device->SetTexture(0, nullptr);
     D3DVIEWPORT9 shadowViewport{0, 0, width, height, 0.0f, 1.0f};
     device->SetViewport(&shadowViewport);
 
-    float target[3] = {app->ViewOffsetX(), app->ViewOffsetY(),
-                       app->CameraDistance()};
+    float target[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
     const D3DVECTOR& lightDirection = app->SceneLight().Direction;
-    float eye[3] = {
-        target[0] - lightDirection.x * 50.0f,
-        target[1] - lightDirection.y * 50.0f,
-        target[2] - lightDirection.z * 50.0f};
+    float eye[3] = {target[0] - lightDirection.x * 50.0f, target[1] - lightDirection.y * 50.0f,
+                    target[2] - lightDirection.z * 50.0f};
     const float up[3] = {0.0f, 0.0f, 1.0f};
     Matrix lightView;
     api.lookAtLH(&lightView, eye, target, up);
 
-    float direction[3] = {lightDirection.x, lightDirection.y,
-                          lightDirection.z};
+    float direction[3] = {lightDirection.x, lightDirection.y, lightDirection.z};
     api.vec3Normalize(direction, direction);
     const float slope = -direction[2];
     const float edge = 1.0f - std::fabs(slope);
@@ -1740,12 +1634,10 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
         positive = edge;
         negative = -edge;
     } else if (slope < -0.8f) {
-        positive = modeOne ? 4.0f * slope + 3.7f
-                           : 9.0f * slope + 8.2f;
+        positive = modeOne ? 4.0f * slope + 3.7f : 9.0f * slope + 8.2f;
         negative = -9.0f * slope - 8.2f;
     } else if (slope > 0.8f) {
-        positive = modeOne ? 3.7f - 4.0f * slope
-                           : 8.2f - 9.0f * slope;
+        positive = modeOne ? 3.7f - 4.0f * slope : 8.2f - 9.0f * slope;
         negative = 9.0f * slope - 8.2f;
     } else {
         positive = modeOne ? 0.5f : 1.0f;
@@ -1758,8 +1650,7 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     Multiply(&shadowMatrix, &shadowMatrix, &transform);
     api.scaling(&transform, 1.0f, 1.0f, 0.5f);
     Multiply(&shadowMatrix, &shadowMatrix, &transform);
-    std::memcpy(&app->LightViewProjection(), &shadowMatrix,
-                sizeof(shadowMatrix));
+    std::memcpy(&app->LightViewProjection(), &shadowMatrix, sizeof(shadowMatrix));
 
     UINT passes = 0;
     app->ActiveRenderPass() = AccessoryRenderPass::ModelEffect;
@@ -1782,7 +1673,7 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
         fx::SetMatrix(effect, "matWorldViewProj", &wvp);
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
-            if (model == nullptr || mdl::Mdl(model)->toonFlag == 0)
+            if (model == nullptr || model->toonFlag == 0)
                 continue;
             app->ActiveRenderObject() = model;
             DrawModelMaterials(app, model, true, true);
@@ -1794,19 +1685,17 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     device->SetVertexShader(nullptr);
     device->SetPixelShader(nullptr);
     IDirect3DSurface9* targetSurface =
-        sub->multisampleAvailable == 0 &&
-        app->RecordingWindow() != nullptr
+        sub->multisampleAvailable == 0 && app->RecordingWindow() != nullptr
             ? sub->captureSurface
             : sub->backbufferSurface;
     device->SetRenderTarget(0, targetSurface);
     device->SetDepthStencilSurface(sub->depthStencilSurface);
     device->SetViewport(&oldViewport);
-    device->SetTransform(D3DTS_PROJECTION,
-                         reinterpret_cast<const D3DMATRIX*>(&projection));
+    device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&projection));
     // x64 sub_7FF7CB4C1030 tail @0x7FF7CB4C1E1D/0x7FF7CB4C1E43:
     // ALPHABLENDENABLE(27)=TRUE, then CULLMODE(22)=CCW(3).
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

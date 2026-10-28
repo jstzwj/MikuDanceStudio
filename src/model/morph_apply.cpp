@@ -79,8 +79,8 @@ void QuatMul(float out[4], const float a[4], const float b[4]) {
 // direct morph path multiplies by w only (0x7FF7CB4DDC49/0x7FF7CB4DDCFB);
 // float multiply does not associate, so pre-combining w * refW would add a
 // different rounding point.  The direct call passes refW = 1.0f (exact).
-void AccumBoneEntry(mdl::BoneMorphOffsetRecord* work,
-                    const mdl::PmxBoneMorphEntry& ent, float w, float refW) {
+void AccumBoneEntry(mdl::BoneMorphOffsetRecord* work, const mdl::PmxBoneMorphEntry& ent, float w,
+                    float refW) {
     mdl::BoneMorphOffsetRecord& rec = work[ent.boneIndex];
     float x = ent.rotation[0];
     float y = ent.rotation[1];
@@ -103,8 +103,7 @@ void AccumBoneEntry(mdl::BoneMorphOffsetRecord* work,
     double angle = std::acos(static_cast<double>(qw));
     if (qw < 0.0f)
         angle -= 3.140000104904175;
-    const double len =
-        std::sqrt(static_cast<double>(x * x + y * y + z * z));
+    const double len = std::sqrt(static_cast<double>(x * x + y * y + z * z));
     float q[4];
     if (angle == 0.0 || len < 0.00000011920929) {
         q[0] = 0.0f;
@@ -161,15 +160,12 @@ void AccumBoneEntry(mdl::BoneMorphOffsetRecord* work,
     // single float store (direct path has one fmul; refW = 1.0f exact).
     // Keep the whole expression in double so the only rounding is the
     // final store, like the original.
-    rec.translation[0] = static_cast<float>(
-        rec.translation[0] +
-        (w * static_cast<double>(ent.translation[0])) * refW);
-    rec.translation[1] = static_cast<float>(
-        rec.translation[1] +
-        (w * static_cast<double>(ent.translation[1])) * refW);
-    rec.translation[2] = static_cast<float>(
-        rec.translation[2] +
-        (w * static_cast<double>(ent.translation[2])) * refW);
+    rec.translation[0] = static_cast<float>(rec.translation[0] +
+                                            (w * static_cast<double>(ent.translation[0])) * refW);
+    rec.translation[1] = static_cast<float>(rec.translation[1] +
+                                            (w * static_cast<double>(ent.translation[1])) * refW);
+    rec.translation[2] = static_cast<float>(rec.translation[2] +
+                                            (w * static_cast<double>(ent.translation[2])) * refW);
 #else
     rec.translation[0] += (ent.translation[0] * w) * refW;
     rec.translation[1] += (ent.translation[1] * w) * refW;
@@ -179,8 +175,7 @@ void AccumBoneEntry(mdl::BoneMorphOffsetRecord* work,
 
 template <std::size_t Count>
 void ApplyMaterialMorphChannels(float (&add)[Count], float (&mul)[Count],
-                                const float (&delta)[Count], float weight,
-                                bool additive) {
+                                const float (&delta)[Count], float weight, bool additive) {
     for (std::size_t i = 0; i < Count; ++i) {
         if (additive)
             add[i] += delta[i] * weight;
@@ -189,8 +184,7 @@ void ApplyMaterialMorphChannels(float (&add)[Count], float (&mul)[Count],
     }
 }
 
-void ApplyMaterialMorphChannels(float& add, float& mul, float delta,
-                                float weight, bool additive) {
+void ApplyMaterialMorphChannels(float& add, float& mul, float delta, float weight, bool additive) {
     if (additive)
         add += delta * weight;
     else
@@ -204,31 +198,28 @@ void ApplyMatSlot(mdl::MaterialMorphPool& add, mdl::MaterialMorphPool& mul,
     const mdl::MaterialMorphChannels& delta = entry.channels;
     mdl::MaterialMorphChannels& addChannels = add.channels;
     mdl::MaterialMorphChannels& mulChannels = mul.channels;
-    ApplyMaterialMorphChannels(addChannels.diffuse, mulChannels.diffuse,
-                               delta.diffuse, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.specular, mulChannels.specular,
-                               delta.specular, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.specularPower,
-                               mulChannels.specularPower,
+    ApplyMaterialMorphChannels(addChannels.diffuse, mulChannels.diffuse, delta.diffuse, weight,
+                               additive);
+    ApplyMaterialMorphChannels(addChannels.specular, mulChannels.specular, delta.specular, weight,
+                               additive);
+    ApplyMaterialMorphChannels(addChannels.specularPower, mulChannels.specularPower,
                                delta.specularPower, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.ambient, mulChannels.ambient,
-                               delta.ambient, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.edgeColor, mulChannels.edgeColor,
-                               delta.edgeColor, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.edgeSize, mulChannels.edgeSize,
-                               delta.edgeSize, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.textureTint,
-                               mulChannels.textureTint, delta.textureTint,
+    ApplyMaterialMorphChannels(addChannels.ambient, mulChannels.ambient, delta.ambient, weight,
+                               additive);
+    ApplyMaterialMorphChannels(addChannels.edgeColor, mulChannels.edgeColor, delta.edgeColor,
                                weight, additive);
-    ApplyMaterialMorphChannels(addChannels.sphereTint, mulChannels.sphereTint,
-                               delta.sphereTint, weight, additive);
-    ApplyMaterialMorphChannels(addChannels.toonTint, mulChannels.toonTint,
-                               delta.toonTint, weight, additive);
+    ApplyMaterialMorphChannels(addChannels.edgeSize, mulChannels.edgeSize, delta.edgeSize, weight,
+                               additive);
+    ApplyMaterialMorphChannels(addChannels.textureTint, mulChannels.textureTint, delta.textureTint,
+                               weight, additive);
+    ApplyMaterialMorphChannels(addChannels.sphereTint, mulChannels.sphereTint, delta.sphereTint,
+                               weight, additive);
+    ApplyMaterialMorphChannels(addChannels.toonTint, mulChannels.toonTint, delta.toonTint, weight,
+                               additive);
 }
 
 // All entries of one material morph (type 8 record), weight `w`.
-void AccumMatMorph(mdl::MaterialMorphPool* addP,
-                   mdl::MaterialMorphPool* mulP, int matCount,
+void AccumMatMorph(mdl::MaterialMorphPool* addP, mdl::MaterialMorphPool* mulP, int matCount,
                    const mdl::MorphRecord& morph, float w) {
     const int n = morph.materialCount;
     for (int k = 0; k < n; ++k) {
@@ -243,25 +234,23 @@ void AccumMatMorph(mdl::MaterialMorphPool* addP,
     }
 }
 
-}  // namespace
+} // namespace
 
-void ModelApplyMorphs(unsigned char* m) {
-    mdl::ModelRecord& model = *mdl::Mdl(m);
+void ModelApplyMorphs(mdl::ModelRecord* m) {
+    mdl::ModelRecord& model = *m;
     if (model.physicsMode != 2)
         return;
 
     mdl::MorphRecord* morphs = model.morphs;
     const int morphCount = static_cast<int>(model.morphCount);
-    mdl::BoneMorphOffsetRecord* work = mdl::BoneMorphOffsets(m);
-    const int workCount = mdl::BoneMorphOffsetCount(m);
+    mdl::BoneMorphOffsetRecord* work = m->boneMorphTable;
+    const int workCount = m->boneMorphCount;
 
     // ---- 1. bone morph offsets into the work records ----------------------
     for (int i = 0; i < workCount; ++i) {
         mdl::BoneMorphOffsetRecord& record = work[i];
-        record.translation[0] = record.translation[1] =
-            record.translation[2] = 0.0f;
-        record.rotation[0] = record.rotation[1] =
-            record.rotation[2] = 0.0f;
+        record.translation[0] = record.translation[1] = record.translation[2] = 0.0f;
+        record.rotation[0] = record.rotation[1] = record.rotation[2] = 0.0f;
         record.rotation[3] = 1.0f;
     }
     for (int i = 0; i < morphCount; ++i) {
@@ -270,20 +259,19 @@ void ModelApplyMorphs(unsigned char* m) {
         if (w == 0.0f)
             continue;
         if (morph.type != 0) {
-            if (morph.type == 2) {                    // bone morph
+            if (morph.type == 2) { // bone morph
                 const int n = morph.boneCount;
                 for (int k = 0; k < n; ++k)
                     AccumBoneEntry(work, morph.boneEntries[k], w, 1.0f);
             }
-        } else {                                      // group morph
+        } else { // group morph
             for (int k = 0; k < morph.groupCount; ++k) {
                 const mdl::PmxGroupMorphEntry& ref = morph.groupEntries[k];
                 const mdl::MorphRecord& target = morphs[ref.morphIndex];
                 if (target.type == 2) {
                     const int en = target.boneCount;
                     for (int e = 0; e < en; ++e)
-                        AccumBoneEntry(work, target.boneEntries[e], w,
-                                       ref.weight);
+                        AccumBoneEntry(work, target.boneEntries[e], w, ref.weight);
                 }
             }
         }
@@ -291,20 +279,27 @@ void ModelApplyMorphs(unsigned char* m) {
 
     // ---- 2. material morph pools ------------------------------------------
     const int matCount = static_cast<int>(model.materialCount);
-    auto* addP = mdl::MaterialMorphAdd(m);
-    auto* mulP = mdl::MaterialMorphMul(m);
+    auto* addP = m->materialMorphPools.additive;
+    auto* mulP = m->materialMorphPools.multiplicative;
     std::memset(addP, 0, sizeof(*addP) * static_cast<std::size_t>(matCount));
     for (int i = 0; i < matCount; ++i) {
         mdl::MaterialMorphChannels& slot = mulP[i].channels;
-        for (float& value : slot.diffuse) value = 1.0f;
-        for (float& value : slot.specular) value = 1.0f;
+        for (float& value : slot.diffuse)
+            value = 1.0f;
+        for (float& value : slot.specular)
+            value = 1.0f;
         slot.specularPower = 1.0f;
-        for (float& value : slot.ambient) value = 1.0f;
-        for (float& value : slot.edgeColor) value = 1.0f;
+        for (float& value : slot.ambient)
+            value = 1.0f;
+        for (float& value : slot.edgeColor)
+            value = 1.0f;
         slot.edgeSize = 1.0f;
-        for (float& value : slot.textureTint) value = 1.0f;
-        for (float& value : slot.sphereTint) value = 1.0f;
-        for (float& value : slot.toonTint) value = 1.0f;
+        for (float& value : slot.textureTint)
+            value = 1.0f;
+        for (float& value : slot.sphereTint)
+            value = 1.0f;
+        for (float& value : slot.toonTint)
+            value = 1.0f;
     }
     for (int i = 0; i < morphCount; ++i) {
         const mdl::MorphRecord& morph = morphs[i];
@@ -312,22 +307,21 @@ void ModelApplyMorphs(unsigned char* m) {
         if (w == 0.0f)
             continue;
         if (morph.type != 0) {
-            if (morph.type == 8)                       // material morph
+            if (morph.type == 8) // material morph
                 AccumMatMorph(addP, mulP, matCount, morph, w);
-        } else {                                      // group morph
+        } else { // group morph
             for (int k = 0; k < morph.groupCount; ++k) {
                 const mdl::PmxGroupMorphEntry& ref = morph.groupEntries[k];
                 const mdl::MorphRecord& target = morphs[ref.morphIndex];
                 if (target.type == 8)
-                    AccumMatMorph(addP, mulP, matCount, target,
-                                  w * ref.weight);
+                    AccumMatMorph(addP, mulP, matCount, target, w * ref.weight);
             }
         }
     }
 
     // ---- 3. compose into the material records ------------------------------
     auto* mats = model.materials;
-    auto* baseP = mdl::MaterialMorphBase(m);
+    auto* baseP = m->materialMorphPools.base;
     for (int i = 0; i < matCount; ++i) {
         mdl::ModelMaterialRecord& mat = mats[i];
         const mdl::MaterialMorphChannels& add = addP[i].channels;
@@ -337,23 +331,16 @@ void ModelApplyMorphs(unsigned char* m) {
             return multiplier * original + added;
         };
         for (int c = 0; c < 3; ++c) {
-            mat.diffuseMirror[c] = compose(mul.diffuse[c], base.diffuse[c],
-                                            add.diffuse[c]);
-            mat.specular[c] = compose(mul.specular[c], base.specular[c],
-                                      add.specular[c]);
-            mat.ambient[c] = compose(mul.ambient[c], base.ambient[c],
-                                     add.ambient[c]);
-            mat.edgeColor[c] = compose(mul.edgeColor[c], base.edgeColor[c],
-                                       add.edgeColor[c]);
+            mat.diffuseMirror[c] = compose(mul.diffuse[c], base.diffuse[c], add.diffuse[c]);
+            mat.specular[c] = compose(mul.specular[c], base.specular[c], add.specular[c]);
+            mat.ambient[c] = compose(mul.ambient[c], base.ambient[c], add.ambient[c]);
+            mat.edgeColor[c] = compose(mul.edgeColor[c], base.edgeColor[c], add.edgeColor[c]);
         }
-        mat.diffuse[3] = compose(mul.diffuse[3], base.diffuse[3],
-                                 add.diffuse[3]);
-        mat.specularPower = compose(mul.specularPower, base.specularPower,
-                                    add.specularPower);
-        mat.edgeColor[3] = compose(mul.edgeColor[3], base.edgeColor[3],
-                                   add.edgeColor[3]);
+        mat.diffuse[3] = compose(mul.diffuse[3], base.diffuse[3], add.diffuse[3]);
+        mat.specularPower = compose(mul.specularPower, base.specularPower, add.specularPower);
+        mat.edgeColor[3] = compose(mul.edgeColor[3], base.edgeColor[3], add.edgeColor[3]);
         mat.edgeSize = compose(mul.edgeSize, base.edgeSize, add.edgeSize);
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

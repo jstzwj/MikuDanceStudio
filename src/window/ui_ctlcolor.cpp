@@ -46,61 +46,45 @@
 #include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
-namespace {
-
-// Free-if-non-null then null the slot - mirrors the exact asm block
-// (mov eax,[esi+off]; cmp eax,0; jz next; push eax; call free;
-//  mov [esi+off],0), including the order of the 7 calls at the call site.
-void FreeTimelineSelectionRecords(MMDApp* app, TimelineSelectionBand band) {
-    TimelineSelectionRecord*& p = app->TimelineSelectionRecords(band);
-    if (p != nullptr) {
-        std::free(p);
-        p = nullptr;
-    }
-}
-
-}  // namespace
-
 // Not yet declared in ported_funcs.hpp - external-linkage forward
 // declarations so the calls below resolve to the real definitions
 // (ui_panel_paint.cpp / coordinator-provided stub); the coordinator
 // registers them centrally in the finishing phase.
-void PanelPaint(MMDApp* app);       // VA 0x00414610
-void SelectionReeval(MMDApp* app);  // VA 0x00430510
+void PanelPaint(MMDApp* app);      // VA 0x00414610
+void SelectionReeval(MMDApp* app); // VA 0x00430510
 
 LRESULT HandleCtlColor(HWND control, HDC dc) {
     // The original does not use the device context.
     MMDApp* app = g_Block;
     (void)dc;
     const HWND ctrl = control;
-    const HWND main = reinterpret_cast<HWND>(app->state.hwnd);  // 657080
+    const HWND main = reinterpret_cast<HWND>(app->state.hwnd); // 657080
     const auto brushResult = [app](int index) {
-        return static_cast<LRESULT>(
-            reinterpret_cast<std::intptr_t>(app->UiBrush(index)));
+        return static_cast<LRESULT>(reinterpret_cast<std::intptr_t>(app->UiBrush(index)));
     };
 
-    if (ctrl == GetDlgItem(main, panel::kFovSlider))  // 0x1BF -> slot 9 (0xA04F0)
+    if (ctrl == GetDlgItem(main, panel::kFovSlider)) // 0x1BF -> slot 9 (0xA04F0)
         return brushResult(9);
 
-    if (ctrl == GetDlgItem(main, panel::kFrameVolumeSlider))  // 0x216 -> slot 10 (0xA04F4)
+    if (ctrl == GetDlgItem(main, panel::kFrameVolumeSlider)) // 0x216 -> slot 10 (0xA04F4)
         return brushResult(10);
 
-    if (ctrl == GetDlgItem(main, panel::kLightColorSliderR))  // 0x1C7 -> slot 0 (0xA04CC)
+    if (ctrl == GetDlgItem(main, panel::kLightColorSliderR)) // 0x1C7 -> slot 0 (0xA04CC)
         return brushResult(0);
 
-    if (ctrl == GetDlgItem(main, panel::kLightColorSliderG))  // 0x1C8 -> slot 1 (0xA04D0)
+    if (ctrl == GetDlgItem(main, panel::kLightColorSliderG)) // 0x1C8 -> slot 1 (0xA04D0)
         return brushResult(1);
 
-    if (ctrl == GetDlgItem(main, panel::kLightColorSliderB))  // 0x1C9 -> slot 2 (0xA04D4)
+    if (ctrl == GetDlgItem(main, panel::kLightColorSliderB)) // 0x1C9 -> slot 2 (0xA04D4)
         return brushResult(2);
 
-    if (ctrl == GetDlgItem(main, panel::kLightDirSliderX))  // 0x1CA -> slot 3 (0xA04D8)
+    if (ctrl == GetDlgItem(main, panel::kLightDirSliderX)) // 0x1CA -> slot 3 (0xA04D8)
         return brushResult(3);
 
-    if (ctrl == GetDlgItem(main, panel::kLightDirSliderY))  // 0x1CB -> slot 4 (0xA04DC)
+    if (ctrl == GetDlgItem(main, panel::kLightDirSliderY)) // 0x1CB -> slot 4 (0xA04DC)
         return brushResult(4);
 
-    if (ctrl == GetDlgItem(main, panel::kLightDirSliderZ))  // 0x1CC -> slot 5 (0xA04E0)
+    if (ctrl == GetDlgItem(main, panel::kLightDirSliderZ)) // 0x1CC -> slot 5 (0xA04E0)
         return brushResult(5);
 
     // Pair 515|510 (0x203/0x1FE) -> slot 6 (0xA04E4): both GetDlgItem calls
@@ -117,7 +101,7 @@ LRESULT HandleCtlColor(HWND control, HDC dc) {
     if (hit520 || hit505)
         return brushResult(7);
 
-    if (ctrl == GetDlgItem(main, panel::kSelfShadowRangeSlider))  // 0x230 -> slot 8 (0xA04EC)
+    if (ctrl == GetDlgItem(main, panel::kSelfShadowRangeSlider)) // 0x230 -> slot 8 (0xA04EC)
         return brushResult(8);
 
     return 0;
@@ -152,21 +136,15 @@ void HandleLButtonUp(MMDApp* app) {
     app->WindowLayoutReady() = 1;
 
     if (dragActive) {
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::Accessory);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::ModelIk);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::Camera);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::Light);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::ModelBone);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::SelfShadow);
-        FreeTimelineSelectionRecords(app, TimelineSelectionBand::ModelMorph);
+        app->ReleaseTimelineSelectionRecords();
 
         app->SelectionBoxDragging() = 0;
         app->TimelineSelectionChanged() = 0;
-        PanelPaint(app);               // 0x414610
-        SelectionReeval(app);          // 0x430510
+        PanelPaint(app);      // 0x414610
+        SelectionReeval(app); // 0x430510
     }
 
-    app->PendingTimelineSelectionRow() = TimelineSelectionRow::None;
+    app->DraggedInterpolationPoint() = InterpolationControlPoint::None;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

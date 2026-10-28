@@ -82,19 +82,30 @@ bool	matrixToEulerXYZ(const btMatrix3x3& mat,btVector3& xyz)
 	{
 		if (fi > btScalar(-1.0f))
 		{
-			/* Original 0x501200 evaluates the arc functions through the
-			   CRT double atan2/asin and stores each result to float once;
-			   the stock float btAtan2/btAsin differ by 1 ULP on some
-			   inputs, which the 6DOF spring chain amplifies per frame. */
-			xyz[0] = (float)::atan2((double)-btGetMatrixElem(mat,5),(double)btGetMatrixElem(mat,8));
+/* Original x86 0x501200 uses double atan2/asin with one float
+               store. The x64 RVA 0x116F00 instead calls atan2f/asinf.
+               The spring chain amplifies changes to these rounding stages. */
+#if defined(_M_X64)
+			xyz[0] = ::atan2f(-btGetMatrixElem(mat, 5), btGetMatrixElem(mat, 8));
+			xyz[1] = ::asinf(btGetMatrixElem(mat, 2));
+			xyz[2] = ::atan2f(-btGetMatrixElem(mat, 1), btGetMatrixElem(mat, 0));
+#else
+			xyz[0] =
+				(float)::atan2((double)-btGetMatrixElem(mat, 5), (double)btGetMatrixElem(mat, 8));
 			xyz[1] = (float)::asin((double)btGetMatrixElem(mat,2));
 			xyz[2] = (float)::atan2((double)-btGetMatrixElem(mat,1),(double)btGetMatrixElem(mat,0));
+#endif
 			return true;
 		}
 		else
 		{
 			// WARNING.  Not unique.  XA - ZA = -atan2(r10,r11)
-			xyz[0] = (float)-::atan2((double)btGetMatrixElem(mat,3),(double)btGetMatrixElem(mat,4));
+#if defined(_M_X64)
+			xyz[0] = -::atan2f(btGetMatrixElem(mat, 3), btGetMatrixElem(mat, 4));
+#else
+			xyz[0] =
+				(float)-::atan2((double)btGetMatrixElem(mat, 3), (double)btGetMatrixElem(mat, 4));
+#endif
 			xyz[1] = -SIMD_HALF_PI;
 			xyz[2] = btScalar(0.0);
 			return false;
@@ -103,7 +114,11 @@ bool	matrixToEulerXYZ(const btMatrix3x3& mat,btVector3& xyz)
 	else
 	{
 		// WARNING.  Not unique.  XAngle + ZAngle = atan2(r10,r11)
-		xyz[0] = (float)::atan2((double)btGetMatrixElem(mat,3),(double)btGetMatrixElem(mat,4));
+#if defined(_M_X64)
+		xyz[0] = ::atan2f(btGetMatrixElem(mat, 3), btGetMatrixElem(mat, 4));
+#else
+		xyz[0] = (float)::atan2((double)btGetMatrixElem(mat, 3), (double)btGetMatrixElem(mat, 4));
+#endif
 		xyz[1] = SIMD_HALF_PI;
 		xyz[2] = 0.0;
 	}
@@ -366,7 +381,12 @@ void btGeneric6DofConstraint::calculateAngleInfo()
 		const btScalar co0 = A[1][1]*A[2][2] - A[1][2]*A[2][1];
 		const btScalar co1 = A[2][0]*A[1][2] - A[1][0]*A[2][2];
 		const btScalar co2 = A[1][0]*A[2][1] - A[2][0]*A[1][1];
+#if defined(_M_X64)
+		// x64 RVA 0x118542: the first two products are co1*A01 and co0*A00.
+		const btScalar det = (co1 * A[0][1] + co0 * A[0][0]) + co2 * A[0][2];
+#else
 		const btScalar det = (co2*A[0][2] + A[0][1]*co1) + A[0][0]*co0;
+#endif
 		const btScalar s = btScalar(1.0)/det;
 		invA.setValue(
 			co0*s,
@@ -386,6 +406,14 @@ void btGeneric6DofConstraint::calculateAngleInfo()
 	   offline against both observed divergent samples ((5,6) and (7,8)
 	   joints, all four angle words each). */
 	btMatrix3x3 relative_frame;
+#if defined(_M_X64)
+	// x64 RVA 0x1185E2..0x11871C folds every relative-frame dot product left.
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 3; ++column)
+			relative_frame[row][column] =
+				(invA[row][0] * B[0][column] + invA[row][1] * B[1][column]) +
+				invA[row][2] * B[2][column];
+#else
 	relative_frame[0][0] = (invA[0][0]*B[0][0] + invA[0][1]*B[1][0]) + invA[0][2]*B[2][0];
 	relative_frame[0][1] = (invA[0][0]*B[0][1] + invA[0][2]*B[2][1]) + invA[0][1]*B[1][1];
 	relative_frame[0][2] = (invA[0][0]*B[0][2] + invA[0][2]*B[2][2]) + invA[0][1]*B[1][2];
@@ -395,6 +423,7 @@ void btGeneric6DofConstraint::calculateAngleInfo()
 	relative_frame[2][0] = (invA[2][0]*B[0][0] + invA[2][1]*B[1][0]) + invA[2][2]*B[2][0];
 	relative_frame[2][1] = (invA[2][0]*B[0][1] + invA[2][1]*B[1][1]) + invA[2][2]*B[2][1];
 	relative_frame[2][2] = (invA[2][1]*B[1][2] + invA[2][2]*B[2][2]) + invA[2][0]*B[0][2];
+#endif
 	matrixToEulerXYZ(relative_frame,m_calculatedAxisAngleDiff);
 	// in euler angle mode we do not actually constrain the angular velocity
 	// along the axes axis[0] and axis[2] (although we do use axis[1]) :
@@ -429,9 +458,17 @@ void btGeneric6DofConstraint::calculateAngleInfo()
 		const float a2y = Bx[2][0]*a1x - a1z*Bx[0][0];
 		const float a2z = a1y*Bx[0][0] - Bx[1][0]*a1x;
 		typedef long double ld;
+#if defined(_M_X64)
+		// MMD x64 RVA 0x118430: mulss/addss, sqrtss, then divss.
+		// The x86 reference instead keeps the norm on the x87 stack.
+		const float n0 = 1.0f / sqrtf((a0x * a0x + a0y * a0y) + a0z * a0z);
+		const float n1 = 1.0f / sqrtf((a1x * a1x + a1y * a1y) + a1z * a1z);
+		const float n2 = 1.0f / sqrtf((a2x * a2x + a2y * a2y) + a2z * a2z);
+#else
 		const float n0 = (float)(1.0L / sqrtl((ld)a0x*a0x + (ld)a0y*a0y + (ld)a0z*a0z));
 		const float n1 = (float)(1.0L / sqrtl((ld)a1x*a1x + (ld)a1y*a1y + (ld)a1z*a1z));
 		const float n2 = (float)(1.0L / sqrtl((ld)a2x*a2x + (ld)a2y*a2y + (ld)a2z*a2z));
+#endif
 		m_calculatedAxis[0].setValue(n0*a0x, n0*a0y, n0*a0z);
 		m_calculatedAxis[1].setValue(n1*a1x, n1*a1y, n1*a1z);
 		m_calculatedAxis[2].setValue(n2*a2x, n2*a2y, n2*a2z);
@@ -446,6 +483,27 @@ void btGeneric6DofConstraint::calculateTransforms()
 
 void btGeneric6DofConstraint::calculateTransforms(const btTransform& transA,const btTransform& transB)
 {
+#if defined(_M_X64)
+	// x64 RVA 0x1197F0 uses (x+y)+z for every basis and origin component.
+	const btTransform *bodies[] = {&transA, &transB};
+	const btTransform *frames[] = {&m_frameInA, &m_frameInB};
+	btTransform *results[] = {&m_calculatedTransformA, &m_calculatedTransformB};
+	for (int side = 0; side < 2; ++side) {
+		const btMatrix3x3 &basis = bodies[side]->getBasis();
+		const btMatrix3x3 &frame = frames[side]->getBasis();
+		const btVector3 &offset = frames[side]->getOrigin();
+		for (int row = 0; row < 3; ++row) {
+			for (int column = 0; column < 3; ++column)
+				results[side]->getBasis()[row][column] =
+					(basis[row][0] * frame[0][column] + basis[row][1] * frame[1][column]) +
+					basis[row][2] * frame[2][column];
+			results[side]->getOrigin()[row] =
+				((basis[row][0] * offset[0] + basis[row][1] * offset[1]) +
+				 basis[row][2] * offset[2]) +
+				bodies[side]->getOrigin()[row];
+		}
+	}
+#else
 	/* The original's VC9 codegen (0x503DC0) folds the body x frame matrix
 	   product with a per-row addition order that differs from the stock
 	   left-associative chain: row 0 accumulates (p0+p1)+p2 like stock, but
@@ -492,6 +550,7 @@ void btGeneric6DofConstraint::calculateTransforms(const btTransform& transA,cons
 	oRB[1] = ((BB[1][1]*oFB[1] + BB[1][2]*oFB[2]) + BB[1][0]*oFB[0]) + oB[1];
 	oRB[2] = ((BB[2][1]*oFB[1] + BB[2][2]*oFB[2]) + BB[2][0]*oFB[0]) + oB[2];
 
+#endif
 	calculateLinearInfo();
 	calculateAngleInfo();
 }
@@ -872,6 +931,21 @@ void btGeneric6DofConstraint::calculateLinearInfo()
 		const btScalar v6 = A[1][1]*A[2][2] - A[1][2]*A[2][1];
 		const btScalar v7 = A[2][0]*A[1][2] - A[1][0]*A[2][2];
 		const btScalar v8 = A[1][0]*A[2][1] - A[2][0]*A[1][1];
+#if defined(_M_X64)
+		// x64 RVA 0x1193D0: the inverse determinant and every projected
+		// coordinate use the same single-precision (x+y)+z reductions.
+		const btScalar inverseDet = 1.0f / ((v7 * A[0][1] + v6 * A[0][0]) + v8 * A[0][2]);
+		const btScalar inverse[3][3] = {
+			{v6 * inverseDet, (A[0][2] * A[2][1] - A[0][1] * A[2][2]) * inverseDet,
+			 (A[0][1] * A[1][2] - A[0][2] * A[1][1]) * inverseDet},
+			{v7 * inverseDet, (A[0][0] * A[2][2] - A[0][2] * A[2][0]) * inverseDet,
+			 (A[0][2] * A[1][0] - A[0][0] * A[1][2]) * inverseDet},
+			{v8 * inverseDet, (A[0][1] * A[2][0] - A[0][0] * A[2][1]) * inverseDet,
+			 (A[0][0] * A[1][1] - A[0][1] * A[1][0]) * inverseDet}};
+		for (int row = 0; row < 3; ++row)
+			m_calculatedLinearDiff[row] =
+				(dx * inverse[row][0] + dy * inverse[row][1]) + dz * inverse[row][2];
+#else
 		const btScalar v9 = btScalar(1.0) /
 			((A[0][1]*v7 + v8*A[0][2]) + v6*A[0][0]);
 		const btScalar v12 = (A[0][1]*A[2][0] - A[0][0]*A[2][1]) * v9;
@@ -889,6 +963,7 @@ void btGeneric6DofConstraint::calculateLinearInfo()
 			+ ((A[0][2]*A[2][1] - A[0][1]*A[2][2])*v9)*dy;
 		m_calculatedLinearDiff[1] = ((v7*v9)*dx + dz*v29) + v30*dy;
 		m_calculatedLinearDiff[2] = (v31*dx + dz*v32) + v12*dy;
+#endif
 	}
 	for(int i = 0; i < 3; i++)
 	{

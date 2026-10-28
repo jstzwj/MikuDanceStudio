@@ -88,11 +88,11 @@ struct MaterialBinding {
     // canonical spelling and resolved once per binding by ENUMERATING the
     // effect's parameters and _stricmp-matching desc.Name (0x18000e811) -
     // case variants like `Matworld` bind, exactly like the original.
-    // [零分配热路径] std::less<> 透明比较器：find(字面量) 走 string 与
-    // const char* 的 operator< 直接比较，不构造临时 std::string（原版
-    // sub_18001B5B0 走预编译 id 表，每 pass 零分配——本表对齐该成本模型；
-    // rayMMD 的 ~31-pass × 10-轮 × 30fps 会把任何每 pass 堆分配放大成
-    // 每秒数十万次 malloc/free，见 MmeBindSemanticParameters 的同向注释）。
+    // [Allocation-free hot path] std::less<> is transparent: find(literal) directly compares string and
+    // const char* through operator<, without a temporary std::string (the original
+    // sub_18001B5B0 uses a precompiled ID table, allocating nothing per pass; this table matches that cost model;
+    // rayMMD's ~31 passes x 10 turns x 30fps amplify any per-pass allocation into
+    // hundreds of thousands of malloc/free operations per second; see the related MmeBindSemanticParameters comment).
     std::map<std::string, D3DXHANDLE, std::less<>> namedHandles;
     bool namesResolved;                               // namedHandles enumeration ran
     D3DXHANDLE   technique;                           // legacy slot (kept null: the
@@ -136,16 +136,16 @@ struct MaterialBinding {
     // Semantic-resolved handles (the SAS standard parameters ray-mmd style
     // effects declare: float4x4 matWorldViewProject : WORLDVIEWPROJECTION
     // etc.). Resolved once per binding through GetParameterBySemantic.
-    // [零分配热路径] semanticFast 把每个语义参数的分发决策（kind/base/
-    // flags/light）在首次绑定时一次定型；每 pass 的绑定循环只做 switch
-    // 分发，不做任何字符串构造/注解读取（对齐原版 sub_18001B5B0 的预编
-    // 译 id 表成本模型）。semanticHandles 仅保留给旧路径兼容。
+    // [Allocation-free hot path] semanticFast caches each semantic parameter's dispatch decision (kind/base/
+    // flags/light) once on first binding; the per-pass binding loop only dispatches with switch,
+    // without string construction or annotation reads (matching original sub_18001B5B0's precompiled
+    // ID-table cost model). semanticHandles remains only for compatibility with the old path.
     struct SemanticBind {
         D3DXHANDLE    handle;
-        unsigned char kind;    // 分发类别（kSem* 常量，material_bind.cpp）
-        unsigned char base;    // 矩阵基底/材质 id/时间序号/纹理槽/鼠标键
-        unsigned char flags;   // 矩阵：bit0=INVERSE bit1=TRANSPOSE；调制：bit0=mul bit1=sphere
-        unsigned char light;   // 1 = Light/Light0 家族
+        unsigned char kind;    // Dispatch category (kSem* constants, material_bind.cpp)
+        unsigned char base;    // Matrix basis/material ID/time index/texture slot/mouse button
+        unsigned char flags;   // Matrix: bit0=INVERSE bit1=TRANSPOSE; modulation: bit0=mul bit1=sphere
+        unsigned char light;   // 1 = Light/Light0 family
     };
     std::vector<SemanticBind> semanticFast;
     std::vector<D3DXHANDLE> semanticHandles;
@@ -225,6 +225,7 @@ MaterialBinding* MmeResolveModelEffectBinding(ModelData* model);
 
 // Resolve one explicit per-material assignment. Unlike the whole-object
 // binding this never changes the carrier's scene/pass classification.
+// An empty path creates a null-effect binding, overriding whole-object fallback.
 MaterialBinding* MmeResolveSubsetEffectBinding(ModelData* model, int subsetIndex,
                                                 const std::string& effectPath);
 
@@ -257,15 +258,15 @@ MaterialBinding* MmeResolveTurnEffectBinding(unsigned int turnId,
     SasResource& resource, ModelData* offscreenOwner, ModelData* model,
     int subsetIndex = -1);
 
-// [sub_18005A1E0 0x18005a24c-0x18005a268] 离屏渲染回合（offscreen render
-// turn）判定：原版以 ctx+0x168 的 0x48 回合包装（wrapper）非空为窗口——
-// wrapper+0x38 是当前 turn id（MME_ApplyModelRenderSnapshot 以它为 owner
-// 键首字段查绑定），wrapper 为空即基回合（turn id 0，场景键 0 查找）。
-// 移植以 ctx->currentBindingOffscreen（pass_planner 在回合应用时按
-// renderPassList[lastRepeatCount-1] 设置、基回合清空——FUN_18005d130
-// [L74740]/[L74743-74745] 的移植对应物）为 wrapper 的资源身份等价物：
-// 非 null 即离屏回合。窗口内的绑定查找一律不得回落到场景键 0（模型
-// 自身的 (0, model, -1) 绑定对 turn-id 键不可见）。
+// [sub_18005A1E0 0x18005a24c-0x18005a268] Offscreen render-turn
+// detection: the original considers the window active when ctx+0x168's 0x48-byte turn wrapper is non-null;
+// wrapper+0x38 is the current turn ID (MME_ApplyModelRenderSnapshot uses it as the first owner-key
+// field for binding lookup). A null wrapper means base turn (turn ID 0, scene-key-0 lookup).
+// The port uses ctx->currentBindingOffscreen (set by pass_planner when applying the turn from
+// renderPassList[lastRepeatCount-1], cleared for the base turn; the port counterpart of FUN_18005d130
+// [L74740]/[L74743-74745]) as the resource-identity equivalent of the wrapper:
+// non-null means an offscreen turn. Binding lookup within the window must never fall back to scene key 0 (the model's
+// own (0, model, -1) binding is invisible to turn-ID keys).
 bool MmeInOffscreenRenderTurn();
 
 // Distinguish an absent turn mapping (no draw) from an explicit "none"

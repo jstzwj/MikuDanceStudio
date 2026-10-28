@@ -17,11 +17,11 @@ struct PhysicsWorldState {
     bt32BitAxisSweep3* broadphase = nullptr;
     btSequentialImpulseConstraintSolver* solver = nullptr;
     btDiscreteDynamicsWorld* world = nullptr;
-    btRigidBody* groundBody = nullptr;  // non-owning alias into world
+    btRigidBody* groundBody = nullptr; // non-owning alias into world
 };
 
 // Create requires an empty state; destroy accepts empty or partially built state.
 void CreatePhysicsWorld(PhysicsWorldState& state);
 void DestroyPhysicsWorld(PhysicsWorldState& state);
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -11,7 +11,7 @@ int main(){
     SetEnvironmentVariableA("MDS_RHI_CPU_INPUTS_ACCEPTED",nullptr);
     SetEnvironmentVariableA("MDS_RHI_CPU_GEOMETRY","1");
     auto app=std::make_unique<MMDApp>();auto model=std::make_unique<mdl::ModelRecord>();
-    auto* bytes=reinterpret_cast<unsigned char*>(model.get());
+    auto* bytes=model.get();
     constexpr unsigned count=67;mdl::BoneRecord bones[4]{};mdl::ModelMaterialRecord material{};
     std::vector<mdl::PmxVertex> source(count);std::vector<std::int32_t> indices(count);
     model->vertexCount=count;model->indexCount=count;model->boneCount=4;model->boneTable=bones;
@@ -69,12 +69,13 @@ int main(){
     // Reject a malformed narrow PMX index before truncating it to UInt16.
     model->pmxVertexIndexSize=2;indices[0]=65536;InitializeModelCpuGeometry(app.get(),bytes);
     CHECK(app->CpuModelFrames().empty());indices[0]=0;
-    // PMD uses padded CPU indices and must preserve its load-time edge color.
-    std::vector<mdl::PmdVertex> pmd(count);std::vector<std::uint16_t> padded(count*2);
-    model->physicsMode=0;model->rawVertices=pmd.data();model->indices=padded.data();model->pmxVertices=nullptr;
-    for(unsigned i=0;i<count;++i){auto& v=pmd[i];v.position[0]=i*.125f;v.normal[1]=.5f;v.bone[0]=0;v.bone[1]=1;v.weightPercent=i%101;padded[i*2]=i;padded[i*2+1]=0xbeef;}
+    // PMD uses contiguous 32-bit CPU indices and must preserve its load-time edge color.
+    std::vector<mdl::PmdVertex> pmd(count);std::vector<std::int32_t> pmdIndices(count);
+    model->physicsMode=0;model->rawVertices=pmd.data();model->indices=pmdIndices.data();model->pmxVertices=nullptr;
+    for(unsigned i=0;i<count;++i){auto& v=pmd[i];v.position[0]=i*.125f;v.normal[1]=.5f;v.bone[0]=0;v.bone[1]=1;v.weightPercent=i%101;pmdIndices[i]=i;}
     InitializeModelCpuGeometry(app.get(),bytes);CHECK(app->CpuModelFrames().size()==1);auto& pmdFrame=*app->CpuModelFrames().at(bytes);
     CHECK(pmdFrame.geometry.Snapshot().indices.bytes.size()==count*2 && pmdFrame.geometry.Snapshot().indices.indexFormat==rhi::IndexFormat::UInt16);
+    for(unsigned i=0;i<count;++i){std::uint16_t index=0;std::memcpy(&index,pmdFrame.geometry.Snapshot().indices.bytes.data()+i*2,2);CHECK(index==i);}
     auto original=pmdFrame.geometry.Edges();for(unsigned i=0;i<count;++i)pmdFrame.geometry.Edges()[i].diffuse=0x80102030u+i;
     std::vector<mdl::SkinnedVertexBase> main(count);auto edge=pmdFrame.geometry.Edges();SkinPmd(bytes,.125f,edge.data(),main.data());
     CHECK(ProduceCpuGeometry(app.get(),bytes,.125f,false));CHECK(!std::memcmp(main.data(),pmdFrame.geometry.MainData(),count*32));CHECK(!std::memcmp(edge.data(),pmdFrame.geometry.Edges().data(),count*16));

@@ -44,7 +44,7 @@ IDirect3DDevice9* DeviceOf(MMDApp* app) {
     return sub->device;
 }
 
-}  // namespace
+} // namespace
 
 void InitRenderStates(MMDApp* app) {
     IDirect3DDevice9* dev = DeviceOf(app);
@@ -52,21 +52,21 @@ void InitRenderStates(MMDApp* app) {
         return;
     D3DRenderer* sub = app->Renderer();
 
-    dev->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);                 // state 7, 1
-    dev->LightEnable(0, TRUE);                                      // vtbl 212
-    dev->SetRenderState(D3DRS_LIGHTING, TRUE);                      // state 137
-    dev->SetRenderState(D3DRS_SPECULARENABLE, TRUE);                // state 29
+    dev->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);  // state 7, 1
+    dev->LightEnable(0, TRUE);                       // vtbl 212
+    dev->SetRenderState(D3DRS_LIGHTING, TRUE);       // state 137
+    dev->SetRenderState(D3DRS_SPECULARENABLE, TRUE); // state 29
 
     // texture cascade: MODULATE alpha/color, arg1 = texture, arg2 = diffuse
-    dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);   // (0,4,4)
-    dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);   // (0,5,2)
+    dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE); // (0,4,4)
+    dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE); // (0,5,2)
     dev->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
     dev->SetTextureStageState(1, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-    dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);   // (0,1,4)
-    dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);   // (0,2,2)
-    dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);   // (0,3,0)
+    dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE); // (0,1,4)
+    dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE); // (0,2,2)
+    dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE); // (0,3,0)
     dev->SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-    dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);   // (1,3,1)
+    dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT); // (1,3,1)
 
     // Sampler filters, x64 0x7FF7CB4286E9..0x7FF7CB428951: the original
     // groups the writes by sampler STATE, not by stage - all three
@@ -82,62 +82,58 @@ void InitRenderStates(MMDApp* app) {
     // operand falling through into that same 0x7FF7CB42893D tail.
     // Identical behavior on both architectures - no per-arch split.
     const DWORD maxAniso = static_cast<DWORD>(sub->shaderModelCaps);
-    const DWORD minMagFilter = sub->runtimeToggle != 0 ? D3DTEXF_ANISOTROPIC
-                                                       : D3DTEXF_LINEAR;
-    const DWORD mipFilter = sub->runtimeToggle != 0 ? D3DTEXF_ANISOTROPIC
-                                                    : D3DTEXF_NONE;
+    const DWORD minMagFilter = sub->runtimeToggle != 0 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR;
+    const DWORD mipFilter = sub->runtimeToggle != 0 ? D3DTEXF_ANISOTROPIC : D3DTEXF_NONE;
     const DWORD maxAnisoAll = sub->runtimeToggle != 0 ? maxAniso : 1;
     for (DWORD s = 0; s < 3; ++s) {
-        dev->SetSamplerState(s, D3DSAMP_MINFILTER, minMagFilter);   // (s,6)
+        dev->SetSamplerState(s, D3DSAMP_MINFILTER, minMagFilter); // (s,6)
     }
     for (DWORD s = 0; s < 3; ++s) {
-        dev->SetSamplerState(s, D3DSAMP_MAGFILTER, minMagFilter);   // (s,5)
+        dev->SetSamplerState(s, D3DSAMP_MAGFILTER, minMagFilter); // (s,5)
     }
     for (DWORD s = 0; s < 3; ++s) {
-        dev->SetSamplerState(s, D3DSAMP_MIPFILTER, mipFilter);      // (s,7)
+        dev->SetSamplerState(s, D3DSAMP_MIPFILTER, mipFilter); // (s,7)
     }
-    dev->SetSamplerState(0, D3DSAMP_MAXANISOTROPY, maxAnisoAll);    // (0,10)
-    dev->SetSamplerState(1, D3DSAMP_MAXANISOTROPY, maxAnisoAll);    // (1,10)
-    dev->SetSamplerState(2, D3DSAMP_MAXANISOTROPY, maxAnisoAll);    // (2,10)
+    dev->SetSamplerState(0, D3DSAMP_MAXANISOTROPY, maxAnisoAll); // (0,10)
+    dev->SetSamplerState(1, D3DSAMP_MAXANISOTROPY, maxAnisoAll); // (1,10)
+    dev->SetSamplerState(2, D3DSAMP_MAXANISOTROPY, maxAnisoAll); // (2,10)
 
     // half-texel matrix for stages 1/2 (D3DTS_TEXTURE1=17, D3DTS_TEXTURE2=18)
     D3DMATRIX halfTexel = {
-        0.5f,  0.0f,  0.0f, 0.0f,
-        0.0f, -0.5f,  0.0f, 0.0f,
-        0.0f,  0.0f,  0.0f, 0.0f,
-        0.5f,  0.5f,  0.0f, 1.0f,
+        0.5f, 0.0f, 0.0f, 0.0f, 0.0f, -0.5f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 0.5f,  0.0f, 1.0f,
     };
-    dev->SetTransform(D3DTS_TEXTURE1, &halfTexel);                  // (17, m)
-    dev->SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_MODULATE);   // (2,4,4)
-    dev->SetTextureStageState(2, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);   // (2,5,2)
-    dev->SetTextureStageState(2, D3DTSS_COLORARG1, D3DTA_TEXTURE);   // (2,2,2)
-    dev->SetTextureStageState(2, D3DTSS_COLORARG2, D3DTA_CURRENT);   // (2,3,1)
-    dev->SetTransform(D3DTS_TEXTURE2, &halfTexel);                   // (18, m)
+    dev->SetTransform(D3DTS_TEXTURE1, &halfTexel);                 // (17, m)
+    dev->SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_MODULATE); // (2,4,4)
+    dev->SetTextureStageState(2, D3DTSS_ALPHAARG1, D3DTA_TEXTURE); // (2,5,2)
+    dev->SetTextureStageState(2, D3DTSS_COLORARG1, D3DTA_TEXTURE); // (2,2,2)
+    dev->SetTextureStageState(2, D3DTSS_COLORARG2, D3DTA_CURRENT); // (2,3,1)
+    dev->SetTransform(D3DTS_TEXTURE2, &halfTexel);                 // (18, m)
     dev->SetTextureStageState(2, D3DTSS_TEXTURETRANSFORMFLAGS,
-                              D3DTTFF_COUNT2);                       // (2,24,2)
+                              D3DTTFF_COUNT2); // (2,24,2)
     // TCI written as the literal 0x10000 (= D3DTSS_TCI_CAMERASPACENORMAL):
     // that is the exact immediate at 0x7FF7CB428A5C, and the binary contains
     // no 0x30000 (SPHEREMAP) TCI immediate anywhere.  Spelled like
     // accessory.cpp to pin the quirk value.
-    dev->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000);      // (2,11,0x10000)
+    dev->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 0x10000); // (2,11,0x10000)
 
-    if (sub->d3dInitialized != 0) {  // stencil shadow setup
-        dev->SetRenderState(D3DRS_STENCILENABLE, TRUE);              // state 52
-        dev->SetRenderState(D3DRS_STENCILMASK, 255);                 // state 58
+    if (sub->d3dInitialized != 0) {                     // stencil shadow setup
+        dev->SetRenderState(D3DRS_STENCILENABLE, TRUE); // state 52
+        dev->SetRenderState(D3DRS_STENCILMASK, 255);    // state 58
     }
-    dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);       // state 206
-    dev->SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_MAX);         // state 209, 5
-    dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);          // state 19, 5
-    dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);      // state 20, 6
+    dev->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);  // state 206
+    dev->SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_MAX);    // state 209, 5
+    dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);     // state 19, 5
+    dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA); // state 20, 6
 
     D3DCAPS9 caps;
     dev->GetDeviceCaps(&caps);
-    app->CpuAlphaTestSupported()=(caps.AlphaCmpCaps & D3DPCMPCAPS_GREATEREQUAL)!=0;
-    if (caps.AlphaCmpCaps & D3DPCMPCAPS_GREATEREQUAL) {  // caps+52 & 0x40
-        dev->SetRenderState(D3DRS_ALPHAREF, 1);                     // state 24
-        dev->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);           // state 15
-        dev->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);  // state 25, 7
+    app->CpuAlphaTestSupported() = (caps.AlphaCmpCaps & D3DPCMPCAPS_GREATEREQUAL) != 0;
+    if (caps.AlphaCmpCaps & D3DPCMPCAPS_GREATEREQUAL) {            // caps+52 & 0x40
+        dev->SetRenderState(D3DRS_ALPHAREF, 1);                    // state 24
+        dev->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);          // state 15
+        dev->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL); // state 25, 7
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

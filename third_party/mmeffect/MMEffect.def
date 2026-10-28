@@ -1,7 +1,7 @@
-; MMEffect.def - 内置 MMEffect.dll 的宿主集成导出表。
+; MMEffect.def - host integration export table for embedded MMEffect.dll.
 ;
-; 原版 MMEffect.dll 的 11 个回调导出不再需要（MMHack 层已由宿主 MmeHost*
-; 集成取代，调用在同一模块内直连）；本表只导出宿主桥使用的集成面。
+; The original MMEffect.dll's 11 callback exports are no longer needed (the MMHack layer is replaced by host MmeHost*
+; integration, with direct calls inside the same module); export only the host bridge integration surface here.
 LIBRARY MMEffect
 EXPORTS
     MmeHostBeginScene

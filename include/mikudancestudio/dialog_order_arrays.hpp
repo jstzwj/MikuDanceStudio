@@ -19,9 +19,8 @@ struct DialogOrderArrays {
 };
 
 // Preserve the original 255-slot scan and leave unmatched entries untouched.
-template<class AccessoryAt>
-void BuildAccessoryOrderIndices(std::int32_t* order, int count,
-                               AccessoryAt accessoryAt) {
+template <class AccessoryAt>
+void BuildAccessoryOrderIndices(std::int32_t* order, int count, AccessoryAt accessoryAt) {
     for (int i = 0; i < count; ++i) {
         for (int slot = 0; slot < 255; ++slot) {
             const mdl::AccessoryRecord* accessory = accessoryAt(slot);
@@ -33,10 +32,9 @@ void BuildAccessoryOrderIndices(std::int32_t* order, int count,
     }
 }
 
-template<class AccessoryAt, class RenameAccessory>
+template <class AccessoryAt, class RenameAccessory>
 std::uint8_t ApplyAccessoryOrderIndices(const std::int32_t* order, int count,
-                                       AccessoryAt accessoryAt,
-                                       RenameAccessory renameAccessory) {
+                                        AccessoryAt accessoryAt, RenameAccessory renameAccessory) {
     for (int i = 0; i < count; ++i) {
         mdl::AccessoryRecord* accessory = accessoryAt(order[i]);
         if (accessory == nullptr)
@@ -47,4 +45,4 @@ std::uint8_t ApplyAccessoryOrderIndices(const std::int32_t* order, int count,
     return static_cast<std::uint8_t>(order[0]);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

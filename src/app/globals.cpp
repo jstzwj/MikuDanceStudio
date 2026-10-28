@@ -16,5 +16,4 @@ const float g_Wrap32 = 4294967296.0f;
 
 const float g_FrameScale = 30.0f;
 
-
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

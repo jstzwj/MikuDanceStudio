@@ -20,4 +20,4 @@ static_assert(offsetof(PathResolutionWorkspace, executableDirectory) == 512);
 static_assert(offsetof(PathResolutionWorkspace, resolvedPath) == 3024);
 static_assert(sizeof(PathResolutionWorkspace) == 3536);
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

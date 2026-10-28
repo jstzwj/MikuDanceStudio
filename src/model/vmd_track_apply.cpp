@@ -26,7 +26,8 @@ void ApplyVmdGlobalTracks(MMDApp* app, const format::VmdDocument& motion) {
         }
         rec.fov = static_cast<std::int32_t>(key.fov);
         rec.perspective = key.perspective != 0 ? 1 : 0;
-        if (cameraOk && !RegisterCameraKey(app, &rec)) cameraOk = false;
+        if (cameraOk && !RegisterCameraKey(app, rec))
+            cameraOk = false;
     }
     bool lightOk = true;
     for (const format::VmdLightKey& key : motion.lights) {
@@ -34,7 +35,8 @@ void ApplyVmdGlobalTracks(MMDApp* app, const format::VmdDocument& motion) {
         rec.frame = key.frame;
         std::memcpy(rec.color, key.color, sizeof rec.color);
         std::memcpy(rec.direction, key.direction, sizeof rec.direction);
-        if (lightOk && !RegisterLightKey(app, &rec)) lightOk = false;
+        if (lightOk && !RegisterLightKey(app, rec))
+            lightOk = false;
     }
     bool shadowOk = true;
     for (const format::VmdShadowKey& key : motion.shadows) {
@@ -42,8 +44,9 @@ void ApplyVmdGlobalTracks(MMDApp* app, const format::VmdDocument& motion) {
         rec.frame = key.frame;
         rec.mode = key.mode;
         rec.distance = key.distance;
-        if (shadowOk && !RegisterSelfShadowKey(app, &rec)) shadowOk = false;
+        if (shadowOk && !RegisterSelfShadowKey(app, rec))
+            shadowOk = false;
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

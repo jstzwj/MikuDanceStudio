@@ -27,51 +27,44 @@
 #include <cstring>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/panel_controls.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 namespace mikudancestudio {
 
 void CreateUiFont(MMDApp* app, HWND hwnd) {
     auto& s = *app;
 
-    NONCLIENTMETRICSA metrics;                                    // 0x467A47
+    NONCLIENTMETRICSA metrics; // 0x467A47
     metrics.cbSize = sizeof(metrics);
-    SystemParametersInfoA(SPI_GETNONCLIENTMETRICS /*0x29*/, 0x154,
-                          &metrics, 0);
+    SystemParametersInfoA(SPI_GETNONCLIENTMETRICS /*0x29*/, 0x154, &metrics, 0);
     // lfMessageFont copy (15 dwords = 60 bytes) -> this+656508
-    std::memcpy(s.state.logFont,
-                &metrics.lfMessageFont, sizeof(LOGFONTA));
+    std::memcpy(s.state.logFont, &metrics.lfMessageFont, sizeof(LOGFONTA));
 
-    const bool english = s.EnglishUI() != 0;                      // 658252
-    HFONT font = CreateFontA(
-        english ? 13 : 12, 0, 0, 0,
-        400 /*FW_NORMAL*/, FALSE, FALSE, FALSE,
-        SHIFTJIS_CHARSET /*0x80*/,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, PROOF_QUALITY /*2*/,
-        FIXED_PITCH | FF_MODERN /*0x31*/,
-        english ? "Tahoma" : "MS PGothic");                       // 0x52BD18/0x52B7C4
-    s.state.hFontUI = font;                                       // 656572
-
+    const bool english = s.EnglishUI() != 0; // 658252
+    HFONT font = CreateFontA(english ? 13 : 12, 0, 0, 0, 400 /*FW_NORMAL*/, FALSE, FALSE, FALSE,
+                             SHIFTJIS_CHARSET /*0x80*/, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             PROOF_QUALITY /*2*/, FIXED_PITCH | FF_MODERN /*0x31*/,
+                             english ? "Tahoma" : "MS PGothic"); // 0x52BD18/0x52B7C4
+    s.state.hFontUI = font;                                      // 656572
 }
 
 void ApplyUiFontToControl(MMDApp* app, HWND control, int id) {
     // Original sends WM_SETFONT immediately after each creation site.  The
     // frame edit and its six navigation buttons retain their class default.
-        switch (id) {
-        case 417:
-        case 418:
-        case 419:
-        case 532:
-        case 533:
-        case 558:
-        case 559:
-            return;
-        default:
-            break;
-        }
-        if (control != nullptr)
-            SendMessageA(control, WM_SETFONT,
-                         reinterpret_cast<WPARAM>(app->state.hFontUI),
-                         TRUE);
+    switch (id) {
+    case panel::kCurrentFrameEdit:
+    case panel::kPreviousFrameButton:
+    case panel::kNextFrameButton:
+    case panel::kNextKeyframeButton:
+    case panel::kPreviousKeyframeButton:
+    case panel::kFirstFrameButton:
+    case panel::kLastFrameButton:
+        return;
+    default:
+        break;
+    }
+    if (control != nullptr)
+        SendMessageA(control, WM_SETFONT, reinterpret_cast<WPARAM>(app->state.hFontUI), TRUE);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

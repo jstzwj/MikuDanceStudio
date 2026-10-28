@@ -3,8 +3,13 @@
 #pragma once
 
 #include <windows.h>
+#include <string>
 
 namespace mme {
+class ModelData;
+
+// [FUN_18003FFF0] Number and cached material name in the current UI language.
+std::wstring MmeDlgSubsetRowLabel(const ModelData& model, int subset, bool english);
 
 // [40005 / FUN_180055b10] open the modeless assignment dialog
 // (CreateDialogParamA, dialog 108). When it already exists, bring it up.

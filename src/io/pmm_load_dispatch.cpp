@@ -69,22 +69,22 @@ void WritePmmWorldParityAtLoad(MMDApp* app);
 namespace {
 
 // Shift-JIS texts from the original .rdata (embedded byte-exact).
-const char kJpOpenFailFmt[] =         // 0x52CDD4
+const char kJpOpenFailFmt[] = // 0x52CDD4
     "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xaa\x93\xc7\x82\xdd\x8d\x9e"
     "\x82\xdf\x82\xdc\x82\xb9\x82\xf1:%d";
-const char kJpOpenCaption[] =         // 0x52DB80
+const char kJpOpenCaption[] = // 0x52DB80
     "\x83\x74\x83\x40\x83\x43\x83\x8b\x93\xc7\x8d\x9e";
-const char kJpNotPmmText[] =          // 0x52DF78
+const char kJpNotPmmText[] = // 0x52DF78
     "\x82\xb1\x82\xcc\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xcd"
     "Polygon Movie Maker"
     "\x97\x70\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xc5\x82\xcd\x82\xa0"
     "\x82\xe8\x82\xdc\x82\xb9\x82\xf1";
-const char kJpBadVersionText[] =      // 0x52DF1C
+const char kJpBadVersionText[] = // 0x52DF1C
     "\x82\xb1\x82\xcc\x83\x6f\x81\x5b\x83\x57\x83\x87\x83\x93\x82\xcc"
     "\x70\x6d\x6d\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xcd\x93\xc7\x82\xdf"
     "\x82\xdc\x82\xb9\x82\xf1";
 
-}  // namespace
+} // namespace
 
 // VA 0x00408870 - wide path -> project directory (truncate at "UserFile").
 void PathToProjectDir(wchar_t* destination, const wchar_t* source) {
@@ -134,10 +134,9 @@ void LoadSceneFile() {
 #endif
     char box[0x100];
 
-    app->SceneModified() = 0;                                  // 0x458FE6
+    app->SceneModified() = 0; // 0x458FE6
     int fd = -1;
-    const errno_t err =
-        _wsopen_s(&fd, app->EnvFileName(), 0x8000, 0x40, 0x80);
+    const errno_t err = _wsopen_s(&fd, app->EnvFileName(), 0x8000, 0x40, 0x80);
     if (err != 0) {
         if (app->EnglishUI() == 0)
             sprintf_s(box, 0x100, kJpOpenFailFmt, err);
@@ -148,41 +147,35 @@ void LoadSceneFile() {
         return;
     }
 
-    app->state.windowLayoutReady = 0;              // 0x459055
-    PathToProjectDir(app->PathWorkspace().projectDirectory,     // 0x45905C
-                      app->EnvFileName());
+    app->state.windowLayoutReady = 0;                       // 0x459055
+    PathToProjectDir(app->PathWorkspace().projectDirectory, // 0x45905C
+                     app->EnvFileName());
 
     format::PmmHeader header;
     const auto status = format::ReadPmmHeader(ReadPmmFileBytes, &fd, header);
     if (status == format::PmmHeaderStatus::InvalidSignature ||
         status == format::PmmHeaderStatus::Truncated) {
         MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
-                    app->EnglishUI() != 0
-                        ? "This isn't the data for Polygon Movie Maker!"
-                        : kJpNotPmmText,
+                    app->EnglishUI() != 0 ? "This isn't the data for Polygon Movie Maker!"
+                                          : kJpNotPmmText,
                     app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
-        _close(fd);                                             // 0x4590C1
+        _close(fd); // 0x4590C1
         return;
     }
 
-    if (status == format::PmmHeaderStatus::Ok &&
-        header.version == format::PmmVersion::V1) {
+    if (status == format::PmmHeaderStatus::Ok && header.version == format::PmmVersion::V1) {
         PmmV1FileLayoutContext layout{app->Renderer(), &app->PathWorkspace()};
         bool valid = false;
         if (_lseeki64(fd, 0, SEEK_SET) == 0) {
             format::PmmSceneDocument document;
             valid = format::ReadPmmSceneDocument(ReadPmmFileBytesResult, &fd,
-                                                 ResolvePmmV1FileLayout,
-                                                 &layout, document);
+                                                 ResolvePmmV1FileLayout, &layout, document);
         }
         // A PMD may have moved since the scene was saved. The existing v1
         // loader owns the locate-and-retry dialog; let it resolve that case.
-        if ((!valid && !layout.modelUnavailable) ||
-            _lseeki64(fd, 30, SEEK_SET) != 30) {
+        if ((!valid && !layout.modelUnavailable) || _lseeki64(fd, 30, SEEK_SET) != 30) {
             MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
-                        app->EnglishUI() != 0
-                            ? "Cannot read the PMM scene data."
-                            : kJpNotPmmText,
+                        app->EnglishUI() != 0 ? "Cannot read the PMM scene data." : kJpNotPmmText,
                         app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
             _close(fd);
             return;
@@ -192,48 +185,43 @@ void LoadSceneFile() {
         LoadSceneV1(app, fd);
         return;
     }
-    if (status == format::PmmHeaderStatus::Ok &&
-        header.version == format::PmmVersion::V2) {
+    if (status == format::PmmHeaderStatus::Ok && header.version == format::PmmVersion::V2) {
         // V2 stores its model layout counts in the scene. Validate the whole
         // ordered document before the legacy adapter creates UI, D3D or Bullet
         // objects. The adapter still owns path recovery and runtime mapping.
         bool valid = false;
         auto session = std::make_unique<format::SceneSession>();
         if (_lseeki64(fd, 0, SEEK_SET) == 0) {
-            valid = format::SceneSession::Load(ReadPmmFileBytesResult, &fd,
-                                                nullptr, nullptr, *session);
+            valid =
+                format::SceneSession::Load(ReadPmmFileBytesResult, &fd, nullptr, nullptr, *session);
         }
         if (!valid || _lseeki64(fd, 30, SEEK_SET) != 30) {
             MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
-                        app->EnglishUI() != 0
-                            ? "Cannot read the PMM scene data."
-                            : kJpNotPmmText,
+                        app->EnglishUI() != 0 ? "Cannot read the PMM scene data." : kJpNotPmmText,
                         app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
             _close(fd);
             return;
         }
-        LoadSceneV2(app, fd);                                     // 0x459106
+        LoadSceneV2(app, fd); // 0x459106
         const auto& models = session->Document().models;
-        const bool allModelsLoaded = !models.empty() &&
-            std::all_of(models.begin(), models.end(), [app](const auto& model) {
-                return model.slot < kModelSlotCount &&
-                       app->ModelSlot(model.slot) != nullptr;
+        const bool allModelsLoaded =
+            !models.empty() && std::all_of(models.begin(), models.end(), [app](const auto& model) {
+                return model.slot < kModelSlotCount && app->ModelSlot(model.slot) != nullptr;
             });
         if (app->state.windowLayoutReady == 1 && allModelsLoaded) {
             format::SceneResourceResolver resources(app->EnvFileName());
             for (const auto& model : models)
-                resources.ReselectModel(model.slot,
-                    mdl::Mdl(app->ModelSlot(model.slot))->path);
+                resources.ReselectModel(model.slot, app->ModelSlot(model.slot)->path);
             int resourceFd = -1;
-            if (_wsopen_s(&resourceFd, app->EnvFileName(),
-                          _O_BINARY | _O_RDONLY, _SH_DENYNO, _S_IREAD) == 0) {
+            if (_wsopen_s(&resourceFd, app->EnvFileName(), _O_BINARY | _O_RDONLY, _SH_DENYNO,
+                          _S_IREAD) == 0) {
                 auto resolved = std::make_unique<format::SceneSession>();
                 const bool available = format::SceneSession::Load(
-                    ReadPmmFileBytesResult, &resourceFd,
-                    format::SceneResourceResolver::Resolve,
+                    ReadPmmFileBytesResult, &resourceFd, format::SceneResourceResolver::Resolve,
                     &resources, *resolved);
                 _close(resourceFd);
-                if (available) session = std::move(resolved);
+                if (available)
+                    session = std::move(resolved);
             }
             app->AttachPortableSceneSession(std::move(session));
         }
@@ -244,14 +232,12 @@ void LoadSceneFile() {
             WritePmmV2SelectorParityReport(app);
         }
 #endif
-        return;                                                 // 0x45E7F7
+        return; // 0x45E7F7
     }
     MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
-                app->EnglishUI() != 0
-                    ? "Cannot read this version of pmm!"
-                    : kJpBadVersionText,
+                app->EnglishUI() != 0 ? "Cannot read this version of pmm!" : kJpBadVersionText,
                 app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
-    _close(fd);                                                 // 0x459149
+    _close(fd); // 0x459149
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

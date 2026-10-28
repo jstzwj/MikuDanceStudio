@@ -109,6 +109,9 @@
 //   stricmp on the raw path, then on both paths made absolute (the record
 //   path joined with the EMM's directory), then a tail/suffix comparison;
 //   pass 2 falls back to comparing just the file name+ext (FUN_18002E6F0).
+//   Each record is consumed once, and the complete exact-path walk precedes
+//   the fallback walk (x64 2E8D0, x86 2B970). Repeated instances of the same
+//   file therefore retain distinct mapping rows.
 //   Live objects with no matching record are reported via
 //   MessageBoxA(0x40): "<emm path>\n" + "Failed to load effect mapping for
 //   the following objects:\n" (0x1800B4D30) + one "\n  <name>" per object.
@@ -116,52 +119,34 @@
 //   exist are reported via MessageBoxA(0x30): "The following effect files
 //   do not exist:\n" (0x1800B4DA0) + one "\n<path>" each.
 //
-//   [Effect*] 行级 round-trip 核验补充（2026-09-15，行为级）：
-//   - "[n].show" 行现在完整落地：load 侧写入管理层注册表
-//     （MmeEmmSetSubsetShown，应用上界 = 材质数，同 FUN_18002E8D0
-//     @0x18002fe07 的 *(object+0x38) 循环界）；save 侧按
+//   [Effect*] Additional line-level round-trip verification (2026-09-15, behavioral):
+//   - "[n].show" lines are fully applied: loading writes the manager registry
+//     (MmeEmmSetSubsetShown, bounded by material count, as in FUN_18002E8D0's
+//     *(object+0x38) loop bound at 0x18002fe07); saving synthesizes them according to
 //     FUN_180030590 @0x180030db2-0x180030e30 / FUN_180032680
-//     @0x180032a60-0x180032ad7 合成（每个 hasShow 子集一行，值取工作
-//     节点 +0x30）；运行时有效可见性查询 MmeEmmEffectiveSubsetShown 复刻
-//     FUN_18002DB10（子集记录优先，回退整对象，默认可见）。
-//   - [FUN_1800431E0 @0x180043307] 复核更正（此前注释有误，非 divergence）：
-//     PMM 自动保存（FUN_180057290 @0x1800573ed）把预构建的
-//     "<PMM同名>.emm" 全路径作为 a2 传入，FUN_1800431E0 在 a2 != NULL 时
-//     直接 strcpy_s + FUN_1800315F0 序列化——不弹任何对话框。
-//     GetSaveFileNameA 分支（a2 == NULL）只属于 40010 菜单命令
-//     （sub_180044080 @0x1800451b9: xor edx,edx），其参数为：过滤器
-//     "emm files(*.emm)\0*.emm\0All files(*.*)\0*.*\0"（英文，
+//     0x180032a60-0x180032ad7 (one line per hasShow subset, value from working
+//     node +0x30); runtime effective visibility query MmeEmmEffectiveSubsetShown reproduces
+//     FUN_18002DB10 (subset record first, whole-object fallback, default visible).
+//   - [FUN_1800431E0 at 0x180043307] Recheck correction (previous comment was wrong, no divergence):
+//     PMM autosave (FUN_180057290 at 0x1800573ed) passes the prebuilt
+//     full "<PMM basename>.emm" path as a2; when a2 != NULL, FUN_1800431E0
+//     directly calls strcpy_s + FUN_1800315F0 serialization, without any dialog.
+//     The GetSaveFileNameA branch (a2 == NULL) belongs only to menu command 40010
+//     (sub_180044080 at 0x1800451b9: xor edx,edx), with filter
+//     "emm files(*.emm)\0*.emm\0All files(*.*)\0*.*\0" (English,
 //     0x1800B4FF8）/ Shift-JIS "emmファイル(*.emm)\0*.emm\0
 //     すべてのファイル(*.*)\0*.*\0"（0x1800B4FC0），lpstrDefExt "emm"，
 //     nMaxFile 260，Flags 0x80A（OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR|
-//     OFN_PATHMUSTEXIST），无 lpstrTitle，lpstrInitialDir = ini
-//     "UserFile" 缓存目录（OK 后更新为所选文件目录）；取消返回 0 不保存。
-//     移植的直写同名 .emm 行为与原版一致。
+//     OFN_PATHMUSTEXIST), no lpstrTitle, lpstrInitialDir = ini
+//     "UserFile" cached directory (updated to the selected directory on OK); cancellation returns 0 without saving.
+//     The port's direct save to a same-basename .emm matches the original.
 //
 // Divergences (documented):
 //   - boost::regex -> std::regex (ECMAScript grammar, the boost default);
 //     lexical_cast -> the strict scanner below.
-//   - The save side emits only the default [Effect] section (no
-//     [Effect@base(n)] owner sections): the port's engine keeps subset
-//     bindings per object without an owner-effect registry, so neither the
-//     owner-name counters nor the "%x"-keyed display-name table can be
-//     synthesized. Owner sections are fully read and applied; after a
-//     load/save round trip their rows reappear as [n] rows of the default
-//     section (same assignments, simplified structure). For the port's
-//     reachable state (no owner-scoped assignments exist) the flattened
-//     output is byte-identical to the original's: the original's a3 vector
-//     holds exactly ONE record (the default section) when no assignment
-//     node carries an owner set.
-//   - The whole ".show" row is synthesized from the live object state
-//     (always present for a registered object); the original writes it
-//     only when the working-map node recorded a whole-show flag (key -1).
-//     The "[n].show" rows round-trip through the manager-side registry
-//     (see MmeEmmSetSubsetShown); the RUNTIME hide effect for a hidden
-//     subset still needs the draw gate hookup in callbacks.cpp (see
-//     MmeEmmEffectiveSubsetShown) - the original drops the subset's draws
-//     at binding time (sub_18002CA80 @0x18002ce6e inserts a NULL
-//     LoadedEffect node), the port's draw path does not gate per subset
-//     yet.
+//   - Base assignments and named owner sections retain separate scopes. The
+//     writer enumerates assignment-local 0x2E resources; explicit visibility
+//     presence is retained independently of its true/false value.
 //   - The port's PMM-save hook placement: the original fires the same
 //     FUN_180057290 body from the OnCreateModel/OnDeleteModel/OnBeginScene
 //     export callbacks (xrefs @0x180057456/0x1800574b7/0x180057513, each
@@ -341,6 +326,9 @@ public:
     void SetDefaultEntries(const std::vector<EmmEffectEntry>& entries) {
         defaultEntries_ = entries;
     }
+    void SetOwnerSections(const std::vector<EmmEffectSection>& sections) {
+        effectSections_ = sections;
+    }
 
 private:
     int version_ = 0;                    // [Info] Version (0 = not parsed)
@@ -419,45 +407,48 @@ bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex);
 // same way before writing the file's rows back).
 void MmeEmmClearSubsetShows(ModelData* model);
 
-// [FUN_180030590] assign one effect file to (objectId, subsetIndex); pass
-// subsetIndex < 0 for the whole object. path "" clears the assignment.
-// Returns true when the object was found and the effect (if any) loaded.
+// Assign one effect file to (objectId, subsetIndex); pass
+// subsetIndex < 0 for the whole object. An empty path selects the standard
+// shader; an explicit subset entry blocks inheritance from the whole object.
+// Returns true when the object was found and its assignment was recorded.
+// Load failure retains the path with an effect-free binding, as in the native
+// working map (x64 0x18002D0F6 / x86 0x1002A6E6); it is reported separately.
 bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::string& path);
 
-// --- [FUN_18002DEF0 / sub_18000B880] 热重载的绑定重解析（不碰分配映射）------
+// --- [FUN_18002DEF0 / sub_18000B880] Re-resolve hot-reload bindings (leave assignments intact) ------
 //
-// 原版 40004 Reload All（FUN_18002DEF0）只给管理器绑定树
-// （qword_1800D9A40+0xA0）的每个活绑定打标记 *(WORD*)(binding+56)=0x100
-// （loaded=0 / unloadRequest=1，@0x18002df0f），分配表一个字节不动；各
-// （owner=0, object, subset）节点在下次 apply 经 sub_18000B880 消费标记：
-// 先 sub_18000B210 释放旧条目引用，再 sub_18000BC90 重编译并切回绑定
-// （@0x18000b8e6-0x18000b930）。移植绑定不逐帧轮询（分配时解析），故由
-// 下面两个入口同步承载同一消费链。path 精确匹配“引用该 .fx 的绑定”，
-// 空串 = 全部受影响绑定（Reload All）。绝不触碰 effectFile /
-// subsetEffects / show 记录——[n] 子集分配原样保留是本族入口的核心约束
-// （对比：MmeAssignEffect(-1) 会 clearSubsetEffects()，热重载禁用之）。
+// Original 40004 Reload All (FUN_18002DEF0) only marks each live binding in the manager binding tree
+// (qword_1800D9A40+0xA0) with *(WORD*)(binding+56)=0x100
+// (loaded=0 / unloadRequest=1, at 0x18002df0f), without changing any assignment bytes. Each
+// (owner=0, object, subset) node consumes the flags through sub_18000B880 on the next apply:
+// sub_18000B210 releases the old entry reference, then sub_18000BC90 recompiles and updates the binding
+// (0x18000b8e6-0x18000b930). Ported bindings do not poll each frame (they resolve on assignment), so
+// the two entry points below execute the same consumption chain synchronously. path matches bindings referencing that .fx exactly;
+// empty string = all affected bindings (Reload All). Never touch effectFile /
+// subsetEffects / show records: retaining [n] subset assignments unchanged is this entry-point family's core constraint
+// (in contrast, MmeAssignEffect(-1) calls clearSubsetEffects(); hot reload must not).
 
-// 消费半程 A（= 标记的 unloadRequest 位 + sub_18000B210 的引用释放）：
-// 让受影响绑定就地释放对旧缓存条目的 owner 引用（MmeEnsureMaterialBinding
-// 原位置空 effect/sas/owner），旧条目在最后一个引用死亡时经 ~LoadedEffect
-// 执行 FUN_18000B210 卸载语义（"Unload effect file" 日志 / SasUnload /
-// Release）。绑定转为无效果状态（绘制路径回退裸主机绘制，与原版
-// B210 后的绑定一致）。
+// Consumption phase A (= unloadRequest flag + sub_18000B210 reference release):
+// affected bindings release their owner references to old cache entries in place (MmeEnsureMaterialBinding
+// clears effect/sas/owner in place). The old entry runs FUN_18000B210 unload semantics through ~LoadedEffect
+// when its last reference dies ("Unload effect file" log / SasUnload /
+// Release). Bindings become effect-free (drawing falls back to raw host rendering, as in the original
+// binding after B210).
 void MmeReleaseEffectBindings(const std::string& path);
 
-// 消费半程 B（= 标记的 loaded=0 位 + sub_18000BC90 的重装载）：按当前
-// 分配表逐模型重跑 MmeResolveModelEffectBinding / MmeResolveSubsetEffectBinding，
-// 把绑定切到重新装载的缓存条目（"Loading effect file" 与 "done.\n\n" 日志
-// 经引擎和 LoadedEffect::doneLogged 闩各记一次，多绑定共享同一条目时静默，
-// 与原版 (path,stamp) 缓存命中行为一致）。装载失败按 sub_18000B880 的失败
-// 路径报告（errorText 日志 + "Failed to load effect file:" 弹窗 + 失败条目
-// 卸载），分配保留、绑定维持无效果；文件缺失（stamp==0）静默
-// （sub_18000BC90 @0x18000bd19 的早退）。返回是否有绑定成功重解析。
+// Consumption phase B (= loaded=0 flag + sub_18000BC90 reload): rerun
+// MmeResolveModelEffectBinding / MmeResolveSubsetEffectBinding per model from current assignments,
+// switching bindings to reloaded cache entries ("Loading effect file" and "done.\n\n" logs
+// are recorded once through the engine and LoadedEffect::doneLogged latch; multiple bindings sharing an entry are silent,
+// as with original (path,stamp) cache hits). Report failures through sub_18000B880's failure
+// path (errorText log + "Failed to load effect file:" dialog + failed-entry
+// unload), retaining assignments and effect-free bindings; missing files (stamp==0) are silent
+// (early return in sub_18000BC90 at 0x18000bd19). Return whether any binding was successfully re-resolved.
 bool MmeRebindEffectAssignments(const std::string& path);
 
-// [0x18000b972 `if (!*(a1))`] 文件级等价查询：是否仍有“effectPath == path
-// 且 effect 非空”的活绑定。无效果绑定（此前装载失败/已卸载）在原版 B880
-// 的删文件分支里直接静默返回、状态不推进——轮询侧以此门复刻该行为。
+// [0x18000b972 `if (!*(a1))`] Equivalent file-level query: whether any live binding has effectPath == path
+// and a non-null effect. Effect-free bindings (failed loading/already unloaded) return silently without advancing state in original B880's
+// deleted-file branch; polling uses this gate to reproduce that behavior.
 bool MmeAnyEffectBindingForPath(const std::string& path);
 
 // Auto-assignment for a freshly registered model (MMEffect.txt (1)): the

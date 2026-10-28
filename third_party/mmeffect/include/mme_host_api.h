@@ -1,30 +1,30 @@
 // ===========================================================================
-// mme_host_api.h - 内置 MMEffect.dll 的宿主集成 API
+// mme_host_api.h - host integration API for embedded MMEffect.dll
 // ===========================================================================
-// 原版 MME 通过 d3d9.dll 代理 + IAT/vtable hook 拦截 MMD 的设备调用；本工程
-// 自带完整渲染管线，宿主（MikuDanceStudio.exe）在渲染管线的对应位置直接
-// 调用本 API。语义与原 MMHack 拦截层逐点对应：
+// Original MME intercepts MMD device calls through a d3d9.dll proxy + IAT/vtable hooks; this project
+// has its own complete rendering pipeline, and the host (MikuDanceStudio.exe) directly
+// calls this API at the corresponding stages. Each semantic matches an original MMHack interception point:
 //
-//   宿主调用点                        原版对应（MMHack 拦截）
+//   Host call site                    Original counterpart (MMHack interception)
 //   ------------------------------    -------------------------------------
-//   MmeHostSetMainWindow              CreateDevice 的属主链主窗口探测
+//   MmeHostSetMainWindow              Main-window discovery along CreateDevice's owner chain
 //   MmeHostSetStandardEffect          Hooked_D3DXCreateEffectFromResourceA
-//   MmeHostSetDrawnWindow             Present 记录的呈现窗口
-//   MmeHostClear                      设备 Clear 槽 43
-//   MmeHostBeginScene                 设备 BeginScene 槽 41（含惰性 Initialize
-//                                     与对象增删差异、OnBeginScene）
-//   MmeHostDrawPrimitive              设备 DrawPrimitive 槽 81
-//   MmeHostDrawIndexedPrimitive       设备 DrawIndexedPrimitive 槽 82
+//   MmeHostSetDrawnWindow             Presentation window recorded by Present
+//   MmeHostClear                      Device Clear slot 43
+//   MmeHostBeginScene                 Device BeginScene slot 41 (including lazy Initialize,
+//                                     object addition/removal differences, OnBeginScene)
+//   MmeHostDrawPrimitive              Device DrawPrimitive slot 81
+//   MmeHostDrawIndexedPrimitive       Device DrawIndexedPrimitive slot 82
 //   MmeHostPreRenderTargetCopy        UpdateSurface/GetRenderTargetData/
-//                                     StretchRect 槽 30/32/34 的提前触发
-//   MmeHostEndScene                   设备 EndScene 槽 42（含 OnEndScene）
-//   MmeHostOnLost/OnResetDevice       设备 Reset 槽 16 前后
-//   MmeHostDestroyDevice              设备 Release 归零销毁路径
-//   MmeHostNotifyPmmLoaded/Saved      Hooked_CreateFileW 的 .pmm 跟踪
-//   MmeHostRecordTextureFile          Hooked_D3DXCreateTextureFromFileEx* 记录
+//                                     Early triggering at StretchRect slots 30/32/34
+//   MmeHostEndScene                   Device EndScene slot 42 (including OnEndScene)
+//   MmeHostOnLost/OnResetDevice       Before/after device Reset slot 16
+//   MmeHostDestroyDevice              Device Release-to-zero destruction path
+//   MmeHostNotifyPmmLoaded/Saved      Hooked_CreateFileW .pmm tracking
+//   MmeHostRecordTextureFile          Hooked_D3DXCreateTextureFromFileEx* records
 //
-// 绘制约定与原版一致：宿主把 Draw* 交给本 API 后不再自行下发绘制——
-// 效果引擎要么经分配的特效技术重发，要么原始转发。
+// Drawing contract matches the original: after handing Draw* to this API, the host must not issue it again;
+// the effect engine either reissues it through the assigned technique or forwards it unchanged.
 // =========================================================================//
 #ifndef MIKUDANCESTUDIO_MME_HOST_API_H_
 #define MIKUDANCESTUDIO_MME_HOST_API_H_
@@ -40,41 +40,41 @@ extern "C" {
 void __cdecl MmeHostInitializeRuntime(HINSTANCE instance);
 void __cdecl MmeHostShutdownRuntime();
 
-// 记录 MMD 主窗口（MME 菜单注入与子类化目标）。在设备创建后、首帧前调用。
+// Record MMD's main window (target for MME menu injection and subclassing). Call after device creation, before the first frame.
 void __cdecl MmeHostSetMainWindow(HWND window);
 
-// 注册宿主侧模型/附件原始宽字符路径直取函数（src/exports/effect_api.cpp
-// 的内部 MmdModelPathW/MmdAcsPathW，非导出）。等价于原版 MMHack 的
-// D3DXLoadMeshFromXW hook [0x1800043b0] 把宽路径原样登记进 ObjData+0x30
-// （材质表/toon 解析全程宽字符、无 SJIS 往返）；MMEffect.dll 无法从 exe
-// 导入库解析非导出符号，故经此指针注入。在设备创建后、首帧前调用。
+// Register direct accessors for original host model/accessory wide paths (internal MmdModelPathW/MmdAcsPathW in
+// src/exports/effect_api.cpp, not exported). Equivalent to original MMHack's
+// D3DXLoadMeshFromXW hook [0x1800043b0] registering the unchanged wide path in ObjData+0x30
+// (wide-character material/toon parsing throughout, without an SJIS round trip). MMEffect.dll cannot resolve non-exported
+// symbols from the EXE import library, so inject function pointers here. Call after device creation, before the first frame.
 typedef const wchar_t* (__cdecl* MmeHostPathProviderFn)(int index);
 void __cdecl MmeHostSetPathProviders(MmeHostPathProviderFn model_path,
                                      MmeHostPathProviderFn acs_path);
 
-// 记录宿主内置标准效果（资源 117/118 编译的 ID3DXEffect*，以不透明指针传
-// 入）并注册 12 个 MME 标准技术句柄。等价于原版对
-// D3DXCreateEffectFromResourceA 成功路径的拦截记录。
+// Record the host's embedded standard effect (ID3DXEffect* compiled from resource 117/118, passed as an opaque
+// pointer) and register 12 MME standard technique handles. Equivalent to original interception of
+// the successful D3DXCreateEffectFromResourceA path.
 void __cdecl MmeHostSetStandardEffect(void* effect);
 
-// 记录当前呈现窗口（GetDrawnWindow 的来源；普通渲染为主窗口，AVI 输出时
-// 为录制窗口——MME 会子类化它以取鼠标坐标）。
+// Record the current presentation window (source for GetDrawnWindow; main window during normal rendering, recording window
+// during AVI output; MME subclasses it to obtain mouse coordinates).
 void __cdecl MmeHostSetDrawnWindow(HWND window);
 
-// 帧清除。内部先与跟踪渲染目标比对判定主目标，主目标清除记录清除色并经
-// OnClear（效果启用时抑制清除，由后处理链自行 Clear）。返回设备 Clear 结果。
+// Frame clear. Compare with the tracked render target to identify the main target; main-target clears record the clear color and pass through
+// OnClear (when effects are enabled, suppress the clear and let post-processing Clear). Returns the device Clear result.
 HRESULT __cdecl MmeHostClear(IDirect3DDevice9* device, unsigned long rect_count,
                                const D3DRECT* rects, unsigned long flags,
                                D3DCOLOR color, float z, unsigned long stencil);
 
-// 帧 BeginScene 状态机：编辑模式采样、惰性 Initialize、对象增删差异
-// （OnCreateModel/OnDeleteModel）、世界矩阵缓存、渲染目标跟踪、OnBeginScene
-// （渲染遍数规划在此发生）。notEditMode != 0 表示非编辑态（AVI 输出/模态）。
-// 初始化失败时按原版每次报告错误、保留待初始化状态，并返回 S_OK 而不
-// 调用真实 BeginScene；初始化成功后调用真实 BeginScene 并返回其结果。
+// Frame BeginScene state machine: sample edit mode, lazy Initialize, object addition/removal differences
+// (OnCreateModel/OnDeleteModel), cache the world matrix, track render targets, OnBeginScene
+// (render-pass planning occurs here). notEditMode != 0 means non-edit mode (AVI output/modal).
+// Initialization failures report an error each time, retain pending initialization and return S_OK without
+// calling real BeginScene, as in the original; after successful initialization, call real BeginScene and return its result.
 HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode);
 
-// 绘制转发：效果引擎接管（经分配特效重发）或原始转发。返回绘制 HRESULT。
+// Draw forwarding: the effect engine takes over (reissues through assigned effects) or forwards unchanged. Returns draw HRESULT.
 HRESULT __cdecl MmeHostDrawPrimitive(IDirect3DDevice9* device,
                                        D3DPRIMITIVETYPE type,
                                        unsigned int start_vertex,
@@ -99,33 +99,33 @@ HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
                                               unsigned int start_index,
                                               unsigned int primitive_count);
 
-// 在 EndScene 之前回读主渲染目标（后台缓冲捕获/AVI 采样）前调用：若本帧
-// OnEndScene 尚未触发则先触发（保证读到的是后处理后的结果）。
+// Call before main render-target readback ahead of EndScene (back-buffer capture/AVI sampling): if this frame's
+// OnEndScene has not fired, trigger it first to ensure readback sees the post-processed result.
 void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device,
                                         IDirect3DSurface9* source);
 
-// 帧 EndScene：触发一次 OnEndScene（后处理链运行）后调用真实 EndScene。
+// Frame EndScene: trigger OnEndScene once (runs the post-processing chain), then call real EndScene.
 HRESULT __cdecl MmeHostEndScene(IDirect3DDevice9* device);
 
-// 设备丢失/重置对（宿主 Reset 前后各一次，对应原 Reset 槽 16 拦截）。
+// Device lost/reset pair (once before and after host Reset, matching original Reset slot 16 interception).
 void __cdecl MmeHostOnLostDevice(IDirect3DDevice9* device);
 void __cdecl MmeHostOnResetDevice(IDirect3DDevice9* device);
 
-// 设备销毁：Cleanup + 释放全部跟踪状态（原设备 Release 归零路径）。
+// Device destruction: Cleanup + release all tracked state (original device Release-to-zero path).
 void __cdecl MmeHostDestroyDevice(IDirect3DDevice9* device);
 
-// .pmm 工程 加载/保存 通知（原 Hooked_CreateFileW 跟踪）。loaded 为一次性，
-// saved 入队依次弹出。
+// .pmm project load/save notifications (original Hooked_CreateFileW tracking). loaded is one-shot;
+// saved notifications are queued and consumed in order.
 void __cdecl MmeHostNotifyPmmLoaded(const wchar_t* path);
 void __cdecl MmeHostNotifyPmmSaved(const wchar_t* path);
 
-// 纹理创建记录（原 Hooked_D3DXCreateTextureFromFileEx* 跟踪；toon01..10
-// 裸名别名自动登记）。
+// Texture creation records (original Hooked_D3DXCreateTextureFromFileEx* tracking; bare toon01..10
+// aliases are registered automatically).
 void __cdecl MmeHostRecordTextureFile(const wchar_t* path,
                                         IDirect3DBaseTexture9* texture);
 
-// 效果引擎已初始化且未被禁用（宿主用于 Accessory 手动 DrawSubset 路径等
-// 需要“绕开 ID3DXMesh 内部绘制”的决策点）。仅当标准效果已注册后可能为 1。
+// True when the effect engine is initialized and enabled (used by the host for accessory manual DrawSubset and other
+// decisions to bypass ID3DXMesh's internal drawing). Can be 1 only after registering the standard effect.
 int __cdecl MmeHostEffectsActive(void);
 // CPU policy query: bridge initialization and the user's effect toggle are
 // different states. No device state or resource is read.

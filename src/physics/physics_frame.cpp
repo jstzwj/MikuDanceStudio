@@ -79,6 +79,9 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 
 #include "mikudancestudio/d3dx_dyn.hpp"
@@ -113,19 +116,28 @@ namespace {
 void TransformToMatrix(float out[16], const btTransform& t) {
     const btMatrix3x3& b = t.getBasis();
     const btVector3& o = t.getOrigin();
-    out[0] = b[0].x();  out[1] = b[1].x();  out[2] = b[2].x();  out[3] = 0.0f;
-    out[4] = b[0].y();  out[5] = b[1].y();  out[6] = b[2].y();  out[7] = 0.0f;
-    out[8] = b[0].z();  out[9] = b[1].z();  out[10] = b[2].z(); out[11] = 0.0f;
-    out[12] = o.x();    out[13] = o.y();    out[14] = o.z();    out[15] = 1.0f;
+    out[0] = b[0].x();
+    out[1] = b[1].x();
+    out[2] = b[2].x();
+    out[3] = 0.0f;
+    out[4] = b[0].y();
+    out[5] = b[1].y();
+    out[6] = b[2].y();
+    out[7] = 0.0f;
+    out[8] = b[0].z();
+    out[9] = b[1].z();
+    out[10] = b[2].z();
+    out[11] = 0.0f;
+    out[12] = o.x();
+    out[13] = o.y();
+    out[14] = o.z();
+    out[15] = 1.0f;
 }
 
 // The reverse of the above (the raw writes at 0x4B25D0/0x4B3460 body+16):
 // basis rows = D3DX columns.
 void MatrixToBasis(btTransform* t, const float* m) {
-    t->getBasis().setValue(
-        m[0], m[4], m[8],
-        m[1], m[5], m[9],
-        m[2], m[6], m[10]);
+    t->getBasis().setValue(m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]);
     t->setOrigin(btVector3(m[12], m[13], m[14]));
 }
 
@@ -164,17 +176,16 @@ float* D3dxQuatFromMatrix(float out[4], const D3DXMATRIXF* m) {
 float* D3dxQuatMul(float out[4], const float a[4], const float b[4]) {
     return d3dx::Get().quatMultiply(out, a, b);
 }
-}  // namespace
+} // namespace
 
 // Build the bone-follow matrix shared by 0x4B22F0 and 0x4B3460:
 //   Rz(rec+72) * Rx(rec+64) * Ry(rec+68) * T(rec+52..60)
 //   [ * T(bone+308..316) * boneMatrix(+52) when the bone link is valid ].
 // boneOverride >= 0 forces the bone index (0x4B3460 uses the center bone
 // for unlinkable records).
-void BuildFollowMatrix(float out[16], unsigned char* m,
-                       const mdl::RigidRecord& rigid,
+void BuildFollowMatrix(float out[16], const mdl::ModelRecord* m, const mdl::RigidRecord& rigid,
                        int boneOverride) {
-    mdl::BoneRecord* bones = mdl::Bones(m);
+    mdl::BoneRecord* bones = m->boneTable;
     D3DXMATRIXF t;
     auto* o = reinterpret_cast<D3DXMATRIXF*>(out);
     D3dxRotZ(o, rigid.rotation[2]);
@@ -182,8 +193,7 @@ void BuildFollowMatrix(float out[16], unsigned char* m,
     D3dxMul(o, o, &t);
     D3dxRotY(&t, rigid.rotation[1]);
     D3dxMul(o, o, &t);
-    D3dxTranslation(&t, rigid.position[0], rigid.position[1],
-                    rigid.position[2]);
+    D3dxTranslation(&t, rigid.position[0], rigid.position[1], rigid.position[2]);
     D3dxMul(o, o, &t);
     const int bone = boneOverride >= 0 ? boneOverride : rigid.boneIndex;
     if (bone >= 0) {
@@ -192,10 +202,6 @@ void BuildFollowMatrix(float out[16], unsigned char* m,
         D3dxMul(o, o, &t);
         D3dxMul(o, o, reinterpret_cast<const D3DXMATRIXF*>(bn.matInit));
     }
-}
-
-inline btRigidBody* BodyOf(const mdl::RigidRecord& rigid) {
-    return static_cast<btRigidBody*>(rigid.body);
 }
 
 // VA 0x004B3460 / x64 sub_7FF7CB4E45D0 - the settle reseat.  The x64 write
@@ -234,8 +240,7 @@ void StopBodyAt(btRigidBody* body, const btTransform& transform) {
 // ---- rigid-body state dumps under MIKUDANCESTUDIO_STATE_DUMP_DIR ---------
 // (porting-era A/B tooling; see frame_state_dump.hpp for the gate)
 
-template <typename T>
-void WriteStateWords(std::FILE* stream, const char* name, const T& value) {
+template <typename T> void WriteStateWords(std::FILE* stream, const char* name, const T& value) {
     std::fprintf(stream, "],\"%s\":[", name);
     const auto* bytes = reinterpret_cast<const unsigned char*>(&value);
     for (std::size_t word = 0; word < sizeof(value) / 4; ++word) {
@@ -253,8 +258,8 @@ void WriteEmptyStateField(std::FILE* stream, const char* name) {
 
 void DumpRigidBodyState(MMDApp* app, const char* fileName) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
 
@@ -268,8 +273,7 @@ void DumpRigidBodyState(MMDApp* app, const char* fileName) {
     std::fputs("{\n  \"schema\": 1,\n  \"models\": [", stream);
     bool firstModel = true;
     // port diagnostic: bound = model-slot capacity (kModelSlotCount)
-    for (unsigned slot = 0; slot < static_cast<unsigned>(kModelSlotCount);
-         ++slot) {
+    for (unsigned slot = 0; slot < static_cast<unsigned>(kModelSlotCount); ++slot) {
         // Model slots are pointers.  The old x86 address expression used a
         // four-byte stride and silently walked through the middle of entries
         // in the x64 build, making diagnostic output (and any future caller
@@ -277,27 +281,29 @@ void DumpRigidBodyState(MMDApp* app, const char* fileName) {
         auto* model = app->ModelSlot(slot);
         if (model == nullptr)
             continue;
-        auto* rigids = mdl::Rigids(model);
-        const int count = static_cast<int>(mdl::Mdl(model)->rigidCount);
+        auto* rigids = model->rigidTable;
+        const int count = static_cast<int>(model->rigidCount);
         if (!firstModel)
             std::fputc(',', stream);
         firstModel = false;
-        std::fprintf(stream, "\n    {\"slot\": %u, \"rigid_count\": %d, "
-                             "\"rigids\": [", slot, count);
+        std::fprintf(stream,
+                     "\n    {\"slot\": %u, \"rigid_count\": %d, "
+                     "\"rigids\": [",
+                     slot, count);
         if (rigids != nullptr && count >= 0 && count <= 100000) {
             for (int i = 0; i < count; ++i) {
                 if (i != 0)
                     std::fputc(',', stream);
                 const mdl::RigidRecord& rec = rigids[i];
-                btRigidBody* body = BodyOf(rec);
+                btRigidBody* body = rec.body;
                 std::fprintf(stream,
-                    "{\"index\":%d,\"bone\":%d,\"mode\":%d,"
-                    "\"world_bits\":[",
-                    i, rec.boneIndex,
-                    static_cast<int>(static_cast<signed char>(rec.mode)));
+                             "{\"index\":%d,\"bone\":%d,\"mode\":%d,"
+                             "\"world_bits\":[",
+                             i, rec.boneIndex,
+                             static_cast<int>(static_cast<signed char>(rec.mode)));
                 if (body != nullptr) {
-                    const auto* transform = reinterpret_cast<const unsigned char*>(
-                        &body->getWorldTransform());
+                    const auto* transform =
+                        reinterpret_cast<const unsigned char*>(&body->getWorldTransform());
                     for (int word = 0; word < 16; ++word) {
                         if (word != 0)
                             std::fputc(',', stream);
@@ -313,10 +319,8 @@ void DumpRigidBodyState(MMDApp* app, const char* fileName) {
                                     body->getInterpolationLinearVelocity());
                     WriteStateWords(stream, "interpolation_angular_bits",
                                     body->getInterpolationAngularVelocity());
-                    WriteStateWords(stream, "linear_bits",
-                                    body->getLinearVelocity());
-                    WriteStateWords(stream, "angular_bits",
-                                    body->getAngularVelocity());
+                    WriteStateWords(stream, "linear_bits", body->getLinearVelocity());
+                    WriteStateWords(stream, "angular_bits", body->getAngularVelocity());
                 } else {
                     WriteEmptyStateField(stream, "interpolation_world_bits");
                     WriteEmptyStateField(stream, "interpolation_linear_bits");
@@ -337,8 +341,8 @@ void DumpRigidBodyState(MMDApp* app, const char* fileName) {
 
 void DumpWorldSolverInfo(btDiscreteDynamicsWorld* world) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH || world == nullptr)
         return;
 
@@ -368,26 +372,26 @@ void DumpWorldSolverInfo(btDiscreteDynamicsWorld* world) {
     std::fclose(stream);
 }
 
-#endif  // MIKUDANCESTUDIO_DIAG
+#endif // MIKUDANCESTUDIO_DIAG
 
-}  // namespace
+} // namespace
 
 // VA 0x004B22F0 - push kinematic rigid bodies to the bones.
 // For every mode==0 record the bone-follow transform is written into the
 // body's motion state; btRigidBody::saveKinematicState (called from
 // stepSimulation) pulls it into m_worldTransform and derives velocities.
-void ModelKinematicSync(unsigned char* m) {
-    const int count = mdl::Mdl(m)->rigidCount;
+void ModelKinematicSync(mdl::ModelRecord* m) {
+    const int count = m->rigidCount;
     if (count <= 0)
         return;
-    mdl::RigidRecord* rigids = mdl::Rigids(m);
+    mdl::RigidRecord* rigids = m->rigidTable;
     for (int i = 0; i < count; ++i) {
         const mdl::RigidRecord& rec = rigids[i];
         if (rec.mode != 0)
             continue;
-        btRigidBody* body = BodyOf(rec);
+        btRigidBody* body = rec.body;
         if (body == nullptr)
-            continue;                                       // port guard
+            continue; // port guard
         float mat[16];
         BuildFollowMatrix(mat, m, rec, -1);
         btTransform tr;
@@ -402,12 +406,12 @@ void ModelKinematicSync(unsigned char* m) {
 // their bone-follow pose.  Teleports every mode>0 body to the follow
 // transform and stops it (current transform + the four velocity slots only;
 // see ReseatRigidBody for the exact x64 write set).
-void ModelDynamicReseat(unsigned char* m) {
-    const int count = mdl::Mdl(m)->rigidCount;
+void ModelDynamicReseat(mdl::ModelRecord* m) {
+    const int count = m->rigidCount;
     if (count <= 0)
         return;
-    mdl::RigidRecord* rigids = mdl::Rigids(m);
-    const int centerBone = mdl::Mdl(m)->centerBone;   // 0x4B3460
+    mdl::RigidRecord* rigids = m->rigidTable;
+    const int centerBone = m->centerBone; // 0x4B3460
 #ifdef MIKUDANCESTUDIO_DIAG
     static int reseatCalls = 0;
     const bool traceReseat = getenv("MIKUDANCESTUDIO_TRACE_RESEAT") != nullptr;
@@ -416,9 +420,8 @@ void ModelDynamicReseat(unsigned char* m) {
         for (int i = 0; i < count; ++i)
             if (static_cast<signed char>(rigids[i].mode) > 0)
                 ++active;
-        std::fprintf(stderr,
-                     "RESEAT call=%d count=%d active(rec80>0)=%d\n",
-                     reseatCalls, count, active);
+        std::fprintf(stderr, "RESEAT call=%d count=%d active(rec80>0)=%d\n", reseatCalls, count,
+                     active);
     }
     ++reseatCalls;
 #endif
@@ -426,9 +429,9 @@ void ModelDynamicReseat(unsigned char* m) {
         const mdl::RigidRecord& rec = rigids[i];
         if (static_cast<signed char>(rec.mode) <= 0)
             continue;
-        btRigidBody* body = BodyOf(rec);
+        btRigidBody* body = rec.body;
         if (body == nullptr)
-            continue;                                       // port guard
+            continue; // port guard
 #ifdef MIKUDANCESTUDIO_DIAG
         if (traceReseat && reseatCalls <= 3) {
             const int id = body->m_debugBodyId;
@@ -436,9 +439,8 @@ void ModelDynamicReseat(unsigned char* m) {
                 unsigned bits;
                 const float ox = body->getWorldTransform().getOrigin().getX();
                 std::memcpy(&bits, &ox, 4);
-                std::fprintf(stderr,
-                             "RESEAT body3 iter=%d rec80=%d pre_origin=%08X\n",
-                             reseatCalls, (int)rec.mode, bits);
+                std::fprintf(stderr, "RESEAT body3 iter=%d rec80=%d pre_origin=%08X\n", reseatCalls,
+                             (int)rec.mode, bits);
             }
         }
 #endif
@@ -460,12 +462,12 @@ void ModelDynamicReseat(unsigned char* m) {
 //  part 3: local matrix (+116) = world * inverse(parent world); physics
 //          pose pos +0x188 / quat +0x194 derived from it, plus the
 //          type-5 and limit-flag corrections and the mode==2 collapse.
-void ModelPhysicsReadback(unsigned char* m) {
-    mdl::BoneRecord* bones = mdl::Bones(m);
-    mdl::RigidRecord* rigids = mdl::Rigids(m);
-    const int rcount = mdl::Mdl(m)->rigidCount;
-    mdl::JointRecord* joints = mdl::Joints(m);
-    const int jcount = mdl::Mdl(m)->jointCount;
+void ModelPhysicsReadback(mdl::ModelRecord* m) {
+    mdl::BoneRecord* bones = m->boneTable;
+    mdl::RigidRecord* rigids = m->rigidTable;
+    const int rcount = m->rigidCount;
+    mdl::JointRecord* joints = m->jointTable;
+    const int jcount = m->jointCount;
 
     // ---- part 1: joint overstretch clamp ------------------------------
     for (int j = 0; j < jcount; ++j) {
@@ -473,11 +475,11 @@ void ModelPhysicsReadback(unsigned char* m) {
         const int ra = joint.rigidA;
         const int rb = joint.rigidB;
         if (ra < 0 || ra >= rcount || rb < 0 || rb >= rcount)
-            continue;                                       // port guard
-        btRigidBody* bodyA = BodyOf(rigids[ra]);
-        btRigidBody* bodyB = BodyOf(rigids[rb]);
+            continue; // port guard
+        btRigidBody* bodyA = rigids[ra].body;
+        btRigidBody* bodyB = rigids[rb].body;
         if (bodyA == nullptr || bodyB == nullptr)
-            continue;                                       // port guard
+            continue; // port guard
         float ma[16], mb[16];
         TransformToMatrix(ma, bodyA->getWorldTransform());
         TransformToMatrix(mb, bodyB->getWorldTransform());
@@ -485,8 +487,7 @@ void ModelPhysicsReadback(unsigned char* m) {
         // ((dy*dy + dx*dx) + dz*dz) and everything downstream runs single
         // precision - sqrtf, the (dist - limit) comiss, divss limit/dist
         // for k, and the (mb-ma)*k products as mulss into the translation.
-        const float dy = ma[13] - mb[13], dx = ma[12] - mb[12],
-                    dz = ma[14] - mb[14];
+        const float dy = ma[13] - mb[13], dx = ma[12] - mb[12], dz = ma[14] - mb[14];
         const float d2 = dy * dy + dx * dx + dz * dz;
         const float dist = std::sqrt(d2);
         const float limit = joint.radiusBound;
@@ -494,16 +495,13 @@ void ModelPhysicsReadback(unsigned char* m) {
             continue;
         const float k = limit / dist;
         float t[16];
-        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t),
-                        (mb[12] - ma[12]) * k,
-                        (mb[13] - ma[13]) * k,
-                        (mb[14] - ma[14]) * k);
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(ma),
-                reinterpret_cast<const D3DXMATRIXF*>(ma),
+        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), (mb[12] - ma[12]) * k,
+                        (mb[13] - ma[13]) * k, (mb[14] - ma[14]) * k);
+        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(ma), reinterpret_cast<const D3DXMATRIXF*>(ma),
                 reinterpret_cast<const D3DXMATRIXF*>(t));
         btTransform tr = bodyB->getWorldTransform();
         tr.setOrigin(btVector3(ma[12], ma[13], ma[14]));
-        StopBodyAt(bodyB, tr);   // x64 inline reset, see StopBodyAt
+        StopBodyAt(bodyB, tr); // x64 inline reset, see StopBodyAt
     }
 
     // ---- part 2: dynamic bodies drive the bone world matrices ---------
@@ -514,15 +512,15 @@ void ModelPhysicsReadback(unsigned char* m) {
         const int bone = rec.boneIndex;
         if (bone < 0)
             continue;
-        btRigidBody* body = BodyOf(rec);
+        btRigidBody* body = rec.body;
         if (body == nullptr)
-            continue;                                       // port guard
+            continue; // port guard
         float w[16];
         TransformToMatrix(w, body->getWorldTransform());
         // Original 0x4B29CE routes this through the real D3DXMatrixMultiply
         // (x87, one rounding per element); an SSE float chain drifts 1-2 ULP
         // into every physics bone.
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(mdl::Bones(m)[bone].matInit),
+        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(m->boneTable[bone].matInit),
                 reinterpret_cast<const D3DXMATRIXF*>(rec.invTransform),
                 reinterpret_cast<const D3DXMATRIXF*>(w));
     }
@@ -535,7 +533,7 @@ void ModelPhysicsReadback(unsigned char* m) {
         const int bi = rigid.boneIndex;
         if (bi < 0)
             continue;
-        mdl::BoneRecord& bone = mdl::Bones(m)[bi];
+        mdl::BoneRecord& bone = m->boneTable[bi];
         float* world = bone.matInit;
         float* local = bone.matLocal;
         const int parent = bone.parent;
@@ -544,9 +542,9 @@ void ModelPhysicsReadback(unsigned char* m) {
         if (parent < 0) {
             std::memcpy(local, world, 16 * sizeof(float));
             haveLocal = true;
-        } else if (D3dxInverse(reinterpret_cast<D3DXMATRIXF*>(inv),
-                               reinterpret_cast<const D3DXMATRIXF*>(
-                                   mdl::Bones(m)[parent].matInit))) {
+        } else if (D3dxInverse(
+                       reinterpret_cast<D3DXMATRIXF*>(inv),
+                       reinterpret_cast<const D3DXMATRIXF*>(m->boneTable[parent].matInit))) {
             D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local),
                     reinterpret_cast<const D3DXMATRIXF*>(world),
                     reinterpret_cast<const D3DXMATRIXF*>(inv));
@@ -558,62 +556,58 @@ void ModelPhysicsReadback(unsigned char* m) {
             // singular parent world matrix: original falls straight through
             // to the +244 copy below.
             std::memcpy(bone.matExtra, bone.matInit,
-                        sizeof(bone.matExtra));               // 0x4B419x
+                        sizeof(bone.matExtra)); // 0x4B419x
             continue;
         }
 
-        float* q = bone.ikBackup + 3;                         // +0x194
+        float* q = bone.ikBackup + 3; // +0x194
         D3dxQuatFromMatrix(q, reinterpret_cast<const D3DXMATRIXF*>(local));
 
         // +0x188 position = translation of T(p) * local * T(-p); the
         // T(p) * local product is kept for the mode==2 branch below.
         float work[16], pos[16], t[16];
-        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), bone.position[0],
-                        bone.position[1], bone.position[2]);
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(work),
-                reinterpret_cast<const D3DXMATRIXF*>(t),
+        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), bone.position[0], bone.position[1],
+                        bone.position[2]);
+        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(work), reinterpret_cast<const D3DXMATRIXF*>(t),
                 reinterpret_cast<const D3DXMATRIXF*>(local));
-        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), -bone.position[0],
-                        -bone.position[1], -bone.position[2]);
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(pos),
-                reinterpret_cast<const D3DXMATRIXF*>(work),
+        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), -bone.position[0], -bone.position[1],
+                        -bone.position[2]);
+        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(pos), reinterpret_cast<const D3DXMATRIXF*>(work),
                 reinterpret_cast<const D3DXMATRIXF*>(t));
         std::memcpy(bone.ikBackup, pos + 12, 3 * sizeof(float));
 
         const int target = bone.tailIdx;
-        mdl::BoneRecord& tb = target >= 0 ? mdl::Bones(m)[target] : bone;
+        mdl::BoneRecord& tb = target >= 0 ? m->boneTable[target] : bone;
 
-        if (bone.type == mdl::BoneType::RotateGrant) {        // tail type
-            float conj[4] = {-tb.physicsQuat[0], -tb.physicsQuat[1],
-                             -tb.physicsQuat[2], tb.physicsQuat[3]};
+        if (bone.type == mdl::BoneType::RotateGrant) { // tail type
+            float conj[4] = {-tb.physicsQuat[0], -tb.physicsQuat[1], -tb.physicsQuat[2],
+                             tb.physicsQuat[3]};
             float out[4];
             D3dxQuatMul(out, conj, q);
             std::memcpy(q, out, sizeof out);
         }
         if ((bone.flags & mdl::kBoneFlagRotInherit) != 0) {
             float limit[4];
-            D3dxQuatFromMatrix(limit, reinterpret_cast<const D3DXMATRIXF*>(
-                                           tb.matLocal));
-            if (limit[3] > 1.0f) limit[3] = 1.0f;
-            if (limit[3] < -1.0f) limit[3] = -1.0f;
+            D3dxQuatFromMatrix(limit, reinterpret_cast<const D3DXMATRIXF*>(tb.matLocal));
+            if (limit[3] > 1.0f)
+                limit[3] = 1.0f;
+            if (limit[3] < -1.0f)
+                limit[3] = -1.0f;
             // x64 0x7FF7CB4E3C85: acosf (float CRT), then subss with the
             // truncated-pi float 0x4048F5C3.
             float angle = std::acos(limit[3]);
             if (limit[3] < 0.0f)
-                angle -= 3.140000104904175f;                 // 0x529xxx
+                angle -= 3.140000104904175f; // 0x529xxx
             // Original 0x4B2CED / x64 0x7FF7CB4E3CD6: ((y*y + x*x) + z*z)
             // through sqrtf.
-            const float axisLen = std::sqrt(limit[1] * limit[1] +
-                                            limit[0] * limit[0] +
-                                            limit[2] * limit[2]);
+            const float axisLen =
+                std::sqrt(limit[1] * limit[1] + limit[0] * limit[0] + limit[2] * limit[2]);
             if (angle != 0.0f && axisLen >= 0.00000011920929f) {
                 const float a = angle * bone.inheritRatio;
                 // x64 0x7FF7CB4E3D0E/0x7FF7CB4E3D5F: sinf/cosf and a
                 // divss sin/axisLen.
                 const float s = std::sin(a) / axisLen;
-                const float rot[4] = {-limit[0] * s, -limit[1] * s,
-                                      -limit[2] * s,
-                                      std::cos(a)};
+                const float rot[4] = {-limit[0] * s, -limit[1] * s, -limit[2] * s, std::cos(a)};
                 // Multiplication order differs per unrolled original path:
                 // parent>=0 (0x4B2DB6) computes rot*q; parent<0 (0x4B3339)
                 // computes q*rot in place.
@@ -636,14 +630,11 @@ void ModelPhysicsReadback(unsigned char* m) {
             std::memset(bone.trans, 0, sizeof(bone.trans));
             std::memset(bone.ikBackup, 0, 3 * sizeof(float));
             work[12] = work[13] = work[14] = 0.0f;
-            D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t),
-                            -bone.position[0], -bone.position[1],
+            D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), -bone.position[0], -bone.position[1],
                             -bone.position[2]);
-            D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local),
-                    reinterpret_cast<const D3DXMATRIXF*>(t),
+            D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local), reinterpret_cast<const D3DXMATRIXF*>(t),
                     reinterpret_cast<const D3DXMATRIXF*>(work));
-            D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t),
-                            bone.position[0], bone.position[1],
+            D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), bone.position[0], bone.position[1],
                             bone.position[2]);
             D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local),
                     reinterpret_cast<const D3DXMATRIXF*>(local),
@@ -651,8 +642,7 @@ void ModelPhysicsReadback(unsigned char* m) {
             if (parent >= 0)
                 D3dxMul(reinterpret_cast<D3DXMATRIXF*>(world),
                         reinterpret_cast<const D3DXMATRIXF*>(local),
-                        reinterpret_cast<const D3DXMATRIXF*>(
-                            mdl::Bones(m)[parent].matInit));
+                        reinterpret_cast<const D3DXMATRIXF*>(m->boneTable[parent].matInit));
         }
         std::memcpy(bone.matExtra, bone.matInit, sizeof(bone.matExtra));
     }
@@ -674,7 +664,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // top of FrameDriver) refreshes it to 1 while playing ([0x368]/[0x330]),
     // while the idle-physics suppress toggle is OFF ([0xA54CC] / x86
     // 0xA4420 = FrameVolumeControlEnabled, menu 299) or while the modeless
-    // model-edge dialog is open ([0xA1B98] / x86 0xA0B50 = FrameRangeDialog,
+    // English-name dialog is open ([0xA1B98] / x86 0xA0B50 = EnglishNameDialog,
     // menu 259); otherwise it walks 1->2->3->0.  0x7FF7CB44B8E7
     // (`cmp [app+0xA1E18],0 / jz -> 0x7FF7CB44C8D6`, x86 twin 0x46EFBE)
     // skips the ENTIRE physics section - wind, gravity, settle request,
@@ -685,24 +675,24 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // catch-up blocks share it but can only run while playing, which
     // already holds the counter open.)
     if (s.state.messageSeen == 0)
-        return;                       // 0x7FF7CB44B8E7 -> 0x7FF7CB44C8D6
+        return; // 0x7FF7CB44B8E7 -> 0x7FF7CB44C8D6
     PhysicsScene* scene = s.Physics();
     if (scene == nullptr)
         return;
-    btDiscreteDynamicsWorld* world = scene->world;   // slot 64 / 0x40
+    btDiscreteDynamicsWorld* world = scene->world; // slot 64 / 0x40
     if (world == nullptr)
         return;
-    auto& simulation=ImportCpuSimulation(s);
+    auto& simulation = ImportCpuSimulation(s);
     CpuSimulationFrame frame;
-    frame.deltaSeconds=s.DeltaTime();
-    frame.selectionActive=selActive!=0;
-    frame.selectionWasActive=s.state.selectionActiveLatch!=0;
-    frame.modelMode=s.state.optflag[0]!=0;
-    frame.frameStep=s.FrameStepPlayback()!=0;
-    frame.playbackActive=s.PlaybackActive()!=0;
-    frame.accessoryEditing=s.state.accessoryEditDialogOpen!=0;
-    frame.frameCopyPending=s.state.frameCopyDialog!=0;
-    CpuSimulationHooks hooks{app,nullptr,nullptr};
+    frame.deltaSeconds = s.DeltaTime();
+    frame.selectionActive = selActive != 0;
+    frame.selectionWasActive = s.state.selectionActiveLatch != 0;
+    frame.modelMode = s.state.optflag[0] != 0;
+    frame.frameStep = s.FrameStepPlayback() != 0;
+    frame.playbackActive = s.PlaybackActive() != 0;
+    frame.accessoryEditing = s.state.accessoryEditDialogOpen != 0;
+    frame.frameCopyPending = s.FrameCopyOrPhysicsDialog() != 0;
+    CpuSimulationHooks hooks{app, nullptr, nullptr};
 #ifdef MIKUDANCESTUDIO_DIAG
     char stageCaptureValue[2]{};
     static LONG stagesCaptured = 0;
@@ -711,81 +701,127 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // already been stepped and makes the original/MikuDanceStudio solver inputs
     // incomparable.
     const bool captureStages =
-        GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_PHYSICS_STAGES",
-                                stageCaptureValue,
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_PHYSICS_STAGES", stageCaptureValue,
                                 sizeof(stageCaptureValue)) == 1 &&
         stageCaptureValue[0] == '1' &&
         // Startup executes an empty-scene physics pass before a PMM is
         // chosen.  Do not consume the one-shot capture there: the useful
         // baseline is the first pass that actually owns model rigid bodies.
-        s.ModelSlots()[0] != nullptr &&
-        InterlockedCompareExchange(&stagesCaptured, 1, 0) == 0;
+        s.ModelSlots()[0] != nullptr && InterlockedCompareExchange(&stagesCaptured, 1, 0) == 0;
 #endif
 #ifdef MIKUDANCESTUDIO_DIAG
-    frame.skipIdleWorld=getenv("MIKUDANCESTUDIO_IDLE_NO_STEP")!=nullptr;
-    if(const char* forced=getenv("MIKUDANCESTUDIO_FORCE_MAINDT")) {
-        frame.overrideMainTimeStep=true;
-        frame.mainTimeStep=static_cast<float>(atof(forced));
+    frame.skipIdleWorld = getenv("MIKUDANCESTUDIO_IDLE_NO_STEP") != nullptr;
+    if (const char* forced = getenv("MIKUDANCESTUDIO_FORCE_MAINDT")) {
+        frame.overrideMainTimeStep = true;
+        frame.mainTimeStep = static_cast<float>(atof(forced));
     }
-    static bool zeroLocalTimeAfterLoad=getenv("MIKUDANCESTUDIO_ZERO_LT_AFTER_LOAD")!=nullptr;
+    static bool zeroLocalTimeAfterLoad = getenv("MIKUDANCESTUDIO_ZERO_LT_AFTER_LOAD") != nullptr;
     struct Trace {
-        MMDApp* app; btDiscreteDynamicsWorld* world; bool capture,trace;
-        bool* zeroLocalTime; int steps=0; const char* labels[16]{};
-        int mode=0; bool settle=false,moved=false;
-    } trace{app,world,captureStages,getenv("MIKUDANCESTUDIO_TRACE_STEPS")!=nullptr,&zeroLocalTimeAfterLoad};
-    hooks.user=&trace;
-    hooks.observe=[](void* user,const CpuSimulationState& state,CpuSimulationEvent event,int index,float) {
-        auto& t=*static_cast<Trace*>(user);
-        auto* app=t.app;
-        ExportCpuSimulation(*app,state);
-        const auto rigid=[&](const char* name) { if(t.capture) DumpRigidBodyState(app,name); };
-        const auto pose=[&](const char* name) { if(t.capture) DumpFrameEntryState(app,name,false); };
-        switch(event) {
+        MMDApp* app;
+        btDiscreteDynamicsWorld* world;
+        bool capture, trace;
+        bool* zeroLocalTime;
+        int steps = 0;
+        const char* labels[16]{};
+        int mode = 0;
+        bool settle = false, moved = false;
+    } trace{app, world, captureStages, getenv("MIKUDANCESTUDIO_TRACE_STEPS") != nullptr,
+            &zeroLocalTimeAfterLoad};
+    hooks.user = &trace;
+    hooks.observe = [](void* user, const CpuSimulationState& state, CpuSimulationEvent event,
+                       int index, float) {
+        auto& t = *static_cast<Trace*>(user);
+        auto* app = t.app;
+        ExportCpuSimulation(*app, state);
+        const auto rigid = [&](const char* name) {
+            if (t.capture)
+                DumpRigidBodyState(app, name);
+        };
+        const auto pose = [&](const char* name) {
+            if (t.capture)
+                DumpFrameEntryState(app, name, false);
+        };
+        switch (event) {
         case CpuSimulationEvent::GravityApplied:
-            if(t.capture) { ArmBoneTransformIkProbe();DumpWorldSolverInfo(t.world); }
+            if (t.capture) {
+                ArmBoneTransformIkProbe();
+                DumpWorldSolverInfo(t.world);
+            }
             break;
         case CpuSimulationEvent::BeforePose:
-            t.mode=state.physicsMode;t.settle=state.resetPending!=0;t.moved=state.bodiesMoved!=0;
-            if(t.trace) {
-                const float localTime=static_cast<const PhysicsWorld*>(t.world)->SubstepRemainder();
-                unsigned bits=0;std::memcpy(&bits,&localTime,4);
-                fprintf(stderr,"PHYSFRAME enter settle=%d count=%d localTime=%08X\n",int(t.settle),t.mode,bits);
+            t.mode = state.physicsMode;
+            t.settle = state.resetPending != 0;
+            t.moved = state.bodiesMoved != 0;
+            if (t.trace) {
+                const float localTime =
+                    static_cast<const PhysicsWorld*>(t.world)->SubstepRemainder();
+                unsigned bits = 0;
+                std::memcpy(&bits, &localTime, 4);
+                fprintf(stderr, "PHYSFRAME enter settle=%d count=%d localTime=%08X\n",
+                        int(t.settle), t.mode, bits);
             }
-            pose("physics_pose0.json");break;
+            pose("physics_pose0.json");
+            break;
         case CpuSimulationEvent::KinematicSync:
-            rigid("physics_sync.rigids.json");pose("physics_sync.json");break;
+            rigid("physics_sync.rigids.json");
+            pose("physics_sync.json");
+            break;
         case CpuSimulationEvent::MainStep:
         case CpuSimulationEvent::ExtraStep:
         case CpuSimulationEvent::SettleStep:
-            if(t.steps<16) t.labels[t.steps]=event==CpuSimulationEvent::MainStep ? "main" : event==CpuSimulationEvent::ExtraStep ? "extra" : "settle";
-            ++t.steps;break;
+            if (t.steps < 16)
+                t.labels[t.steps] = event == CpuSimulationEvent::MainStep    ? "main"
+                                    : event == CpuSimulationEvent::ExtraStep ? "extra"
+                                                                             : "settle";
+            ++t.steps;
+            break;
         case CpuSimulationEvent::Stepped:
-            if(index) { char name[64]{};std::snprintf(name,sizeof(name),"physics_settle_post%d.rigids.json",index);rigid(name); }
-            else { rigid("physics_step.rigids.json");pose("physics_step.json"); }
+            if (index) {
+                char name[64]{};
+                std::snprintf(name, sizeof(name), "physics_settle_post%d.rigids.json", index);
+                rigid(name);
+            } else {
+                rigid("physics_step.rigids.json");
+                pose("physics_step.json");
+            }
             break;
         case CpuSimulationEvent::SettleReseat: {
-            char name[64]{};std::snprintf(name,sizeof(name),"physics_settle_pre%d.rigids.json",index);rigid(name);break;
+            char name[64]{};
+            std::snprintf(name, sizeof(name), "physics_settle_pre%d.rigids.json", index);
+            rigid(name);
+            break;
         }
         case CpuSimulationEvent::Settled:
-            rigid("physics_settle.rigids.json");pose("physics_settle.json");break;
+            rigid("physics_settle.rigids.json");
+            pose("physics_settle.json");
+            break;
         case CpuSimulationEvent::Readback:
-            rigid("physics_readback.rigids.json");pose("physics_readback.json");break;
+            rigid("physics_readback.rigids.json");
+            pose("physics_readback.json");
+            break;
         case CpuSimulationEvent::AfterPose:
-            if(*t.zeroLocalTime) { static_cast<PhysicsWorld*>(t.world)->ClearSubstepRemainder();*t.zeroLocalTime=false; }
-            pose("physics_pose1.json");break;
-        default: break;
+            if (*t.zeroLocalTime) {
+                static_cast<PhysicsWorld*>(t.world)->ClearSubstepRemainder();
+                *t.zeroLocalTime = false;
+            }
+            pose("physics_pose1.json");
+            break;
+        default:
+            break;
         }
     };
 #endif
-    RunCpuSimulationFrame(simulation,EditorCpuSimulationContext(s),frame,hooks);
-    ExportCpuSimulation(s,simulation);
+    RunCpuSimulationFrame(simulation, EditorCpuSimulationContext(s), frame, hooks);
+    ExportCpuSimulation(s, simulation);
 #ifdef MIKUDANCESTUDIO_DIAG
-    if(trace.trace && trace.steps>0) {
-        fprintf(stderr,"PHYSFRAME steps=%d settle=%d moved=%d count=%d labels=",trace.steps,int(trace.settle),int(trace.moved),trace.mode);
-        for(int n=0;n<trace.steps && n<16;++n) fprintf(stderr,"%s%s",n ? "," : "",trace.labels[n]);
-        fprintf(stderr,"\n");
+    if (trace.trace && trace.steps > 0) {
+        fprintf(stderr, "PHYSFRAME steps=%d settle=%d moved=%d count=%d labels=", trace.steps,
+                int(trace.settle), int(trace.moved), trace.mode);
+        for (int n = 0; n < trace.steps && n < 16; ++n)
+            fprintf(stderr, "%s%s", n ? "," : "", trace.labels[n]);
+        fprintf(stderr, "\n");
     }
 #endif
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

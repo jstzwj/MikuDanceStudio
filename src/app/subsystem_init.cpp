@@ -20,11 +20,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <mmsystem.h>   // WAVEFORMATEX for dsound.h
+#include <mmsystem.h> // WAVEFORMATEX for dsound.h
 #include <dsound.h>
 
 #include <cstdint>
-#include <process.h>   // _beginthread
+#include <process.h> // _beginthread
 
 #include "mikudancestudio/physics_scene.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -59,20 +59,19 @@ void __cdecl WaveFeedThread(void* ctx) {
     IDirectSoundBuffer* buffer = audio->streamingBuffer;
     const DWORD avgBytes = audio->format.nAvgBytesPerSec;
     const std::int32_t bufBytes = audio->bufferBytes;
-    auto lock = [&](DWORD off, void** p1, DWORD* l1, void** p2,
-                    DWORD* l2) -> HRESULT {
+    auto lock = [&](DWORD off, void** p1, DWORD* l1, void** p2, DWORD* l2) -> HRESULT {
         HRESULT hr = buffer->Lock(off, avgBytes, p1, l1, p2, l2, 0);
-        if (hr == DSERR_BUFFERLOST) {                          // 0x4C2D14
-            buffer->Restore();                                 // 0x4C2D1F
+        if (hr == DSERR_BUFFERLOST) { // 0x4C2D14
+            buffer->Restore();        // 0x4C2D1F
             hr = buffer->Lock(off, avgBytes, p1, l1, p2, l2, 0);
         }
         return hr;
     };
     auto exitThread = [&]() {
-        buffer->Stop();                                        // 0x4C2F36
-        buffer->Release();                                     // 0x4C2F4A
-        audio->streamingBuffer = nullptr;                       // 0x4C2F4C
-        audio->WriteStopFlag(2);                                              // 0x4C2F53
+        buffer->Stop();                   // 0x4C2F36
+        buffer->Release();                // 0x4C2F4A
+        audio->streamingBuffer = nullptr; // 0x4C2F4C
+        audio->WriteStopFlag(2);          // 0x4C2F53
         _endthread();
     };
 
@@ -81,31 +80,31 @@ void __cdecl WaveFeedThread(void* ctx) {
     void* p2 = nullptr;
     DWORD l1 = 0;
     DWORD l2 = 0;
-    if (lock(0, &p1, &l1, &p2, &l2) >= 0) {                    // 0x4C2D0D
-        // x64 0x7FF7CB4FADFA..0x7FF7CB4FAE1A：两段读任一失败，本回合只
-        // 自增一次 failureCount（计数在调用方，不在 feed 里）。
-        if (!WaveStreamFeed(ctx, p1, static_cast<int>(l1), p2,
-                            static_cast<int>(l2)))              // 0x4C2D69
-            ++audio->failureCount;                              // 0x7FF7CB4FAE1A
-        buffer->Unlock(p1, l1, p2, l2);                        // 0x4C2D8B
-        buffer->Play(0, 0, DSBPLAY_LOOPING);                   // 0x4C2D9C
-        bool wrapped = false;                                  // 0x4C2DA7
+    if (lock(0, &p1, &l1, &p2, &l2) >= 0) { // 0x4C2D0D
+        // x64 0x7FF7CB4FADFA..0x7FF7CB4FAE1A: failure of either read increments failureCount only
+        // once per iteration (counted by the caller, not by feed).
+        if (!WaveStreamFeed(audio, p1, static_cast<int>(l1), p2,
+                            static_cast<int>(l2))) // 0x4C2D69
+            ++audio->failureCount;                 // 0x7FF7CB4FAE1A
+        buffer->Unlock(p1, l1, p2, l2);            // 0x4C2D8B
+        buffer->Play(0, 0, DSBPLAY_LOOPING);       // 0x4C2D9C
+        bool wrapped = false;                      // 0x4C2DA7
         if (audio->ReadStopFlag() != 1) {
-            DWORD writeOff = l1;  // v3 seeded with the first lock length
+            DWORD writeOff = l1; // v3 seeded with the first lock length
             // ---- 2. streaming loop ----------------------------------------
             for (;;) {
-                if (lock(writeOff, &p1, &l1, &p2, &l2) < 0)    // 0x4C2DD8
+                if (lock(writeOff, &p1, &l1, &p2, &l2) < 0) // 0x4C2DD8
                     break;
-                if (l1 == 0 && l2 == 0) {                      // 0x4C2E1A
-                    buffer->Unlock(p1, 0, p2, 0);              // 0x4C2F24
+                if (l1 == 0 && l2 == 0) {         // 0x4C2E1A
+                    buffer->Unlock(p1, 0, p2, 0); // 0x4C2F24
                     break;
                 }
-                if (!WaveStreamFeed(ctx, p1, static_cast<int>(l1), p2,
-                                    static_cast<int>(l2)))      // 0x4C2E3C
-                    ++audio->failureCount;                      // 0x7FF7CB4FAF35
-                buffer->Unlock(p1, l1, p2, l2);                // 0x4C2E5E
-                if (audio->failureCount > 2) {                  // 0x4C2E67
-                    buffer->Stop();                            // 0x4C2F31
+                if (!WaveStreamFeed(audio, p1, static_cast<int>(l1), p2,
+                                    static_cast<int>(l2))) // 0x4C2E3C
+                    ++audio->failureCount;                 // 0x7FF7CB4FAF35
+                buffer->Unlock(p1, l1, p2, l2);            // 0x4C2E5E
+                if (audio->failureCount > 2) {             // 0x4C2E67
+                    buffer->Stop();                        // 0x4C2F31
                     break;
                 }
                 // play-cursor chase (0x4C2E6D..0x4C2EC4)
@@ -117,10 +116,10 @@ void __cdecl WaveFeedThread(void* ctx) {
                         if (cur <= last)
                             wrapped = false;
                     } else if (cur > writeOff) {
-                        break;                                 // 0x4C2EC6
+                        break; // 0x4C2EC6
                     }
                     last = cur;
-                    for (int i = 0; i < 10; ++i) {             // 0x4C2E9E
+                    for (int i = 0; i < 10; ++i) { // 0x4C2E9E
                         Sleep(10);
                         if (audio->ReadStopFlag() == 1)
                             break;
@@ -150,7 +149,7 @@ void __cdecl WaveFeedThread(void* ctx) {
     exitThread();
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // VA 0x004C2450 - InitAudioContext(this): partial zeroing of the 0x25C audio/
@@ -160,13 +159,12 @@ void __cdecl WaveFeedThread(void* ctx) {
 // memset the whole 0x25C block to zero, so these writes are value-neutral -
 // ported verbatim anyway.)
 // ---------------------------------------------------------------------------
-void InitAudioContext(void* sub) {
-    auto* audio = static_cast<WaveAudioContext*>(sub);
-    audio->path[0] = L'\0';                                    // 0x4C2452
-    audio->englishUI = 0;                                      // 0x4C2456
-    audio->waveformMax = nullptr;                              // 0x4C245C
-    audio->waveformMin = nullptr;                              // 0x4C245E
-    audio->volume = 0;                                         // 0x4C2461
+void InitAudioContext(WaveAudioContext* audio) {
+    audio->path[0] = L'\0';       // 0x4C2452
+    audio->englishUI = 0;         // 0x4C2456
+    audio->waveformMax = nullptr; // 0x4C245C
+    audio->waveformMin = nullptr; // 0x4C245E
+    audio->volume = 0;            // 0x4C2461
 }
 
 // ---------------------------------------------------------------------------
@@ -212,25 +210,24 @@ void PhysicsSceneInit(PhysicsScene* scene) {
 // The original returns char (0 no-buffer / 1 spawned); the shared header
 // declares the return void and no caller checks it - kept void.
 // ---------------------------------------------------------------------------
-void WaveSeekAndFeed(void* obj, double seconds) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
-    if (audio->streamingBuffer == nullptr)                      // 0x4C34A4
-        return;                                                 // 0x4C34AA
+void WaveSeekAndFeed(WaveAudioContext* audio, double seconds) {
+    if (audio->streamingBuffer == nullptr)                       // 0x4C34A4
+        return;                                                  // 0x4C34AA
     const std::int32_t avgBytes = audio->format.nAvgBytesPerSec; // 0x4C34B1
     const std::int32_t blkAlign = audio->format.nBlockAlign;     // 0x4C34B7
-    audio->WriteStopFlag(0);                                        // 0x4C34BF
-    audio->failureCount = 0;                                    // 0x4C34C9
-    double avg = static_cast<double>(avgBytes);                 // 0x4C34D7 fild
-    if (avgBytes < 0)                                           // 0x4C34DA jge
-        avg += 4294967296.0;                                    // 0x4C34DC
-    const double t = static_cast<double>(blkAlign) *
-                     ((avg * seconds) / static_cast<double>(blkAlign));
-    const std::int32_t whole = static_cast<std::int32_t>(t);    // 0x4C34EA ftol
-    const std::int32_t rem = whole % blkAlign;                  // 0x4C34F2 idiv
-    const std::int32_t dataOff = audio->dataOffset;              // 0x4C34F4
-    HANDLE file = audio->fileHandle;                             // 0x4C3502
+    audio->WriteStopFlag(0);                                     // 0x4C34BF
+    audio->failureCount = 0;                                     // 0x4C34C9
+    double avg = static_cast<double>(avgBytes);                  // 0x4C34D7 fild
+    if (avgBytes < 0)                                            // 0x4C34DA jge
+        avg += 4294967296.0;                                     // 0x4C34DC
+    const double t =
+        static_cast<double>(blkAlign) * ((avg * seconds) / static_cast<double>(blkAlign));
+    const std::int32_t whole = static_cast<std::int32_t>(t); // 0x4C34EA ftol
+    const std::int32_t rem = whole % blkAlign;               // 0x4C34F2 idiv
+    const std::int32_t dataOff = audio->dataOffset;          // 0x4C34F4
+    HANDLE file = audio->fileHandle;                         // 0x4C3502
     SetFilePointer(file, dataOff - rem + whole, nullptr, FILE_BEGIN);
-    audio->feedThread = _beginthread(WaveFeedThread, 0, obj);   // 0x4C3518
+    audio->feedThread = _beginthread(WaveFeedThread, 0, audio); // 0x4C3518
 }
 
 // ---------------------------------------------------------------------------
@@ -246,20 +243,19 @@ void WaveSeekAndFeed(void* obj, double seconds) {
 // WAV volume never took effect; replicated verbatim below, then
 // WaveSeekAndFeed(this, seconds), SetTimer(hwnd, 0x64, 0x21, 0).
 // ---------------------------------------------------------------------------
-void WaveRestartAt(void* obj, double seconds) {  // VA 0x004C3530
-    auto* audio = static_cast<WaveAudioContext*>(obj);
-    HWND hwnd = audio->mainWindow;                              // 0x4C3533
-    KillTimer(hwnd, 0x64);                                      // 0x4C3539
-    CloseDataFile(obj);                                         // 0x4C3541
-    WaveStartPlayback(obj);                                     // 0x4C3548
+void WaveRestartAt(WaveAudioContext* audio, double seconds) { // VA 0x004C3530
+    HWND hwnd = audio->mainWindow;                            // 0x4C3533
+    KillTimer(hwnd, 0x64);                                    // 0x4C3539
+    CloseDataFile(audio);                                     // 0x4C3541
+    WaveStartPlayback(audio);                                 // 0x4C3548
     IDirectSoundBuffer* buffer = audio->streamingBuffer;
     // x64 0x7FF7CB4FAC5E (call [rax+0x78], edx = [rbx+0x288]): the original
     // re-applies the volume dword through vtable slot 15 = SetFrequency, not
     // SetVolume (slot 17) - an invalid no-op call, so the original's WAV
     // volume never took effect.  DWORD cast = mov edx bit-pattern semantics.
-    buffer->SetFrequency(static_cast<DWORD>(audio->volume));      // 0x4C355D
-    WaveSeekAndFeed(obj, seconds);                              // 0x4C356B
-    SetTimer(hwnd, 0x64, 0x21, nullptr);                        // 0x4C3580
+    buffer->SetFrequency(static_cast<DWORD>(audio->volume)); // 0x4C355D
+    WaveSeekAndFeed(audio, seconds);                         // 0x4C356B
+    SetTimer(hwnd, 0x64, 0x21, nullptr);                     // 0x4C3580
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -13,13 +13,15 @@ struct D3DXMATRIXF {
 using Effect = ID3DXEffect;
 using FnCreateTexInMemEx = HRESULT(WINAPI*)(IDirect3DDevice9*, LPCVOID, UINT, UINT, UINT, UINT,
                                             DWORD, D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR,
-                                            void*, void*, IDirect3DTexture9**);
+                                            D3DXIMAGE_INFO*, PALETTEENTRY*, IDirect3DTexture9**);
 using FnCreateTexFromFileExA = HRESULT(WINAPI*)(IDirect3DDevice9*, LPCSTR, UINT, UINT, UINT, DWORD,
-                                                D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR, void*,
-                                                void*, IDirect3DTexture9**);
+                                                D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR,
+                                                D3DXIMAGE_INFO*, PALETTEENTRY*,
+                                                IDirect3DTexture9**);
 using FnCreateTexFromFileExW = HRESULT(WINAPI*)(IDirect3DDevice9*, LPCWSTR, UINT, UINT, UINT, DWORD,
-                                                D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR, void*,
-                                                void*, IDirect3DTexture9**);
+                                                D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR,
+                                                D3DXIMAGE_INFO*, PALETTEENTRY*,
+                                                IDirect3DTexture9**);
 using FnCreateTexture = HRESULT(WINAPI*)(IDirect3DDevice9*, UINT, UINT, UINT, DWORD, D3DFORMAT,
                                          D3DPOOL, IDirect3DTexture9**);
 using FnCreateEffectFromResA = HRESULT(WINAPI*)(IDirect3DDevice9*, HMODULE, LPCSTR, const void*,
@@ -40,7 +42,7 @@ using FnComputeNormals = HRESULT(WINAPI*)(void*, const DWORD*);
 using FnVecQuat = float*(WINAPI*)(float out[4], const D3DXMATRIXF* m);
 using FnVec3Normalize = float*(WINAPI*)(float out[3], const float* src);
 using FnQuatMultiply = float*(WINAPI*)(float out[4], const float* q1, const float* q2);
-using FnMatrixQuat = D3DXMATRIXF*(WINAPI*)(D3DXMATRIXF* out, const float q[4]);
+using FnMatrixQuat = D3DXMATRIXF*(WINAPI*)(D3DXMATRIXF * out, const float q[4]);
 using FnQuatToAxisAngle = void(WINAPI*)(const float q[4], float axis[3], float* angle);
 using FnQuatNormalize = float*(WINAPI*)(float out[4], const float q[4]);
 using FnSaveSurfaceToFileW = HRESULT(WINAPI*)(const wchar_t*, int /*D3DXIMAGE_FILEFORMAT*/,
@@ -54,8 +56,8 @@ struct Api {
     static HRESULT WINAPI fromMemEx(IDirect3DDevice9* device, LPCVOID source, UINT sourceBytes,
                                     UINT width, UINT height, UINT mipLevels, DWORD usage,
                                     D3DFORMAT format, D3DPOOL pool, DWORD filter, DWORD mipFilter,
-                                    D3DCOLOR colorKey, void* sourceInfo, void* palette,
-                                    IDirect3DTexture9** texture) {
+                                    D3DCOLOR colorKey, D3DXIMAGE_INFO* sourceInfo,
+                                    PALETTEENTRY* palette, IDirect3DTexture9** texture) {
         return ::D3DXCreateTextureFromFileInMemoryEx(
             device, source, sourceBytes, width, height, mipLevels, usage, format, pool, filter,
             mipFilter, colorKey, sourceInfo, palette, texture);
@@ -63,8 +65,8 @@ struct Api {
     static HRESULT WINAPI fromFileExA(IDirect3DDevice9* device, LPCSTR path, UINT width,
                                       UINT height, UINT mipLevels, DWORD usage, D3DFORMAT format,
                                       D3DPOOL pool, DWORD filter, DWORD mipFilter,
-                                      D3DCOLOR colorKey, void* sourceInfo, void* palette,
-                                      IDirect3DTexture9** texture) {
+                                      D3DCOLOR colorKey, D3DXIMAGE_INFO* sourceInfo,
+                                      PALETTEENTRY* palette, IDirect3DTexture9** texture) {
         return ::D3DXCreateTextureFromFileExA(device, path, width, height, mipLevels, usage, format,
                                               pool, filter, mipFilter, colorKey, sourceInfo,
                                               palette, texture);
@@ -72,8 +74,8 @@ struct Api {
     static HRESULT WINAPI fromFileExW(IDirect3DDevice9* device, LPCWSTR path, UINT width,
                                       UINT height, UINT mipLevels, DWORD usage, D3DFORMAT format,
                                       D3DPOOL pool, DWORD filter, DWORD mipFilter,
-                                      D3DCOLOR colorKey, void* sourceInfo, void* palette,
-                                      IDirect3DTexture9** texture) {
+                                      D3DCOLOR colorKey, D3DXIMAGE_INFO* sourceInfo,
+                                      PALETTEENTRY* palette, IDirect3DTexture9** texture) {
         return ::D3DXCreateTextureFromFileExW(device, path, width, height, mipLevels, usage, format,
                                               pool, filter, mipFilter, colorKey, sourceInfo,
                                               palette, texture);
@@ -187,7 +189,7 @@ struct Api {
         return reinterpret_cast<D3DXMATRIXF*>(::D3DXMatrixScaling(Matrix(out), x, y, z));
     }
 
-   private:
+private:
     static D3DXMATRIX* Matrix(D3DXMATRIXF* value) { return reinterpret_cast<D3DXMATRIX*>(value); }
     static const D3DXMATRIX* Matrix(const D3DXMATRIXF* value) {
         return reinterpret_cast<const D3DXMATRIX*>(value);
@@ -207,4 +209,4 @@ inline Api& Get() {
     static Api api;
     return api;
 }
-}  // namespace mikudancestudio::d3dx
+} // namespace mikudancestudio::d3dx

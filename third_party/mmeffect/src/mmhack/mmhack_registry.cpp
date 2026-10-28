@@ -1,27 +1,27 @@
-// mmhack_registry.cpp - 对象数据图、纹理缓存与技术缓存（原 MMHack 注册层
-// 的去 hook 化保留部分）。
+// mmhack_registry.cpp - Object data map, texture cache, and technique cache (the retained, de-hooked portion
+// of the original MMHack registration layer).
 //
-// 原版的三个指针键包装器注册表（IDirect3D9/IDirect3DDevice9/ID3DXMesh，插
-// 入 FUN_180007020/FUN_1800069d0/FUN_1800066b0）与网格->文件簿记随设备包装
-// 机制一并去除——本工程由宿主直接调用，无需对象包装。保留的缓存：对象 id
-// 键 objData 图（DAT_18006e958）、技术句柄图（DAT_18006ccd0 族）、文件名键
-// 纹理缓存（FUN_180010d90 hash 族，含 toon01..10 裸名别名）。
+// The original's three pointer-keyed wrapper registries (IDirect3D9/IDirect3DDevice9/ID3DXMesh, inserted by
+// FUN_180007020/FUN_1800069d0/FUN_1800066b0) and mesh-to-file bookkeeping were removed with the device wrapper
+// mechanism: this project is called directly by the host and needs no object wrappers. Retained caches: the object-id-
+// keyed objData map (DAT_18006e958), technique handle maps (DAT_18006ccd0 family), and filename-keyed
+// texture cache (FUN_180010d90 hash family, including bare-name toon01..10 aliases).
 #include "mmhack_state.h"
 
 // ---------------------------------------------------------------------------
-// 每对象数据图  [DAT_18006e958; 访问器 FUN_18000f2b0]
+// Per-object data map [DAT_18006e958; accessor FUN_18000f2b0]
 // ---------------------------------------------------------------------------
 MmhObjData* MmhGetObjectData(unsigned long long id)
 {
     if (!MmhIsKnownObjectId(id))
-        return &g_mmh.objDataDefault;            // [FUN_18000f2b0 头节点回退]
+        return &g_mmh.objDataDefault;            // [FUN_18000f2b0 header-node fallback]
     auto it = g_mmh.objData.find(id);
     if (it == g_mmh.objData.end())
         return &g_mmh.objDataDefault;
     return &it->second;
 }
 
-// [FUN_18000fb60 近似]: id 有效当且仅当它出现在宿主当前的 PMD/附件 id 列表。
+// [FUN_18000fb60 approximation]: an id is valid iff it appears in the host's current PMD/accessory id lists.
 bool MmhIsKnownObjectId(unsigned long long id)
 {
     int n = ExpGetPmdNum();
@@ -36,37 +36,37 @@ bool MmhIsKnownObjectId(unsigned long long id)
 }
 
 // ---------------------------------------------------------------------------
-// 纹理缓存  [hash 图族 FUN_180010d90 / FUN_180010c40]
+// Texture cache [hash-map family FUN_180010d90 / FUN_180010c40]
 // ---------------------------------------------------------------------------
-// [FUN_18000f3d0] 原版对内置 toon 特殊处理：完整路径 "data\toonNN.bmp"
-// 只以裸文件名 "toonNN.bmp" 登记键（toon 分支 0x18000f5ca 直接跳到登记
-// 尾部，跳过 0x18000f5ce-0x18000f5e9 的完整路径登记，规范化完整路径键
-// 从不写入）——裸名正是材质表存储的键，也是 GetToonTexture
-// [FUN_18000f810] 查找（含 "toon10.bmp" 与空串回退）使用的键；模型
-// texName 恰为完整路径形态时原版必然 miss（直落空串回退返回 NULL）。
+// [FUN_18000f3d0] The original handles built-in toon textures specially: a full path "data\toonNN.bmp"
+// is registered only under its bare filename "toonNN.bmp" (the toon branch at 0x18000f5ca jumps straight to the registration
+// tail, skipping full-path registration at 0x18000f5ce-0x18000f5e9; the normalized full-path key
+// is never written). The bare name is exactly the key stored in the material table and used by GetToonTexture
+// [FUN_18000f810] for lookup (including "toon10.bmp" and empty-string fallbacks). If a model's
+// texName happens to be a full path, the original always misses (falls straight through to the empty-string fallback, returning NULL).
 static bool MmhToonBasenameAlias(const std::wstring& name, std::wstring* bare)
 {
-    // [0x18000f468] 完整路径必须恰为 15 个宽字符（"data\toonNN.bmp"），且
-    // 前 4 字符为 "data"——该前缀比较是 _wcsnicmp（大小写不敏感）
-    // [0x18000f48a]。第 5 字符（分隔符）原版不检查，由 basename 提取隐式
-    // 限定为 '/' 或 '\'。
+    // [0x18000f468] The full path must be exactly 15 wide characters ("data\toonNN.bmp"), with
+    // "data" as its first 4 characters; this prefix comparison uses _wcsnicmp (case-insensitive)
+    // [0x18000f48a]. The original does not check the 5th character (separator); basename extraction implicitly
+    // restricts it to '/' or '\'.
     if (name.size() != 15)
         return false;
     if (_wcsnicmp(name.c_str(), L"data", 4) != 0)
         return false;
     size_t slash = name.find_last_of(L"/\\");
     std::wstring base = (slash == std::wstring::npos) ? name : name.substr(slash + 1);
-    // [0x18000f468] basename 必须恰为 10 字符。
+    // [0x18000f468] The basename must be exactly 10 characters.
     if (base.size() != 10)
         return false;
-    // [0x18000f4b2] "toon" 前缀是 wcsncmp——大小写敏感（"Toon.." 不匹配）。
+    // [0x18000f4b2] The "toon" prefix uses wcsncmp: case-sensitive ("Toon.." does not match).
     if (wcsncmp(base.c_str(), L"toon", 4) != 0)
         return false;
-    // [0x18000f4d5..0x18000f4e8] ".bmp" 后缀是逐字符比较——大小写敏感。
+    // [0x18000f4d5..0x18000f4e8] The ".bmp" suffix is compared character by character: case-sensitive.
     if (base.compare(6, 4, L".bmp") != 0)
         return false;
-    // [0x18000f500..0x18000f554] 数字限定：('0','1'..'9') = toon01..toon09，
-    // 或 ('1','0') = toon10。toon00 与 toon11..toon19 均不登记。
+    // [0x18000f500..0x18000f554] Digit restrictions: ('0','1'..'9') = toon01..toon09,
+    // or ('1','0') = toon10. Neither toon00 nor toon11..toon19 is registered.
     wchar_t c4 = base[4], c5 = base[5];
     if (!(c4 == L'0' && c5 >= L'1' && c5 <= L'9') && !(c4 == L'1' && c5 == L'0'))
         return false;
@@ -173,7 +173,7 @@ int MmhTecCacheIndex(const char* tecName)
     return it == g_mmh.tecCache.end() ? -1 : it->second;
 }
 
-// --- 12 MME 技术描述符 [0x18005bdf0 静态表] ---------------------------------
+// --- 12 MME technique descriptors [0x18005bdf0 static table] ----------------
 const MmhTecDesc g_tecTable[MMH_TEC_COUNT] = {
     { "ColorRenderTec",            0x00000000u },
     { "ZValuePlotTec",             0x00000000u },
@@ -186,5 +186,5 @@ const MmhTecDesc g_tecTable[MMH_TEC_COUNT] = {
     { "DiffuseBufferShadowTec",    0x01000000u },
     { "DiffuseBSTextureTec",       0x01000001u },
     { "DiffuseBSSphiaTec",         0x01000100u },
-    { "DiffuseBSSphiaTexCd2Tec",   0x01000101u },
+    { "DiffuseBSSphiaTexTec",      0x01000101u },
 };

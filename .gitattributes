@@ -1,0 +1,8 @@
+# Keep clang-format's LF output stable across Windows checkouts.
+.clang-format text eol=lf
+.vscode/*.json text eol=lf
+include/mikudancestudio/*.h text eol=lf
+include/mikudancestudio/*.hpp text eol=lf
+src/**/*.cpp text eol=lf
+src/**/*.hpp text eol=lf
+src/**/*.inc text eol=lf

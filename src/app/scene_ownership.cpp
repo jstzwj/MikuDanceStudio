@@ -26,22 +26,22 @@ void TraceAccessoryRelease(int slot, const char* phase, const void* track) {
     FILE* stream = nullptr;
     if (fopen_s(&stream, path, "ab") != 0 || stream == nullptr)
         return;
-    fprintf(stream, "stage=accessory-track-%s slot=%d track=%p\r\n", phase,
-            slot, track);
+    fprintf(stream, "stage=accessory-track-%s slot=%d track=%p\r\n", phase, slot, track);
     fclose(stream);
 }
 #else
-inline void TraceAccessoryRelease(int, const char*, const void*) {}
+inline void TraceAccessoryRelease(int, const char*, const void*) {
+}
 #endif
 
-}  // namespace
+} // namespace
 
 void ReleaseSceneModels(MMDApp& app) {
     // x64 teardown sub_7FF7CB42BD40+0x42C130: 255-count do/while over the
     // model slots (app+0xBE8), each entry through sub_7FF7CB4C8D50
     // (ModelDispose twin) then operator delete - kModelSlotCount wide.
     for (int slot = 0; slot < kModelSlotCount; ++slot) {
-        unsigned char*& model = app.ModelSlot(slot);
+        mdl::ModelRecord*& model = app.ModelSlot(slot);
         if (model == nullptr)
             continue;
         ModelDispose(model);
@@ -87,4 +87,4 @@ void ReleaseAccessoriesAndTracks(MMDApp& app) {
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

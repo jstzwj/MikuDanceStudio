@@ -17,6 +17,7 @@ subject to the following restrictions:
 #define SIMD_TRANSFORM_UTIL_H
 
 #include "btTransform.h"
+#include "btMmdMath.h"
 #include <math.h>
 #define ANGULAR_MOTION_THRESHOLD btScalar(0.5)*SIMD_HALF_PI
 
@@ -64,106 +65,8 @@ SIMD_FORCE_INLINE btVector3 btAabbSupport(const btVector3& halfExtents,const btV
 
 
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-/* Verbatim transcription of MMD 0x4EFD17..0x4EFE2D: the angular-speed
-   length stays extended (fsqrt), the clamp and 0.001 comparisons use the
-   once-rounded float copy, and the sync quotient comes from the x87 fsin
-   instruction with axis components rounded once per fstp.  The Taylor
-   branch keeps the original scalar-SSE scheduling. */
-__declspec(noinline)
-static void mmdSinCosAxisAsm(const float* w, float dt,
-                             float* axis, float* pdw)
-{
-	const float thr = 0.78539819f;   /* 0x3F490FDB */
-	const float half = 0.5f;         /* 0x3F000000 */
-	const float tiny = 0.001f;       /* 0x3A83126F */
-	const float tayc = 0.020833334f; /* 0x3CAAAAAB */
-	float var48, qax, qay, qaz, qdw;
-	__asm
-	{
-		mov edx, w
-		fld dword ptr [edx+8]
-		fld dword ptr [edx+4]
-		fld dword ptr [edx]
-		fld st
-		fmul st, st(1)
-		fld st(2)
-		fmulp st(3), st
-		faddp st(2), st
-		fld st(2)
-		fmulp st(3), st
-		fxch st(1)
-		faddp st(2), st
-		fxch st(1)
-		fsqrt
-		fst dword ptr [var48]
-		fld st
-		fld dword ptr [dt]
-		fmul st(1), st
-		fld dword ptr [thr]
-		fxch st(2)
-		fcomip st, st(2)
-		fstp st(1)
-		jbe MMD_UNCLAMPED
-		movss xmm2, dword ptr [thr]
-		fstp st(1)
-		divss xmm2, dword ptr [dt]
-		movss dword ptr [var48], xmm2
-		fld dword ptr [var48]
-		jmp MMD_GOTFA
-	MMD_UNCLAMPED:
-		movss xmm2, dword ptr [var48]
-		fxch st(1)
-	MMD_GOTFA:
-		movss xmm1, dword ptr [dt]
-		fld dword ptr [half]
-		comiss xmm2, dword ptr [tiny]
-		jb MMD_TAYLOR
-	MMD_SINPATH:
-		fld st(1)
-		fmul st, st(3)
-		fmul st, st(1)
-		fsin
-		fdiv st, st(2)
-		fmul st(4), st
-		fxch st(4)
-		fstp dword ptr [qax]
-		fld dword ptr [edx+4]
-		fmul st, st(4)
-		fstp dword ptr [qay]
-		fld dword ptr [edx+8]
-		fmulp st(4), st
-		fxch st(3)
-		fstp dword ptr [qaz]
-		jmp MMD_COSPART
-	MMD_TAYLOR:
-		fstp st(3)
-		movaps xmm4, xmm1
-		mulss xmm4, xmm1
-		mulss xmm4, xmm1
-		movaps xmm0, xmm1
-		mulss xmm0, dword ptr [half]
-		movss xmm1, dword ptr [edx]
-		mulss xmm4, xmm2
-		mulss xmm4, xmm2
-		mulss xmm4, dword ptr [tayc]
-		subss xmm0, xmm4
-		mulss xmm1, xmm0
-		movss dword ptr [qax], xmm1
-		movss xmm1, dword ptr [edx+4]
-		mulss xmm1, xmm0
-		movss dword ptr [qay], xmm1
-		movss xmm1, dword ptr [edx+8]
-		mulss xmm1, xmm0
-		movss dword ptr [qaz], xmm1
-	MMD_COSPART:
-		fmulp st(1), st
-		fmulp st(1), st
-		fcos
-		fstp dword ptr [qdw]
-	}
-	axis[0] = qax; axis[1] = qay; axis[2] = qaz;
-	*pdw = qdw;
-}
+// The isolated numeric implementation preserves VC9's extended intermediates
+// and the float rounding used by the clamp and Taylor branch.
 #endif
 
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
@@ -251,7 +154,7 @@ public:
 		   row of the product groups the cross terms differently). */
 		btScalar axisArr[3];
 		btScalar dw;
-		mmdSinCosAxisAsm((const float*)&angvel.x(), timeStep, axisArr, &dw);
+		btMmdMath::integrateRotation((const float*)&angvel.x(), timeStep, axisArr, &dw);
 		const btScalar ax = axisArr[0];
 		const btScalar ay = axisArr[1];
 		const btScalar az = axisArr[2];

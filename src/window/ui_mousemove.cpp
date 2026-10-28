@@ -75,15 +75,13 @@ namespace mikudancestudio {
 void PanelPaint(MMDApp* app);
 
 // Not-yet-ported refresh helpers (src/app/late_ports.cpp).
-void SyncAccessoryEditPanel(MMDApp* a);              // 0x4134E0
-void RefreshLightPanel(MMDApp* a);              // 0x411070
-void ApplyGravityTrack(MMDApp* a);              // 0x412330
-void RefreshSelfShadowPanel(MMDApp* a);              // 0x411B90
-void DragInterpolationControlPoint(MMDApp* a);  // 0x416280
-void ReloadModels(MMDApp* a);              // 0x42E640
-void RelayoutSidebarControls(MMDApp* a);              // 0x442EB0
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // 0x4B4260
-void ApplyAccessoryTrack(MMDApp* a, int idx);     // 0x413120
+void SyncAccessoryEditPanel(MMDApp* a);       // 0x4134E0
+void RefreshLightPanel(MMDApp* a);            // 0x411070
+void ApplyGravityTrack(MMDApp* a);            // 0x412330
+void RefreshSelfShadowPanel(MMDApp* a);       // 0x411B90
+void ReloadModels(MMDApp* a);                 // 0x42E640
+void RelayoutSidebarControls(MMDApp* a);      // 0x442EB0
+void ApplyAccessoryTrack(MMDApp* a, int idx); // 0x413120
 
 namespace {
 
@@ -91,25 +89,24 @@ namespace {
 // (x64 xlate only carries its first 800 element entries)
 
 // --- layout constants -------------------------------------------------------
-constexpr int kRowPitch = 13;     // 0x0D  hover row pitch
-constexpr int kColPitch = 14;     // 0x0E  hover column pitch (bands)
-constexpr int kGridX0 = 94;       // 0x5E  first hover row x
-constexpr int kColY0 = 209;       // 0xD1  first hover column y (display)
-constexpr int kColY0Bone = 153;   // 0x99  first hover column y (bone-edit)
-constexpr int kSidebarMin = 250;  // 0xFA  sidebar drag minimum
-
+constexpr int kRowPitch = 13;    // 0x0D  hover row pitch
+constexpr int kColPitch = 14;    // 0x0E  hover column pitch (bands)
+constexpr int kGridX0 = 94;      // 0x5E  first hover row x
+constexpr int kColY0 = 209;      // 0xD1  first hover column y (display)
+constexpr int kColY0Bone = 153;  // 0x99  first hover column y (bone-edit)
+constexpr int kSidebarMin = 250; // 0xFA  sidebar drag minimum
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-unsigned char* CurrentModel(MMDApp* app) {
+mdl::ModelRecord* CurrentModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
 // Frame-remap walk over 16-byte offset records {idx, parent, slot, frame}
 // referenced by the band lists (display mode 0x444F8C..0x445833), or by the
-// model bone/morph/IK lists (bone-edit mode 0x445889..0x446040).  Every
+// model display/morph/bone lists (bone-edit mode 0x445889..0x446040).  Every
 // record that references list entry `idx` rewrites the entry's frame so the
 // dragged frames land on the hovered row:
 //   row == 0: frame = rec.frame                       (direct copy)
@@ -120,11 +117,9 @@ unsigned char* CurrentModel(MMDApp* app) {
 // `idx > 0` test (bands/bone).  `maxModel` is model+0x31B0 for the model
 // lists, nullptr for the band lists.
 template <typename Key>
-void RemapList(MMDApp* app, const int* recs, int count, Key* keys,
-               int row, int limit, std::uint32_t* maxModel) {
-    auto valid = [limit](int idx) {
-        return limit >= 0 ? idx >= limit : idx > 0;
-    };
+void RemapList(MMDApp* app, const int* recs, int count, Key* keys, int row, int limit,
+               std::uint32_t* maxModel) {
+    auto valid = [limit](int idx) { return limit >= 0 ? idx >= limit : idx > 0; };
     if (row == 0) {
         for (int i = 0; i < count; ++i) {
             const int* rec = recs + 4 * i;
@@ -137,8 +132,7 @@ void RemapList(MMDApp* app, const int* recs, int count, Key* keys,
             const int idx = rec[0];
             if (valid(idx)) {
                 Key& key = keys[idx];
-                const std::int32_t pf = static_cast<std::int32_t>(
-                    keys[key.previous].frame);
+                const std::int32_t pf = static_cast<std::int32_t>(keys[key.previous].frame);
                 if (pf + 1 < row + rec[3]) {
                     const std::int32_t v = row + rec[3];
                     if (v > 0)
@@ -157,8 +151,7 @@ void RemapList(MMDApp* app, const int* recs, int count, Key* keys,
                 if (key.next == 0) {
                     key.frame = row + rec[3];
                 } else {
-                    const std::int32_t nextFrame =
-                        static_cast<std::int32_t>(keys[key.next].frame);
+                    const std::int32_t nextFrame = static_cast<std::int32_t>(keys[key.next].frame);
                     if (nextFrame - 1 > row + rec[3])
                         key.frame = row + rec[3];
                     else
@@ -182,9 +175,7 @@ void RemapList(MMDApp* app, const int* recs, int count, Key* keys,
 // records carry the index at +4 and the accessory slot at +8; the list base
 // is this+0x384[slot] and the records are 60 bytes.
 void RemapAccList(MMDApp* app, const int* recs, int count, int row) {
-    auto listOf = [app](int slot) {
-        return app->AccessoryKeys(slot);
-    };
+    auto listOf = [app](int slot) { return app->AccessoryKeys(slot); };
     if (row == 0) {
         for (int i = 0; i < count; ++i) {
             const int* rec = recs + 4 * i;
@@ -199,8 +190,7 @@ void RemapAccList(MMDApp* app, const int* recs, int count, int row) {
             if (idx > 0) {
                 mdl::AccessoryKey* list = listOf(rec[2]);
                 mdl::AccessoryKey& key = list[idx];
-                const std::int32_t pf = static_cast<std::int32_t>(
-                    list[key.previous].frame);
+                const std::int32_t pf = static_cast<std::int32_t>(list[key.previous].frame);
                 if (pf + 1 < row + rec[3]) {
                     const std::int32_t v = row + rec[3];
                     if (v > 0)
@@ -220,8 +210,7 @@ void RemapAccList(MMDApp* app, const int* recs, int count, int row) {
                 if (key.next == 0) {
                     key.frame = row + rec[3];
                 } else {
-                    const std::int32_t nextFrame =
-                        static_cast<std::int32_t>(list[key.next].frame);
+                    const std::int32_t nextFrame = static_cast<std::int32_t>(list[key.next].frame);
                     if (nextFrame - 1 > row + rec[3])
                         key.frame = row + rec[3];
                     else
@@ -240,27 +229,26 @@ inline unsigned char HoverFlag(MMDApp* app) {
     return static_cast<unsigned char>(!app->CtrlModifierActive());
 }
 
-void SetAccessorySelected(MMDApp* app, int slot, int keyIndex,
-                          std::uint8_t selected) {
+void SetAccessorySelected(MMDApp* app, int slot, int keyIndex, std::uint8_t selected) {
     auto* keys = app->AccessoryKeys(slot);
     keys[keyIndex].selected = selected;
 }
 
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // WM_MOUSEMOVE handler (see header comment for the flow map).
 // ===========================================================================
 void HandleMouseMove(std::uint32_t lParam, int mouseY) {
     MMDApp* app = g_Block;
-    const int X = static_cast<int>(lParam & 0xFFFFu);  // a2 (low word)
-    const int Y = mouseY;                              // a3 (high word)
+    const int X = static_cast<int>(lParam & 0xFFFFu); // a2 (low word)
+    const int Y = mouseY;                             // a3 (high word)
 
     // --- 1. hide-rect gates (0x444CC6) -------------------------------------
     if (app->state.a06B5 != 0) {
         D3DRenderer* sub = app->Renderer();
-        const int ratio = static_cast<int>(
-            sub->viewScale * 200.0);  // viewScale = sub+0x1D4F0 float ratio
+        const int ratio =
+            static_cast<int>(sub->viewScale * 200.0); // viewScale = sub+0x1D4F0 float ratio
         if (X > static_cast<int>(app->state.hideLeft) - ratio)
             return;
         app->state.a06B5 = 0;
@@ -271,8 +259,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
         app->state.a06B4 = 0;
     }
     if (app->state.a06B6 != 0) {
-        if (X > app->state.hideLeft ||
-            X < app->state.hideRight)
+        if (X > app->state.hideLeft || X < app->state.hideRight)
             return;
         // Original stores (X < 0xA0D40), which is false on this path (0x444D55).
         app->state.a06B6 = 0;
@@ -298,14 +285,12 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
         }
         RECT rc;
         GetClientRect(static_cast<HWND>(app->Hwnd()), &rc);
-        if ((app->SidebarWidth() <=
-                 app->MouseX() && app->MouseY() <= rc.bottom - 158 &&
-             app->MouseX() <=
-                 app->SidebarWidth() + 6) &
+        if ((app->SidebarWidth() <= app->MouseX() && app->MouseY() <= rc.bottom - 158 &&
+             app->MouseX() <= app->SidebarWidth() + 6) &
             (app->FloatingWindow() == nullptr)) {
-            SetCursor(LoadCursorA(nullptr,
-                                  reinterpret_cast<LPCSTR>(
-                                      static_cast<INT_PTR>(0x7F84))));  // IDC_SIZEWE
+            SetCursor(
+                LoadCursorA(nullptr,
+                            reinterpret_cast<LPCSTR>(static_cast<INT_PTR>(0x7F84)))); // IDC_SIZEWE
         }
 
         // --- 3. sidebar drag (0x444E54) ------------------------------------
@@ -316,9 +301,8 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 app->SidebarWidth() = kSidebarMin;
             if (rc.right - 5 < app->SidebarWidth())
                 app->SidebarWidth() = rc.right - 5;
-            app->SidebarRatio() = static_cast<float>(
-                static_cast<double>(app->SidebarWidth()) /
-                static_cast<double>(rc.right));
+            app->SidebarRatio() = static_cast<float>(static_cast<double>(app->SidebarWidth()) /
+                                                     static_cast<double>(rc.right));
             RelayoutSidebarControls(app);
             PanelPaint(app);
             const int sidebar = app->SidebarWidth();
@@ -337,97 +321,84 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
             InvalidateRect(hwnd, &rc, FALSE);
         }
         if (app->ViewportToolHovered() == 1) {
-            SetCursor(LoadCursorA(nullptr,
-                                  reinterpret_cast<LPCSTR>(
-                                      static_cast<INT_PTR>(0x7F89))));  // IDC_HAND
+            SetCursor(
+                LoadCursorA(nullptr,
+                            reinterpret_cast<LPCSTR>(static_cast<INT_PTR>(0x7F89)))); // IDC_HAND
         }
 
         // --- 4. drag-frame remap (0x444F46) --------------------------------
         if (app->TimelineSelectionChanged() != 0) {
-            const int row =
-                (app->MouseX() -
-                 app->SelectionBoxAnchorX() - 6) /
-                kRowPitch;  // v15 == v257 (magic /13 = truncating)
+            const int row = (app->MouseX() - app->SelectionBoxAnchorX() - 6) /
+                            kRowPitch; // v15 == v257 (magic /13 = truncating)
             app->SceneModified() = 1;
-            if (app->state.optflag[0] == 0) {
+            if (app->CameraMode() == 0) {
                 // ---- bone-edit mode (0x445887..0x446065) ------------------
-                unsigned char* model = CurrentModel(app);
-                mdl::ModelRecord& record = *mdl::Mdl(model);
-                // bone list: 28-byte records, idx > 0 (0x44588F..0x445B30)
+                mdl::ModelRecord* model = CurrentModel(app);
+                mdl::ModelRecord& record = *model;
+                // Display/IK keys: skip the root record (0x44588F..0x445B30).
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::ModelBone)),
-                          app->TimelineSelectionCount(TimelineSelectionBand::ModelBone),
-                          mdl::DisplayKeys(model), row, -1,
-                          &record.maxFrame);
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelDisplay)),
+                          app->TimelineSelectionCount(TimelineSelectionBand::ModelDisplay),
+                          model->displayKeys, row, -1, &record.maxFrame);
                 // morph list: 20-byte records, idx >= model count
                 // (0x445B38..0x445D90)
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::ModelMorph)),
-                          app->TimelineSelectionCount(
-                              TimelineSelectionBand::ModelMorph),
-                          mdl::MorphKeys(model), row,
-                          static_cast<std::int32_t>(record.morphCount),
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelMorph)),
+                          app->TimelineSelectionCount(TimelineSelectionBand::ModelMorph),
+                          model->morphKeys, row, static_cast<std::int32_t>(record.morphCount),
                           &record.maxFrame);
-                // IK list: 60-byte records, idx >= model count
+                // Bone keys: skip per-bone root records, idx >= boneCount
                 // (0x445D9E..0x446040)
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::ModelIk)),
-                          app->TimelineSelectionCount(TimelineSelectionBand::ModelIk),
-                          mdl::BoneKeys(model), row,
-                          static_cast<std::int32_t>(record.boneCount),
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::ModelBone)),
+                          app->TimelineSelectionCount(TimelineSelectionBand::ModelBone),
+                          model->boneKeys, row, static_cast<std::int32_t>(record.boneCount),
                           &record.maxFrame);
-                PanelPaint(app);  // 0x446044
+                PanelPaint(app); // 0x446044
                 // 0x446065: original __thiscall(this=model, dword0x980,
                 // dword0xA0CC4).
-                SeekModelFrame(model,
-                          app->state.currentFrame,
-                          app->state.playbackPhysicsMode);
+                SeekModelFrame(*model, app->state.currentFrame, app->state.playbackPhysicsMode);
             } else {
                 // ---- display mode (0x444F8A..0x44587D) --------------------
                 // four fixed band lists (84/40/24/36-byte records)
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::Camera)),
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::Camera)),
                           app->TimelineSelectionCount(TimelineSelectionBand::Camera),
-                          app->CameraKeys(),
-                          row, -1, nullptr);
+                          app->CameraKeys(), row, -1, nullptr);
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::Light)),
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::Light)),
                           app->TimelineSelectionCount(TimelineSelectionBand::Light),
-                          app->LightKeys(),
-                          row, -1, nullptr);
+                          app->LightKeys(), row, -1, nullptr);
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::SelfShadow)),
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::SelfShadow)),
                           app->TimelineSelectionCount(TimelineSelectionBand::SelfShadow),
-                          app->ShadowKeys(),
-                          row, -1, nullptr);
+                          app->ShadowKeys(), row, -1, nullptr);
                 RemapList(app,
-                          reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                              TimelineSelectionBand::Gravity)),
+                          reinterpret_cast<const int*>(
+                              app->TimelineSelectionRecords(TimelineSelectionBand::Gravity)),
                           app->TimelineSelectionCount(TimelineSelectionBand::Gravity),
-                          app->GravityKeys(),
-                          row, -1, nullptr);
+                          app->GravityKeys(), row, -1, nullptr);
                 RemapAccList(app,
-                             reinterpret_cast<const int*>(app->TimelineSelectionRecords(
-                                 TimelineSelectionBand::Accessory)),
-                             app->TimelineSelectionCount(
-                                 TimelineSelectionBand::Accessory), row);
-                PanelPaint(app);   // 0x445837
-                ReloadModels(app);    // 0x44583E
-                RefreshLightPanel(app);    // 0x445845
-                RefreshSelfShadowPanel(app);    // 0x44584C
-                ApplyGravityTrack(app);    // 0x445853
+                             reinterpret_cast<const int*>(
+                                 app->TimelineSelectionRecords(TimelineSelectionBand::Accessory)),
+                             app->TimelineSelectionCount(TimelineSelectionBand::Accessory), row);
+                PanelPaint(app);             // 0x445837
+                ReloadModels(app);           // 0x44583E
+                RefreshLightPanel(app);      // 0x445845
+                RefreshSelfShadowPanel(app); // 0x44584C
+                ApplyGravityTrack(app);      // 0x445853
                 // per-slot refresh for every set flag (0x445858..0x445879)
                 for (int i = 0; i < 255; ++i) {
                     if (app->ObjectSlot(i) != nullptr)
                         ApplyAccessoryTrack(app, i);
                 }
-                SyncAccessoryEditPanel(app);    // 0x44587D
+                SyncAccessoryEditPanel(app); // 0x44587D
             }
         } else if (app->SelectionBoxDragging() != 0) {
             // ---- 5. hover highlight (0x44606F..0x446A2C) ------------------
@@ -441,35 +412,34 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 xStart = app->SelectionBoxAnchorX() + 6;
             }
             int yTop, yBottom;
-            if (app->MouseY() <=
-                app->SelectionBoxAnchorY() + 145) {
+            if (app->MouseY() <= app->SelectionBoxAnchorY() + 145) {
                 yTop = app->MouseY();
                 yBottom = app->SelectionBoxAnchorY() + 145;
             } else {
                 yTop = app->SelectionBoxAnchorY() + 145;
                 yBottom = app->MouseY();
             }
-            int rowStart = (xStart - kGridX0) / kRowPitch;  // 0x4460BC
+            int rowStart = (xStart - kGridX0) / kRowPitch; // 0x4460BC
             if (xStart - kRowPitch * rowStart - kGridX0 <= 6)
                 rowStart -= 1;
             if (rowStart < 0)
                 rowStart = 0;
-            int rowEnd = (xEnd - kGridX0) / kRowPitch;      // 0x4460F8
+            int rowEnd = (xEnd - kGridX0) / kRowPitch; // 0x4460F8
             if (xEnd - kRowPitch * rowEnd - kGridX0 > 6)
                 rowEnd += 1;
             if (rowEnd > app->SidebarWidth() - 22)
                 rowEnd = app->SidebarWidth() - 22;
-            int colStart = (yTop - kColY0) / kColPitch;     // 0x446135
+            int colStart = (yTop - kColY0) / kColPitch; // 0x446135
             if (yTop - kColPitch * colStart - kColY0 <= 7)
                 colStart -= 1;
             if (colStart < 0)
                 colStart = 0;
-            int colEnd = (yBottom - kColY0) / kColPitch;    // 0x44617B
+            int colEnd = (yBottom - kColY0) / kColPitch; // 0x44617B
             if (yBottom - kColPitch * colEnd - kColY0 > 7)
                 colEnd += 1;
 
             const unsigned char flag = HoverFlag(app);
-            if (app->state.optflag[0] != 0) {
+            if (app->CameraMode() != 0) {
                 // ---- display-mode hover (0x4461B3) ------------------------
                 if (!app->ShiftModifierActive()) {
                     // clear band visibility flags for all 200 rows
@@ -479,19 +449,18 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                     auto* shadowKeys = app->ShadowKeys();
                     auto* gravityKeys = app->GravityKeys();
                     int* bandMaps = app->state.rowHitBand1;
-                    int* accWalk =
-                        app->state.rowHitAcc + 1;
+                    int* accWalk = app->state.rowHitAcc + 1;
                     for (int row_i = 0; row_i < 200; ++row_i) {
-                        const int b0 = bandMaps[-200];  // band0 map
+                        const int b0 = bandMaps[-200]; // band0 map
                         if (b0 >= 0)
                             cameraKeys[b0].selected = 0;
-                        const int b1 = bandMaps[0];     // band1 map
+                        const int b1 = bandMaps[0]; // band1 map
                         if (b1 >= 0)
                             lightKeys[b1].selected = 0;
-                        const int b2 = bandMaps[200];   // band2 map
+                        const int b2 = bandMaps[200]; // band2 map
                         if (b2 >= 0)
                             shadowKeys[b2].selected = 0;
-                        const int b3 = bandMaps[400];   // band3 map
+                        const int b3 = bandMaps[400]; // band3 map
                         if (b3 >= 0)
                             gravityKeys[b3].selected = 0;
                         // accessory map + slot array, 40 groups of 5
@@ -576,18 +545,18 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 // x64 0x7FF7CB459875 resets the column cursor for each row;
                 // only the row base advances by 0x320 at 0x7FF7CB4598BC.
                 VisitTimelineSelectionCells(rowStart, rowEnd, colStart, colEnd,
-                    [&](std::size_t cell, int column) {
-                        const int key = app->state.rowHitAcc[cell];
-                        const int slot = app->state.jointLineMap[column];
-                        if (key >= 0 && slot >= 0)
-                            SetAccessorySelected(app, slot, key, flag);
-                    });
+                                            [&](std::size_t cell, int column) {
+                                                const int key = app->state.rowHitAcc[cell];
+                                                const int slot = app->state.jointLineMap[column];
+                                                if (key >= 0 && slot >= 0)
+                                                    SetAccessorySelected(app, slot, key, flag);
+                                            });
             } else {
                 // ---- bone-edit mode hover (0x44653B) ----------------------
-                unsigned char* model = CurrentModel(app);
-                mdl::DisplayKey* displayKeys = mdl::DisplayKeys(model);
-                mdl::MorphKey* morphKeys = mdl::MorphKeys(model);
-                mdl::BoneKey* boneKeys = mdl::BoneKeys(model);
+                mdl::ModelRecord* model = CurrentModel(app);
+                mdl::DisplayKey* displayKeys = model->displayKeys;
+                mdl::MorphKey* morphKeys = model->morphKeys;
+                mdl::BoneKey* boneKeys = model->boneKeys;
                 if (!app->ShiftModifierActive()) {
                     // clear bone/morph/IK visibility flags for all 200 rows
                     // (0x44653F..0x4467F0)
@@ -618,41 +587,41 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 // x64 0x7FF7CB459A6C reloads the row cursor; 0x459BB9
                 // advances the row base independently of the inner loop.
                 VisitTimelineSelectionCells(rowStart, rowEnd, colStartB, colEndB,
-                    [&](std::size_t cell, int) {
-                        const int display = app->state.rowHitIk[cell];
-                        if (display > 0)
-                            displayKeys[display].allocated = flag;
-                        else if (display == -10)
-                            displayKeys[0].allocated = flag;
-                        const int morph = app->state.rowHitMorph[cell];
-                        if (morph > 0)
-                            morphKeys[morph].allocated = flag;
-                        else if (morph == -10)
-                            morphKeys[0].allocated = flag;
-                        const int bone = app->state.rowHitBone[cell];
-                        if (bone > 0)
-                            boneKeys[bone].allocated = flag;
-                        else if (bone == -10)
-                            boneKeys[0].allocated = flag;
-                    });
+                                            [&](std::size_t cell, int) {
+                                                const int display = app->state.rowHitIk[cell];
+                                                if (display > 0)
+                                                    displayKeys[display].allocated = flag;
+                                                else if (display == -10)
+                                                    displayKeys[0].allocated = flag;
+                                                const int morph = app->state.rowHitMorph[cell];
+                                                if (morph > 0)
+                                                    morphKeys[morph].allocated = flag;
+                                                else if (morph == -10)
+                                                    morphKeys[0].allocated = flag;
+                                                const int bone = app->state.rowHitBone[cell];
+                                                if (bone > 0)
+                                                    boneKeys[bone].allocated = flag;
+                                                else if (bone == -10)
+                                                    boneKeys[0].allocated = flag;
+                                            });
                 // hover rect (0x446A13..0x446A25)
-                app->TimelineRangeFirstOffset() = rowStart;
-                app->TimelineRangeLastOffset() = rowEnd;
-                app->TimelineRangeFirstBase() = colStartB;
-                app->TimelineRangeLastBase() = colEndB;
+                app->TimelineRangeFirstColumn() = rowStart;
+                app->TimelineRangeLastColumn() = rowEnd;
+                app->TimelineRangeFirstRow() = colStartB;
+                app->TimelineRangeLastRow() = colEndB;
             }
-            PanelPaint(app);  // 0x446A2D
+            PanelPaint(app); // 0x446A2D
             // rect reset (0x446A32..0x446A46)
-            app->TimelineRangeFirstOffset() = 0;
-            app->TimelineRangeLastOffset() = 0;
-            app->TimelineRangeFirstBase() = 0;
-            app->TimelineRangeLastBase() = 0;
+            app->TimelineRangeFirstColumn() = 0;
+            app->TimelineRangeLastColumn() = 0;
+            app->TimelineRangeFirstRow() = 0;
+            app->TimelineRangeLastRow() = 0;
         }
     }
 
     // --- 6. physics-enabled hover helper (0x446A4C) -------------------------
-    if (app->PendingTimelineSelectionRow() != TimelineSelectionRow::None)
+    if (app->DraggedInterpolationPoint() != InterpolationControlPoint::None)
         DragInterpolationControlPoint(app);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

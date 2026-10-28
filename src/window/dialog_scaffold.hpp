@@ -34,8 +34,7 @@ namespace mikudancestudio {
 // EM_REPLACESEL prefill of one edit control (the dialogs fill their empty
 // edits by replacing the empty selection, not by SetWindowText).
 inline void PrefillEdit(HWND hDlg, int controlId, const char* text) {
-    SendMessageA(GetDlgItem(hDlg, controlId), EM_REPLACESEL, 0,
-                 reinterpret_cast<LPARAM>(text));
+    SendMessageA(GetDlgItem(hDlg, controlId), EM_REPLACESEL, 0, reinterpret_cast<LPARAM>(text));
 }
 
 // SetFocus on the edit, then EM_SETSEL 0..GetWindowTextLength - the
@@ -71,6 +70,6 @@ inline void MakeDialogTopmostIfRequested(MMDApp* app, HWND hDlg) {
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio
 
-#endif  // MIKUDANCESTUDIO_WINDOW_DIALOG_SCAFFOLD_HPP
+#endif // MIKUDANCESTUDIO_WINDOW_DIALOG_SCAFFOLD_HPP

@@ -31,10 +31,22 @@ the publish job's `contents: write` permission.
 推送标签后自动构建并发布两个架构；标签与 `VERSION` 不一致时立即失败。
 以后发布新版本：修改 `VERSION`、提交，再推送同名 `vxx.xx` 标签即可。
 
+For a regression-only run, enable `validation_only` and set `tag` to the branch or
+commit to test. This uses the same x86/x64 build and test steps, preserves the test
+artifacts, and skips packaging and publishing. Existing version tags remain fixed.
+
+```sh
+gh workflow run release.yml -f tag=main -f validation_only=true
+```
+
 ## Package and runtime / 压缩包与运行环境
 
 Each ZIP contains `MikuDanceStudio.exe`, `Data/MMDxShow.dll`, version/readme and
 license files. MME and the default toon textures are embedded in the executable.
+`LICENSE` contains the MIT license for MikuDanceStudio's own code.
+`licenses/MikuMikuDance.txt` preserves the original MikuMikuDance permission
+statement and disclaimer; the extracted resources described in `res/README.md`
+retain their original terms. `licenses/Bullet.txt` contains the Bullet license.
 External models, motions and effects are not included. Extract the entire folder
 and keep the `Data` subdirectory next to the EXE.
 

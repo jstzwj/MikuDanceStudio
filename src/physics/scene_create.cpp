@@ -46,12 +46,10 @@ namespace mikudancestudio {
 namespace {
 
 // One gizmo vertex buffer: create, lock(0, len), copy, unlock.
-bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot,
-           unsigned len, const void* data) {
+bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot, unsigned len, const void* data) {
     IDirect3DVertexBuffer9* vb = nullptr;
-    if (FAILED(dev->CreateVertexBuffer(
-            len, 0x8 /*D3DUSAGE_WRITEONLY*/, 0x42 /*XYZ|DIFFUSE*/,
-            D3DPOOL_MANAGED /*1*/, &vb, nullptr)))
+    if (FAILED(dev->CreateVertexBuffer(len, 0x8 /*D3DUSAGE_WRITEONLY*/, 0x42 /*XYZ|DIFFUSE*/,
+                                       D3DPOOL_MANAGED /*1*/, &vb, nullptr)))
         return false;
     *slot = vb;
     void* p = nullptr;
@@ -63,12 +61,10 @@ bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot,
 }
 
 // One gizmo index buffer.  The original locks with size 0 (= whole buffer).
-bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot,
-           unsigned len, const void* data) {
+bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot, unsigned len, const void* data) {
     IDirect3DIndexBuffer9* ib = nullptr;
-    if (FAILED(dev->CreateIndexBuffer(
-            len, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_MANAGED /*1*/, &ib,
-            nullptr)))
+    if (FAILED(dev->CreateIndexBuffer(len, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_MANAGED /*1*/, &ib,
+                                      nullptr)))
         return false;
     *slot = ib;
     void* p = nullptr;
@@ -79,37 +75,38 @@ bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
-    scene->owner = d3dSub;                                   // 0x4032F3
+    scene->owner = d3dSub; // 0x4032F3
     // No renderer means a CPU simulation owner; gizmos are renderer resources.
     // A legacy renderer with a missing device remains an initialization error.
-    IDirect3DDevice9* dev = d3dSub?d3dSub->device:nullptr;    // +120032
-    if(d3dSub && !dev)return false;
+    IDirect3DDevice9* dev = d3dSub ? d3dSub->device : nullptr; // +120032
+    if (d3dSub && !dev)
+        return false;
 
     // ---- gizmo buffers ----------------------------------------------------
-    if(dev){
-    if (!PutVB(dev, &scene->gizmoSphereVB, 928, kGizmoSphere58))    // 0x403308
-        return false;
-    if (!PutIB(dev, &scene->gizmoSphereIB, 480, kGizmoSphereIdx))   // 0x403BD7
-        return false;
-    if (!PutVB(dev, &scene->gizmoCubeVB, 128, kGizmoCube8))         // 0x4047C0
-        return false;
-    if (!PutIB(dev, &scene->gizmoCubeIB, 48, kGizmoCubeIdx))        // 0x4048E3
-        return false;
-    if (!PutVB(dev, &scene->gizmoSphere33VB, 528, kGizmoSphere33))  // 0x404A22
-        return false;
-    if (!PutIB(dev, &scene->gizmoSphere33IB, 256, kGizmoSphere33Idx))  // 0x404F0E
-        return false;
-    if (!PutVB(dev, &scene->gizmoArrowVB, 256, kGizmoArrow16))      // 0x405A22
-        return false;
-    if (!PutIB(dev, &scene->gizmoIdentityIB, 32, kGizmoIdentityIdx))  // 0x4057DD
-        return false;
-    if (!PutVB(dev, &scene->gizmoBoxSelVB, 256, kGizmoBoxSel16))    // 0x405526
-        return false;
-    if (!PutIB(dev, &scene->gizmoBoxSelIB, 144, kGizmoBoxSelIdx))   // 0x405A0D
-        return false;
+    if (dev) {
+        if (!PutVB(dev, &scene->gizmoSphereVB, 928, kGizmoSphere58)) // 0x403308
+            return false;
+        if (!PutIB(dev, &scene->gizmoSphereIB, 480, kGizmoSphereIdx)) // 0x403BD7
+            return false;
+        if (!PutVB(dev, &scene->gizmoCubeVB, 128, kGizmoCube8)) // 0x4047C0
+            return false;
+        if (!PutIB(dev, &scene->gizmoCubeIB, 48, kGizmoCubeIdx)) // 0x4048E3
+            return false;
+        if (!PutVB(dev, &scene->gizmoSphere33VB, 528, kGizmoSphere33)) // 0x404A22
+            return false;
+        if (!PutIB(dev, &scene->gizmoSphere33IB, 256, kGizmoSphere33Idx)) // 0x404F0E
+            return false;
+        if (!PutVB(dev, &scene->gizmoArrowVB, 256, kGizmoArrow16)) // 0x405A22
+            return false;
+        if (!PutIB(dev, &scene->gizmoIdentityIB, 32, kGizmoIdentityIdx)) // 0x4057DD
+            return false;
+        if (!PutVB(dev, &scene->gizmoBoxSelVB, 256, kGizmoBoxSel16)) // 0x405526
+            return false;
+        if (!PutIB(dev, &scene->gizmoBoxSelIB, 144, kGizmoBoxSelIdx)) // 0x405A0D
+            return false;
     }
 
     // ---- Bullet world stack and static ground -------------------------------
@@ -124,4 +121,4 @@ bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
     return true;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -124,39 +124,7 @@ static btScalar mmdSubFloat(btScalar left, btScalar right)
    reciprocal variant wrong: its clipped contacts differ from the original by
    1-14 ULP while the float-rounded reciprocal reproduces the original
    exactly, so the plain C path below is the faithful one. */
-#if 0
-__declspec(noinline)
-static void mmdInv22Scale(btScalar* pm11, btScalar* pm12,
-                          btScalar* pm21, btScalar* pm22)
-{
-  const float det = (*pm11) * (*pm22) - (*pm12) * (*pm21);
-  const float* pdet = &det;
-  __asm
-  {
-    mov eax, pdet
-    mov ecx, pm11
-    mov edx, pm12
-    fld dword ptr [eax]
-    fld1
-    fdivrp st(1), st      ; extended 1/det
-    fld dword ptr [ecx]
-    fmul st, st(1)
-    fstp dword ptr [ecx]  ; m11 scaled once
-    mov eax, pm21
-    fld dword ptr [edx]
-    fmul st, st(1)
-    fstp dword ptr [edx]  ; m12
-    mov edx, pm22
-    fld dword ptr [eax]
-    fmul st, st(1)
-    fstp dword ptr [eax]  ; m21
-    fld dword ptr [edx]
-    fmul st, st(1)
-    fstp dword ptr [edx]  ; m22
-    fstp st(0)
-  }
-}
-#endif
+
 
 #define dMULTIPLYOP1_331(A,op,B,C) \
 {\
@@ -371,11 +339,18 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
 
   // get vector from centers of box 1 to box 2, relative to box 1
   p = p2 - p1;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+  // MMD x64 RVA 0xFE150: single-precision (x+y)+z throughout SAT.
+  typedef btScalar MmdSatScalar;
+  dMULTIPLY1_331(pp, R1, p);
+#else
+  typedef double MmdSatScalar;
   // MMD's VC9 build evaluates all three transpose-dot products z+y+x.
   // The source macro's x+y+z spelling is reassociated differently by VS2022.
   pp[0] = mmdAddFloat(mmdAddFloat(R1[8]*p[2],R1[4]*p[1]),R1[0]*p[0]);
   pp[1] = mmdAddFloat(mmdAddFloat(R1[9]*p[2],R1[5]*p[1]),R1[1]*p[0]);
   pp[2] = mmdAddFloat(mmdAddFloat(R1[10]*p[2],R1[6]*p[1]),R1[2]*p[0]);
+#endif
 
   // get side lengths / 2
   A[0] = side1[0]*btScalar(0.5);
@@ -386,6 +361,17 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   B[2] = side2[2]*btScalar(0.5);
 
   // Rij is R1'*R2, i.e. the relative rotation between R1 and R2
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+  R11 = dDOT44(R1 + 0, R2 + 0);
+  R12 = dDOT44(R1 + 0, R2 + 1);
+  R13 = dDOT44(R1 + 0, R2 + 2);
+  R21 = dDOT44(R1 + 1, R2 + 0);
+  R22 = dDOT44(R1 + 1, R2 + 1);
+  R23 = dDOT44(R1 + 1, R2 + 2);
+  R31 = dDOT44(R1 + 2, R2 + 0);
+  R32 = dDOT44(R1 + 2, R2 + 1);
+  R33 = dDOT44(R1 + 2, R2 + 2);
+#else
   // Preserve the exact scalar-SSE scheduling at MMD 0x4E756A..0x4E777B.
   R11 = mmdAddFloat(mmdAddFloat(R1[0]*R2[0],R1[8]*R2[8]),R1[4]*R2[4]);
   // VC9 happens to keep this one dot product on x87 until its final store.
@@ -399,6 +385,7 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   R31 = mmdAddFloat(mmdAddFloat(R1[6]*R2[4],R1[10]*R2[8]),R1[2]*R2[0]);
   R32 = mmdAddFloat(mmdAddFloat(R1[10]*R2[9],R1[6]*R2[5]),R1[2]*R2[1]);
   R33 = mmdAddFloat(mmdAddFloat(R1[10]*R2[10],R1[6]*R2[6]),R1[2]*R2[2]);
+#endif
 
   Q11 = btFabs(R11); Q12 = btFabs(R12); Q13 = btFabs(R13);
   Q21 = btFabs(R21); Q22 = btFabs(R22); Q23 = btFabs(R23);
@@ -414,18 +401,19 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   // set to a vector relative to body 1. invert_normal is 1 if the sign of
   // the normal should be flipped.
 
-#define TST(expr1,expr2,norm,cc) \
-  { \
-  const double mmd_face_expr1 = (expr1); \
-  const double mmd_face_expr2 = (expr2); \
-  s2 = (btScalar)(fabs(mmd_face_expr1) - mmd_face_expr2); \
-  if (s2 > 0) return 0; \
-  if (s2 > s) { \
-    s = s2; \
-    normalR = norm; \
-    invert_normal = (mmd_face_expr1 < 0); \
-    code = (cc); \
-  } \
+#define TST(expr1, expr2, norm, cc)                                                                \
+  {                                                                                                \
+	  const MmdSatScalar mmd_face_expr1 = (expr1);                                                 \
+	  const MmdSatScalar mmd_face_expr2 = (expr2);                                                 \
+	  s2 = (btScalar)(fabs(mmd_face_expr1) - mmd_face_expr2);                                      \
+	  if (s2 > 0)                                                                                  \
+		  return 0;                                                                                \
+	  if (s2 > s) {                                                                                \
+		  s = s2;                                                                                  \
+		  normalR = norm;                                                                          \
+		  invert_normal = (mmd_face_expr1 < 0);                                                    \
+		  code = (cc);                                                                             \
+	  }                                                                                            \
   }
 
   s = -dInfinity;
@@ -433,93 +421,108 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   code = 0;
 
   // separating axis = u1,u2,u3
-  TST ((double)pp[0],((double)A[0] + (double)B[0]*Q11 +
-       (double)B[1]*Q12 + (double)B[2]*Q13),R1+0,1);
-  TST ((double)pp[1],((double)A[1] + (double)B[0]*Q21 +
-       (double)B[1]*Q22 + (double)B[2]*Q23),R1+1,2);
-  TST ((double)pp[2],((double)A[2] + (double)B[0]*Q31 +
-       (double)B[1]*Q32 + (double)B[2]*Q33),R1+2,3);
+  TST((MmdSatScalar)pp[0],
+	  ((MmdSatScalar)A[0] + (MmdSatScalar)B[0] * Q11 + (MmdSatScalar)B[1] * Q12 +
+	   (MmdSatScalar)B[2] * Q13),
+	  R1 + 0, 1);
+  TST((MmdSatScalar)pp[1],
+	  ((MmdSatScalar)A[1] + (MmdSatScalar)B[0] * Q21 + (MmdSatScalar)B[1] * Q22 +
+	   (MmdSatScalar)B[2] * Q23),
+	  R1 + 1, 2);
+  TST((MmdSatScalar)pp[2],
+	  ((MmdSatScalar)A[2] + (MmdSatScalar)B[0] * Q31 + (MmdSatScalar)B[1] * Q32 +
+	   (MmdSatScalar)B[2] * Q33),
+	  R1 + 2, 3);
 
   // separating axis = v1,v2,v3
-  TST ((double)R2[0]*p[0] + (double)R2[4]*p[1] +
-       (double)R2[8]*p[2],
-       ((double)A[0]*Q11 + (double)A[1]*Q21 +
-        (double)A[2]*Q31 + (double)B[0]),R2+0,4);
-  TST ((double)R2[1]*p[0] + (double)R2[5]*p[1] +
-       (double)R2[9]*p[2],
-       ((double)A[0]*Q12 + (double)A[1]*Q22 +
-        (double)A[2]*Q32 + (double)B[1]),R2+1,5);
-  TST ((double)R2[2]*p[0] + (double)R2[6]*p[1] +
-       (double)R2[10]*p[2],
-       ((double)A[0]*Q13 + (double)A[1]*Q23 +
-        (double)A[2]*Q33 + (double)B[2]),R2+2,6);
+  TST((MmdSatScalar)R2[0] * p[0] + (MmdSatScalar)R2[4] * p[1] + (MmdSatScalar)R2[8] * p[2],
+	  ((MmdSatScalar)A[0] * Q11 + (MmdSatScalar)A[1] * Q21 + (MmdSatScalar)A[2] * Q31 +
+	   (MmdSatScalar)B[0]),
+	  R2 + 0, 4);
+  TST((MmdSatScalar)R2[1] * p[0] + (MmdSatScalar)R2[5] * p[1] + (MmdSatScalar)R2[9] * p[2],
+	  ((MmdSatScalar)A[0] * Q12 + (MmdSatScalar)A[1] * Q22 + (MmdSatScalar)A[2] * Q32 +
+	   (MmdSatScalar)B[1]),
+	  R2 + 1, 5);
+  TST((MmdSatScalar)R2[2] * p[0] + (MmdSatScalar)R2[6] * p[1] + (MmdSatScalar)R2[10] * p[2],
+	  ((MmdSatScalar)A[0] * Q13 + (MmdSatScalar)A[1] * Q23 + (MmdSatScalar)A[2] * Q33 +
+	   (MmdSatScalar)B[2]),
+	  R2 + 2, 6);
 
   // note: cross product axes need to be scaled when s is computed.
   // normal (n1,n2,n3) is relative to box 1.
 #undef TST
-#define TST(expr1,expr2,n1,n2,n3,cc) \
-  /* VC9 evaluates the two SAT expressions and the squared axis length on */ \
-  /* x87, then spills s2 and sqrt(length2) to float.  It subsequently */ \
-  /* forms one scalar-SSE reciprocal and multiplies both s2 and the three */ \
-  /* normal components by it (MMD 0x4E7B22..0x4E8409).  Keeping every */ \
-  /* operation as btScalar makes VS2022 round each product/add too early. */ \
-  { \
-  const double mmd_expr1 = (expr1); \
-  const double mmd_expr2 = (expr2); \
-  const double mmd_n1 = (n1); \
-  const double mmd_n2 = (n2); \
-  const double mmd_n3 = (n3); \
-  s2 = (btScalar)(fabs(mmd_expr1) - mmd_expr2); \
-  if (s2 > 0) return 0; \
-  l = (btScalar)sqrt(mmd_n1*mmd_n1 + mmd_n2*mmd_n2 + \
-                     mmd_n3*mmd_n3); \
-  if (l > 0) { \
-    const btScalar mmd_inv_l = btScalar(1.0) / l; \
-    s2 *= mmd_inv_l; \
-    if (s2*fudge_factor > s) { \
-      s = s2; \
-      normalR = 0; \
-      normalC[0] = (btScalar)(n1)*mmd_inv_l; \
-      normalC[1] = (btScalar)(n2)*mmd_inv_l; \
-      normalC[2] = (btScalar)(n3)*mmd_inv_l; \
-      invert_normal = ((expr1) < 0); \
-      code = (cc); \
-    } \
-  } \
+#define TST(expr1, expr2, n1, n2, n3, cc)                                                          \
+  /* VC9 evaluates the two SAT expressions and the squared axis length on */                       \
+  /* x87, then spills s2 and sqrt(length2) to float.  It subsequently */                           \
+  /* forms one scalar-SSE reciprocal and multiplies both s2 and the three */                       \
+  /* normal components by it (MMD 0x4E7B22..0x4E8409).  Keeping every */                           \
+  /* operation as btScalar makes VS2022 round each product/add too early. */                       \
+  {                                                                                                \
+	  const MmdSatScalar mmd_expr1 = (expr1);                                                      \
+	  const MmdSatScalar mmd_expr2 = (expr2);                                                      \
+	  const MmdSatScalar mmd_n1 = (n1);                                                            \
+	  const MmdSatScalar mmd_n2 = (n2);                                                            \
+	  const MmdSatScalar mmd_n3 = (n3);                                                            \
+	  s2 = (btScalar)(fabs(mmd_expr1) - mmd_expr2);                                                \
+	  if (s2 > 0)                                                                                  \
+		  return 0;                                                                                \
+	  l = (btScalar)sqrt(mmd_n1 * mmd_n1 + mmd_n2 * mmd_n2 + mmd_n3 * mmd_n3);                     \
+	  if (l > 0) {                                                                                 \
+		  const btScalar mmd_inv_l = btScalar(1.0) / l;                                            \
+		  s2 *= mmd_inv_l;                                                                         \
+		  if (s2 * fudge_factor > s) {                                                             \
+			  s = s2;                                                                              \
+			  normalR = 0;                                                                         \
+			  normalC[0] = (btScalar)(n1) * mmd_inv_l;                                             \
+			  normalC[1] = (btScalar)(n2) * mmd_inv_l;                                             \
+			  normalC[2] = (btScalar)(n3) * mmd_inv_l;                                             \
+			  invert_normal = ((expr1) < 0);                                                       \
+			  code = (cc);                                                                         \
+		  }                                                                                        \
+	  }                                                                                            \
   }
 
   // separating axis = u1 x (v1,v2,v3)
-  TST((double)pp[2]*R21-(double)pp[1]*R31,
-      ((double)A[1]*Q31+(double)A[2]*Q21+
-       (double)B[1]*Q13+(double)B[2]*Q12),0,-R31,R21,7);
-  TST((double)pp[2]*R22-(double)pp[1]*R32,
-      ((double)A[1]*Q32+(double)A[2]*Q22+
-       (double)B[0]*Q13+(double)B[2]*Q11),0,-R32,R22,8);
-  TST((double)pp[2]*R23-(double)pp[1]*R33,
-      ((double)A[1]*Q33+(double)A[2]*Q23+
-       (double)B[0]*Q12+(double)B[1]*Q11),0,-R33,R23,9);
+  TST((MmdSatScalar)pp[2] * R21 - (MmdSatScalar)pp[1] * R31,
+	  ((MmdSatScalar)A[1] * Q31 + (MmdSatScalar)A[2] * Q21 + (MmdSatScalar)B[1] * Q13 +
+	   (MmdSatScalar)B[2] * Q12),
+	  0, -R31, R21, 7);
+  TST((MmdSatScalar)pp[2] * R22 - (MmdSatScalar)pp[1] * R32,
+	  ((MmdSatScalar)A[1] * Q32 + (MmdSatScalar)A[2] * Q22 + (MmdSatScalar)B[0] * Q13 +
+	   (MmdSatScalar)B[2] * Q11),
+	  0, -R32, R22, 8);
+  TST((MmdSatScalar)pp[2] * R23 - (MmdSatScalar)pp[1] * R33,
+	  ((MmdSatScalar)A[1] * Q33 + (MmdSatScalar)A[2] * Q23 + (MmdSatScalar)B[0] * Q12 +
+	   (MmdSatScalar)B[1] * Q11),
+	  0, -R33, R23, 9);
 
   // separating axis = u2 x (v1,v2,v3)
-  TST((double)pp[0]*R31-(double)pp[2]*R11,
-      ((double)A[0]*Q31+(double)A[2]*Q11+
-       (double)B[1]*Q23+(double)B[2]*Q22),R31,0,-R11,10);
-  TST((double)pp[0]*R32-(double)pp[2]*R12,
-      ((double)A[0]*Q32+(double)A[2]*Q12+
-       (double)B[0]*Q23+(double)B[2]*Q21),R32,0,-R12,11);
-  TST((double)pp[0]*R33-(double)pp[2]*R13,
-      ((double)A[0]*Q33+(double)A[2]*Q13+
-       (double)B[0]*Q22+(double)B[1]*Q21),R33,0,-R13,12);
+  TST((MmdSatScalar)pp[0] * R31 - (MmdSatScalar)pp[2] * R11,
+	  ((MmdSatScalar)A[0] * Q31 + (MmdSatScalar)A[2] * Q11 + (MmdSatScalar)B[1] * Q23 +
+	   (MmdSatScalar)B[2] * Q22),
+	  R31, 0, -R11, 10);
+  TST((MmdSatScalar)pp[0] * R32 - (MmdSatScalar)pp[2] * R12,
+	  ((MmdSatScalar)A[0] * Q32 + (MmdSatScalar)A[2] * Q12 + (MmdSatScalar)B[0] * Q23 +
+	   (MmdSatScalar)B[2] * Q21),
+	  R32, 0, -R12, 11);
+  TST((MmdSatScalar)pp[0] * R33 - (MmdSatScalar)pp[2] * R13,
+	  ((MmdSatScalar)A[0] * Q33 + (MmdSatScalar)A[2] * Q13 + (MmdSatScalar)B[0] * Q22 +
+	   (MmdSatScalar)B[1] * Q21),
+	  R33, 0, -R13, 12);
 
   // separating axis = u3 x (v1,v2,v3)
-  TST((double)pp[1]*R11-(double)pp[0]*R21,
-      ((double)A[0]*Q21+(double)A[1]*Q11+
-       (double)B[1]*Q33+(double)B[2]*Q32),-R21,R11,0,13);
-  TST((double)pp[1]*R12-(double)pp[0]*R22,
-      ((double)A[0]*Q22+(double)A[1]*Q12+
-       (double)B[0]*Q33+(double)B[2]*Q31),-R22,R12,0,14);
-  TST((double)pp[1]*R13-(double)pp[0]*R23,
-      ((double)A[0]*Q23+(double)A[1]*Q13+
-       (double)B[0]*Q32+(double)B[1]*Q31),-R23,R13,0,15);
+  TST((MmdSatScalar)pp[1] * R11 - (MmdSatScalar)pp[0] * R21,
+	  ((MmdSatScalar)A[0] * Q21 + (MmdSatScalar)A[1] * Q11 + (MmdSatScalar)B[1] * Q33 +
+	   (MmdSatScalar)B[2] * Q32),
+	  -R21, R11, 0, 13);
+  TST((MmdSatScalar)pp[1] * R12 - (MmdSatScalar)pp[0] * R22,
+	  ((MmdSatScalar)A[0] * Q22 + (MmdSatScalar)A[1] * Q12 + (MmdSatScalar)B[0] * Q33 +
+	   (MmdSatScalar)B[2] * Q31),
+	  -R22, R12, 0, 14);
+  TST((MmdSatScalar)pp[1] * R13 - (MmdSatScalar)pp[0] * R23,
+	  ((MmdSatScalar)A[0] * Q23 + (MmdSatScalar)A[1] * Q13 + (MmdSatScalar)B[0] * Q32 +
+	   (MmdSatScalar)B[1] * Q31),
+	  -R23, R13, 0, 15);
 
 #undef TST
 
@@ -554,9 +557,13 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
       /* MMD: dot = ((n.x*R[0][j] + n.z*R[2][j]) + n.y*R[1][j]); the
          grouping decides degenerate near-zero sign tests (edge contacts
          where the normal is perpendicular to an axis). */
-      const btScalar dj = (normal[0]*R1[0*4+j] + normal[2]*R1[2*4+j])
+#if defined(_M_X64)
+	  const btScalar dj = dDOT14(normal, R1 + j);
+#else
+	  const btScalar dj = (normal[0]*R1[0*4+j] + normal[2]*R1[2*4+j])
                         + normal[1]*R1[1*4+j];
-      sign = (dj > 0) ? btScalar(1.0) : btScalar(-1.0);
+#endif
+	  sign = (dj > 0) ? btScalar(1.0) : btScalar(-1.0);
       for (i=0; i<3; i++) pa[i] += sign * A[j] * R1[i*4+j];
     }
 
@@ -564,10 +571,15 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
     btVector3 pb;
     for (i=0; i<3; i++) pb[i] = p2[i];
     for (j=0; j<3; j++) {
-      const btScalar dj2 = (normal[0]*R2[0*4+j] + normal[2]*R2[2*4+j])
-                         + normal[1]*R2[1*4+j];
-      sign = (dj2 > 0) ? btScalar(-1.0) : btScalar(1.0);
-      for (i=0; i<3; i++) pb[i] += sign * B[j] * R2[i*4+j];
+#if defined(_M_X64)
+		const btScalar dj2 = dDOT14(normal, R2 + j);
+#else
+		const btScalar dj2 =
+			(normal[0] * R2[0 * 4 + j] + normal[2] * R2[2 * 4 + j]) + normal[1] * R2[1 * 4 + j];
+#endif
+		sign = (dj2 > 0) ? btScalar(-1.0) : btScalar(1.0);
+		for (i = 0; i < 3; i++)
+			pb[i] += sign * B[j] * R2[i * 4 + j];
     }
 
     btScalar alpha,beta;
@@ -705,18 +717,29 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
                    lanr, a1, a2,
                    DBX(center[0]), DBX(center[1]), DBX(center[2]));
   }
+#if defined(_M_X64)
+  c1 = dDOT14(center, Ra + code1);
+  c2 = dDOT14(center, Ra + code2);
+#else
   c1 = mmdAddFloat(mmdAddFloat(center[1]*Ra[4+code1],
                               center[2]*Ra[8+code1]),
                    center[0]*Ra[code1]);
   c2 = mmdAddFloat(mmdAddFloat(center[1]*Ra[4+code2],
                               center[2]*Ra[8+code2]),
                    center[0]*Ra[code2]);
+#endif
   if (openmmdDboxTraceEnabled()) {
     openmmdDboxLog("c1 %08X c2 %08X\n", DBX(c1), DBX(c2));
   }
   // optimize this? - we have already computed this data above, but it is not
   // stored in an easy-to-index format. for now it's quicker just to recompute
   // the four dot products.
+#if defined(_M_X64)
+  m11 = dDOT44(Ra + code1, Rb + a1);
+  m12 = dDOT44(Ra + code1, Rb + a2);
+  m21 = dDOT44(Ra + code2, Rb + a1);
+  m22 = dDOT44(Ra + code2, Rb + a2);
+#else
   m11 = mmdAddFloat(mmdAddFloat(Ra[8+code1]*Rb[8+a1],
                                 Ra[4+code1]*Rb[4+a1]),
                     Ra[code1]*Rb[a1]);
@@ -729,6 +752,7 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   m22 = mmdAddFloat(mmdAddFloat(Ra[8+code2]*Rb[8+a2],
                                 Ra[4+code2]*Rb[4+a2]),
                     Ra[code2]*Rb[a2]);
+#endif
   if (openmmdDboxTraceEnabled()) {
     openmmdDboxLog("m %08X %08X %08X %08X\n",
                    DBX(m11), DBX(m12), DBX(m21), DBX(m22));
@@ -744,9 +768,14 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
     quad[1] = mmdSubFloat(c2MinusK2,k4);
     quad[2] = mmdAddFloat(c1MinusK1,k3);
     quad[3] = mmdAddFloat(c2MinusK2,k4);
-    quad[4] = mmdAddFloat(mmdAddFloat(k3,k1),c1);
+#if defined(_M_X64)
+	quad[4] = mmdAddFloat(mmdAddFloat(k1, c1), k3);
+	quad[5] = mmdAddFloat(mmdAddFloat(k2, c2), k4);
+#else
+	quad[4] = mmdAddFloat(mmdAddFloat(k3,k1),c1);
     quad[5] = mmdAddFloat(mmdAddFloat(k4,k2),c2);
-    quad[6] = mmdSubFloat(mmdAddFloat(k1,c1),k3);
+#endif
+	quad[6] = mmdSubFloat(mmdAddFloat(k1,c1),k3);
     quad[7] = mmdSubFloat(mmdAddFloat(k2,c2),k4);
     if (openmmdDboxTraceEnabled()) {
       openmmdDboxLog("k %08X %08X %08X %08X quad %08X %08X %08X %08X "
@@ -790,14 +819,19 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   for (j=0; j < n; j++) {
     btScalar k1 =  m22*(ret[j*2]-c1) - m12*(ret[j*2+1]-c2);
     btScalar k2 = -m21*(ret[j*2]-c1) + m11*(ret[j*2+1]-c2);
-    for (i=0; i<3; i++) point[cnum*3+i] =
-			  mmdAddFloat(mmdAddFloat(k1*Rb[i*4+a1],
-                                    k2*Rb[i*4+a2]),center[i]);
-    const btScalar normalDotPoint = mmdAddFloat(
+    for (i=0; i<3; i++)
+		point[cnum * 3 + i] =
+#if defined(_M_X64)
+			mmdAddFloat(mmdAddFloat(k1 * Rb[i * 4 + a1], center[i]), k2 * Rb[i * 4 + a2]);
+	const btScalar normalDotPoint = dDOT(normal2, point + cnum * 3);
+#else
+			mmdAddFloat(mmdAddFloat(k1 * Rb[i * 4 + a1], k2 * Rb[i * 4 + a2]), center[i]);
+	const btScalar normalDotPoint = mmdAddFloat(
       mmdAddFloat(normal2[2]*point[cnum*3+2],
                   normal2[0]*point[cnum*3]),
       normal2[1]*point[cnum*3+1]);
-    dep[cnum] = mmdSubFloat(Sa[codeN],normalDotPoint);
+#endif
+	dep[cnum] = mmdSubFloat(Sa[codeN],normalDotPoint);
     if (openmmdDboxTraceEnabled()) {
       openmmdDboxLog("pt %d kk %08X %08X p %08X %08X %08X ndp %08X dep %08X"
                      "\n", j, DBX(k1), DBX(k2),

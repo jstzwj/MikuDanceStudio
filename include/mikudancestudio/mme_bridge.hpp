@@ -1,12 +1,12 @@
 // ===========================================================================
-// mme_bridge.hpp - 静态内置 MMEffect 的宿主桥
+// mme_bridge.hpp - host bridge for statically embedded MMEffect
 // ===========================================================================
-// 桥职责：在渲染管线的对应点直接调用 MmeHost*（见
-// third_party/mmeffect/include/mme_host_api.h）。有效设备即登记；标准效果
-// 缺失仍进入 MME 惰性初始化，保留原版逐帧失败诊断与重试语义。
+// Bridge responsibilities: call MmeHost* directly at the corresponding rendering stages (see
+// third_party/mmeffect/include/mme_host_api.h). Register any valid device; a missing standard effect
+// still enters MME lazy initialization, preserving the original per-frame failure diagnostics and retries.
 //
-// 绘制约定：Draw* 交给桥后宿主不得再自行下发同一绘制——效果引擎要么经
-// 分配的特效技术重发，要么原始转发（与原版 MMHack 拦截一致）。
+// Draw contract: once Draw* is passed to the bridge, the host must not issue the same draw again. The engine
+// either reissues it through the assigned effect technique or forwards it unchanged (as original MMHack does).
 // =========================================================================//
 #pragma once
 
@@ -18,35 +18,33 @@ class MMDApp;
 
 namespace mme {
 
-// 设备创建后调用（InitD3D 尾部）：注册主窗口与内置标准效果。标准效果为
-// 空时由 MME 惰性初始化报告失败并在下次 BeginScene 重试。InitD3D 在 WM_CREATE 期间，
-// app->Hwnd() 尚未赋值——必须传入 InitD3D 收到的窗口句柄。
+// Called after device creation (end of InitD3D): register the main window and embedded standard effect. If the
+// standard effect is null, MME lazy initialization reports failure and retries on the next BeginScene. During WM_CREATE,
+// app->Hwnd() is not assigned yet; pass the window handle received by InitD3D.
 void OnDeviceCreated(MMDApp* app, HWND hwnd);
 
-// 设备销毁前调用（应用关闭/设备释放路径）。
+// Called before device destruction (application shutdown/device release paths).
 void OnDeviceDestroyed(MMDApp* app);
 
-// 设备 Reset 前后（PostDeviceReset 内部）。顺序约束：OnResetDevice 须紧贴
-// device->Reset、在 InitRenderStates 之前——对应原版 MMHack vtable 槽 16
-// Reset 拦截器 [0x180003d30] 的 OnLost→Reset→OnReset 结构（详见
-// mme_bridge.cpp 设备生命周期节头注释）。
+// Before/after device Reset (inside PostDeviceReset). OnResetDevice must immediately follow
+// device->Reset and precede InitRenderStates, matching the original MMHack vtable slot 16
+// Reset interceptor's [0x180003d30] OnLost->Reset->OnReset sequence (see the
+// device lifecycle section header in mme_bridge.cpp).
 void OnLostDevice(MMDApp* app);
 void OnResetDevice(MMDApp* app);
 
-// 帧级：Clear / BeginScene / EndScene / 主渲染目标回读前触发。
-HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
-                   D3DCOLOR color, float z, unsigned long stencil);
+// Per-frame hooks: Clear / BeginScene / EndScene / before main render-target readback.
+HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags, D3DCOLOR color,
+                   float z, unsigned long stencil);
 HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device);
 HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device);
-HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
-                const RECT* source, const RECT* destination,
+HRESULT Present(MMDApp* app, IDirect3DDevice9* device, const RECT* source, const RECT* destination,
                 HWND destinationWindow, const RGNDATA* dirtyRegion);
-void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
-                         IDirect3DSurface9* source);
+void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device, IDirect3DSurface9* source);
 
-// 绘制转发（当前对象/材质/技术等状态由 Exp* 查询面提供）。
-HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
-                      unsigned int start_vertex, unsigned int primitive_count);
+// Draw forwarding (current object/material/technique state comes from Exp* queries).
+HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, unsigned int start_vertex,
+                      unsigned int primitive_count);
 #ifdef MIKUDANCESTUDIO_DIAG
 struct LineDrawBridgeProbe {
     unsigned long calls = 0;
@@ -67,28 +65,27 @@ struct DrawSnapshotProbe {
 };
 DrawSnapshotProbe ProbeDrawSnapshot();
 #endif
-HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
-                             int base_vertex_index, unsigned int min_vertex_index,
-                             unsigned int vertex_count, unsigned int start_index,
-                             unsigned int primitive_count);
+HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, int base_vertex_index,
+                             unsigned int min_vertex_index, unsigned int vertex_count,
+                             unsigned int start_index, unsigned int primitive_count);
 
-// MME 已初始化且效果引擎未被禁用。宿主在需要绕开 ID3DXMesh 内部绘制
-// （其持有真实设备、绕过绘制转发）的路径上以此为分路条件。
+// True when MME is initialized and the effect engine is enabled. The host uses this to select paths
+// that bypass ID3DXMesh's internal drawing (which holds the real device and bypasses draw forwarding).
 bool EffectsActive();
 // User-visible effect policy, independent of bridge/resource initialization.
 bool EffectsEnabled();
 
-// 附件网格的 DrawSubset 等价物：MME 激活时手工设置流/索引/FVF 并经绘制
-// 转发（复刻 ID3DXMesh::DrawSubset 的硬件路径）；未激活时直呼原
-// DrawSubset。返回绘制 HRESULT。
+// Accessory mesh DrawSubset equivalent: when MME is active, set streams/indices/FVF manually and forward
+// the draw (replicating ID3DXMesh::DrawSubset's hardware path); otherwise call the original
+// DrawSubset directly. Returns the draw HRESULT.
 HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material);
 
-// .pmm 工程 加载/保存 成功点通知（EMM 自动加载/自动保存）。
+// Notify successful .pmm project load/save points (EMM automatic loading/saving).
 void NotifyPmmLoaded(MMDApp* app);
 void NotifyPmmSaved(MMDApp* app);
 
-// 纹理按路径登记（模型/附件/toon 纹理创建成功点；供 GetToonTexture 查询）。
+// Register textures by path after successful model/accessory/toon creation (for GetToonTexture queries).
 void RecordTexture(const wchar_t* path, IDirect3DBaseTexture9* texture);
 
-}  // namespace mme
-}  // namespace mikudancestudio
+} // namespace mme
+} // namespace mikudancestudio

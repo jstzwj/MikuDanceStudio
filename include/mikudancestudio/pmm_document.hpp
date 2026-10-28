@@ -13,6 +13,5 @@ struct PmmDocument {
     std::vector<std::uint8_t> remainingBytes;
 };
 bool ReadPmmDocument(ReadPmmBytesResult read, void* context, PmmDocument& document);
-bool WritePmmDocument(WritePmmBytes write, void* context,
-                      const PmmDocument& document);
+bool WritePmmDocument(WritePmmBytes write, void* context, const PmmDocument& document);
 }

@@ -79,6 +79,5 @@ struct ModelDocument {
     PmdDocument pmd;
     PmxDocument pmx;
 };
-bool ReadModelDocument(ReadModelBytesResult read, void* context,
-                       ModelDocument& document);
+bool ReadModelDocument(ReadModelBytesResult read, void* context, ModelDocument& document);
 }

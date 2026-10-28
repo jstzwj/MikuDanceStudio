@@ -13,6 +13,7 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+#include "LinearMath/btMmdMath.h"
 #include "btGjkPairDetector.h"
 #include "BulletCollision/CollisionShapes/btConvexShape.h"
 #include "BulletCollision/NarrowPhaseCollision/btSimplexSolverInterface.h"
@@ -44,26 +45,7 @@ static BT_NOINLINE void mmdGjkNormalizeX87(btVector3& value,
 													btScalar lengthSquared)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar* components = &value[0];
-	__asm
-	{
-		mov eax, components
-		fld dword ptr [lengthSquared]
-		fsqrt
-		fld1
-		fdivrp st(1), st
-
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::normalize(value, lengthSquared);
 #else
 	value /= btSqrt(lengthSquared);
 #endif
@@ -80,31 +62,7 @@ static BT_NOINLINE void mmdGjkTailNormalize(btVector3& normal,
                                                     btScalar* sOut)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar* components = &normal.m_floats[0];
-	__asm
-	{
-		mov eax, components
-		mov edx, rlenOut
-		fld dword ptr [lenSqr]
-		fsqrt
-		fld1
-		fdivrp st(1), st		; st0 = 1/sqrt(lenSqr), extended
-		fst dword ptr [edx]		; float copy for the distance term
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-		mov edx, sOut
-		fld dword ptr [squaredDistance]
-		fsqrt
-		fstp dword ptr [edx]
-	}
+	btMmdMath::tailNormalize(normal, lenSqr, squaredDistance, rlenOut, sOut);
 #else
 	const btScalar rlen = btScalar(1.)/btSqrt(lenSqr);
 	normal *= rlen;
@@ -120,34 +78,10 @@ static BT_NOINLINE btScalar mmdGjkNegLengthZXY(const btVector3& a,
 												   const btVector3& b)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	const float* pa = a.m_floats;
-	const float* pb = b.m_floats;
-	btScalar result;
-	__asm
-	{
-		mov eax, pa
-		mov edx, pb
-		fld dword ptr [eax]
-		fsub dword ptr [edx]		; dx
-		fld dword ptr [eax+4]
-		fsub dword ptr [edx+4]	; dy
-		fld dword ptr [eax+8]
-		fsub dword ptr [edx+8]	; dz
-		fmul st, st				; dz*dz
-		fld st(1)
-		fmulp st(2), st			; dy*dy
-		faddp st(1), st			; dz*dz + dy*dy
-		fld st(1)
-		fmulp st(2), st			; dx*dx
-		faddp st(1), st			; (dz*dz + dy*dy) + dx*dx
-		fsqrt
-		fchs
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::negativeDistance(a, b);
 #else
 	const btVector3 d = a - b;
-	return -btSqrt((d.z()*d.z() + d.y()*d.y()) + d.x()*d.x());
+	return -btSqrt(d.length2()); // x64 RVA 0xFB2F0: (x*x+y*y)+z*z.
 #endif
 }
 
@@ -157,34 +91,10 @@ static BT_NOINLINE btScalar mmdGjkLengthMinusMarginZXY(
 	const btVector3& a, const btVector3& b, btScalar margin)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	const float* pa = a.m_floats;
-	const float* pb = b.m_floats;
-	btScalar result;
-	__asm
-	{
-		mov eax, pa
-		mov edx, pb
-		fld dword ptr [eax]
-		fsub dword ptr [edx]		; dx
-		fld dword ptr [eax+4]
-		fsub dword ptr [edx+4]	; dy
-		fld dword ptr [eax+8]
-		fsub dword ptr [edx+8]	; dz
-		fmul st, st				; dz*dz
-		fld st(1)
-		fmulp st(2), st			; dy*dy
-		faddp st(1), st			; dz*dz + dy*dy
-		fld st(1)
-		fmulp st(2), st			; dx*dx
-		faddp st(1), st			; (dz*dz + dy*dy) + dx*dx
-		fsqrt
-		fsub dword ptr [margin]
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::distanceMinusMargin(a, b, margin);
 #else
 	const btVector3 d = a - b;
-	return btSqrt((d.z()*d.z() + d.y()*d.y()) + d.x()*d.x()) - margin;
+	return btSqrt(d.length2()) - margin;
 #endif
 }
 
@@ -298,6 +208,11 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 				const btScalar negZ = -axisZ;
 				const btMatrix3x3& basisA = input.m_transformA.getBasis();
 				const btMatrix3x3& basisB = input.m_transformB.getBasis();
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				// MMD x64 RVA 0xFB2F0 uses (x+y)+z throughout the support loop.
+				btVector3 seperatingAxisInA = -m_cachedSeparatingAxis * basisA;
+				btVector3 seperatingAxisInB = m_cachedSeparatingAxis * basisB;
+#else
 				btVector3 seperatingAxisInA(
 					(basisA[0].x()*negX + basisA[2].x()*negZ) + basisA[1].x()*negY,
 					(basisA[0].y()*negX + basisA[1].y()*negY) + basisA[2].y()*negZ,
@@ -306,10 +221,15 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 					(basisB[2].x()*axisZ + basisB[0].x()*axisX) + basisB[1].x()*axisY,
 					(basisB[1].y()*axisY + basisB[2].y()*axisZ) + basisB[0].y()*axisX,
 					(basisB[1].z()*axisY + basisB[2].z()*axisZ) + basisB[0].z()*axisX);
+#endif
 
 				btVector3 pInA = m_minkowskiA->localGetSupportVertexWithoutMarginNonVirtual(seperatingAxisInA);
 				btVector3 qInB = m_minkowskiB->localGetSupportVertexWithoutMarginNonVirtual(seperatingAxisInB);
 
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				btVector3 pWorld = localTransA(pInA);
+				btVector3 qWorld = localTransB(qInB);
+#else
 				btVector3  pWorld = btVector3(
 					((basisA[0].y()*pInA.y() + basisA[0].z()*pInA.z()) + basisA[0].x()*pInA.x()) + localTransA.getOrigin().x(),
 					((basisA[1].y()*pInA.y() + basisA[1].z()*pInA.z()) + basisA[1].x()*pInA.x()) + localTransA.getOrigin().y(),
@@ -318,9 +238,14 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 					((basisB[0].y()*qInB.y() + basisB[0].z()*qInB.z()) + basisB[0].x()*qInB.x()) + localTransB.getOrigin().x(),
 					((basisB[1].y()*qInB.y() + basisB[1].z()*qInB.z()) + basisB[1].x()*qInB.x()) + localTransB.getOrigin().y(),
 					((basisB[2].y()*qInB.y() + basisB[2].z()*qInB.z()) + basisB[2].x()*qInB.x()) + localTransB.getOrigin().z());
+#endif
 
 				btVector3 w	= pWorld - qWorld;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+				const btScalar delta = m_cachedSeparatingAxis.dot(w);
+#else
 				const btScalar delta = (axisZ*w.z() + axisY*w.y()) + axisX*w.x();
+#endif
 
 				// potential exit, they don't overlap
 				if ((delta > btScalar(0.0)) && (delta * delta > squaredDistance * input.m_maximumDistanceSquared))
@@ -346,10 +271,12 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 					if (f0 <= btScalar(0.))
 					{
 						m_degenerateSimplex = 2;
-					} else
-					{
+					}
+#if !defined(_M_X64)
+					else {
 						m_degenerateSimplex = 11;
 					}
+#endif
 					checkSimplex = true;
 					break;
 				}
@@ -395,7 +322,9 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 				{
 					m_simplexSolver->backup_closest(m_cachedSeparatingAxis);
 					checkSimplex = true;
+#if !defined(_M_X64)
 					m_degenerateSimplex = 12;
+#endif
 					break;
 				}
 
@@ -471,10 +400,14 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput& inpu
 				if (isValid2)
 				{
 					btVector3 tmpNormalInB = tmpPointOnB-tmpPointOnA;
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+					btScalar lenSqr = tmpNormalInB.length2();
+#else
 					// MMD 0x4E4AF3: ((z*z + y*y) + x*x).
 					btScalar lenSqr = (tmpNormalInB.z()*tmpNormalInB.z()
 						+ tmpNormalInB.y()*tmpNormalInB.y())
 						+ tmpNormalInB.x()*tmpNormalInB.x();
+#endif
 					if (lenSqr <= (SIMD_EPSILON*SIMD_EPSILON))
 					{
 						tmpNormalInB = m_cachedSeparatingAxis;

@@ -23,7 +23,7 @@ bool ResolveSessionModel(void* context, std::uint8_t,
     std::memcpy(path, rawPath.data(), rawPath.size());
     wchar_t resolved[256]{};
     if (!mikudancestudio::ResolveAnsiUserFile(
-            reinterpret_cast<unsigned char*>(adapter.renderer), path,
+            adapter.renderer, path,
             resolved, 256, *adapter.paths)) return false;
     int fd = -1;
     if (_wsopen_s(&fd, resolved, _O_BINARY | _O_RDONLY,

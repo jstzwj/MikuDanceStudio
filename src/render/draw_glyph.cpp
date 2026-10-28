@@ -21,11 +21,11 @@
 
 namespace mikudancestudio {
 
-int DrawGlyph(MMDApp* app, const char* text, HDC hdc, int size, int x, int y,
-              unsigned char r, unsigned char g, unsigned char b, int bold) {
+int DrawGlyph(MMDApp* app, const char* text, HDC hdc, int size, int x, int y, unsigned char r,
+              unsigned char g, unsigned char b, int bold) {
     HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE /*0x40*/, 0x3C);
     auto* lf = static_cast<LOGFONTA*>(GlobalLock(mem));
-    const bool english = app->EnglishUI() != 0;                   // 658252
+    const bool english = app->EnglishUI() != 0; // 658252
     strcpy_s(lf->lfFaceName, 0x20, english ? "Arial" : "MS PGothic");
     lf->lfWidth = 0;
     lf->lfEscapement = 0;
@@ -40,7 +40,7 @@ int DrawGlyph(MMDApp* app, const char* text, HDC hdc, int size, int x, int y,
     HFONT font = CreateFontIndirectA(lf);
     HGDIOBJ prev = SelectObject(hdc, font);
     SetBkMode(hdc, TRANSPARENT /*1*/);
-    SetTextColor(hdc, RGB(r, g, b));                              // a7|a8<<8|a9<<16
+    SetTextColor(hdc, RGB(r, g, b)); // a7|a8<<8|a9<<16
     const int len = static_cast<int>(strlen(text));
     TextOutA(hdc, x, y, text, len);
     SIZE extent;
@@ -52,4 +52,4 @@ int DrawGlyph(MMDApp* app, const char* text, HDC hdc, int size, int x, int y,
     return extent.cx;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

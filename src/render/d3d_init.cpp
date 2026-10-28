@@ -38,15 +38,17 @@ BOOL CALLBACK EnumMonitorsMax(HMONITOR, HDC, LPRECT rect, LPARAM lParam) {
     auto* renderer = reinterpret_cast<D3DRenderer*>(lParam);
     const std::int32_t w = rect->right - rect->left;
     const std::int32_t h = rect->bottom - rect->top;
-    if (renderer->screenWidth < w)  renderer->screenWidth = w;
-    if (renderer->screenHeight < h) renderer->screenHeight = h;
+    if (renderer->screenWidth < w)
+        renderer->screenWidth = w;
+    if (renderer->screenHeight < h)
+        renderer->screenHeight = h;
     return TRUE;
 }
 
 void ReleaseCom(void* object) {
     if (object == nullptr)
         return;
-    reinterpret_cast<IUnknown*>(object)->Release();  // vtable slot 2
+    reinterpret_cast<IUnknown*>(object)->Release(); // vtable slot 2
 }
 
 // Porting-era error/state dumps under MIKUDANCESTUDIO_STATE_DUMP_DIR /
@@ -54,13 +56,11 @@ void ReleaseCom(void* object) {
 // OFF); the OFF stubs below keep the call sites valid and inline away to
 // nothing.
 #ifdef MIKUDANCESTUDIO_DIAG
-void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp,
-                             const HRESULT* attempts, int attemptCount,
-                             D3DFORMAT depthFormat, IDirect3D9* d3d,
-                             HWND hwnd) {
+void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp, const HRESULT* attempts,
+                             int attemptCount, D3DFORMAT depthFormat, IDirect3D9* d3d, HWND hwnd) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
     CreateDirectoryA(directory, nullptr);
@@ -70,14 +70,12 @@ void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp,
     if (fopen_s(&stream, path, "wb") != 0 || stream == nullptr)
         return;
     std::fprintf(stream,
-        "BackBuffer=%ux%u format=%u depth=%u swap=%u msaa=%u quality=%u "
-        "flags=%u interval=%u\r\n",
-        pp.BackBufferWidth, pp.BackBufferHeight,
-        static_cast<unsigned>(pp.BackBufferFormat),
-        static_cast<unsigned>(depthFormat),
-        static_cast<unsigned>(pp.SwapEffect),
-        static_cast<unsigned>(pp.MultiSampleType), pp.MultiSampleQuality,
-        pp.Flags, pp.PresentationInterval);
+                 "BackBuffer=%ux%u format=%u depth=%u swap=%u msaa=%u quality=%u "
+                 "flags=%u interval=%u\r\n",
+                 pp.BackBufferWidth, pp.BackBufferHeight,
+                 static_cast<unsigned>(pp.BackBufferFormat), static_cast<unsigned>(depthFormat),
+                 static_cast<unsigned>(pp.SwapEffect), static_cast<unsigned>(pp.MultiSampleType),
+                 pp.MultiSampleQuality, pp.Flags, pp.PresentationInterval);
     for (int index = 0; index < attemptCount; ++index)
         std::fprintf(stream, "attempt[%d]=0x%08X\r\n", index,
                      static_cast<unsigned>(attempts[index]));
@@ -89,28 +87,27 @@ void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp,
     D3DDISPLAYMODE display{};
     const HRESULT displayResult = d3d->GetAdapterDisplayMode(0, &display);
     std::fprintf(stream,
-        "window=%p valid=%d thread=%lu currentThread=%lu process=%lu "
-        "visible=%d rect=(%ld,%ld,%ld,%ld) client=(%ld,%ld,%ld,%ld) "
-        "adapterCount=%u displayResult=0x%08X display=%ux%u format=%u\r\n",
-        static_cast<void*>(hwnd), IsWindow(hwnd), windowThread,
-        GetCurrentThreadId(), windowProcess, IsWindowVisible(hwnd),
-        windowRect.left, windowRect.top, windowRect.right, windowRect.bottom,
-        clientRect.left, clientRect.top, clientRect.right, clientRect.bottom,
-        d3d->GetAdapterCount(), static_cast<unsigned>(displayResult),
-        display.Width, display.Height, static_cast<unsigned>(display.Format));
-    const HWND alternate = CreateWindowW(L"STATIC", L"D3D9 retry probe",
-        WS_OVERLAPPED, 0, 0, 64, 64, nullptr, nullptr,
-        GetModuleHandleW(nullptr), nullptr);
+                 "window=%p valid=%d thread=%lu currentThread=%lu process=%lu "
+                 "visible=%d rect=(%ld,%ld,%ld,%ld) client=(%ld,%ld,%ld,%ld) "
+                 "adapterCount=%u displayResult=0x%08X display=%ux%u format=%u\r\n",
+                 static_cast<void*>(hwnd), IsWindow(hwnd), windowThread, GetCurrentThreadId(),
+                 windowProcess, IsWindowVisible(hwnd), windowRect.left, windowRect.top,
+                 windowRect.right, windowRect.bottom, clientRect.left, clientRect.top,
+                 clientRect.right, clientRect.bottom, d3d->GetAdapterCount(),
+                 static_cast<unsigned>(displayResult), display.Width, display.Height,
+                 static_cast<unsigned>(display.Format));
+    const HWND alternate = CreateWindowW(L"STATIC", L"D3D9 retry probe", WS_OVERLAPPED, 0, 0, 64,
+                                         64, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (alternate) {
         D3DPRESENT_PARAMETERS candidate = pp;
         candidate.hDeviceWindow = alternate;
         IDirect3DDevice9* probeDevice = nullptr;
-        const HRESULT probeResult = d3d->CreateDevice(
-            0, D3DDEVTYPE_HAL, alternate, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
-            &candidate, &probeDevice);
-        std::fprintf(stream, "alternate-window=0x%08X\r\n",
-                     static_cast<unsigned>(probeResult));
-        if (probeDevice) probeDevice->Release();
+        const HRESULT probeResult =
+            d3d->CreateDevice(0, D3DDEVTYPE_HAL, alternate, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+                              &candidate, &probeDevice);
+        std::fprintf(stream, "alternate-window=0x%08X\r\n", static_cast<unsigned>(probeResult));
+        if (probeDevice)
+            probeDevice->Release();
         DestroyWindow(alternate);
     }
     std::fclose(stream);
@@ -118,18 +115,15 @@ void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp,
 
 void DumpEffectFailure(HRESULT result, int resourceId, void* errors) {
     char directory[MAX_PATH]{};
-    DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
+    DWORD length = GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH) {
-        length = GetEnvironmentVariableA(
-            "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+        length = GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     }
     if (length == 0 || length >= MAX_PATH)
         return;
     CreateDirectoryA(directory, nullptr);
     char path[MAX_PATH]{};
-    std::snprintf(path, sizeof(path), "%s\\effect_create.error.txt",
-                  directory);
+    std::snprintf(path, sizeof(path), "%s\\effect_create.error.txt", directory);
     FILE* stream = nullptr;
     if (fopen_s(&stream, path, "wb") != 0 || stream == nullptr)
         return;
@@ -145,41 +139,41 @@ void DumpEffectFailure(HRESULT result, int resourceId, void* errors) {
     std::fclose(stream);
 }
 
-void DumpEffectStatus(bool haveD3dx, int vsMajor, int psMajor,
-                      int maxTexW, int maxTexH, D3DRenderer* renderer) {
+void DumpEffectStatus(bool haveD3dx, int vsMajor, int psMajor, int maxTexW, int maxTexH,
+                      D3DRenderer* renderer) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
     CreateDirectoryA(directory, nullptr);
     char path[MAX_PATH]{};
-    std::snprintf(path, sizeof(path), "%s\\effect_create.status.txt",
-                  directory);
+    std::snprintf(path, sizeof(path), "%s\\effect_create.status.txt", directory);
     FILE* stream = nullptr;
     if (fopen_s(&stream, path, "wb") != 0 || stream == nullptr)
         return;
     std::fprintf(stream,
-        "d3dx=%d vs=%d ps=%d max=%dx%d capable=%u rt=%p surface=%p "
-        "depth=%p effect=%p\r\n",
-        haveD3dx ? 1 : 0, vsMajor, psMajor, maxTexW, maxTexH,
-        renderer->postProcessEnabled,
-        renderer->hdrTexture, renderer->shadowSurface,
-        renderer->shadowDepthSurface, renderer->effect);
+                 "d3dx=%d vs=%d ps=%d max=%dx%d capable=%u rt=%p surface=%p "
+                 "depth=%p effect=%p\r\n",
+                 haveD3dx ? 1 : 0, vsMajor, psMajor, maxTexW, maxTexH, renderer->postProcessEnabled,
+                 renderer->hdrTexture, renderer->shadowSurface, renderer->shadowDepthSurface,
+                 renderer->effect);
     std::fclose(stream);
 }
 #else
-inline void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS&,
-                                    const HRESULT*, int, D3DFORMAT,
-                                    IDirect3D9*, HWND) {}
-inline void DumpEffectFailure(HRESULT, int, void*) {}
-inline void DumpEffectStatus(bool, int, int, int, int, D3DRenderer*) {}
+inline void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS&, const HRESULT*, int, D3DFORMAT,
+                                    IDirect3D9*, HWND) {
+}
+inline void DumpEffectFailure(HRESULT, int, void*) {
+}
+inline void DumpEffectStatus(bool, int, int, int, int, D3DRenderer*) {
+}
 #endif
 
-}  // namespace
+} // namespace
 
 bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
-    D3DRenderer* r = app->Renderer();                               // 657092
+    D3DRenderer* r = app->Renderer(); // 657092
     if (r == nullptr)
         return false;
     // The required D3DX import is resolved by Windows before WinMain.
@@ -187,50 +181,44 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     constexpr bool haveD3dx = true;
 
     r->hwnd = hwnd;
-    EnumDisplayMonitors(nullptr, nullptr, EnumMonitorsMax,
-                        reinterpret_cast<LPARAM>(r));
+    EnumDisplayMonitors(nullptr, nullptr, EnumMonitorsMax, reinterpret_cast<LPARAM>(r));
 
     IDirect3D9* d3d = Direct3DCreate9(D3D_SDK_VERSION /*0x20*/);
     r->d3d9 = d3d;
     if (d3d == nullptr) {
         MessageBoxA(hwnd,
-            english ? "DirectX9 is not installed in your PC!!\nPlease install it if you want."
-                    : "DirectX\x82\xCC\x83\x6F\x81\x5B\x83\x57\x83\x87"
-                      "\x83\x93\x39\x82\xAA\x83\x43\x83\x93\x83\x58"
-                      "\x83\x67\x81\x5B\x83\x8B\x82\xB3\x82\xEA\x82"
-                      "\xC4\x82\xA2\x82\xDC\x82\xB9\x82\xF1\x0A\x8D"
-                      "\xC5\x90\x56\x82\xCC\x44\x69\x72\x65\x63\x74"
-                      "\x58\x82\xF0\x83\x70\x83\x73\x83\x52\x83\x93"
-                      "\x82\xC9\x83\x43\x83\x93\x83\x58\x83\x67\x81"
-                      "\x5B\x83\x8B\x82\xB5\x82\xC4\x89\xBA\x82\xB3"
-                      "\x82\xA2",  // x64 0x7FF7CB54A338
+                    english
+                        ? "DirectX9 is not installed in your PC!!\nPlease install it if you want."
+                        : "DirectX\x82\xCC\x83\x6F\x81\x5B\x83\x57\x83\x87"
+                          "\x83\x93\x39\x82\xAA\x83\x43\x83\x93\x83\x58"
+                          "\x83\x67\x81\x5B\x83\x8B\x82\xB3\x82\xEA\x82"
+                          "\xC4\x82\xA2\x82\xDC\x82\xB9\x82\xF1\x0A\x8D"
+                          "\xC5\x90\x56\x82\xCC\x44\x69\x72\x65\x63\x74"
+                          "\x58\x82\xF0\x83\x70\x83\x73\x83\x52\x83\x93"
+                          "\x82\xC9\x83\x43\x83\x93\x83\x58\x83\x67\x81"
+                          "\x5B\x83\x8B\x82\xB5\x82\xC4\x89\xBA\x82\xB3"
+                          "\x82\xA2", // x64 0x7FF7CB54A338
 
-            "Direct3D::Init", MB_OK);
+                    "Direct3D::Init", MB_OK);
         return false;
     }
 
     // back-buffer format preference: A8R8G8B8(21) unless unsupported -> X8R8G8B8(22)
     r->backbufferFormat = static_cast<D3DFORMAT>(21);
-    if (FAILED(d3d->CheckDeviceType(0, D3DDEVTYPE_HAL,
-                                    D3DFMT_X8R8G8B8 /*22*/,
+    if (FAILED(d3d->CheckDeviceType(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8 /*22*/,
                                     D3DFMT_A8R8G8B8 /*21*/, TRUE)))
         r->backbufferFormat = static_cast<D3DFORMAT>(22);
 
     // depth format ladder: D24S8(75) -> D24X8(77) -> D16(80)
     const D3DFORMAT bbFmt = r->backbufferFormat;
-    r->presentParameters.AutoDepthStencilFormat =
-        static_cast<D3DFORMAT>(75);
-    if (FAILED(d3d->CheckDepthStencilMatch(
-            0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8,
-            bbFmt, D3DFMT_D24S8))) {
+    r->presentParameters.AutoDepthStencilFormat = static_cast<D3DFORMAT>(75);
+    if (FAILED(
+            d3d->CheckDepthStencilMatch(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, bbFmt, D3DFMT_D24S8))) {
         r->d3dInitialized = 0;
-        r->presentParameters.AutoDepthStencilFormat =
-            static_cast<D3DFORMAT>(77);
-        if (FAILED(d3d->CheckDepthStencilMatch(
-                0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8,
-                bbFmt, D3DFMT_D24X8)))
-            r->presentParameters.AutoDepthStencilFormat =
-                static_cast<D3DFORMAT>(80);
+        r->presentParameters.AutoDepthStencilFormat = static_cast<D3DFORMAT>(77);
+        if (FAILED(d3d->CheckDepthStencilMatch(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, bbFmt,
+                                               D3DFMT_D24X8)))
+            r->presentParameters.AutoDepthStencilFormat = static_cast<D3DFORMAT>(80);
     }
 
     // presentation parameters (fields land on the object layout exactly)
@@ -245,37 +233,34 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     pp.Windowed = TRUE;
     pp.EnableAutoDepthStencil = TRUE;
     pp.AutoDepthStencilFormat = r->presentParameters.AutoDepthStencilFormat;
-    pp.PresentationInterval = 0x80000000;   // D3DPRESENT_INTERVAL_IMMEDIATE
+    pp.PresentationInterval = 0x80000000; // D3DPRESENT_INTERVAL_IMMEDIATE
 
     // multisample ladder 8 -> 4 -> 2 -> 1 (both depth-format candidates)
     DWORD quality = 0;
     auto msProbe = [&](D3DFORMAT fmt, DWORD type) {
         DWORD q = 0;
         return SUCCEEDED(d3d->CheckDeviceMultiSampleType(
-                   0, D3DDEVTYPE_HAL, fmt, TRUE,
-                   static_cast<D3DMULTISAMPLE_TYPE>(type), &q))
+                   0, D3DDEVTYPE_HAL, fmt, TRUE, static_cast<D3DMULTISAMPLE_TYPE>(type), &q))
                    ? (q, true)
                    : false;
     };
     const D3DFORMAT fmt128 = r->backbufferFormat;
     const D3DFORMAT fmt100 = r->presentParameters.AutoDepthStencilFormat;
-    if (msProbe(fmt128, 8) && SUCCEEDED(d3d->CheckDeviceMultiSampleType(
-            0, D3DDEVTYPE_HAL, fmt100, TRUE, D3DMULTISAMPLE_8_SAMPLES, &quality))) {
+    if (msProbe(fmt128, 8) &&
+        SUCCEEDED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, fmt100, TRUE,
+                                                  D3DMULTISAMPLE_8_SAMPLES, &quality))) {
         pp.MultiSampleType = D3DMULTISAMPLE_8_SAMPLES;
     } else if (msProbe(fmt128, 4) &&
-               SUCCEEDED(d3d->CheckDeviceMultiSampleType(
-                   0, D3DDEVTYPE_HAL, fmt100, TRUE,
-                   D3DMULTISAMPLE_4_SAMPLES, &quality))) {
+               SUCCEEDED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, fmt100, TRUE,
+                                                         D3DMULTISAMPLE_4_SAMPLES, &quality))) {
         pp.MultiSampleType = D3DMULTISAMPLE_4_SAMPLES;
     } else if (msProbe(fmt128, 2) &&
-               SUCCEEDED(d3d->CheckDeviceMultiSampleType(
-                   0, D3DDEVTYPE_HAL, fmt100, TRUE,
-                   D3DMULTISAMPLE_2_SAMPLES, &quality))) {
+               SUCCEEDED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, fmt100, TRUE,
+                                                         D3DMULTISAMPLE_2_SAMPLES, &quality))) {
         pp.MultiSampleType = D3DMULTISAMPLE_2_SAMPLES;
     } else if (msProbe(fmt128, 1) &&
-               SUCCEEDED(d3d->CheckDeviceMultiSampleType(
-                   0, D3DDEVTYPE_HAL, fmt100, TRUE,
-                   D3DMULTISAMPLE_NONMASKABLE, &quality))) {
+               SUCCEEDED(d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, fmt100, TRUE,
+                                                         D3DMULTISAMPLE_NONMASKABLE, &quality))) {
         pp.MultiSampleType = D3DMULTISAMPLE_NONMASKABLE;
     } else {
         pp.SwapEffect = static_cast<D3DSWAPEFFECT>(3);
@@ -290,9 +275,13 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     // mirror into the object (later code reads the embedded copy)
 #ifdef MIKUDANCESTUDIO_DIAG
     char historyFlag[2]{};
-    if((GetEnvironmentVariableA("MDS_RHI_SCENE_HISTORY",historyFlag,2)==1 && historyFlag[0]=='1') ||
-       (GetEnvironmentVariableA("MDS_RHI_REPLAY_SINGLE_SAMPLE_CONTROL",historyFlag,2)==1 && historyFlag[0]=='1')) {
-        pp.MultiSampleType=D3DMULTISAMPLE_NONE;pp.MultiSampleQuality=0;r->multisampleAvailable=0;
+    if ((GetEnvironmentVariableA("MDS_RHI_SCENE_HISTORY", historyFlag, 2) == 1 &&
+         historyFlag[0] == '1') ||
+        (GetEnvironmentVariableA("MDS_RHI_REPLAY_SINGLE_SAMPLE_CONTROL", historyFlag, 2) == 1 &&
+         historyFlag[0] == '1')) {
+        pp.MultiSampleType = D3DMULTISAMPLE_NONE;
+        pp.MultiSampleQuality = 0;
+        r->multisampleAvailable = 0;
     }
 #endif
     r->presentParameters = pp;
@@ -304,16 +293,25 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     int attemptCount = 0;
     const auto createDevice = [&](D3DDEVTYPE type, DWORD behavior) {
         [[maybe_unused]] const D3DPRESENT_PARAMETERS requested = pp;
-        const HRESULT result = d3d->CreateDevice(
-            0, type, hwnd, behavior, &pp, deviceSlot);
+        const HRESULT result = d3d->CreateDevice(0, type, hwnd, behavior, &pp, deviceSlot);
 #ifdef MIKUDANCESTUDIO_DIAG
         char directory[MAX_PATH]{};
-        const DWORD directoryLength=GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR",directory,MAX_PATH);
-        if(directoryLength>0&&directoryLength<MAX_PATH){
-            char path[MAX_PATH]{};std::snprintf(path,sizeof(path),"%s\\d3d_create.attempts.txt",directory);
-            FILE* file=nullptr;
-            if(fopen_s(&file,path,attemptCount?"ab":"wb")==0&&file){
-                std::fprintf(file,"attempt=%d type=%u behavior=%u visible=%d width=%u height=%u format=%u count=%u swap=%u autoDepth=%d depth=%u samples=%u quality=%u flags=%u interval=%u hr=%08lx\n",attemptCount,static_cast<unsigned>(type),behavior,IsWindowVisible(hwnd),requested.BackBufferWidth,requested.BackBufferHeight,requested.BackBufferFormat,requested.BackBufferCount,requested.SwapEffect,requested.EnableAutoDepthStencil,requested.AutoDepthStencilFormat,requested.MultiSampleType,requested.MultiSampleQuality,requested.Flags,requested.PresentationInterval,(unsigned long)result);
+        const DWORD directoryLength =
+            GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+        if (directoryLength > 0 && directoryLength < MAX_PATH) {
+            char path[MAX_PATH]{};
+            std::snprintf(path, sizeof(path), "%s\\d3d_create.attempts.txt", directory);
+            FILE* file = nullptr;
+            if (fopen_s(&file, path, attemptCount ? "ab" : "wb") == 0 && file) {
+                std::fprintf(
+                    file,
+                    "attempt=%d type=%u behavior=%u visible=%d width=%u height=%u format=%u count=%u swap=%u autoDepth=%d depth=%u samples=%u quality=%u flags=%u interval=%u hr=%08lx\n",
+                    attemptCount, static_cast<unsigned>(type), behavior, IsWindowVisible(hwnd),
+                    requested.BackBufferWidth, requested.BackBufferHeight,
+                    requested.BackBufferFormat, requested.BackBufferCount, requested.SwapEffect,
+                    requested.EnableAutoDepthStencil, requested.AutoDepthStencilFormat,
+                    requested.MultiSampleType, requested.MultiSampleQuality, requested.Flags,
+                    requested.PresentationInterval, (unsigned long)result);
                 std::fclose(file);
             }
         }
@@ -334,7 +332,7 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
             pp.SwapEffect = static_cast<D3DSWAPEFFECT>(3);
             pp.MultiSampleType = D3DMULTISAMPLE_NONE;
             pp.MultiSampleQuality = 0;
-            pp.Flags = 1;                        // lockable back buffer
+            pp.Flags = 1; // lockable back buffer
             r->multisampleAvailable = 0;
             hr = createDevice(D3DDEVTYPE_HAL, 0x40);
             if (FAILED(hr)) {
@@ -343,19 +341,16 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                 pp.BackBufferFormat = D3DFMT_X8R8G8B8;
                 hr = createDevice(D3DDEVTYPE_HAL, 0x40);
                 if (FAILED(hr)) {
-                    hr = createDevice(D3DDEVTYPE_HAL,
-                                      0x20 /*SOFTWARE VP*/);
+                    hr = createDevice(D3DDEVTYPE_HAL, 0x20 /*SOFTWARE VP*/);
                     if (FAILED(hr)) {
                         hr = createDevice(D3DDEVTYPE_REF, 0x40);
                         if (FAILED(hr)) {
                             hr = createDevice(D3DDEVTYPE_REF, 0x20);
                             if (FAILED(hr)) {
-                                DumpCreateDeviceFailure(
-                                    pp, attempts, attemptCount,
-                                    r->presentParameters
-                                        .AutoDepthStencilFormat, d3d, hwnd);
-                                MessageBoxA(hwnd, "CreateDevice Failed!",
-                                            "Direct3D::Init", MB_OK);
+                                DumpCreateDeviceFailure(pp, attempts, attemptCount,
+                                                        r->presentParameters.AutoDepthStencilFormat,
+                                                        d3d, hwnd);
+                                MessageBoxA(hwnd, "CreateDevice Failed!", "Direct3D::Init", MB_OK);
                                 d3d->Release();
                                 return false;
                             }
@@ -370,15 +365,14 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     // caps: raw dword reads at the original offsets (Ghidra split locals)
     D3DCAPS9 caps;
     if (FAILED(device->GetDeviceCaps(&caps)))
-        return true;                       // original proceeds regardless
+        return true; // original proceeds regardless
     // x64 0x7FF7CB4280E1: renderer+240048 mirrors caps+0x6C, which is
     // D3DCAPS9::MaxAnisotropy (MaxTextureWidth/Height live at +0x58/+0x5C
     // in this struct, pushing MaxAnisotropy to +0x6C; MaxStreams is the
     // far later +0xBC).  render_states feeds this field to
     // D3DSAMP_MAXANISOTROPY.  The old +0x70 read picked MaxVertexW (float
     // bits) and delivered a garbage anisotropy cap.
-    r->shaderModelCaps =
-        static_cast<std::int32_t>(caps.MaxAnisotropy);
+    r->shaderModelCaps = static_cast<std::int32_t>(caps.MaxAnisotropy);
     // The original stack-local labels are displaced by one dword around
     // GetDeviceCaps.  The actual fields consumed at 0x4084DA..0x408533 are
     // MaxTextureWidth/Height and the VS/PS version dwords.  Reading the
@@ -387,10 +381,8 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     // MaxVertexShaderConst/PixelShader1xMaxValue.  On modern hardware that
     // produces the observed bogus gate values VS=1, PS=224 and disables the
     // complete effect/reflection renderer.
-    const std::int32_t maxTexW = static_cast<std::int32_t>(
-        caps.MaxTextureWidth);
-    const std::int32_t maxTexH = static_cast<std::int32_t>(
-        caps.MaxTextureHeight);
+    const std::int32_t maxTexW = static_cast<std::int32_t>(caps.MaxTextureWidth);
+    const std::int32_t maxTexH = static_cast<std::int32_t>(caps.MaxTextureHeight);
     r->maxTextureWidth = maxTexW;
     r->maxTextureHeight = maxTexH;
     // BYTE1 of caps dwords +0xC8/+0xD0 = VS/PS major version gates
@@ -400,33 +392,39 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     if (haveD3dx && vsMajor >= 2 && psMajor >= 2) {
         r->postProcessEnabled = 1;
         std::int32_t rtW = maxTexW, rtH = maxTexH;
-        if (rtW > 2048) rtW = 2048;
-        if (rtH > 2048) rtH = 2048;
+        if (rtW > 2048)
+            rtW = 2048;
+        if (rtH > 2048)
+            rtH = 2048;
         r->renderTargetWidth = rtW;
         r->renderTargetHeight = rtH;
 
-        if (SUCCEEDED(d3dx->createTexture(device, rtW, rtH, 1,
-                                          D3DUSAGE_RENDERTARGET /*1*/,
-                                          static_cast<D3DFORMAT>(114) /*A16B16G16R16F*/,
+        if (SUCCEEDED(d3dx->createTexture(device, rtW, rtH, 1, D3DUSAGE_RENDERTARGET /*1*/,
+                                          static_cast<D3DFORMAT>(114) /*R32F*/,
                                           D3DPOOL_DEFAULT /*0*/, &r->hdrTexture))) {
             // sprite texture from the embedded PNG (res 0x67)
             HRSRC res = FindResourceA(hModule, MAKEINTRESOURCEA(0x67), "PNG");
             DWORD size = SizeofResource(nullptr, res);
             HGLOBAL glob = LoadResource(hModule, res);
             void* data = LockResource(glob);
-            d3dx->fromMemEx(device, data, size, UINT(-1), UINT(-1), 1, 0,
-                            D3DFMT_UNKNOWN, D3DPOOL_MANAGED, DWORD(-1),
-                            DWORD(-1), 0, nullptr, nullptr,
+            d3dx->fromMemEx(device, data, size, UINT(-1), UINT(-1), 1, 0, D3DFMT_UNKNOWN,
+                            D3DPOOL_MANAGED, DWORD(-1), DWORD(-1), 0, nullptr, nullptr,
                             &r->spriteTexture);
             IDirect3DSurface9** spriteSurf = &r->shadowSurface;
             r->hdrTexture->GetSurfaceLevel(0, spriteSurf);
 
             IDirect3DSurface9** shadowDepth = &r->shadowDepthSurface;
             if (FAILED(device->CreateDepthStencilSurface(
-                    rtW, rtH, static_cast<D3DFORMAT>(77) /*D24X8*/,
-                    D3DMULTISAMPLE_NONE, 0, FALSE, shadowDepth, nullptr))) {
-                if (*spriteSurf) { (*spriteSurf)->Release(); *spriteSurf = nullptr; }
-                if (r->hdrTexture) { r->hdrTexture->Release(); r->hdrTexture = nullptr; }
+                    rtW, rtH, static_cast<D3DFORMAT>(77) /*D24X8*/, D3DMULTISAMPLE_NONE, 0, FALSE,
+                    shadowDepth, nullptr))) {
+                if (*spriteSurf) {
+                    (*spriteSurf)->Release();
+                    *spriteSurf = nullptr;
+                }
+                if (r->hdrTexture) {
+                    r->hdrTexture->Release();
+                    r->hdrTexture = nullptr;
+                }
             } else {
                 void** effect = reinterpret_cast<void**>(&r->effect);
                 void* effectErrors = nullptr;
@@ -434,15 +432,15 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                 int effectResource = 0;
                 if (vsMajor >= 3 && psMajor >= 3) {
                     effectResource = 118;
-                    effectResult = d3dx->createEffectFromResA(
-                        device, nullptr, MAKEINTRESOURCEA(118), nullptr,
-                        nullptr, 0, nullptr, effect, &effectErrors);
-                    r->shaderModel3 = 1;                            // SM3
+                    effectResult =
+                        d3dx->createEffectFromResA(device, nullptr, MAKEINTRESOURCEA(118), nullptr,
+                                                   nullptr, 0, nullptr, effect, &effectErrors);
+                    r->shaderModel3 = 1; // SM3
                 } else {
                     effectResource = 117;
-                    effectResult = d3dx->createEffectFromResA(
-                        device, nullptr, MAKEINTRESOURCEA(117), nullptr,
-                        nullptr, 0, nullptr, effect, &effectErrors);
+                    effectResult =
+                        d3dx->createEffectFromResA(device, nullptr, MAKEINTRESOURCEA(117), nullptr,
+                                                   nullptr, 0, nullptr, effect, &effectErrors);
                     // Level-0 format of the HDR texture decides the integer
                     // the effect receives under the name "SKII1": 114 ==
                     // D3DFMT_R32F ('r') -> 600 plus the shader-model-3 flag,
@@ -453,21 +451,24 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                     if (*effect != nullptr) {
                         D3DSURFACE_DESC levelDesc{};
                         r->hdrTexture->GetLevelDesc(0, &levelDesc);
-                        const bool r32fTarget =
-                            levelDesc.Format == D3DFMT_R32F;
-                        static_cast<d3dx::Effect*>(*effect)->SetInt(
-                            "SKII1", r32fTarget ? 600 : 500);
-                        r->shaderModel3 =
-                            static_cast<std::uint8_t>(r32fTarget);
+                        const bool r32fTarget = levelDesc.Format == D3DFMT_R32F;
+                        static_cast<d3dx::Effect*>(*effect)->SetInt("SKII1",
+                                                                    r32fTarget ? 600 : 500);
+                        r->shaderModel3 = static_cast<std::uint8_t>(r32fTarget);
                     }
                 }
                 if (FAILED(effectResult) || *effect == nullptr)
-                    DumpEffectFailure(effectResult, effectResource,
-                                      effectErrors);
+                    DumpEffectFailure(effectResult, effectResource, effectErrors);
                 ReleaseCom(effectErrors);
                 if (*effect == nullptr) {
-                    if (*spriteSurf) { (*spriteSurf)->Release(); *spriteSurf = nullptr; }
-                    if (r->hdrTexture) { r->hdrTexture->Release(); r->hdrTexture = nullptr; }
+                    if (*spriteSurf) {
+                        (*spriteSurf)->Release();
+                        *spriteSurf = nullptr;
+                    }
+                    if (r->hdrTexture) {
+                        r->hdrTexture->Release();
+                        r->hdrTexture = nullptr;
+                    }
                     if (*shadowDepth) {
                         (*shadowDepth)->Release();
                         *shadowDepth = nullptr;
@@ -481,44 +482,38 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     DumpEffectStatus(haveD3dx, vsMajor, psMajor, maxTexW, maxTexH, r);
 
     // aspect + projection: PerspectiveFovLH(PI/4, aspect, 1.0f, 10000.0f)
-    const float aspect = static_cast<float>(
-        static_cast<double>(r->screenWidth) /
-        static_cast<double>(r->screenHeight));
+    const float aspect = static_cast<float>(static_cast<double>(r->screenWidth) /
+                                            static_cast<double>(r->screenHeight));
     r->aspectRatio = aspect;
     if (haveD3dx) {
         d3dx::D3DXMATRIXF proj;
-        d3dx->perspectiveFovLH(&proj, 0.7853981852531433f /*PI/4, 0x529698*/,
-                               aspect, 1.0f, 10000.0f /*0x529618*/);
-        device->SetTransform(D3DTS_PROJECTION /*3*/,
-                             reinterpret_cast<const D3DMATRIX*>(&proj));
+        d3dx->perspectiveFovLH(&proj, 0.7853981852531433f /*PI/4, 0x529698*/, aspect, 1.0f,
+                               10000.0f /*0x529618*/);
+        device->SetTransform(D3DTS_PROJECTION /*3*/, reinterpret_cast<const D3DMATRIX*>(&proj));
     }
 
-    app->CpuRenderFrame().groundAlphaBlend=false;
-    InitRenderStates(app);                                         // 0x406E90
+    app->CpuRenderFrame().groundAlphaBlend = false;
+    InitRenderStates(app); // 0x406E90
 
     r->viewScale = 1.0f;
-    device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
-                          &r->backbufferSurface);
+    device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &r->backbufferSurface);
     device->GetDepthStencilSurface(&r->depthStencilSurface);
 
     if (r->multisampleAvailable == 0 &&
-        device->CreateRenderTarget(
-            r->screenWidth, r->screenHeight,
-            r->backbufferFormat,
-            D3DMULTISAMPLE_NONE, 0, TRUE /*lockable*/,
-            &r->captureSurface, nullptr) != D3D_OK)
+        device->CreateRenderTarget(r->screenWidth, r->screenHeight, r->backbufferFormat,
+                                   D3DMULTISAMPLE_NONE, 0, TRUE /*lockable*/, &r->captureSurface,
+                                   nullptr) != D3D_OK)
         r->multisampleAvailable = 1;
 
     if (r->stereoEnabled != 0 &&
-        ProbeStereo3D(device, reinterpret_cast<unsigned char*>(
-                                  &r->stereoHandle)))
+        ProbeStereo3D(device, reinterpret_cast<unsigned char*>(&r->stereoHandle)))
         r->stereoEnabled = 0;
 
-    // 内置 MMEffect：设备与内置标准效果均已就绪，注册宿主窗口/标准效果。
-    // 实际 Initialize 保持原版的惰性时机（首个 BeginScene）。InitD3D 运行
-    // 于 WM_CREATE 期间，app->Hwnd() 尚未赋值——传参数句柄。
+    // Embedded MMEffect: the device and embedded standard effect are ready; register the host window/standard effect.
+    // Actual Initialize retains the original lazy timing (first BeginScene). InitD3D runs
+    // during WM_CREATE, before app->Hwnd() is assigned; pass the argument handle.
     mme::OnDeviceCreated(app, hwnd);
     return true;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

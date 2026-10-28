@@ -46,8 +46,8 @@ namespace mikudancestudio {
 // Already-ported callees (real bodies; PostViewRefresh is declared in
 // ported_funcs.hpp, RefreshAfterFrameApply lives in
 // src/window/ui_frame_step.cpp).
-void RefreshAfterFrameApply(MMDApp* app);   // VA 0x00432FA0
-                                            // frame-apply refresh chain
+void RefreshAfterFrameApply(MMDApp* app); // VA 0x00432FA0
+                                          // frame-apply refresh chain
 
 namespace {
 
@@ -58,7 +58,7 @@ IDirect3DDevice9* RenderDeviceOf(MMDApp* app) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr)
         return nullptr;
-    return r->device;  // +120032 (0x1D4E0)
+    return r->device; // +120032 (0x1D4E0)
 }
 
 // Line/ground vertex: D3DFVF_XYZ|D3DFVF_DIFFUSE (0x42), 16 bytes.
@@ -71,23 +71,21 @@ struct LineVertex {
 static_assert(sizeof(LineVertex) == 16);
 
 // Original Japanese message @0x52A294/0x52A234/0x52A1F8 (Shift-JIS):
-// "グラフィックカードの性能が足りません(MakeLine[23])"
-const char kJpMakeLine[] =
-    "\203O\203\211\203t\203B\203b\203N\203J\201[\203h"
-    "\202\314\220\253\224\\\202\252\221\253\202\350\202\334\202\271\202\361";
+// "The graphics card is not powerful enough (MakeLine[23])"
+const char kJpMakeLine[] = "\203O\203\211\203t\203B\203b\203N\203J\201[\203h"
+                           "\202\314\220\253\224\\\202\252\221\253\202\350\202\334\202\271\202\361";
 
 // --- 0x40AF40 message helper: EN/JP selection via app+658252 -----------
 void MakeLineFailBox(MMDApp* app, const char* jpSuffix, const char* title) {
     char text[256];
     if (app->state.englishUI != 0)
-        sprintf_s(text, 0x100, "%s",
-                  "The performance of the graphics card doesn't suffice.");
+        sprintf_s(text, 0x100, "%s", "The performance of the graphics card doesn't suffice.");
     else
         sprintf_s(text, 0x100, "%s%s", kJpMakeLine, jpSuffix);
     MessageBoxA(static_cast<HWND>(app->Hwnd()), text, title, 0);
 }
 
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // VA 0x0040A680 - AngleFabsF  (original: sub_40A680)
@@ -95,7 +93,7 @@ void MakeLineFailBox(MMDApp* app, const char* jpSuffix, const char* title) {
 // fld st,arg0 / fabs / fstp dword: float in, float out.  Only caller in the
 // binary: sub_47E8A0 (bone-rotation dialog math, case 300).
 // ===========================================================================
-float AngleFabsF(float v) {  // 0x40A680
+float AngleFabsF(float v) { // 0x40A680
     return std::fabs(v);
 }
 
@@ -105,7 +103,7 @@ float AngleFabsF(float v) {  // 0x40A680
 // fld arg0 / call __CIasin / fstp dword: the x87 intrinsic computes at
 // double precision, the wrapper truncates the result to float.
 // ===========================================================================
-float AngleAsinF(float v) {  // 0x40A690
+float AngleAsinF(float v) { // 0x40A690
     return static_cast<float>(std::asin(static_cast<double>(v)));
 }
 
@@ -117,9 +115,8 @@ float AngleAsinF(float v) {  // 0x40A690
 // helper computes atan(st1/st0) = atan2(arg0, arg1) at double precision
 // and rounds to float before returning.
 // ===========================================================================
-float AngleAtan2F(float a, float b) {  // 0x40A6B0
-    return static_cast<float>(std::atan2(static_cast<double>(a),
-                                         static_cast<double>(b)));
+float AngleAtan2F(float a, float b) { // 0x40A6B0
+    return static_cast<float>(std::atan2(static_cast<double>(a), static_cast<double>(b)));
 }
 
 // ===========================================================================
@@ -127,7 +124,7 @@ float AngleAtan2F(float a, float b) {  // 0x40A6B0
 // ===========================================================================
 // fld arg0 / call __CIcos / fstp dword - double-precision cos, float out.
 // ===========================================================================
-float AngleCosF(float v) {  // 0x40A6D0
+float AngleCosF(float v) { // 0x40A6D0
     return static_cast<float>(std::cos(static_cast<double>(v)));
 }
 
@@ -151,48 +148,46 @@ float AngleCosF(float v) {  // 0x40A6D0
 // Note: src/render/grid_geometry.cpp (InitGridGeometry) is an earlier,
 // incomplete take on the same VA - this is the full body.
 // ===========================================================================
-bool MakeLineGeometry(MMDApp* app) {  // 0x40AF40
+bool MakeLineGeometry(MMDApp* app) { // 0x40AF40
     auto& s = *app;
     IDirect3DDevice9* device = RenderDeviceOf(app);
 
     // 1. line vertex buffer (release stale one first) ---------------------
-    IDirect3DVertexBuffer9*& lineVb = s.GroundGridVertices();       // 768
+    IDirect3DVertexBuffer9*& lineVb = s.GroundGridVertices(); // 768
     if (lineVb != nullptr) {
         lineVb->Release();
         lineVb = nullptr;
     }
-    if (FAILED(device->CreateVertexBuffer(1440, 8 /*D3DUSAGE_WRITEONLY*/,
-                                          0x42 /*XYZ|DIFFUSE*/,
-                                          D3DPOOL_MANAGED /*1*/,
-                                          &lineVb, nullptr))) {
-        MakeLineFailBox(&s, "(MakeLine)", "MakeLine");              // 0x40afca
+    if (FAILED(device->CreateVertexBuffer(1440, 8 /*D3DUSAGE_WRITEONLY*/, 0x42 /*XYZ|DIFFUSE*/,
+                                          D3DPOOL_MANAGED /*1*/, &lineVb, nullptr))) {
+        MakeLineFailBox(&s, "(MakeLine)", "MakeLine"); // 0x40afca
         return false;
     }
 
     LineVertex* verts = nullptr;
-    lineVb->Lock(0, 1440, reinterpret_cast<void**>(&verts), 0);     // 0x40b00b
+    lineVb->Lock(0, 1440, reinterpret_cast<void**>(&verts), 0); // 0x40b00b
     // x64 0x7FF7CB42F4C8 / 0x7FF7CB42F4F4: 0xFF0000FF, not 0xFF000001.
-    constexpr std::uint32_t kAxisB = 0xFF0000FFu;   // -16776961 (blue)
-    constexpr std::uint32_t kAxisR = 0xFFFF0000u;   // -65536    (red)
-    constexpr std::uint32_t kAxisG = 0xFF00FF00u;   // -16711936 (green)
-    constexpr std::uint32_t kGrid  = 0xFFB4B4B4u;   // -4934476  (gray)
+    constexpr std::uint32_t kAxisB = 0xFF0000FFu; // -16776961 (blue)
+    constexpr std::uint32_t kAxisR = 0xFFFF0000u; // -65536    (red)
+    constexpr std::uint32_t kAxisG = 0xFF00FF00u; // -16711936 (green)
+    constexpr std::uint32_t kGrid = 0xFFB4B4B4u;  // -4934476  (gray)
 
-    verts[0]  = {0.0f, 0.1f, 0.0f, kAxisB};    // 0x40b013..
-    verts[1]  = {0.0f, 0.1f, -65.0f, kAxisB};
-    verts[2]  = {0.0f, 0.1f, 0.0f, kAxisR};
-    verts[3]  = {65.0f, 0.1f, 0.0f, kAxisR};
-    verts[4]  = {0.0f, 0.1f, 0.0f, kAxisG};
-    verts[5]  = {0.0f, 65.0f, 0.0f, kAxisG};    // x64 0x7FF7CB42F584: Y=65
-    verts[6]  = {0.0f, 0.1f, 0.0f, kGrid};
-    verts[7]  = {0.0f, 0.1f, 50.0f, kGrid};
-    verts[8]  = {0.0f, 0.1f, 0.0f, kGrid};
-    verts[9]  = {-50.0f, 0.1f, 0.0f, kGrid};
+    verts[0] = {0.0f, 0.1f, 0.0f, kAxisB}; // 0x40b013..
+    verts[1] = {0.0f, 0.1f, -65.0f, kAxisB};
+    verts[2] = {0.0f, 0.1f, 0.0f, kAxisR};
+    verts[3] = {65.0f, 0.1f, 0.0f, kAxisR};
+    verts[4] = {0.0f, 0.1f, 0.0f, kAxisG};
+    verts[5] = {0.0f, 65.0f, 0.0f, kAxisG}; // x64 0x7FF7CB42F584: Y=65
+    verts[6] = {0.0f, 0.1f, 0.0f, kGrid};
+    verts[7] = {0.0f, 0.1f, 50.0f, kGrid};
+    verts[8] = {0.0f, 0.1f, 0.0f, kGrid};
+    verts[9] = {-50.0f, 0.1f, 0.0f, kGrid};
 
-    for (int t = 1; t <= 10; ++t) {             // 0x40b1c2 loop, v39 = 1..10
+    for (int t = 1; t <= 10; ++t) { // 0x40b1c2 loop, v39 = 1..10
         const float p = static_cast<float>(t) * 5.0f;
         const float n = static_cast<float>(t) * -5.0f;
         LineVertex* w = verts + 10 + 8 * (t - 1);
-        w[0] = {p, 0.1f, -50.0f, kGrid};        // 0x40b1d6..
+        w[0] = {p, 0.1f, -50.0f, kGrid}; // 0x40b1d6..
         w[1] = {p, 0.1f, 50.0f, kGrid};
         w[2] = {n, 0.1f, -50.0f, kGrid};
         w[3] = {n, 0.1f, 50.0f, kGrid};
@@ -201,41 +196,38 @@ bool MakeLineGeometry(MMDApp* app) {  // 0x40AF40
         w[6] = {-50.0f, 0.1f, n, kGrid};
         w[7] = {50.0f, 0.1f, n, kGrid};
     }
-    lineVb->Unlock();                            // 0x40b38d
+    lineVb->Unlock(); // 0x40b38d
 
     // 2. line index buffer -----------------------------------------------
-    IDirect3DIndexBuffer9*& lineIb = s.GroundGridIndices();         // 772
-    if (FAILED(device->CreateIndexBuffer(180, 0,
-                                         D3DFMT_INDEX16 /*101*/,
-                                         D3DPOOL_MANAGED /*1*/,
-                                         &lineIb, nullptr))) {      // 0x40b3b5
+    IDirect3DIndexBuffer9*& lineIb = s.GroundGridIndices(); // 772
+    if (FAILED(device->CreateIndexBuffer(180, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_MANAGED /*1*/,
+                                         &lineIb, nullptr))) { // 0x40b3b5
         MakeLineFailBox(&s, "(MakeLine2)", "MakeLine2");
         return false;
     }
     void* idxRaw = nullptr;
-    if (FAILED(lineIb->Lock(0, 0, &idxRaw, 0))) {                   // 0x40b402
+    if (FAILED(lineIb->Lock(0, 0, &idxRaw, 0))) { // 0x40b402
         MakeLineFailBox(&s, "(MakeLine3)", "MakeLine3");
         return false;
     }
     auto* indices = static_cast<std::uint16_t*>(idxRaw);
-    for (int i = 0; i < 90; ++i)                                   // 0x40b447
+    for (int i = 0; i < 90; ++i) // 0x40b447
         indices[i] = static_cast<std::uint16_t>(i);
-    lineIb->Unlock();                                              // 0x40b468
+    lineIb->Unlock(); // 0x40b468
 
     // 3. ground quad VB @app+651560 (unchecked, like the original) --------
-    IDirect3DVertexBuffer9*& groundVb = s.GroundPlaneVertices();    // 651560
-    device->CreateVertexBuffer(96, 8 /*WRITEONLY*/, 0x42,
-                               D3DPOOL_MANAGED, &groundVb, nullptr);
+    IDirect3DVertexBuffer9*& groundVb = s.GroundPlaneVertices(); // 651560
+    device->CreateVertexBuffer(96, 8 /*WRITEONLY*/, 0x42, D3DPOOL_MANAGED, &groundVb, nullptr);
     LineVertex* ground = nullptr;
-    groundVb->Lock(0, 96, reinterpret_cast<void**>(&ground), 0);    // 0x40b4a2
+    groundVb->Lock(0, 96, reinterpret_cast<void**>(&ground), 0); // 0x40b4a2
     constexpr std::uint32_t kWhite = 0x00FFFFFFu;
-    ground[0] = {-50.0f, 0.0f, -50.0f, kWhite};   // 0x40b4ae..
+    ground[0] = {-50.0f, 0.0f, -50.0f, kWhite}; // 0x40b4ae..
     ground[1] = {-50.0f, 0.0f, 50.0f, kWhite};
     ground[2] = {50.0f, 0.0f, -50.0f, kWhite};
     ground[3] = {50.0f, 0.0f, -50.0f, kWhite};
     ground[4] = {-50.0f, 0.0f, 50.0f, kWhite};
     ground[5] = {50.0f, 0.0f, 50.0f, kWhite};
-    groundVb->Unlock();                                            // 0x40b578
+    groundVb->Unlock(); // 0x40b578
     return true;
 }
 
@@ -251,19 +243,19 @@ bool MakeLineGeometry(MMDApp* app) {  // 0x40AF40
 // (kGenericInputFlagSlot).
 // ===========================================================================
 void UpdateKeyEdgeState(MMDApp* app, int nVirtKey,
-                        std::uint32_t* state) {  // 0x40E3D0
-    if ((GetKeyState(nVirtKey) & 0x80) == 0x80) {                  // 0x40e3de
+                        std::uint32_t* state) {   // 0x40E3D0
+    if ((GetKeyState(nVirtKey) & 0x80) == 0x80) { // 0x40e3de
         if (*state != 0) {
-            *state = 3;                                            // 0x40e401
+            *state = 3; // 0x40e401
         } else {
-            *state = 1;                                            // 0x40e3ed
-            app->state.messageSeen = 1;      // 658796
+            *state = 1;                 // 0x40e3ed
+            app->state.messageSeen = 1; // 658796
         }
     } else if (*state == 1 || *state == 3) {
-        *state = 2;                                                // 0x40e425
+        *state = 2; // 0x40e425
         app->state.messageSeen = 1;
     } else {
-        *state = 0;                                                // 0x40e41b
+        *state = 0; // 0x40e41b
     }
 }
 
@@ -276,14 +268,14 @@ void UpdateKeyEdgeState(MMDApp* app, int nVirtKey,
 // <msg>\n", "error", 0) and LocalFree.
 // ===========================================================================
 void ShowWin32ErrorMessage(MMDApp* app, const char* context,
-                           DWORD messageId) {  // 0x40E440
+                           DWORD messageId) { // 0x40E440
     char* message = nullptr;
     char text[256];
-    FormatMessageA(0x1300, nullptr, messageId, 0x400,
-                   reinterpret_cast<LPSTR>(&message), 0, nullptr);  // 0x40e47d
+    FormatMessageA(0x1300, nullptr, messageId, 0x400, reinterpret_cast<LPSTR>(&message), 0,
+                   nullptr); // 0x40e47d
     sprintf_s(text, 0x100, "%s: %d:%s\n", context, messageId,
               message);                                            // 0x40e49a
-    MessageBoxA(static_cast<HWND>(app->Hwnd()), text, "error", 0);  // 0x40e4b4
+    MessageBoxA(static_cast<HWND>(app->Hwnd()), text, "error", 0); // 0x40e4b4
     LocalFree(message);                                            // 0x40e4c5
 }
 
@@ -297,17 +289,14 @@ void ShowWin32ErrorMessage(MMDApp* app, const char* context,
 //   return DrawIndexedPrimitive(LINELIST, 0, 0, 90, 0, 45).
 // Callers: RenderModelsFixed (0x425D20) / RenderModelsEffect (0x4277E0).
 // ===========================================================================
-HRESULT DrawGridLines(MMDApp* app) {  // 0x40E4E0
+HRESULT DrawGridLines(MMDApp* app) { // 0x40E4E0
     IDirect3DDevice9* device = RenderDeviceOf(app);
-    device->SetRenderState(D3DRS_LIGHTING /*137*/, 0);              // 0x40e4ff
-    device->SetTexture(0, nullptr);                                 // 0x40e51a
-    device->SetFVF(0x42 /*D3DFVF_XYZ|D3DFVF_DIFFUSE*/);             // 0x40e533
-    device->SetStreamSource(
-        0, app->GroundGridVertices() /*768*/,
-        0, 16);                                                     // 0x40e557
-    device->SetIndices(app->GroundGridIndices() /*772*/);           // 0x40e575
-    return device->DrawIndexedPrimitive(D3DPT_LINELIST /*2*/, 0, 0, 90,
-                                        0, 45);                     // 0x40e59a
+    device->SetRenderState(D3DRS_LIGHTING /*137*/, 0);                          // 0x40e4ff
+    device->SetTexture(0, nullptr);                                             // 0x40e51a
+    device->SetFVF(0x42 /*D3DFVF_XYZ|D3DFVF_DIFFUSE*/);                         // 0x40e533
+    device->SetStreamSource(0, app->GroundGridVertices() /*768*/, 0, 16);       // 0x40e557
+    device->SetIndices(app->GroundGridIndices() /*772*/);                       // 0x40e575
+    return device->DrawIndexedPrimitive(D3DPT_LINELIST /*2*/, 0, 0, 90, 0, 45); // 0x40e59a
 }
 
 // ===========================================================================
@@ -323,20 +312,17 @@ HRESULT DrawGridLines(MMDApp* app) {  // 0x40E4E0
 //   return the sub pointer value (original leaves it in eax).
 // Callers: RenderModelsFixed (0x425D20) / RenderModelsEffect (0x4277E0).
 // ===========================================================================
-std::uintptr_t DrawGroundPolygon(MMDApp* app) {  // 0x40E5A0
+std::uintptr_t DrawGroundPolygon(MMDApp* app) { // 0x40E5A0
     D3DRenderer* r = app->Renderer();
-    IDirect3DDevice9* device = r->device;  // +120032 (0x1D4E0)
-    if (r->d3dInitialized != 0)   // wrapper+120164 (0x1D564)          0x40e5a9
+    IDirect3DDevice9* device = r->device; // +120032 (0x1D4E0)
+    if (r->d3dInitialized != 0)           // wrapper+120164 (0x1D564)          0x40e5a9
         device->SetRenderState(D3DRS_STENCILENABLE /*52*/, 0);
-    device->SetStreamSource(
-        0, app->GroundPlaneVertices() /*651560*/,
-        0, 16);                                                     // 0x40e5eb
-    device->SetFVF(0x42);                                           // 0x40e604
-    device->DrawPrimitive(D3DPT_TRIANGLELIST /*4*/, 0, 2);          // 0x40e621
-    device->SetRenderState(D3DRS_ALPHABLENDENABLE /*27*/, 0);       // 0x40e63c
-    if (r->d3dInitialized != 0)   // wrapper+120164 (0x1D564)        // 0x40e644
-        return static_cast<std::uintptr_t>(
-            device->SetRenderState(D3DRS_STENCILENABLE /*52*/, 1));
+    device->SetStreamSource(0, app->GroundPlaneVertices() /*651560*/, 0, 16); // 0x40e5eb
+    device->SetFVF(0x42);                                                     // 0x40e604
+    device->DrawPrimitive(D3DPT_TRIANGLELIST /*4*/, 0, 2);                    // 0x40e621
+    device->SetRenderState(D3DRS_ALPHABLENDENABLE /*27*/, 0);                 // 0x40e63c
+    if (r->d3dInitialized != 0) // wrapper+120164 (0x1D564)        // 0x40e644
+        return static_cast<std::uintptr_t>(device->SetRenderState(D3DRS_STENCILENABLE /*52*/, 1));
     return reinterpret_cast<std::uintptr_t>(r);
 }
 
@@ -363,20 +349,20 @@ std::uintptr_t DrawGroundPolygon(MMDApp* app) {  // 0x40E5A0
 //          morph/tree @model+9952 (count dword +11652, flag array
 //          *(model+11668), node 60 bytes).
 // ===========================================================================
-void JumpNextKeyframe(MMDApp* app) {  // 0x441070
+void JumpNextKeyframe(MMDApp* app) { // 0x441070
     auto& s = *app;
     const std::uint32_t cur = s.state.currentFrame;
 
-    if (s.state.optflag[0] != 0) {        // 0x441089
+    if (s.CameraMode() != 0) { // 0x441089
         std::uint32_t best = 0xFFFFFFFAu;
 
         // camera tree (+884, node stride 21 dwords)
         if (s.GlobalTrackSelected(GlobalTimelineTrack::Camera) != 0) {
             std::uint32_t* n = reinterpret_cast<std::uint32_t*>(s.CameraKeys());
             std::uint32_t last = 0;
-            if (n[0] <= cur) {                                      // 0x4410b9
+            if (n[0] <= cur) { // 0x4410b9
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x4410d4
+                for (;;) { // 0x4410d4
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -386,8 +372,8 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
                         break;
                 }
             }
-            const std::uint32_t f = n[21 * last];                   // 0x4410d9
-            if (f > cur && f < 0xFFFFFFFAu)                         // 0x4410e2
+            const std::uint32_t f = n[21 * last]; // 0x4410d9
+            if (f > cur && f < 0xFFFFFFFAu)       // 0x4410e2
                 best = f;
         }
         // light tree (+888, node stride 10 dwords)
@@ -396,7 +382,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
             std::uint32_t last = 0;
             if (n[0] <= cur) {
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x441121
+                for (;;) { // 0x441121
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -406,7 +392,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
                         break;
                 }
             }
-            const std::uint32_t f = n[10 * last];                   // 0x441126
+            const std::uint32_t f = n[10 * last]; // 0x441126
             if (f > cur && f < best)
                 best = f;
         }
@@ -416,7 +402,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
             std::uint32_t last = 0;
             if (n[0] <= cur) {
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x44116e
+                for (;;) { // 0x44116e
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -426,7 +412,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
                         break;
                 }
             }
-            const std::uint32_t f = n[6 * last];                    // 0x441173
+            const std::uint32_t f = n[6 * last]; // 0x441173
             if (f > cur && f < best)
                 best = f;
         }
@@ -436,7 +422,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
             std::uint32_t last = 0;
             if (n[0] <= cur) {
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x4411b9
+                for (;;) { // 0x4411b9
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -446,20 +432,19 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
                         break;
                 }
             }
-            const std::uint32_t f = n[9 * last];                    // 0x4411be
+            const std::uint32_t f = n[9 * last]; // 0x4411be
             if (f > cur && f < best)
                 best = f;
         }
         // Scan only selected accessory timeline rows.
-        for (int i = 0; i < 255; ++i) {                             // 0x4411d5
-            std::uint32_t* n =
-                reinterpret_cast<std::uint32_t*>(s.AccessoryKeys(i));
+        for (int i = 0; i < 255; ++i) { // 0x4411d5
+            std::uint32_t* n = reinterpret_cast<std::uint32_t*>(s.AccessoryKeys(i));
             const auto* accessory = s.AccessorySlots()[i];
-            if (accessory != nullptr && accessory->rowSelected != 0) {       // 0x4411ea
+            if (accessory != nullptr && accessory->rowSelected != 0) { // 0x4411ea
                 std::uint32_t last = 0;
-                if (n[0] <= cur) {                                  // 0x4411ff
+                if (n[0] <= cur) { // 0x4411ff
                     const std::uint32_t* p = n;
-                    for (;;) {                                      // 0x44121d
+                    for (;;) { // 0x44121d
                         const std::uint32_t next = p[2];
                         if (next == 0)
                             break;
@@ -469,35 +454,35 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
                             break;
                     }
                 }
-                const std::uint32_t f = n[15 * last];               // 0x441226
-                if (f > cur && f < best)                            // 0x44122f
+                const std::uint32_t f = n[15 * last]; // 0x441226
+                if (f > cur && f < best)              // 0x44122f
                     best = f;
             }
         }
 
-        if (best < 0xFFFFFFFAu) {                                   // 0x441244
-            s.state.currentFrame = best;        // 0x44125a
+        if (best < 0xFFFFFFFAu) {        // 0x441244
+            s.state.currentFrame = best; // 0x44125a
             char buf[256];
-            sprintf_s(buf, 0x100, "%d", best);                      // 0x441260
+            sprintf_s(buf, 0x100, "%d", best); // 0x441260
             SetWindowTextA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kCurrentFrameEdit),
-                           buf);                                    // 0x441279/483
-            RefreshAfterFrameApply(app);                            // 0x44148c
-            PostViewRefresh(app);                                   // 0x441493
+                           buf);         // 0x441279/483
+            RefreshAfterFrameApply(app); // 0x44148c
+            PostViewRefresh(app);        // 0x441493
         }
         return;
     }
 
     // ---- model branch (byte @+760 == 0) --------------------------------
-    unsigned char* model = s.SelectedModel();                       // 0x441285
+    mdl::ModelRecord* model = s.SelectedModel(); // 0x441285
     std::uint32_t best = 0xFFFFFFFAu;
 
     // Display/IK key track (the named gate keeps its x64 layout correct).
-    if (mdl::Mdl(model)->displayKeyframesPresent != 0) {             // 0x44128c
-        mdl::DisplayKey* n = mdl::DisplayKeys(model);
+    if (model->displayKeyframesPresent != 0) { // 0x44128c
+        mdl::DisplayKey* n = model->displayKeys;
         std::uint32_t last = 0;
         if (n[0].frame <= cur) {
             std::uint32_t idx = 0;
-            for (;;) {                                              // 0x4412e5
+            for (;;) { // 0x4412e5
                 const std::uint32_t next = n[last].next;
                 if (next == 0)
                     break;
@@ -512,15 +497,15 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
             best = f;
     }
     // Selected facial display rows refer to the roots of the morph tracks.
-    if (mikudancestudio::mdl::Mdl(model)->facialFrameCount != 0) {                                    // 0x441300
-        const auto& record = *mdl::Mdl(model);
+    if (model->facialFrameCount != 0) { // 0x441300
+        const auto& record = *model;
         const mdl::MorphKey* base = record.morphKeys;
         for (int i = 0; i < record.facialFrameCount; ++i) {
             const mdl::FrameGroup& row = record.displayFrames[i];
             if (row.selected != 0) {
                 std::uint32_t node = row.targetIndex;
                 if (base[node].frame <= cur) {
-                    for (;;) {                                      // 0x441374
+                    for (;;) { // 0x441374
                         const std::uint32_t next = base[node].next;
                         if (next == 0)
                             break;
@@ -538,17 +523,15 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
     // key tree @model+9952 (count dword @model+11652, flag array
     // *(model+11668), node 60 bytes)
     {
-        const int count =
-            static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount);   // 0x4413a0
+        const int count = static_cast<int>(model->boneCount); // 0x4413a0
         if (count > 0) {
-            mdl::BoneKey* base = mdl::BoneKeys(model);
-            const unsigned char* flags =
-                mikudancestudio::mdl::Mdl(model)->boneSelection;
+            mdl::BoneKey* base = model->boneKeys;
+            const unsigned char* flags = model->boneSelection;
             for (int k = 0; k < count; ++k) {
-                if (flags[k] != 0) {                                // 0x4413dc
+                if (flags[k] != 0) { // 0x4413dc
                     std::uint32_t node = k;
                     if (base[node].frame <= cur) {
-                        for (;;) {                                  // 0x441417
+                        for (;;) { // 0x441417
                             const std::uint32_t next = base[node].next;
                             if (next == 0)
                                 break;
@@ -565,14 +548,14 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
         }
     }
 
-    if (best < 0xFFFFFFFAu) {                                       // 0x44144c
-        s.state.currentFrame = best;            // 0x44145e
+    if (best < 0xFFFFFFFAu) {        // 0x44144c
+        s.state.currentFrame = best; // 0x44145e
         char buf[256];
-        sprintf_s(buf, 0x100, "%d", best);                          // 0x441464
+        sprintf_s(buf, 0x100, "%d", best); // 0x441464
         SetWindowTextA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kCurrentFrameEdit),
-                       buf);                                        // 0x44147d/483
-        RefreshAfterFrameApply(app);                                // 0x44148c
-        PostViewRefresh(app);                                       // 0x441493
+                       buf);         // 0x44147d/483
+        RefreshAfterFrameApply(app); // 0x44148c
+        PostViewRefresh(app);        // 0x441493
     }
 }
 
@@ -585,20 +568,20 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
 // the [1] child is probed as the previous candidate.  The tail (store +
 // item 417 echo + sub_432FA0 + PostViewRefresh) runs unconditionally.
 // ===========================================================================
-void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
+void JumpPrevKeyframe(MMDApp* app) { // 0x4414C0
     auto& s = *app;
     const std::uint32_t cur = s.state.currentFrame;
 
-    if (s.state.optflag[0] != 0) {        // 0x4414d9
+    if (s.CameraMode() != 0) { // 0x4414d9
         std::uint32_t best = 0;
 
         // camera tree (+884, node stride 21 dwords)
         if (s.GlobalTrackSelected(GlobalTimelineTrack::Camera) != 0) {
             std::uint32_t* n = reinterpret_cast<std::uint32_t*>(s.CameraKeys());
             std::uint32_t last = 0;
-            if (n[0] < cur) {                                       // 0x441506
+            if (n[0] < cur) { // 0x441506
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x441524
+                for (;;) { // 0x441524
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -608,12 +591,12 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                         break;
                 }
             }
-            const std::uint32_t f = n[21 * last];                   // 0x441529
-            if (f >= cur) {                                         // 0x441530
-                const std::uint32_t f2 = n[21 * n[21 * last + 1]];  // 0x441544
+            const std::uint32_t f = n[21 * last];                  // 0x441529
+            if (f >= cur) {                                        // 0x441530
+                const std::uint32_t f2 = n[21 * n[21 * last + 1]]; // 0x441544
                 if (f2 < cur && f2 != 0)
                     best = f2;
-            } else if (f != 0) {                                    // 0x441534
+            } else if (f != 0) { // 0x441534
                 best = f;
             }
         }
@@ -623,7 +606,7 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
             std::uint32_t last = 0;
             if (n[0] < cur) {
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x44158c
+                for (;;) { // 0x44158c
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -633,12 +616,12 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                         break;
                 }
             }
-            const std::uint32_t f = n[10 * last];                   // 0x441591
-            if (f < cur) {                                          // 0x441598
+            const std::uint32_t f = n[10 * last]; // 0x441591
+            if (f < cur) {                        // 0x441598
                 if (f > best)
                     best = f;
             } else {
-                const std::uint32_t f2 = n[10 * n[10 * last + 1]];  // 0x4415a8
+                const std::uint32_t f2 = n[10 * n[10 * last + 1]]; // 0x4415a8
                 if (f2 < cur && f2 > best)
                     best = f2;
             }
@@ -649,7 +632,7 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
             std::uint32_t last = 0;
             if (n[0] < cur) {
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x4415f0
+                for (;;) { // 0x4415f0
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -659,12 +642,12 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                         break;
                 }
             }
-            const std::uint32_t f = n[6 * last];                    // 0x4415f5
-            if (f >= cur) {                                         // 0x4415fc
-                const std::uint32_t f2 = n[6 * n[6 * last + 1]];    // 0x44160c
+            const std::uint32_t f = n[6 * last];                 // 0x4415f5
+            if (f >= cur) {                                      // 0x4415fc
+                const std::uint32_t f2 = n[6 * n[6 * last + 1]]; // 0x44160c
                 if (f2 < cur && f2 > best)
                     best = f2;
-            } else if (f > best) {                                  // 0x441600
+            } else if (f > best) { // 0x441600
                 best = f;
             }
         }
@@ -674,7 +657,7 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
             std::uint32_t last = 0;
             if (n[0] < cur) {
                 std::uint32_t idx = 0;
-                for (;;) {                                          // 0x441658
+                for (;;) { // 0x441658
                     const std::uint32_t next = n[idx + 2];
                     if (next == 0)
                         break;
@@ -684,26 +667,25 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                         break;
                 }
             }
-            const std::uint32_t f = n[9 * last];                    // 0x44165d
-            if (f >= cur) {                                         // 0x441664
-                const std::uint32_t f2 = n[9 * n[9 * last + 1]];    // 0x441674
+            const std::uint32_t f = n[9 * last];                 // 0x44165d
+            if (f >= cur) {                                      // 0x441664
+                const std::uint32_t f2 = n[9 * n[9 * last + 1]]; // 0x441674
                 if (f2 < cur && f2 > best)
                     best = f2;
-            } else if (f > best) {                                  // 0x441668
+            } else if (f > best) { // 0x441668
                 best = f;
             }
         }
         // Scan only selected accessory timeline rows.
-        for (int i = 0; i < 255; ++i) {                             // 0x441685
-            std::uint32_t* n =
-                reinterpret_cast<std::uint32_t*>(s.AccessoryKeys(i));
+        for (int i = 0; i < 255; ++i) { // 0x441685
+            std::uint32_t* n = reinterpret_cast<std::uint32_t*>(s.AccessoryKeys(i));
             const auto* accessory = s.AccessorySlots()[i];
-            if (accessory == nullptr || accessory->rowSelected == 0)         // 0x4416a0
+            if (accessory == nullptr || accessory->rowSelected == 0) // 0x4416a0
                 continue;
             std::uint32_t last = 0;
-            if (n[0] < cur) {                                       // 0x4416c3
+            if (n[0] < cur) { // 0x4416c3
                 const std::uint32_t* p = n;
-                for (;;) {                                          // 0x4416e1
+                for (;;) { // 0x4416e1
                     const std::uint32_t next = p[2];
                     if (next == 0)
                         break;
@@ -713,37 +695,37 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                         break;
                 }
             }
-            const std::uint32_t f = n[15 * last];                   // 0x4416ee
-            if (f >= cur) {                                         // 0x4416f3
-                const std::uint32_t f2 = n[15 * n[15 * last + 1]];  // 0x441721
+            const std::uint32_t f = n[15 * last];                  // 0x4416ee
+            if (f >= cur) {                                        // 0x4416f3
+                const std::uint32_t f2 = n[15 * n[15 * last + 1]]; // 0x441721
                 if (f2 < cur && f2 > best)
                     best = f2;
-            } else if (f > best) {                                  // 0x4416f7
+            } else if (f > best) { // 0x4416f7
                 best = f;
             }
         }
 
-        s.state.currentFrame = best;            // 0x441753
+        s.state.currentFrame = best; // 0x441753
         char buf[256];
-        sprintf_s(buf, 0x100, "%d", best);                          // 0x441759
+        sprintf_s(buf, 0x100, "%d", best); // 0x441759
         SetWindowTextA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kCurrentFrameEdit),
-                       buf);                                        // 0x441772/a9e
-        RefreshAfterFrameApply(app);                                // 0x441aa7
-        PostViewRefresh(app);                                       // 0x441ab3
+                       buf);         // 0x441772/a9e
+        RefreshAfterFrameApply(app); // 0x441aa7
+        PostViewRefresh(app);        // 0x441ab3
         return;
     }
 
     // ---- model branch (byte @+760 == 0) --------------------------------
-    unsigned char* model = s.SelectedModel();                       // 0x44177e
-    std::uint32_t best = 0;                                         // 0x441787
+    mdl::ModelRecord* model = s.SelectedModel(); // 0x44177e
+    std::uint32_t best = 0;                      // 0x441787
 
     // Display/IK key track.
-    if (mdl::Mdl(model)->displayKeyframesPresent != 0) {             // 0x441789
-        mdl::DisplayKey* n = mdl::DisplayKeys(model);
+    if (model->displayKeyframesPresent != 0) { // 0x441789
+        mdl::DisplayKey* n = model->displayKeys;
         std::uint32_t last = 0;
         if (n[0].frame < cur) {
             std::uint32_t idx = 0;
-            for (;;) {                                              // 0x4417e3
+            for (;;) { // 0x4417e3
                 const std::uint32_t next = n[last].next;
                 if (next == 0)
                     break;
@@ -754,25 +736,24 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
             }
         }
         const std::uint32_t f = n[last].frame;
-        if (f >= cur) {                                             // 0x4417f7
-            const std::uint32_t f2 =
-                n[n[last].previous].frame;
+        if (f >= cur) { // 0x4417f7
+            const std::uint32_t f2 = n[n[last].previous].frame;
             if (f2 < cur && f2 != 0)
                 best = f2;
-        } else if (f != 0) {                                        // 0x4417fb
+        } else if (f != 0) { // 0x4417fb
             best = f;
         }
     }
     // Selected facial display rows refer to the roots of the morph tracks.
-    if (mikudancestudio::mdl::Mdl(model)->facialFrameCount != 0) {                                    // 0x441858
-        const auto& record = *mdl::Mdl(model);
+    if (model->facialFrameCount != 0) { // 0x441858
+        const auto& record = *model;
         const mdl::MorphKey* base = record.morphKeys;
         for (int i = 0; i < record.facialFrameCount; ++i) {
             const mdl::FrameGroup& row = record.displayFrames[i];
             if (row.selected != 0) {
                 std::uint32_t node = row.targetIndex;
                 if (base[node].frame < cur) {
-                    for (;;) {                                      // 0x4418d5
+                    for (;;) { // 0x4418d5
                         const std::uint32_t next = base[node].next;
                         if (next == 0)
                             break;
@@ -782,12 +763,11 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                     }
                 }
                 const std::uint32_t f = base[node].frame;
-                if (f >= cur) {                                     // 0x4418e3
-                    const std::uint32_t f2 =
-                        base[base[node].previous].frame;
+                if (f >= cur) { // 0x4418e3
+                    const std::uint32_t f2 = base[base[node].previous].frame;
                     if (f2 < cur && f2 > best)
                         best = f2;
-                } else if (f > best) {                              // 0x4418e9
+                } else if (f > best) { // 0x4418e9
                     best = f;
                 }
             }
@@ -795,17 +775,15 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
     }
     // key tree @model+9952 (count dword @model+11652, node 60 bytes)
     {
-        const int count =
-            static_cast<int>(mikudancestudio::mdl::Mdl(model)->boneCount);   // 0x441954
+        const int count = static_cast<int>(model->boneCount); // 0x441954
         if (count > 0) {
-            mdl::BoneKey* base = mdl::BoneKeys(model);
-            const unsigned char* flags =
-                mikudancestudio::mdl::Mdl(model)->boneSelection;
+            mdl::BoneKey* base = model->boneKeys;
+            const unsigned char* flags = model->boneSelection;
             for (int k = 0; k < count; ++k) {
-                if (flags[k] != 0) {                                // 0x441994
+                if (flags[k] != 0) { // 0x441994
                     std::uint32_t node = k;
                     if (base[node].frame < cur) {
-                        for (;;) {                                  // 0x4419d7
+                        for (;;) { // 0x4419d7
                             const std::uint32_t next = base[node].next;
                             if (next == 0)
                                 break;
@@ -815,12 +793,11 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
                         }
                     }
                     const std::uint32_t f = base[node].frame;
-                    if (f >= cur) {                                 // 0x4419e9
-                        const std::uint32_t f2 =
-                            base[base[node].previous].frame;
+                    if (f >= cur) { // 0x4419e9
+                        const std::uint32_t f2 = base[base[node].previous].frame;
                         if (f2 < cur && f2 > best)
                             best = f2;
-                    } else if (f > best) {                          // 0x4419ef
+                    } else if (f > best) { // 0x4419ef
                         best = f;
                     }
                 }
@@ -828,13 +805,13 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
         }
     }
 
-    s.state.currentFrame = best;                // 0x441a79
+    s.state.currentFrame = best; // 0x441a79
     char buf[256];
-    sprintf_s(buf, 0x100, "%d", best);                              // 0x441a7f
+    sprintf_s(buf, 0x100, "%d", best); // 0x441a7f
     SetWindowTextA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kCurrentFrameEdit),
-                   buf);                                            // 0x441a98/a9e
-    RefreshAfterFrameApply(app);                                    // 0x441aa7
-    PostViewRefresh(app);                                           // 0x441ab3
+                   buf);         // 0x441a98/a9e
+    RefreshAfterFrameApply(app); // 0x441aa7
+    PostViewRefresh(app);        // 0x441ab3
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

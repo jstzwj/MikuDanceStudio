@@ -75,16 +75,19 @@ struct PmdEnglishModelData {
     char comment[256]{};
 };
 using ReadModelBytesResult = int (*)(void*, void*, std::size_t);
-enum class PmdOptionalRead { Value, EndOfFile, ReadError, Truncated };
+enum class PmdOptionalRead {
+    Value,
+    EndOfFile,
+    ReadError,
+    Truncated
+};
 struct PmdEnglishPresence {
     bool hasEnglish = false;
     bool hasToonFields = false;
 };
-PmdOptionalRead ReadPmdOptionalCount(ReadModelBytesResult, void*,
-                                     std::uint32_t& count);
+PmdOptionalRead ReadPmdOptionalCount(ReadModelBytesResult, void*, std::uint32_t& count);
 bool ReadPmdEnglishPresence(ReadModelBytesResult, void*, PmdEnglishPresence&);
-bool ReadModelSectionCount(ReadModelBytes, void*, std::uint8_t width,
-                           std::uint32_t& count);
+bool ReadModelSectionCount(ReadModelBytes, void*, std::uint8_t width, std::uint32_t& count);
 bool ReadPmdEnglishModel(ReadModelBytes, void*, PmdEnglishModelData&);
 bool ReadPmdEnglishName(ReadModelBytes, void*, char (&name)[20]);
 bool ReadPmdEnglishGroupName(ReadModelBytes, void*, char (&name)[50]);
@@ -93,13 +96,11 @@ bool ReadPmdMorphHeader(ReadModelBytes, void*, PmdMorphHeaderData&);
 bool ReadPmdMorphOffset(ReadModelBytes, void*, PmdMorphOffsetData&);
 bool ReadPmdDisplayTarget(ReadModelBytes, void*, std::uint16_t&);
 bool ReadPmdGroupName(ReadModelBytes, void*, char (&name)[50]);
-bool ReadPmdBoneFrame(ReadModelBytes, void*, std::uint16_t& bone,
-                      std::uint8_t& group);
+bool ReadPmdBoneFrame(ReadModelBytes, void*, std::uint16_t& bone, std::uint8_t& group);
 bool ReadPmxMorphHeader(ReadModelBytes, void*, PmxMorphHeaderData&);
-bool ReadPmxMorphOffset(ReadModelBytes, void*, std::uint8_t type,
-                        PmxMorphIndexSizes, PmxMorphOffsetData&);
-bool ReadPmxDisplayHeader(ReadModelBytes, void*, std::uint8_t& special,
-                          std::int32_t& count);
+bool ReadPmxMorphOffset(ReadModelBytes, void*, std::uint8_t type, PmxMorphIndexSizes,
+                        PmxMorphOffsetData&);
+bool ReadPmxDisplayHeader(ReadModelBytes, void*, std::uint8_t& special, std::int32_t& count);
 bool ReadPmxDisplayEntry(ReadModelBytes, void*, std::uint8_t boneIndexSize,
                          std::uint8_t morphIndexSize, PmxDisplayEntryData&);
 bool ReadPmdMaterial(ReadModelBytes, void*, MaterialData&);
@@ -111,4 +112,4 @@ bool ReadPmdRigid(ReadModelBytes, void*, RigidData&);
 bool ReadPmxRigid(ReadModelBytes, void*, std::uint8_t boneIndexSize, RigidData&);
 bool ReadPmdJoint(ReadModelBytes, void*, JointData&);
 bool ReadPmxJoint(ReadModelBytes, void*, std::uint8_t rigidIndexSize, JointData&);
-}  // namespace mikudancestudio::format
+} // namespace mikudancestudio::format

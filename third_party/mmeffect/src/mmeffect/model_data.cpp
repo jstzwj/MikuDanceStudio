@@ -141,16 +141,16 @@ void ModelData::BuildNameTable()
         // (-1, -2, ...) into the name map [L105-168].
         int modelCount = ExpGetPmdNum();
         for (int i = 0; i < modelCount; ++i) {
-            // 原版 [0x180058E80] 是 `mov edx,eax; cmp rdx,[rbx+18h]`——ID 在
-            // MMHack 注册侧（mov r14d,eax）与比较侧一致截成 32 位。本移植的
-            // 注册/查找/modelRegistry 全链用完整 64 位指针 ID（mme_host.cpp），
-            // 故此处必须全宽比较；原先的单边 32 位截断会让 x64 堆指针恒不等，
-            // 名字表恒空、CONTROLOBJECT 全部落默认值。
-            // 原版 [0x180058E80] 是 `mov edx,eax; cmp rdx,[rbx+18h]`——ID 在
-            // MMHack 注册侧（mov r14d,eax）与比较侧一致截成 32 位。本移植的
-            // 注册/查找/modelRegistry 全链用完整 64 位指针 ID（mme_host.cpp），
-            // 故此处必须全宽比较；原先的单边 32 位截断会让 x64 堆指针恒不等，
-            // 名字表恒空、CONTROLOBJECT 全部落默认值。
+            // The original [0x180058E80] uses `mov edx,eax; cmp rdx,[rbx+18h]`: IDs are
+            // consistently truncated to 32 bits at both MMHack registration (mov r14d,eax) and comparison. This port's
+            // entire registration/lookup/modelRegistry chain uses full 64-bit pointer IDs (mme_host.cpp),
+            // so comparisons here must use the full width. The old one-sided 32-bit truncation made x64 heap pointers always unequal,
+            // leaving the name table always empty and all CONTROLOBJECT values at their defaults.
+            // The original [0x180058E80] uses `mov edx,eax; cmp rdx,[rbx+18h]`: IDs are
+            // consistently truncated to 32 bits at both MMHack registration (mov r14d,eax) and comparison. This port's
+            // entire registration/lookup/modelRegistry chain uses full 64-bit pointer IDs (mme_host.cpp),
+            // so comparisons here must use the full width. The old one-sided 32-bit truncation made x64 heap pointers always unequal,
+            // leaving the name table always empty and all CONTROLOBJECT values at their defaults.
             unsigned long long hostId =
                 reinterpret_cast<unsigned long long>(ExpGetPmdID(i));
             if (hostId != objectId_) {

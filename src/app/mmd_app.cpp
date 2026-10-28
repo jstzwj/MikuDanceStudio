@@ -7,4 +7,4 @@ namespace mikudancestudio {
 
 MMDApp* g_Block = nullptr;
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -24,4 +24,4 @@ struct VpdDocument {
 bool ReadVpd(std::FILE* stream, VpdDocument& document);
 bool WriteVpd(std::FILE* stream, const VpdDocument& document);
 
-}  // namespace mikudancestudio::format
+} // namespace mikudancestudio::format

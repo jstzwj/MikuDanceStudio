@@ -25,8 +25,8 @@
 // (HIWORD==1) from 669/673/677 route to sub_461C20 / sub_43D2E0(hDlg,0)
 // / sub_43D560; id 2 cancels with EndDialog(1).
 //
-// The selection-dialog call targets remain pending.  The frame-range apply
-// target is ported in frame_range_apply.cpp.
+// Selection helpers live in dialog_select_ops.cpp; frame-range scaling
+// lives in frame_range_apply.cpp. Their shared declarations are in ported_funcs.hpp.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -42,19 +42,9 @@
 
 namespace mikudancestudio {
 
-// ---- pending dependencies (stubs.cpp / dialog_select_ops.cpp) -------------
-// All of the 0x466630/0x461C20/0x43Dxxx family are __thiscall on Block in
-// the original (caller loads ECX from the Block global), so the HWND-only
-// stub signatures were missing the MMDApp* first parameter.  The bodies are
-// ported in dialog_select_ops.cpp with these corrected signatures.
-void InitSelectNavDialog(MMDApp* app, HWND hDlg);    // VA 0x00466630
-void SyncSelectAttachCombo(MMDApp* app, HWND hDlg);  // VA 0x00461C20
-void ResetModelSelection(MMDApp* app);               // VA 0x004256C0
-void ApplyBoneAttach(MMDApp* app, HWND hDlg);        // VA 0x0043D610
-void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection);  // VA 0x0043D2E0
-void CommitTargetBonePick(MMDApp* app, HWND hDlg);   // VA 0x0043D560
-void ApplyFrameRangeScale(HWND hDlg);                // VA 0x0043E970
-                                                   // (frame_range_apply.cpp)
+// Frame-range apply reads the active application through g_Block.
+void ApplyFrameRangeScale(HWND hDlg); // VA 0x0043E970
+                                      // (frame_range_apply.cpp)
 
 // ===========================================================================
 // VA 0x0044C5D0 - FrameRangeDlgProc
@@ -63,42 +53,41 @@ INT_PTR CALLBACK FrameRangeDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lP
     (void)lParam;
     char text[256];
 
-    if (Msg == WM_INITDIALOG) {                     // 0x44C5F8
+    if (Msg == WM_INITDIALOG) { // 0x44C5F8
         MMDApp* app = g_Block;
-        if (app->state.floatingWindow != 0)   // 0xA0D38
+        if (app->state.floatingWindow != 0) // 0xA0D38
             SetWindowPos(hDlg, HWND_TOPMOST, 0, 0, 0, 0,
-                         SWP_NOSIZE | SWP_NOMOVE);  // x64 0x7FF7CB475FE5: or rdx,-1, flags 3
+                         SWP_NOSIZE | SWP_NOMOVE); // x64 0x7FF7CB475FE5: or rdx,-1, flags 3
 
-        const HWND main = reinterpret_cast<HWND>(
-            app->state.hwnd);
-        GetWindowTextA(GetDlgItem(main, panel::kRangeStartEdit), text, 8);           // 0x44C68E
+        const HWND main = reinterpret_cast<HWND>(app->state.hwnd);
+        GetWindowTextA(GetDlgItem(main, panel::kRangeStartEdit), text, 8); // 0x44C68E
         sprintf_s(text, 0x100, "%d", atol(text));
         SendMessageA(GetDlgItem(hDlg, panel::kScaleFromEdit), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(text));
-        GetWindowTextA(GetDlgItem(main, panel::kRangeStopEdit), text, 8);           // 0x44C6EB
+        GetWindowTextA(GetDlgItem(main, panel::kRangeStopEdit), text, 8); // 0x44C6EB
         sprintf_s(text, 0x100, "%d", atol(text));
         SendMessageA(GetDlgItem(hDlg, panel::kScaleToEdit), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(text));
 
         SendMessageA(GetDlgItem(hDlg, panel::kScaleRateEdit), EM_REPLACESEL, 0,
-                     reinterpret_cast<LPARAM>("1.0"));  // 0x52D740
-        SetFocus(GetDlgItem(hDlg, panel::kScaleRateEdit));                           // 0x44C74C
+                     reinterpret_cast<LPARAM>("1.0"));     // 0x52D740
+        SetFocus(GetDlgItem(hDlg, panel::kScaleRateEdit)); // 0x44C74C
         SendMessageA(GetDlgItem(hDlg, panel::kScaleRateEdit), EM_SETSEL, 0, 3);
         SendMessageA(GetDlgItem(hDlg, panel::kScaleBoneCheckbox), BM_SETCHECK, 1, 0);
         SendMessageA(GetDlgItem(hDlg, panel::kScaleMorphCheckbox), BM_SETCHECK, 1, 0);
         SendMessageA(GetDlgItem(hDlg, panel::kScaleDispIkCheckbox), BM_SETCHECK, 1, 0);
 
-        SetFocus(GetDlgItem(hDlg, panel::kScaleFromEdit));                           // 0x44C7A7
+        SetFocus(GetDlgItem(hDlg, panel::kScaleFromEdit)); // 0x44C7A7
         const HWND edit = GetDlgItem(hDlg, panel::kScaleFromEdit);
         SendMessageA(edit, EM_SETSEL, 0, GetWindowTextLengthA(edit));
         return 0;
     }
-    if (Msg == WM_COMMAND) {                        // 0x44C5FD
-        if (LOWORD(wParam) == 1) {                  // OK
-            ApplyFrameRangeScale(hDlg);              // 0x0043E970
-            EndDialog(hDlg, 1);
-        } else if (LOWORD(wParam) == 2) {           // Cancel
-            EndDialog(hDlg, 2);
+    if (Msg == WM_COMMAND) {            // 0x44C5FD
+        if (LOWORD(wParam) == IDOK) {   // OK
+            ApplyFrameRangeScale(hDlg); // 0x0043E970
+            EndDialog(hDlg, IDOK);
+        } else if (LOWORD(wParam) == IDCANCEL) { // Cancel
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -108,18 +97,18 @@ INT_PTR CALLBACK FrameRangeDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lP
 // VA 0x0047A3F0 - SelectNavDlgProc
 // ===========================================================================
 INT_PTR CALLBACK SelectNavDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lParam) {
-    if (Msg == WM_INITDIALOG) {                     // 0x47A3F9
-        InitSelectNavDialog(g_Block, hDlg);                   // 0x00466630 list fill
+    if (Msg == WM_INITDIALOG) {             // 0x47A3F9
+        InitSelectNavDialog(g_Block, hDlg); // 0x00466630 list fill
         return 0;
     }
     if (Msg != WM_COMMAND)
         return 0;
 
-    if (LOWORD(wParam) == 2) {                      // 0x47A40F cancel
-        EndDialog(hDlg, 1);
+    if (LOWORD(wParam) == IDCANCEL) { // 0x47A40F cancel
+        EndDialog(hDlg, IDOK);
         return 0;
     }
-    if (LOWORD(wParam) == 671) {                    // 0x47A42A previous
+    if (LOWORD(wParam) == 671) { // 0x47A42A previous
         HWND combo = GetDlgItem(hDlg, panel::kBoneNameCombo);
         const LRESULT cur = SendMessageA(combo, CB_GETCURSEL, 0, 0);
         if (cur > 0) {
@@ -128,7 +117,7 @@ INT_PTR CALLBACK SelectNavDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lPa
         }
         return 0;
     }
-    if (LOWORD(wParam) == 670) {                    // 0x47A47A next
+    if (LOWORD(wParam) == 670) { // 0x47A47A next
         HWND combo = GetDlgItem(hDlg, panel::kBoneNameCombo);
         const LRESULT cur = SendMessageA(combo, CB_GETCURSEL, 0, 0);
         if (cur < SendMessageA(combo, CB_GETCOUNT, 0, 0) - 1) {
@@ -137,15 +126,15 @@ INT_PTR CALLBACK SelectNavDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lPa
         }
         return 0;
     }
-    if (LOWORD(wParam) == 632) {                    // 0x47A4DD
+    if (LOWORD(wParam) == 632) { // 0x47A4DD
         ResetModelSelection(g_Block);
         return 0;
     }
-    if (LOWORD(wParam) == 630) {                    // 0x47A4F6
+    if (LOWORD(wParam) == 630) { // 0x47A4F6
         ApplyBoneAttach(g_Block, hDlg);
         return 0;
     }
-    if (HIWORD(wParam) == 1) {                      // 0x47A516 click
+    if (HIWORD(wParam) == 1) { // 0x47A516 click
         const HWND ctrl = reinterpret_cast<HWND>(lParam);
         if (ctrl == GetDlgItem(hDlg, panel::kBoneNameCombo)) {
             SyncSelectAttachCombo(g_Block, hDlg);
@@ -163,4 +152,4 @@ INT_PTR CALLBACK SelectNavDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lPa
     return 0;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

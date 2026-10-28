@@ -35,27 +35,24 @@
 namespace mikudancestudio {
 namespace {
 
-template <typename T>
-T& At(unsigned char* p, std::size_t offset) {
+template <typename T> T& At(unsigned char* p, std::size_t offset) {
     return *reinterpret_cast<T*>(p + offset);
 }
-template <typename T>
-const T& At(const unsigned char* p, std::size_t offset) {
+template <typename T> const T& At(const unsigned char* p, std::size_t offset) {
     return *reinterpret_cast<const T*>(p + offset);
 }
 
 // JP overflow strings 0x52B918 / 0x52B908, Shift-JIS byte-exact (same
 // resources as the global-track registrar in command_frame_edit.cpp).
-const char kJpOverflow[] =
-    "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67"
-    "\x90\x94\x82\xaa%d\x8c\xc2\x82\xf0\x89\x7a\x82\xa6"
-    "\x82\xdc\x82\xb5\x82\xbd\n\x82\xb1\x82\xea\x88\xc8"
-    "\x8f\xe3\x82\xcc\x93\x6f\x98\x5e\x82\xcd\x8d\x73"
-    "\x82\xa6\x82\xdc\x82\xb9\x82\xf1\n\x81\x75\xcc\xda"
-    "\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75"
-    "\x95\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c"
-    "\x81\x76\x82\xf0\x8e\xc0\x8d\x73\x82\xb5\x82\xc4"
-    "\x89\xba\x82\xb3\x82\xa2";
+const char kJpOverflow[] = "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67"
+                           "\x90\x94\x82\xaa%d\x8c\xc2\x82\xf0\x89\x7a\x82\xa6"
+                           "\x82\xdc\x82\xb5\x82\xbd\n\x82\xb1\x82\xea\x88\xc8"
+                           "\x8f\xe3\x82\xcc\x93\x6f\x98\x5e\x82\xcd\x8d\x73"
+                           "\x82\xa6\x82\xdc\x82\xb9\x82\xf1\n\x81\x75\xcc\xda"
+                           "\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75"
+                           "\x95\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c"
+                           "\x81\x76\x82\xf0\x8e\xc0\x8d\x73\x82\xb5\x82\xc4"
+                           "\x89\xba\x82\xb3\x82\xa2";
 const char kJpTitle[] = "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
 
 // Free-slot scan of a 10000-record accessory table starting at index 1
@@ -70,13 +67,12 @@ std::uint32_t FindFreeAccSlot(MMDApp* app, mdl::AccessoryKey* table) {
             if (app->state.englishUI != 0) {
                 sprintf_s(message, sizeof(message),
                           "You cannot regist over %dpoint.\n"
-                          "Please execute 'delete unused frame'", 10000);
-                MessageBoxA(app->state.hwnd, message,
-                            "register frame", 0);
+                          "Please execute 'delete unused frame'",
+                          10000);
+                MessageBoxA(app->state.hwnd, message, "register frame", 0);
             } else {
                 sprintf_s(message, sizeof(message), kJpOverflow, 10000);
-                MessageBoxA(app->state.hwnd, message,
-                            kJpTitle, 0);
+                MessageBoxA(app->state.hwnd, message, kJpTitle, 0);
             }
             return 0;
         }
@@ -88,8 +84,7 @@ std::uint32_t FindFreeAccSlot(MMDApp* app, mdl::AccessoryKey* table) {
 // record (0x4141.. field stores; +0x18 is the registered/selected flag).
 // Source layout: +0 frame offset, +4 slot byte, then the eleven payload
 // dwords at +8..+0x30.
-void FillAccKeyRecord(mdl::AccessoryKey& dst,
-                      const mdl::AccessoryClipboardKey& src,
+void FillAccKeyRecord(mdl::AccessoryKey& dst, const mdl::AccessoryClipboardKey& src,
                       std::uint32_t frame) {
     dst.frame = frame;
     std::memcpy(&dst.visible, &src.visible, 4);
@@ -107,38 +102,36 @@ void FillAccKeyRecord(mdl::AccessoryKey& dst,
 // Unsigned frame delta as the original computes it: fild of the signed
 // difference with the negative fixup +2^32 (flt_52B9F0).
 float UnsignedFrameDelta(std::uint32_t a, std::uint32_t b) {
-    const std::int32_t raw =
-        static_cast<std::int32_t>(a - b);
+    const std::int32_t raw = static_cast<std::int32_t>(a - b);
     float f = static_cast<float>(raw);
-    if (raw < 0) f += 4294967296.0f;
+    if (raw < 0)
+        f += 4294967296.0f;
     return f;
 }
 
-}  // namespace
+} // namespace
 
 // ---- VA 0x00401150: array constructor --------------------------------------
 // Calls `ctor` over each of `count` elements of `elementSize` bytes, walking
 // from the last element down to the first (the original's counting loop).
 // The ctor receives the element address (original passes it in ECX; the
 // ported no-op 0x4C46F0 takes it as a plain pointer argument).
-// 
-void* ConstructArrayElements(void* block, std::uint32_t elementSize,
-                             std::uint32_t count, void* ctor) {
+//
+void* ConstructArrayElements(void* block, std::uint32_t elementSize, std::uint32_t count,
+                             void* ctor) {
     const auto fn = reinterpret_cast<void (*)(void*)>(ctor);
     unsigned char* p = static_cast<unsigned char*>(block);
-    for (std::int32_t i = static_cast<std::int32_t>(count) - 1; i >= 0;
-         --i) {
+    for (std::int32_t i = static_cast<std::int32_t>(count) - 1; i >= 0; --i) {
         fn(p + static_cast<std::size_t>(i) * elementSize);
     }
     return block;
 }
 
 // ---- VA 0x00413120: accessory track seek / object state push ---------------
-void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
+void ApplyAccessoryTrack(MMDApp* app, int slot) { // VA 0x00413120
     if (app == nullptr || slot < 0 || slot >= 255)
         return;
-    const std::uint32_t cur =
-        static_cast<std::uint32_t>(app->CurrentFrame());
+    const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
     mdl::AccessoryKey* keys = app->AccessoryKeys(slot);
     auto* obj = app->AccessorySlot(slot);
     // The original dereferences the slot pointer directly; callers keep the
@@ -154,7 +147,7 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
         for (;;) {
             const std::uint32_t next = keys[index].next;
             if (next == 0) {
-                terminal = true;  // last record stays current
+                terminal = true; // last record stays current
                 break;
             }
             index = next;
@@ -166,8 +159,7 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
     // Verbatim state push (0x41316C..0x4131A0 / 0x413189.. terminal).
     // withFloats: the two interpolated channels (+0x34/+0x38) are copied
     // verbatim on exact hit and on the terminal record.
-    const auto pushState = [&](const mdl::AccessoryKey& rec,
-                               bool withFloats) {
+    const auto pushState = [&](const mdl::AccessoryKey& rec, bool withFloats) {
         obj->visible = rec.visible;
         obj->shadowEnabled = rec.shadowEnabled;
         obj->parentModel = rec.parentModel;
@@ -193,18 +185,15 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
         // (0x4131AC..0x413224).
         const mdl::AccessoryKey& prec = keys[rec.previous];
         const float t =
-            UnsignedFrameDelta(cur, prec.frame) /
-            UnsignedFrameDelta(rec.frame, prec.frame);
-        obj->scale =
-            prec.scale + t * (rec.scale - prec.scale);
-        obj->opacity =
-            prec.opacity + t * (rec.opacity - prec.opacity);
+            UnsignedFrameDelta(cur, prec.frame) / UnsignedFrameDelta(rec.frame, prec.frame);
+        obj->scale = prec.scale + t * (rec.scale - prec.scale);
+        obj->opacity = prec.opacity + t * (rec.opacity - prec.opacity);
         pushState(prec, false);
         SeekPortableSceneAccessory(app, slot, static_cast<int>(cur));
         return;
     }
 
-    pushState(rec, true);  // exact hit (0x413225..0x413297)
+    pushState(rec, true); // exact hit (0x413225..0x413297)
     SeekPortableSceneAccessory(app, slot, static_cast<int>(cur));
 }
 
@@ -213,12 +202,10 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
 // targets the currently selected accessory slot (app+0x9E170) instead of
 // the record's own slot byte.  Returns 0 when the table is full (the
 // replay loop in the 0xFA handler stops); 1 otherwise.
-// 
-int PasteAccessoryKeyRecord(MMDApp* app, void* recData, int useSelectedSlot) {
-    const auto& src =
-        *static_cast<const mdl::AccessoryClipboardKey*>(recData);
-    const std::uint8_t slot =
-        useSelectedSlot != 0 ? app->SelectedAccessorySlot() : src.slot;
+//
+int PasteAccessoryKeyRecord(MMDApp* app, const mdl::AccessoryClipboardKey& src,
+                            int useSelectedSlot) {
+    const std::uint8_t slot = useSelectedSlot != 0 ? app->SelectedAccessorySlot() : src.slot;
 
     // No accessory loaded: the original returns through its epilogue
     // without touching anything (0x41411E..0x414164).
@@ -227,8 +214,7 @@ int PasteAccessoryKeyRecord(MMDApp* app, void* recData, int useSelectedSlot) {
     }
 
     mdl::AccessoryKey* table = app->AccessoryKeys(slot);
-    const std::uint32_t frame =
-        static_cast<std::uint32_t>(app->CurrentFrame()) + src.frameOffset;
+    const std::uint32_t frame = static_cast<std::uint32_t>(app->CurrentFrame()) + src.frameOffset;
 
     // Walk to the first record with frame >= target (0x41416D..0x4141AF).
     std::uint32_t index = 0;
@@ -237,7 +223,7 @@ int PasteAccessoryKeyRecord(MMDApp* app, void* recData, int useSelectedSlot) {
         for (;;) {
             const std::uint32_t next = table[index].next;
             if (next == 0) {
-                offEnd = true;  // append after `index`
+                offEnd = true; // append after `index`
                 break;
             }
             index = next;
@@ -256,7 +242,8 @@ int PasteAccessoryKeyRecord(MMDApp* app, void* recData, int useSelectedSlot) {
     }
 
     const std::uint32_t freeIndex = FindFreeAccSlot(app, table);
-    if (freeIndex == 0) return 0;  // overflow box already shown
+    if (freeIndex == 0)
+        return 0; // overflow box already shown
 
     mdl::AccessoryKey& added = table[freeIndex];
     if (offEnd) {
@@ -279,4 +266,4 @@ int PasteAccessoryKeyRecord(MMDApp* app, void* recData, int useSelectedSlot) {
     return 1;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

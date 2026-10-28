@@ -19,8 +19,7 @@ namespace mikudancestudio {
 // app-side twin keeps the recorder call sites typed without pulling the
 // DLL-internal class hierarchy into the EXE.
 struct IPushSource : public IUnknown {
-    virtual HRESULT STDMETHODCALLTYPE SetBitmapInfo(const void* pBitmapInfo,
-                                                    int n, float fps) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetBitmapInfo(const void* pBitmapInfo, int n, float fps) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetStreamingState(void* pState) = 0;
     virtual HRESULT STDMETHODCALLTYPE StartStreaming(DWORD_PTR dwBits) = 0;
     virtual HRESULT STDMETHODCALLTYPE BeginStreaming() = 0;
@@ -63,4 +62,4 @@ struct DShowRecorder {
 static_assert(sizeof(DShowRecorder) == 0x6C);
 #endif
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

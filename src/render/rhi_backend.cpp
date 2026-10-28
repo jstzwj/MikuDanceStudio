@@ -3,48 +3,68 @@
 #include "mikudancestudio/rhi_d3d12.hpp"
 namespace mikudancestudio::rhi {
 bool BackendAvailable(Backend backend) {
-    switch(backend) {
+    switch (backend) {
 #ifdef MIKUDANCESTUDIO_RHI_D3D11
-    case Backend::D3D11:return true;
+    case Backend::D3D11:
+        return true;
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_D3D12
-    case Backend::D3D12:return true;
+    case Backend::D3D12:
+        return true;
 #endif
-    default:return false;
+    default:
+        return false;
     }
 }
-BackendDevice CreateBackendDevice(const SwapchainDesc& desc,const BackendOptions& options) {
+BackendDevice CreateBackendDevice(const SwapchainDesc& desc, const BackendOptions& options) {
     BackendDevice result;
-    switch(options.backend) {
+    switch (options.backend) {
 #ifdef MIKUDANCESTUDIO_RHI_D3D11
-    case Backend::D3D11:{
-        auto native=CreateD3D11Device(desc,options.driver==BackendDriver::Software?D3D11Driver::Warp:D3D11Driver::Hardware,options.model);
-        result.device=std::move(native.device);result.swapchain=std::move(native.swapchain);
-        result.reason=std::move(native.creationReason);result.adapter=std::move(native.adapterName);result.nativeError=native.creationError;
+    case Backend::D3D11: {
+        auto native = CreateD3D11Device(
+            desc,
+            options.driver == BackendDriver::Software ? D3D11Driver::Warp : D3D11Driver::Hardware,
+            options.model);
+        result.device = std::move(native.device);
+        result.swapchain = std::move(native.swapchain);
+        result.reason = std::move(native.creationReason);
+        result.adapter = std::move(native.adapterName);
+        result.nativeError = native.creationError;
         break;
     }
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_D3D12
-    case Backend::D3D12:{
-        auto native=CreateD3D12Device(desc,options.driver==BackendDriver::Software?D3D12Driver::Warp:D3D12Driver::Hardware,{options.model,false});
-        result.device=std::move(native.device);result.swapchain=std::move(native.swapchain);
-        result.reason=std::move(native.creationReason);result.adapter=std::move(native.adapterName);result.nativeError=native.creationError;
+    case Backend::D3D12: {
+        auto native = CreateD3D12Device(
+            desc,
+            options.driver == BackendDriver::Software ? D3D12Driver::Warp : D3D12Driver::Hardware,
+            {options.model, false});
+        result.device = std::move(native.device);
+        result.swapchain = std::move(native.swapchain);
+        result.reason = std::move(native.creationReason);
+        result.adapter = std::move(native.adapterName);
+        result.nativeError = native.creationError;
         break;
     }
 #endif
-    default:result.reason="backend_not_built";break;
+    default:
+        result.reason = "backend_not_built";
+        break;
     }
     return result;
 }
-bool ReadBackendPresentation(Backend backend,Device& device,RgbaImage& image) {
-    switch(backend) {
+bool ReadBackendPresentation(Backend backend, Device& device, RgbaImage& image) {
+    switch (backend) {
 #ifdef MIKUDANCESTUDIO_RHI_D3D11
-    case Backend::D3D11:return ReadD3D11Swapchain(device,image);
+    case Backend::D3D11:
+        return ReadD3D11Swapchain(device, image);
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_D3D12
-    case Backend::D3D12:return ReadD3D12Swapchain(device,image);
+    case Backend::D3D12:
+        return ReadD3D12Swapchain(device, image);
 #endif
-    default:return false;
+    default:
+        return false;
     }
 }
 }

@@ -59,6 +59,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <shellapi.h>
 
@@ -80,35 +81,33 @@ namespace mikudancestudio {
 namespace {
 
 // JP-locale MessageBox byte strings - verbatim Shift-JIS from .rdata.
-// 0x52E568 "保存していない変更点があります\n\nこのままロードしてよろしいですか？"
+// 0x52E568 "There are unsaved changes.\n\nContinue loading?"
 const char kJpDirtyText[] =
     "\x95\xdb\x91\xb6\x82\xb5\x82\xc4\x82\xa2\x82\xc8\x82\xa2"
     "\x95\xcf\x8d\x58\x93\x5f\x82\xaa\x82\xa0\x82\xe8\x82\xdc\x82\xb7"
     "\x0a\x0a"
     "\x82\xb1\x82\xcc\x82\xdc\x82\xdc\x83\x8d\x81\x5b\x83\x68"
     "\x82\xb5\x82\xc4\x82\xe6\x82\xeb\x82\xb5\x82\xa2\x82\xc5\x82\xb7\x82\xa9\x81\x48";
-// 0x52E5AC "ファイルを開く"
-const char kJpDirtyCaption[] =
-    "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xf0\x8a\x4a\x82\xad";
-// 0x52E49C "ボーンを選択してからでは読みません"
-const char kJpPoseText[] =
-    "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
-    "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
-    "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
-// 0x52E4CC "ポーズ読込"
+// 0x52E5AC "Open file"
+const char kJpDirtyCaption[] = "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xf0\x8a\x4a\x82\xad";
+// 0x52E49C "Cannot load before selecting bones"
+const char kJpPoseText[] = "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
+                           "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
+                           "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
+// 0x52E4CC "Load pose"
 const char kJpPoseCaption[] = "\x83\x7c\x81\x5b\x83\x59\x93\xc7\x8d\x9e";
-// 0x52E374 "ボーンを選択してからではvsqポーズでは読みません" (ASCII "vsq" embedded)
-const char kJpVsqText[] =
-    "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
-    "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd" "vsq"
-    "\x83\x66\x81\x5b\x83\x5e\x82\xcd"
-    "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
-// 0x52E2F4 "ボーンを選択してからではoniポーズでは読みません" (ASCII "oni" embedded)
-const char kJpOniText[] =
-    "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
-    "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd" "oni"
-    "\x83\x66\x81\x5b\x83\x5e\x82\xcd"
-    "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
+// 0x52E374 "Cannot load a vsq pose before selecting bones" (ASCII "vsq" embedded)
+const char kJpVsqText[] = "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
+                          "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
+                          "vsq"
+                          "\x83\x66\x81\x5b\x83\x5e\x82\xcd"
+                          "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
+// 0x52E2F4 "Cannot load an oni pose before selecting bones" (ASCII "oni" embedded)
+const char kJpOniText[] = "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe"
+                          "\x83\x82\x81\x5b\x83\x68\x82\xc5\x82\xcd"
+                          "oni"
+                          "\x83\x66\x81\x5b\x83\x5e\x82\xcd"
+                          "\x93\xc7\x82\xdf\x82\xdc\x82\xb9\x82\xf1";
 
 HWND MainHwnd(MMDApp* app) {
     return static_cast<HWND>(app->Hwnd());
@@ -117,7 +116,8 @@ HWND MainHwnd(MMDApp* app) {
 // Menu item 0x12D checked state - the "remember current directory" gate.
 // Original: GetMenu(hwnd) -> GetMenuState(menu, 0x12D, 0) & 8.
 bool DirMenuChecked(MMDApp* app) {
-    return (GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & MF_CHECKED) != 0;
+    return (GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & MF_CHECKED) !=
+           0;
 }
 
 // VA 0x00408960 - the port writes at `destination` directly, while the
@@ -125,11 +125,10 @@ bool DirMenuChecked(MMDApp* app) {
 // pointer.  Passing app+652088+512 reproduces the exact in-object write
 // (the +512 slot at byte 653112, 0x9F738).
 wchar_t* DirOf(MMDApp* app, const wchar_t* szFile) {
-    return ExtractDirFromPath(app->PathWorkspace().executableDirectory,
-                              szFile);
+    return ExtractDirFromPath(app->PathWorkspace().executableDirectory, szFile);
 }
 
-}  // namespace
+} // namespace
 
 void HandleDropFiles(HDROP hDrop) {
     MMDApp* app = g_Block;
@@ -142,8 +141,7 @@ void HandleDropFiles(HDROP hDrop) {
         DragQueryFileW(hDrop, iFile, szFile, static_cast<UINT>(sizeof(szFile) / sizeof(szFile[0])));
 
         // ---- .pmm - project file -----------------------------------------
-        if (wcsstr(szFile, L".pmm") || wcsstr(szFile, L".PMM") ||
-            wcsstr(szFile, L".Pmm")) {
+        if (wcsstr(szFile, L".pmm") || wcsstr(szFile, L".PMM") || wcsstr(szFile, L".Pmm")) {
             if (app->SceneModified() != 0) {
                 int r;
                 if (app->EnglishUI()) {
@@ -151,58 +149,51 @@ void HandleDropFiles(HDROP hDrop) {
                                     "There is a change point not preserved.\n\nAre you OK?",
                                     "open file data", MB_OKCANCEL);
                 } else {
-                    r = MessageBoxA(MainHwnd(app), kJpDirtyText,
-                                    kJpDirtyCaption, MB_OKCANCEL);
+                    r = MessageBoxA(MainHwnd(app), kJpDirtyText, kJpDirtyCaption, MB_OKCANCEL);
                 }
                 if (r != IDOK)
-                    return;  // 0x4613F9: original returns, DragFinish skipped
+                    return; // 0x4613F9: original returns, DragFinish skipped
             }
-            if (DirMenuChecked(app)) {  // 0x46140D
-                wcscpy_s(app->DirUser(), 0x3E8, DirOf(app, szFile));  // 0xA1540
+            if (DirMenuChecked(app)) {                               // 0x46140D
+                wcscpy_s(app->DirUser(), 0x3E8, DirOf(app, szFile)); // 0xA1540
             }
-            wcscpy_s(app->EnvFileName(), 0x100, szFile);              // 0xA0900
-            LoadSceneFile();                                          // 0x458F80
+            wcscpy_s(app->EnvFileName(), 0x100, szFile); // 0xA0900
+            LoadSceneFile();                             // 0x458F80
             continue;
         }
 
         // ---- .pmd / .pmx - model -----------------------------------------
-        if ((wcsstr(szFile, L".pmd") || wcsstr(szFile, L".PMD") ||
-             wcsstr(szFile, L".Pmd")) ||
-            (wcsstr(szFile, L".pmx") || wcsstr(szFile, L".PMX") ||
-             wcsstr(szFile, L".Pmx"))) {
+        if ((wcsstr(szFile, L".pmd") || wcsstr(szFile, L".PMD") || wcsstr(szFile, L".Pmd")) ||
+            (wcsstr(szFile, L".pmx") || wcsstr(szFile, L".PMX") || wcsstr(szFile, L".Pmx"))) {
             if (DirMenuChecked(app)) {
-                wcscpy_s(app->DirModel(), 0x3E8, DirOf(app, szFile));  // 0xA0D70
+                wcscpy_s(app->DirModel(), 0x3E8, DirOf(app, szFile)); // 0xA0D70
             }
-            LoadModelFile(app, szFile);                               // 0x460430
+            LoadModelFile(app, szFile); // 0x460430
             continue;
         }
 
         // ---- .vpd - pose data ---------------------------------------------
-        if (wcsstr(szFile, L".vpd") || wcsstr(szFile, L".VPD") ||
-            wcsstr(szFile, L".Vpd")) {
-            if (app->state.optflag[0] != 0) {  // 760
+        if (wcsstr(szFile, L".vpd") || wcsstr(szFile, L".VPD") || wcsstr(szFile, L".Vpd")) {
+            if (app->CameraMode() != 0) { // 760
                 if (app->EnglishUI())
-                    MessageBoxA(MainHwnd(app), "Not selected model!",
-                                "open pose data", MB_OK);
+                    MessageBoxA(MainHwnd(app), "Not selected model!", "open pose data", MB_OK);
                 else
-                    MessageBoxA(MainHwnd(app), kJpPoseText, kJpPoseCaption,
-                                MB_OK);
+                    MessageBoxA(MainHwnd(app), kJpPoseText, kJpPoseCaption, MB_OK);
             } else {
                 if (DirMenuChecked(app)) {
-                    wcscpy_s(app->DirPose(), 0x3E8, DirOf(app, szFile));  // 0xA2CB0
+                    wcscpy_s(app->DirPose(), 0x3E8, DirOf(app, szFile)); // 0xA2CB0
                 }
-                LoadVpdFile(szFile);                                  // 0x418A10
+                LoadVpdFile(szFile); // 0x418A10
             }
             continue;
         }
 
         // ---- .vmd - motion data -------------------------------------------
-        if (wcsstr(szFile, L".vmd") || wcsstr(szFile, L".VMD") ||
-            wcsstr(szFile, L".Vmd")) {
+        if (wcsstr(szFile, L".vmd") || wcsstr(szFile, L".VMD") || wcsstr(szFile, L".Vmd")) {
             if (DirMenuChecked(app)) {
-                wcscpy_s(app->DirMotion(), 0x3E8, DirOf(app, szFile));  // 0xA24E0
+                wcscpy_s(app->DirMotion(), 0x3E8, DirOf(app, szFile)); // 0xA24E0
             }
-            LoadVmdFile(szFile);                                      // 0x434B60
+            LoadVmdFile(szFile); // 0x434B60
             app->SceneModified() = 1;
             continue;
         }
@@ -210,101 +201,94 @@ void HandleDropFiles(HDROP hDrop) {
         // ---- .x - DirectX accessory ---------------------------------------
         if (wcsstr(szFile, L".x") || wcsstr(szFile, L".X")) {
             if (DirMenuChecked(app)) {
-                wcscpy_s(app->DirAccs(), 0x3E8, DirOf(app, szFile));   // 0xA1D10
+                wcscpy_s(app->DirAccs(), 0x3E8, DirOf(app, szFile)); // 0xA1D10
             }
-            LoadAccessoryFile(szFile);  // 0x460B30 (original LABEL_31)
+            LoadAccessoryFile(szFile); // 0x460B30 (original LABEL_31)
             continue;
         }
 
         // ---- .vac - the third needle is L"Vac" (no dot), original quirk ---
-        if (wcsstr(szFile, L".vac") || wcsstr(szFile, L".VAC") ||
-            wcsstr(szFile, L"Vac")) {
+        if (wcsstr(szFile, L".vac") || wcsstr(szFile, L".VAC") || wcsstr(szFile, L"Vac")) {
             if (DirMenuChecked(app)) {
                 wcscpy_s(app->DirAccs(), 0x3E8, DirOf(app, szFile));
             }
-            LoadAccessoryFile(szFile);  // 0x460B30 (original LABEL_31)
+            LoadAccessoryFile(szFile); // 0x460B30 (original LABEL_31)
             continue;
         }
 
         // ---- .avi - video ---------------------------------------------------
-        if (wcsstr(szFile, L".avi") || wcsstr(szFile, L".AVI") ||
-            wcsstr(szFile, L".Avi")) {
+        if (wcsstr(szFile, L".avi") || wcsstr(szFile, L".AVI") || wcsstr(szFile, L".Avi")) {
             if (DirMenuChecked(app)) {
-                wcscpy_s(app->DirBg(), 0x3E8, DirOf(app, szFile));     // 0xA3C50
+                wcscpy_s(app->DirBg(), 0x3E8, DirOf(app, szFile)); // 0xA3C50
             }
-            wcscpy_s(app->state.aviBackgroundPath, 0x100, szFile);              // 0x9E1EC
+            wcscpy_s(app->state.aviBackgroundPath, 0x100, szFile); // 0x9E1EC
             // original: sub_433250(this) reads the path from app+647660;
             // the stub interface takes the path - pass the same buffer
-            LoadAviFile(app);                                        // 0x433250
+            LoadAviFile(app); // 0x433250
             app->SceneModified() = 1;
             continue;
         }
 
         // ---- .bmp / .jpg - backdrop image ----------------------------------
-        if (wcsstr(szFile, L".bmp") || wcsstr(szFile, L".BMP") ||
-            wcsstr(szFile, L".Bmp")) {
+        if (wcsstr(szFile, L".bmp") || wcsstr(szFile, L".BMP") || wcsstr(szFile, L".Bmp")) {
             if (DirMenuChecked(app)) {
                 wcscpy_s(app->DirBg(), 0x3E8, DirOf(app, szFile));
             }
         } else {
-            if (!(wcsstr(szFile, L".jpg") || wcsstr(szFile, L".JPG") ||
-                  wcsstr(szFile, L".Jpg"))) {
+            if (!(wcsstr(szFile, L".jpg") || wcsstr(szFile, L".JPG") || wcsstr(szFile, L".Jpg"))) {
                 // ---- .wav - wave audio ----
-                if (wcsstr(szFile, L".wav") || wcsstr(szFile, L".WAV") ||
-                    wcsstr(szFile, L".Wav")) {
-                    wcscpy_s(app->state.wavPath, 0x100, szFile);  // 0xD0
+                if (wcsstr(szFile, L".wav") || wcsstr(szFile, L".WAV") || wcsstr(szFile, L".Wav")) {
+                    wcscpy_s(app->state.wavPath, 0x100, szFile); // 0xD0
                     if (DirMenuChecked(app)) {
-                        wcscpy_s(app->DirWave(), 0x3E8, DirOf(app, szFile));  // 0xA3480
+                        wcscpy_s(app->DirWave(), 0x3E8, DirOf(app, szFile)); // 0xA3480
                     }
                     // original: sub_418500(this) reads the path from app+208;
                     // the stub interface takes the path - pass the same buffer
-                    LoadWaveFile(app);                                // 0x418500
+                    LoadWaveFile(app); // 0x418500
                     app->SceneModified() = 1;
                 } else {
                     // ---- .vsq - VOCALOID sequence ----
                     if (wcsstr(szFile, L".vsq") || wcsstr(szFile, L".VSQ") ||
                         wcsstr(szFile, L".Vsq")) {
-                        if (app->state.optflag[0] != 0) {
+                        if (app->CameraMode() != 0) {
                             if (app->EnglishUI())
-                                MessageBoxA(MainHwnd(app), "Not selected model!",
-                                            "open vsq data", MB_OK);
-                            else
-                                MessageBoxA(MainHwnd(app), kJpVsqText, "vsq",
+                                MessageBoxA(MainHwnd(app), "Not selected model!", "open vsq data",
                                             MB_OK);
+                            else
+                                MessageBoxA(MainHwnd(app), kJpVsqText, "vsq", MB_OK);
                         } else {
-                            LoadVsqFile(app, szFile);                   // 0x435FE0
+                            LoadVsqFile(app, szFile); // 0x435FE0
                             app->SceneModified() = 1;
                         }
                     } else {
                         // ---- .oni - OpenNI/Kinect data ----
                         if (wcsstr(szFile, L".oni") || wcsstr(szFile, L".ONI") ||
                             wcsstr(szFile, L".Oni")) {
-                            if (app->state.optflag[0] != 0) {
+                            if (app->CameraMode() != 0) {
                                 if (app->EnglishUI())
                                     MessageBoxA(MainHwnd(app), "Please select model!",
                                                 "open oni data", MB_OK);
                                 else
-                                    MessageBoxA(MainHwnd(app), kJpOniText, "oni",
-                                                MB_OK);
+                                    MessageBoxA(MainHwnd(app), kJpOniText, "oni", MB_OK);
                             } else {
                                 if (app->state.depthDeviceEnabled != 0)
-                                    DisableKinect(app);                // 0x42A020
+                                    DisableKinect(app); // 0x42A020
                                 char sjisPath[256];
-                                WideToSjis(app->Renderer(), sjisPath, szFile, 256);  // 0x407910
-                                OpenNiInit(app, sjisPath);             // 0x429CB0
+                                WideToSjis(app->Renderer(), sjisPath, szFile, 256); // 0x407910
+                                OpenNiInit(app, sjisPath);                          // 0x429CB0
                             }
                         }
                     }
                 }
-                continue;  // 0x461A65 (LABEL_64)
+                continue; // 0x461A65 (LABEL_64)
             }
         }
         // .bmp or .jpg matched: backdrop tail shared at 0x46199F
-        wcscpy_s(app->state.pictureBackgroundPath, 0x100, szFile);    // 0x9E448
-        LoadBackgroundPicture(app);                                   // 0x4337A0
+        wcscpy_s(app->state.pictureBackgroundPath, 0x100, szFile); // 0x9E448
+        LoadBackgroundPicture(app);                                // 0x4337A0
         app->SceneModified() = 1;
     }
-    DragFinish(hDrop);  // 0x461BF7 (not reached by the cancel path above)
+    DragFinish(hDrop); // 0x461BF7 (not reached by the cancel path above)
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

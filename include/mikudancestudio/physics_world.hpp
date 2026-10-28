@@ -16,4 +16,4 @@ public:
 #endif
 };
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

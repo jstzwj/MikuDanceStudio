@@ -48,18 +48,18 @@ bool CheckSelectorBonePoses() {
     display[2].previous = 1;
     for (int i = 0; i < 3; ++i)
         display[i].selectorStates = &pairs[i];
-    auto* raw = reinterpret_cast<unsigned char*>(model.get());
+    auto* raw = model.get();
     for (const auto [frame, expected] :
          {std::pair{3, 0.0f}, std::pair{7, 10.0f},
           std::pair{12, 10.0f}, std::pair{17, 20.0f}}) {
-        SeekModelFrame(raw, frame, 0);
+        SeekModelFrame(*raw, frame, 0);
         if (!Near(bone.trans[0], expected)) return false;
         InitModelTrackCursors(raw, 0.0f, 0);
         AdvanceModelKeyframes(raw, static_cast<float>(frame) / 30.0f, 0);
         if (!Near(bone.trans[0], expected)) return false;
     }
     keys[1].next = 0;
-    SeekModelFrame(raw, 17, 0);
+    SeekModelFrame(*raw, 17, 0);
     if (!Near(bone.trans[0], 0.0f) ||
         !Near(bone.rotQuat[3], 1.0f)) return false;
     InitModelTrackCursors(raw, 0.0f, 0);
@@ -126,8 +126,8 @@ int main() {
     display[1].visible = 0;
     display[1].ikStates = &ikState[1];
     display[1].selectorStates = &selectorPairs[1];
-    auto* raw = reinterpret_cast<unsigned char*>(model.get());
-    SeekModelFrame(raw, 5, 0);
+    auto* raw = model.get();
+    SeekModelFrame(*raw, 5, 0);
     if (!Near(bone.trans[0], 5.0f) ||
         !Near(bone.rotQuat[2], 0.3826834f) ||
         !Near(morph.value, 0.5f) || ik.enabled != 1 ||
@@ -136,9 +136,9 @@ int main() {
     // Edits to runtime keys must affect the next scrub immediately.
     boneKeys[1].position[0] = 20.0f;
     morphKeys[1].value = 0.4f;
-    SeekModelFrame(raw, 5, 0);
+    SeekModelFrame(*raw, 5, 0);
     if (!Near(bone.trans[0], 10.0f) || !Near(morph.value, 0.2f)) return 2;
-    SeekModelFrame(raw, 10, 0);
+    SeekModelFrame(*raw, 10, 0);
     if (!Near(bone.trans[0], 20.0f) || !Near(morph.value, 0.4f) ||
         model->loadComplete != 0 || ik.enabled != 0 ||
         selector.linkedModel != 4 || selector.linkedBone != 5 ||

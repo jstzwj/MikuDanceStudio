@@ -106,14 +106,14 @@ private:
     char* previous_;
 };
 
-// [0x18000c08e / 0x18000c0fa] 原版 flags 立即数对应的 SDK 具名常量
-// （d3dx9shader.h；移植 d3dx9.h 只定义了 D3DXFX_* 族，未含 D3DXSHADER_*，
-// 故按 SDK 数值在此局部具名）：
-//   0x1000 = D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY (1<<12)——并非
-//            D3DXFX_NOT_CLONEABLE（=1<<11=0x800，与 DXSDK/Wine/ReactOS 头一致）；
+// [0x18000c08e / 0x18000c0fa] Named SDK constants for the original immediate flags
+// (d3dx9shader.h; the port's d3dx9.h defines only D3DXFX_*, not D3DXSHADER_*,
+// so name the SDK values locally here):
+//   0x1000 = D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY (1<<12), not
+//            D3DXFX_NOT_CLONEABLE (=1<<11=0x800, consistent with DXSDK/Wine/ReactOS headers);
 //   0xC0   = D3DXSHADER_FORCE_VS_SOFTWARE_NOOPT(0x40) |
-//            D3DXSHADER_FORCE_PS_SOFTWARE_NOOPT(0x80)——并非
-//            SKIPVALIDATION|SKIPOPTIMIZATION（那两者是 0x2|0x4=0x6）。
+//            D3DXSHADER_FORCE_PS_SOFTWARE_NOOPT(0x80), not
+//            SKIPVALIDATION|SKIPOPTIMIZATION (those are 0x2|0x4=0x6).
 const unsigned long kD3dxShaderEnableBackwardsCompatibility = 1u << 12; // 0x1000
 const unsigned long kD3dxShaderForceVsSoftwareNoOpt = 1u << 6;          // 0x40
 const unsigned long kD3dxShaderForcePsSoftwareNoOpt = 1u << 7;          // 0x80
@@ -183,27 +183,27 @@ void MmeEngineInit(IDirect3DDevice9* device, bool mipFilterAvailable)
 
 LoadedEffect::~LoadedEffect()
 {
-    // [0x18000b210] FUN_18000B210 完整卸载语义，锚定原版地址级顺序：
+    // [0x18000b210] Complete FUN_18000B210 unload semantics, preserving original address-level ordering:
     //
-    // 1. [0x18000b24b-0x18000b316] 日志先行：仅当 effect(+0x00) 非空时记录
-    //    "Unload effect file: <path>\n\n"（sub_180009080(x, 0) 纯写日志行），
-    //    失败加载条目（effect == null）静默卸载——原版 `if (*a1)` 门。
+    // 1. [0x18000b24b-0x18000b316] Log first: only if effect(+0x00) is non-null, record
+    //    "Unload effect file: <path>\n\n" (sub_180009080(x, 0) only writes a log line);
+    //    failed-load entries (effect == null) unload silently, matching the original `if (*a1)` gate.
     if (effect != nullptr) {
         MmeLogWrite(("Unload effect file: " + path + "\n\n").c_str(), 0);
     }
-    // 2. [0x18000b31b-0x18000b5de] 逐语义资源释放：原版遍历语义数组
-    //    （每项 0x28 字节，tag 0x26/0x27/0x28/0x2C/0x2D/0x2E/0x33）销毁资源
-    //    对象（sub_18000B660）、offscreen 深度（sub_18000B750）、动画纹理
-    //    （vtable 调用）、并清空 render-turn vector(+0x1B8) 与两个句柄
-    //    map(+0xB8/+0xD8)。移植的全部语义资源（offscreen surface/depth/
-    //    texture、CONTROLOBJECT 表、technique 模型）都在 SasEffect 里，
-    //    SasUnload 是它们的等价析构链。
+    // 2. [0x18000b31b-0x18000b5de] Release resources by semantic: the original traverses the semantic array
+    //    (0x28 bytes/entry, tags 0x26/0x27/0x28/0x2C/0x2D/0x2E/0x33), destroying resource
+    //    objects (sub_18000B660), offscreen depth (sub_18000B750), animated textures
+    //    (vtable calls), and clearing render-turn vector(+0x1B8) plus both handle
+    //    maps(+0xB8/+0xD8). All ported semantic resources (offscreen surface/depth/
+    //    texture, CONTROLOBJECT tables, technique models) belong to SasEffect;
+    //    SasUnload is their equivalent destruction chain.
     if (sas != nullptr) {
         SasUnload(sas);
         sas = nullptr;
     }
     // 3. [0x18000b614-0x18000b623] ID3DXEffect::Release()（(*a1)->vtbl+0x10）
-    //    并置空——原版链的最后一步。
+    //    and clear the pointer, the original chain's last step.
     if (effect != nullptr) {
         effect->Release();
         effect = nullptr;
@@ -213,13 +213,13 @@ LoadedEffect::~LoadedEffect()
 void MmeEngineTerm()
 {
     // [0x18001eeb0] FUN_18001eeb0: release every cache entry, then drop the
-    // containers。引用计数语义：cache.clear() 丢弃缓存侧引用，条目在
-    // “最后一个持有者”（仍存活的全量 MaterialBinding owner 引用）死亡时
-    // 经 ~LoadedEffect 执行 FUN_18000B210 语义（日志 / SasUnload /
-    // effect->Release）——与原版 boost shared_ptr 控制块的 dispose 时序
-    // 1:1。Cleanup 的调用顺序（callbacks.cpp：先 delete g_ownerManager /
-    // g_context，后 MmeEngineTerm）保证 term 时引用已归零，条目在此处
-    // 立即析构，与原版 term 立即逐条目 unload 的可观察行为一致。
+    // containers. Reference-count semantics: cache.clear() drops the cache reference; an entry is destroyed when
+    // its last holder (the surviving MaterialBinding owner references) dies,
+    // and ~LoadedEffect executes FUN_18000B210 semantics (log / SasUnload /
+    // effect->Release), matching the original boost shared_ptr control block's disposal timing
+    // exactly. Cleanup call order (callbacks.cpp: delete g_ownerManager /
+    // g_context before MmeEngineTerm) ensures references are already zero at termination, so entries
+    // are destroyed immediately here, matching original term's observable immediate per-entry unload behavior.
     EffectCacheRef().clear();
 
     TextureCache& textures = TextureCacheRef();
@@ -297,7 +297,7 @@ unsigned long MmeEngineQueryFileStamp(const std::string& pathAnsi)
     return stamp;
 }
 
-std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
+static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* device,
                                                       const std::string& pathAnsi)
 {
     EffectCache& cache = EffectCacheRef();
@@ -325,12 +325,12 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     // (FUN_180006610 = CP 0 ansi->wide, same as MmeAnsiToWide).
     std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
 
-    // [big-C 11296-11305 / 0x18000c0a4-0x18000c0f3] 宏数组只有两项：
-    //   defines[0] = {"_INDEX", "PSIZE15"}——_INDEX 的*值*是字符串
-    //     "PSIZE15"（0x18000c0b2），PSIZE15 本身不是独立宏名；
-    //   defines[1] = {"MME_MIPMAP", ""} 仅当 DAT_1800d99da（引擎初始化的
-    //     mip 锁存，0x18000c0d5 判 !=0）时填入，Definition 指向 NUL 空串
-    //     unk_1800b3b83（0x18000c0f3）。剩余槽位由清零形成 {NULL,NULL} 终止符。
+    // [big-C 11296-11305 / 0x18000c0a4-0x18000c0f3] The macro array contains only two entries:
+    //   defines[0] = {"_INDEX", "PSIZE15"}: _INDEX's value is the string
+    //     "PSIZE15" (0x18000c0b2); PSIZE15 is not a separate macro name;
+    //   defines[1] = {"MME_MIPMAP", ""} is populated only when DAT_1800d99da (the mip latch set during engine
+    //     initialization, tested for !=0 at 0x18000c0d5) is set. Definition points to the empty NUL string
+    //     unk_1800b3b83 (0x18000c0f3). Zeroed remaining slots form the {NULL,NULL} terminator.
     D3DXMACRO defines[4];
     memset(&defines, 0, sizeof(defines));
     int defineCount = 0;
@@ -339,27 +339,31 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     ++defineCount;
     if (g_engineMipFilterOk != 0) {                // [0x18000c0d5] DAT_1800d99da
         defines[defineCount].Name = "MME_MIPMAP";
-        defines[defineCount].Definition = "";      // [0x18000c0f3] unk_1800b3b83（空串）
+        defines[defineCount].Definition = "";      // [0x18000c0f3] unk_1800b3b83 (empty string)
         ++defineCount;
     }
 
     // [big-C 11258-11327] CWD switch around the load (relative resources).
     ScopedChdir chdirScope(pathAnsi);
 
-    // [0x18000c08e-0x18000c0fa] 原版 flags = 0x1000 | (byte_1800D99DE ? 0xC0 : 0)：
-    //   bit12 恒置（bts edi,0Ch）= D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY，
-    //   0xC0 仅调试模式置入（cmovnz），byte_1800D99DE = g_debugMode
-    //   （Initialize 0x1800564f3 由 MMHack 导入 IsDebugMode() 一次性锁存，
-    //   即宿主 exe 目录 MMEffect.debug 文件存在）。
-    unsigned long loadFlags = kD3dxShaderEnableBackwardsCompatibility;   // 0x1000
+    // [0x18000c08e-0x18000c0fa] Original flags = 0x1000 | (byte_1800D99DE ? 0xC0 : 0):
+    //   bit12 is always set (bts edi,0Ch) = D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY;
+    //   0xC0 is included only in debug mode (cmovnz), byte_1800D99DE = g_debugMode
+    //   (latched once by Initialize at 0x1800564f3 via MMHack import IsDebugMode(),
+    //   meaning MMEffect.debug exists in the host EXE directory).
+    // The x86 0.37 DLL (RVA 0xC970, call at 0xCD10) passes zero outside
+    // debug mode. Enabling the x64 compatibility bit changes shader bytecode.
+#if defined(_M_X64)
+    unsigned long loadFlags = kD3dxShaderEnableBackwardsCompatibility; // 0x1000
+#else
+    unsigned long loadFlags = 0;
+#endif
     if (g_debugMode != 0) {
-        loadFlags |= kD3dxShaderForceVsSoftwareNoOpt |
-                     kD3dxShaderForcePsSoftwareNoOpt;                    // 0xC0
+        loadFlags |= kD3dxShaderForceVsSoftwareNoOpt | kD3dxShaderForcePsSoftwareNoOpt; // 0xC0
     }
 
     ID3DXBuffer* errors = nullptr;
-    HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines,
-                                           nullptr, loadFlags,
+    HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines, nullptr, loadFlags,
                                            g_effectPool, &entry->effect, &errors);
     // [0x18000c1ab-0x18000c376] on failure exactly ONE segment is appended to
     // the error text: the compiler text when the error buffer carries bytes,
@@ -454,6 +458,36 @@ std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
     return entry;
 }
 
+std::shared_ptr<LoadedEffect> MmeEngineLoadEffectFile(IDirect3DDevice9* device,
+                                                     const std::string& pathAnsi,
+                                                     int materialCount)
+{
+    auto loaded = LoadCachedEffectFile(device, pathAnsi);
+    if (!loaded || !loaded->effect) {
+        return loaded;
+    }
+    const auto key = std::make_pair(materialCount, g_skipValidation);
+    auto validation = loaded->techniqueValidation.find(key);
+    if (validation == loaded->techniqueValidation.end()) {
+        validation = loaded->techniqueValidation.emplace(
+            key, SasValidateTechniqueSelections(loaded->sas, materialCount)).first;
+    }
+    if (validation->second.empty()) {
+        return loaded;
+    }
+
+    // Native load tail: x64 0x18000C432 / x86 0x1000CF5E rejects a nonzero
+    // selection-table result. Keep the compiled cache entry intact: subset
+    // restrictions can make this assignment invalid while another model's
+    // smaller material range remains valid. The existing caller owns error
+    // reporting and assignment/reload failure handling.
+    auto failure = std::make_shared<LoadedEffect>();
+    failure->path = pathAnsi;
+    failure->fileStamp = loaded->fileStamp;
+    failure->errorText = validation->second;
+    return failure;
+}
+
 std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     IDirect3DDevice9* device, const std::shared_ptr<LoadedEffect>& source)
 {
@@ -477,34 +511,39 @@ std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     return instance;
 }
 
-void MmeEngineUnloadEffectFile(const std::string& pathAnsi)
+void MmeEngineUnloadEffectFile(const std::string& pathAnsi,
+                               const std::shared_ptr<LoadedEffect>& expected)
 {
-    // [0x18000b210] FUN_18000b210 的引用计数等价物：原版“卸载效果文件”=
-    // 让缓存条目的 shared_ptr 引用链收敛——缓存 map erase 掉自己的那份，
-    // 条目本身活到“最后一个引用它的绑定对象销毁”（0x18000b5e9-0x18000b611
-    // 控制块 InterlockedDecrement → dispose）。移植由 cache.erase 丢弃缓存
-    // 侧引用，真正的资源释放（日志 "Unload effect file: <path>\n\n"、
-    // SasUnload、effect->Release）发生在最后一个 MaterialBinding 的 owner
-    // 引用死亡时的 ~LoadedEffect——与原版时序 1:1。
+    // [0x18000b210] Reference-counted equivalent of FUN_18000b210: the original "unload effect file" operation
+    // lets the cached entry's shared_ptr references converge: the cache map erases its own reference,
+    // while the entry survives until the last binding that references it is destroyed (0x18000b5e9-0x18000b611
+    // control-block InterlockedDecrement -> dispose). The port's cache.erase drops the cache
+    // reference; actual resource release ("Unload effect file: <path>\n\n" log,
+    // SasUnload, effect->Release) occurs in ~LoadedEffect when the last MaterialBinding owner
+    // reference dies, matching original timing exactly.
     //
-    // 调用方（emm_manager.cpp 加载失败清理 / mme_ui.cpp Reload-All 与自动
-    // 热重载）在卸载后立即重新分配效果：重新加载产生新条目，绑定在
-    // MmeEnsureMaterialBinding 里切换 owner 引用，旧条目随即经析构链死亡。
-    // 卸载与重分配之间不存在渲染帧（同一消息处理内同步执行），绑定侧
-    // 的 effect/sas 借用指针在旧条目死亡前就已刷新为新条目。
-    EffectCacheRef().erase(pathAnsi);
+    // Callers (emm_manager.cpp failed-load cleanup / mme_ui.cpp Reload-All and automatic
+    // hot reload) reassign effects immediately after unloading: reloading creates a new entry, binding resolution in
+    // MmeEnsureMaterialBinding switches owner references, and the old entry then dies through its destruction chain.
+    // No rendering frame occurs between unload and reassignment (synchronous within one message handler); the binding's
+    // borrowed effect/sas pointers are updated to the new entry before the old one dies.
+    auto& cache = EffectCacheRef();
+    auto found = cache.find(pathAnsi);
+    if (found != cache.end() && (!expected || found->second == expected)) {
+        cache.erase(found);
+    }
 }
 
 void MmeEngineClearCaches()
 {
-    // [0x18000a990] sub_18000A990：sub_1800203F0 逐节点销毁效果缓存树
-    // （表头 0x1800D9C68、计数 0x1800D9C70），sub_180020580 销毁纹理缓存树
-    // （表头 0x1800D9C88、计数 0x1800D9C90）。两棵树的清空只丢缓存侧引用：
-    // 无绑定引用的条目当场经 ~LoadedEffect 死亡（卸载日志 / SasUnload /
-    // effect->Release），仍被 MaterialBinding::owner 引用的条目活到该绑定
-    // 重解析切换 owner——与原版 boost::shared_ptr 控制块的 dispose 时序
-    // 一致。纹理缓存当前没有绑定侧持有者（MmeEngineCacheTexture 仅注册/
-    // 查询），清空即全部释放，等价于原版 DXTextureCache 的逐节点销毁。
+    // [0x18000a990] sub_18000A990: sub_1800203F0 destroys effect-cache tree nodes
+    // (head 0x1800D9C68, count 0x1800D9C70); sub_180020580 destroys texture-cache tree nodes
+    // (head 0x1800D9C88, count 0x1800D9C90). Clearing either tree drops only cache references:
+    // entries with no binding references die immediately through ~LoadedEffect (unload log / SasUnload /
+    // effect->Release); entries held by MaterialBinding::owner survive until that binding
+    // resolves again and switches owner, matching original boost::shared_ptr control-block disposal
+    // timing. The texture cache currently has no binding-side holders (MmeEngineCacheTexture only registers/
+    // queries), so clearing releases everything, equivalent to original DXTextureCache's per-node destruction.
     EffectCacheRef().clear();
     TextureCacheRef().clear();
 }

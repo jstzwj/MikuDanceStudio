@@ -144,26 +144,26 @@ std::vector<RowRef> g_rows;
 // row rebuild so per-material rows survive FUN_18003fff0 refreshes.
 std::set<ModelData*> g_expanded;
 
-// --- [sub_18003FFF0 0x1800400ce-0x18004043f] offscreen 渲染目标标签页集 ---
-// 原版为每个 offscreen 维护一个 0x48 字节的包装对象（+0 = 内层 SAS 记录、
-// +8 = 名字（标签页标题）、+0x38 = id、+0x50 在内层记录上 = Description 注解
-// （0x18004044e 处 `mov r8,[rbx]; add r8,50h` 的标签 1004 文本））。sub_18002CA80
-// 在计划构建时把它们注册进 manager 的 id 树，sub_18002BAA0 每次重建时从树里
-// 重灌 manager+0x138 向量，并在 planDirty（manager+0x90）置位且对话框打开时于
-// 尾部调 sub_18003FFF0(dlg,0)。
-// 移植端对应物：renderPassList 队列项直接携带的 0x2E 资源记录（wrapper+0 的
-// 2026-09-15 重构产物）—— 每个排队 offscreen 资源一个 {SasEffect*, 资源序号}；
-// 标签页顺序跟随 ctx->renderPassList（原版按队列顺序收集 id）。
+// --- [sub_18003FFF0 0x1800400ce-0x18004043f] Offscreen render-target tabs ---
+// The original maintains a 0x48-byte wrapper per offscreen target (+0 = inner SAS record,
+// +8 = name (tab title), +0x38 = ID; inner record +0x50 = Description annotation
+// (label 1004 text at 0x18004044e: `mov r8,[rbx]; add r8,50h`)). sub_18002CA80
+// registers wrappers in the manager ID tree during plan construction; sub_18002BAA0 refills
+// manager+0x138's vector from the tree on each rebuild, then, if planDirty (manager+0x90) is set and the dialog is open,
+// calls sub_18003FFF0(dlg,0) at its tail.
+// Port counterpart: the 0x2E resource record carried directly by each renderPassList queue entry (the wrapper+0
+// refactor of 2026-09-15); one {SasEffect*, resource index} per queued offscreen resource.
+// Tab order follows ctx->renderPassList (the original collects IDs in queue order).
 struct OffscreenTab {
-    SasEffect* sas;        // 持有该 offscreen 资源的效果
+    SasEffect* sas;        // Effect owning this offscreen resource
     ModelData* owner;      // scene carrier: the DefaultEffect "self" identity
-    int        resIndex;   // sas->resources[] 槽位（OFFSCREENRENDERTARGET 记录）
-    size_t     id;         // 稳定身份（lParam），跨重建对应原版的包装对象指针
+    int        resIndex;   // sas->resources[] slot (OFFSCREENRENDERTARGET record)
+    size_t     id;         // Stable identity (lParam), corresponding to the original wrapper pointer across rebuilds
 };
 std::vector<OffscreenTab> g_offscreenTabs;
-// (效果, 资源) -> 稳定 id 的分配表（原版：id 树中复用的包装对象）。
+// (effect, resource) -> stable ID allocation table (original: wrappers reused in the ID tree).
 std::map<std::pair<SasEffect*, int>, size_t> g_offscreenIds;
-size_t g_offscreenSignature = static_cast<size_t>(-1);   // per-frame 轮询签名
+size_t g_offscreenSignature = static_cast<size_t>(-1);   // Per-frame polling signature
 size_t g_nextOffscreenId = 1;
 
 HWND g_dlgWindow = nullptr;      // the modeless dialog handle (DAT_1800d9a48)
@@ -255,16 +255,16 @@ const char* EffectTextForModel(ModelData* model, int subset = -1)
     return text.c_str();
 }
 
-// --- [sub_18003FFF0 标签页半 + sub_18002CA80/sub_18002BAA0 收集] offscreen 辅助 ---
+// --- [sub_18003FFF0 tab half + sub_18002CA80/sub_18002BAA0 collection] Offscreen helpers ---
 
-// 前置声明（定义在下方选中行收集一节）。
+// Forward declaration (defined in the selected-row collection section below).
 LONG_PTR DlgTabSelParamGate();
 
-// 取路径的 basename+扩展名（行键匹配的第二规则）。
-// [sub_18002CA80 收集 + sub_18002BAA0 0x18002badc-0x18002c60 重灌] 依当前
-// pass 计划重建 offscreen 标签页集：renderPassList 顺序，每条队列项携带的 0x2E
-// 资源关联一个条目，按 (效果, 资源) 去重（首个出现优先），并为新见到的 (效果,
-// 资源) 分配稳定 id、抓拍 DefaultEffect 行快照。
+// Extract path basename + extension (the second row-key matching rule).
+// [sub_18002CA80 collection + sub_18002BAA0 refill at 0x18002badc-0x18002c60] Rebuild offscreen tabs from the current
+// pass plan: follow renderPassList order, associate one entry with the 0x2E resource carried by each queue item,
+// deduplicate by (effect, resource) with first occurrence winning, allocate stable IDs for newly seen (effect,
+// resource) pairs, and snapshot DefaultEffect rows.
 void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
 {
     out.clear();
@@ -274,8 +274,8 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
     }
     for (size_t i = 0; i < ctx->renderPassList.size(); ++i) {
         const MmeRenderPassItem& item = ctx->renderPassList[i];
-        // [2026-09-15 per-resource queue rework] 队列项直接携带 0x2E 资源记
-        // 录（wrapper+0 等价物）；(效果, 资源下标) 由载体绑定反推。
+        // [2026-09-15 per-resource queue rework] Each queue item directly carries a 0x2E resource record
+        // (wrapper+0 equivalent); derive (effect, resource index) from the carrier binding.
         SasResource* res = item.offscreen;
         MaterialBinding* binding = item.assignment;
         if (res == nullptr || binding == nullptr || binding->sas == nullptr) {
@@ -289,7 +289,7 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
         }
         int resIndex = (int)(res - &sas->resources[0]);
         if (sas->resources[resIndex].semanticId != 0x2E) {
-            continue;   // 仅 OFFSCREENRENDERTARGET 记录
+            continue;   // Only OFFSCREENRENDERTARGET records
         }
         bool dup = false;
         for (size_t j = 0; j < out.size(); ++j) {
@@ -310,7 +310,7 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
         } else {
             id = g_nextOffscreenId++;
             g_offscreenIds[key] = id;
-            // 首次见到：抓拍注解行快照（恢复“显示”时还原注解原值）。
+            // First sighting: snapshot annotation rows (restore original annotations when restoring "show").
         }
         OffscreenTab tab;
         tab.sas = sas;
@@ -321,8 +321,8 @@ void DlgCollectOffscreenTabs(std::vector<OffscreenTab>& out)
     }
 }
 
-// 当前选中标签页对应的 offscreen（Main / 失效选中 -> null）。lParam 即稳定 id
-// （原版为包装对象指针；0x1800400ce-0x180040104 处失效选中被折回 0 = Main）。
+// Offscreen target for the selected tab (Main / invalid selection -> null). lParam is the stable ID
+// (originally the wrapper pointer; 0x1800400ce-0x180040104 maps invalid selections back to 0 = Main).
 OffscreenTab* DlgCurrentOffscreen()
 {
     LONG_PTR gate = DlgTabSelParamGate();
@@ -337,8 +337,8 @@ OffscreenTab* DlgCurrentOffscreen()
     return nullptr;
 }
 
-// 当前标签页的 DefaultEffect 行集（可写 - 直接落在 SasEffect 的注解行上，
-// 运行期 offscreen 解析每 pass 都读它，改派即时生效）。
+// Current tab's DefaultEffect rows (writable, directly backed by SasEffect annotation rows,
+// read each pass by runtime offscreen resolution; reassignment takes effect immediately).
 std::vector<std::pair<std::string, std::string>>* DlgOffscreenRows(OffscreenTab* tab)
 {
     if (tab == nullptr || tab->sas == nullptr ||
@@ -348,7 +348,7 @@ std::vector<std::pair<std::string, std::string>>* DlgOffscreenRows(OffscreenTab*
     return &tab->sas->resources[tab->resIndex].defaultEffectMap;
 }
 
-// [sub_18002DB80 读取路径] 首个与对象文件匹配的行。
+// [sub_18002DB80 read path] First row matching the object's file.
 SasResource& DlgResource(OffscreenTab* tab)
 {
     return tab->sas->resources[tab->resIndex];
@@ -417,9 +417,9 @@ bool DlgRowEffectIsNone(ModelData* model)
     return model->effectFile().empty();
 }
 
-// [sub_18003FFF0 0x180040445-0x18004046b] 标签页说明文字（1004 静态控件）：
-// Main 恒为 "Main Render Target"（0x1800b4e68，无语言分支）；offscreen 页为
-// 内层记录 +0x50 的 Description 注解。
+// [sub_18003FFF0 0x180040445-0x18004046b] Tab description text (static control 1004):
+// Main always uses "Main Render Target" (0x1800b4e68, no language branch); offscreen tabs use
+// the inner record's Description annotation at +0x50.
 void DlgRefreshCaption()
 {
     if (g_dlgWindow == nullptr) {
@@ -434,10 +434,10 @@ void DlgRefreshCaption()
     SetDlgItemTextA(g_dlgWindow, kDlgTabCaption, text);
 }
 
-// [sub_18003FFF0 0x1800400ce-0x18004043f] 标签页重建：现存标签 lParam 集与
-// 新 offscreen 集不一致时删除 1..N-1 重插（文本 = 资源名 +0x8，mask 9），并
-// 恒等身份恢复选中（0x1800403e9 TCM_SETCURSEL；选中丢失回落 0 = Main，
-// 0x18004043f）。随后刷新说明文字。
+// [sub_18003FFF0 0x1800400ce-0x18004043f] Rebuild tabs: if existing tab lParams differ from
+// the new offscreen set, delete and reinsert 1..N-1 (text = resource name +0x8, mask 9), and
+// restore selection by identity (0x1800403e9 TCM_SETCURSEL; lost selection falls back to 0 = Main,
+// 0x18004043f). Then refresh the description.
 void DlgSyncTabs()
 {
     if (g_dlgWindow == nullptr) {
@@ -465,7 +465,7 @@ void DlgSyncTabs()
         }
     }
     if (!same) {
-        // 记住当前选中身份，重插后恢复（0x180040387-0x180040424）。
+        // Remember selected identity and restore it after reinsertion (0x180040387-0x180040424).
         LRESULT cursel = SendMessageA(tab, TCM_GETCURSEL, 0, 0);
         LONG_PTR wantedId = 0;
         if (cursel > 0) {
@@ -502,8 +502,8 @@ void DlgSyncTabs()
 
 }
 
-// per-frame 轮询签名：offscreen 关联变化（计划重建 / 效果重载）时触发标签页
-// 与行文本重建（原版由 sub_18002BAA0 尾部的 planDirty 分支触发）。
+// Per-frame polling signature: changes in offscreen associations (plan rebuild / effect reload) trigger tab
+// and row-text rebuilds (originally triggered by sub_18002BAA0's trailing planDirty branch).
 size_t DlgOffscreenSignature()
 {
     MmeContext* ctx = MmeGetContext();
@@ -512,8 +512,8 @@ size_t DlgOffscreenSignature()
     }
     size_t hash = ctx->renderPassList.size() * 0x9E3779B97F4A7C15ULL;
     for (size_t i = 0; i < ctx->renderPassList.size(); ++i) {
-        // [2026-09-15 per-resource queue rework] 队列项即 offscreen 关联：
-        // 哈希 (载体, 资源) 对。
+        // [2026-09-15 per-resource queue rework] Queue items are offscreen associations:
+        // hash (carrier, resource) pairs.
         const MmeRenderPassItem& item = ctx->renderPassList[i];
         hash = hash * 0x9E3779B97F4A7C15ULL ^
                (size_t)item.carrier ^ ((size_t)item.offscreen << 8);
@@ -647,8 +647,8 @@ bool DlgHasSelection(bool onlyNormalObject)
 
 // [FUN_180043fd0] the FIRST selected row's effect path ("" when none / the
 // "(default)" row / an empty mapping).
-// [sub_18003FFF0 0x18004149f] offscreen 页取行值：none/hide/main_default 与
-// "(none)" 不算路径，其余（绝对路径）作为 Disassemble 的输入。
+// [sub_18003FFF0 0x18004149f] Offscreen-tab row values: none/hide/main_default and
+// "(none)" are not paths; pass other values (absolute paths) to Disassemble.
 std::string DlgSelectedEffectPath()
 {
     HWND list = DlgList();
@@ -788,7 +788,7 @@ void DlgWriteEffectForSelection(const char* path)
         ModelData* model = refs[i].model;
         if (off != nullptr) {
             if (model == nullptr) {
-                continue;   // offscreen 页 "(default)" 行已被收集门挡住，保险再挡一次
+                continue;   // Offscreen "(default)" rows were excluded during collection; guard again defensively
             }
             if (path != nullptr && path[0] != '\0') {
                 DlgUpsertOffscreenRow(off, model, path, refs[i].subset);
@@ -855,25 +855,6 @@ void DlgAddDefaultRow(HWND list)
     DlgSetRowCheck(list, index, 0);
 }
 
-std::string DlgSubsetRowLabel(ModelData* model, int subset, int matCount)
-{
-    // FUN_18003fff0's subset row text: "  |-- <name>:" and, for the last
-    // material, "  `-- <name>:"; unnamed materials fall back to
-    // "材質%d" (Japanese UI) / "subset%d".
-    const wchar_t* materialName = GetMaterialName(model->objectId(),
-                                                  (unsigned long)subset, 0);
-    std::string name;
-    if (materialName != nullptr) {
-        name = MmeWideToAnsi(materialName);
-    }
-    if (name.empty()) {
-        name = MmeFormat(MmeIsEnglishUiMode() ? "subset%d" : "\xE6\x9D\x90\xE8\xB3\xAA%d",
-                         subset);
-    }
-    return MmeFormat(subset == matCount - 1 ? "  `-- %s:" : "  |-- %s:",
-                     name.c_str());
-}
-
 void DlgAddObjectRow(HWND list, ModelData* model)
 {
     RowRef row;
@@ -894,8 +875,8 @@ void DlgAddObjectRow(HWND list, ModelData* model)
         return;
     }
     g_rows.push_back(row);
-    // [sub_18003FFF0] 每个标签页的对象行集相同（sub_18002E5F0 不按目标过滤），
-    // 仅效果列/复选框随目标变化（sub_18002DB80 按 targetId 查询）。
+    // [sub_18003FFF0] Every tab has the same object rows (sub_18002E5F0 does not filter by target);
+    // only effect columns/checkboxes vary by target (sub_18002DB80 queries targetId).
     OffscreenTab* off = DlgCurrentOffscreen();
     DlgSetRowText(list, index, kColEffect,
                   off != nullptr ? DlgOffscreenRowText(off, model)
@@ -911,20 +892,20 @@ void DlgAddObjectRow(HWND list, ModelData* model)
             RowRef sub;
             sub.model = model;
             sub.subset = m;
-            std::string label = DlgSubsetRowLabel(model, m, matCount);
-            LVITEMA subItem;
+            std::wstring label = MmeDlgSubsetRowLabel(*model, m, MmeIsEnglishUiMode());
+            LVITEMW subItem;
             memset(&subItem, 0, sizeof(subItem));
             subItem.mask = LVIF_TEXT | LVIF_PARAM;
             subItem.iItem = (int)g_rows.size();
-            subItem.pszText = const_cast<LPSTR>(label.c_str());
+            subItem.pszText = const_cast<LPWSTR>(label.c_str());
             subItem.lParam = (LPARAM)g_rows.size();
-            int subIndex = (int)SendMessageA(list, LVM_INSERTITEMA, 0,
+            int subIndex = (int)SendMessageW(list, LVM_INSERTITEMW, 0,
                                              (LPARAM)&subItem);
             if (subIndex < 0) {
                 break;
             }
             g_rows.push_back(sub);
-            // [sub_18002DB80 0x18002dbc1 回退] 子集行显示对象级值。
+            // [sub_18002DB80 fallback at 0x18002dbc1] Subset rows display the object-level value.
             DlgSetRowText(list, subIndex, kColEffect,
                           off != nullptr ? DlgOffscreenRowText(off, model, m)
                                          : EffectTextForModel(model, m));
@@ -1011,8 +992,8 @@ void DlgRebuildList(bool preserveSelection)
 // [FUN_18003fff0-lite] refresh the visible Effect File texts and the
 // checkbox images from the working state. Guarded by DAT_1800d99db so the
 // state writes cannot re-enter the checkbox handler (the hide/show flicker).
-// [sub_18003FFF0 0x180040bbc] 行集不变时（换页/改派后）仅按当前目标重写每行
-// 文本与状态图 —— 原版对每个既有条目重发 LVM_SETITEMTEXT(0x102E)。
+// [sub_18003FFF0 0x180040bbc] When rows stay unchanged (after tab switching/reassignment), rewrite only each row's
+// text and state image for the current target; the original reissues LVM_SETITEMTEXT(0x102E) for every existing entry.
 void DlgRefreshTexts()
 {
     HWND list = DlgList();
@@ -1182,7 +1163,7 @@ bool DlgSaveFileDialog(const char* filter, const char* title, const char* defExt
 // @0x180042330-0x180042415): MessageBoxA(dlg, msg, "MikuMikuEffect",
 // MB_ICONERROR); the label is "Post " for kind 2 and "Pre" otherwise
 // (0x1800b4f90/0x1800b4f98; Japanese "ポスト"/"プリ" 0x1800b4f60/f68 and
-// "エフェクトは指定できません: " 0x1800b4f70).
+// JP "Cannot assign effect: " 0x1800b4f70).
 bool DlgValidateEffectPath(const char* path)
 {
     MmeContext* ctx = MmeGetContext();
@@ -1196,7 +1177,7 @@ bool DlgValidateEffectPath(const char* path)
                 message = (scriptOrder == kSasOrderPostprocess) ? "Post " : "Pre";
                 message += "Effect cannot be specified: ";
             } else {
-                // Shift-JIS: "ポスト" / "プリ" + "エフェクトは指定できません: "
+                // Shift-JIS: "Post" / "Pre" + "effect cannot be assigned: "
                 message = (scriptOrder == kSasOrderPostprocess)
                               ? "\x83\x7C\x83\x58\x83\x67"
                               : "\x83\x76\x83\x8A";
@@ -1236,7 +1217,7 @@ void DlgSetEffectFlow()
 
     // The initial path: the first selected object's current assignment (the
     // original seeds the dialog with the row's text), else the last dir.
-    // [sub_18003FFF0 0x18004149f] offscreen 页取首个选中行的行值。
+    // [sub_18003FFF0 0x18004149f] Get the first selected offscreen-tab row's value.
     char path[MAX_PATH];
     path[0] = '\0';
     if (!refs.empty() && refs[0].model != nullptr) {
@@ -1308,8 +1289,8 @@ void DlgRemoveEffectFlow()
 
 // [40013 Hide/Show / FUN_180042610 via 0x9c4d] uniform target across the
 // selection: any shown object -> hide all; otherwise show all.
-// [sub_180042610] offscreen 页的“显示”判据为行值非 "hide"（含无行对象，
-// 对应分配表默认可见）。
+// [sub_180042610] An offscreen-tab item is "shown" when its row value is not "hide" (including objects with no row,
+// matching default-visible assignment semantics).
 void DlgToggleHideShowFlow()
 {
     std::vector<SelectedRef> refs;
@@ -1374,8 +1355,8 @@ void DlgSubsetExtractFlow()
 }
 
 // [40008 Reset with default / FUN_1800424a0]
-// [sub_1800424a0 0x18004254f] offscreen 页经 sub_180033570 擦除该
-// (targetId, obj) 的全部表项（含全部子集）；移植端移除全部匹配行。
+// [sub_1800424a0 0x18004254f] Offscreen tabs use sub_180033570 to erase all entries for
+// (targetId, obj), including every subset; the port removes all matching rows.
 void DlgResetWithDefaultFlow()
 {
     std::vector<SelectedRef> refs;
@@ -1649,7 +1630,7 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         bool japanese = !MmeIsEnglishUiMode();
         if (!japanese) {
             SetWindowTextA(dlg, "Map Effect File");
-            SetWindowTextA(GetDlgItem(dlg, 1), "OK");          // IDOK：资源模板为日文侧文案
+            SetWindowTextA(GetDlgItem(dlg, 1), "OK");          // IDOK: the resource template contains Japanese text
             SetWindowTextA(GetDlgItem(dlg, 2), "Cancel");
             SetWindowTextA(GetDlgItem(dlg, kBtnRefresh), "Apply");
             SetWindowTextA(GetDlgItem(dlg, kBtnGroup), "Selected Items");
@@ -1698,8 +1679,8 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         g_expanded.clear();
         g_colFraction[0] = 0.0;
         g_colFraction[1] = 0.0;
-        // [sub_18003FFF0 @0x180044625 后的打开路径] 打开时按当前 offscreen 集
-        // 补建标签页并刷新 1004 说明文字。
+        // [sub_18003FFF0 opening path after 0x180044625] On opening, populate missing tabs from the current offscreen set
+        // and refresh description control 1004.
         g_offscreenSignature = DlgOffscreenSignature();
         DlgSyncTabs();
         // The DAT_1800d7788 anchor table is built from the template layout.
@@ -1745,9 +1726,9 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
         if (header != nullptr && header->idFrom == kDlgTab &&
             header->code == TCN_SELCHANGE) {
             // [-551 from the 0x3ea tab control, 0x180044b70-0x180044b99]
-            // DAT_1800d9f44 = TCM_GETCURSEL 结果 + sub_18003FFF0(dlg,0)：换页
-            // 时行集不变（sub_18002E5F0 不按目标过滤），但对每个既有条目重发
-            // LVM_SETITEMTEXT 刷新效果列/复选框，并重设 1004 说明文字。
+            // DAT_1800d9f44 = TCM_GETCURSEL result + sub_18003FFF0(dlg,0): switching tabs
+            // leaves the row set unchanged (sub_18002E5F0 does not filter by target), but reissues
+            // LVM_SETITEMTEXT for each existing item to refresh effect columns/checkboxes and resets description 1004.
             DlgRefreshCaption();
             DlgRefreshTexts();
             DlgSyncSelectionState();
@@ -1766,8 +1747,8 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
                 if ((changed & LVIS_STATEIMAGEMASK) != 0) {
                     // The checkbox toggle runs the shown write
                     // (FUN_180042610) and latches the click latch.
-                    // [sub_180042610] offscreen 页写行值（hide/快照还原）而非
-                    // 对象主可见性 —— DlgApplyShown 内部分流。
+                    // [sub_180042610] Offscreen tabs write row values (hide/snapshot restoration), not
+                    // main object visibility; DlgApplyShown dispatches internally.
                     unsigned int newState = info->uNewState & LVIS_STATEIMAGEMASK;
                     if (newState != 0 && info->iItem >= 0 &&
                         info->iItem < (int)g_rows.size() &&
@@ -2077,6 +2058,19 @@ INT_PTR CALLBACK MmeAssignmentDlgProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM 
 
 } // namespace
 
+std::wstring MmeDlgSubsetRowLabel(const ModelData& model, int subset, bool english)
+{
+    // FUN_18003FFF0: use the constructor's +0xa0/+0xc0 name
+    // vectors, prepend the subset index, and insert with LVM_INSERTITEMW.
+    const auto& names = english ? model.materialNamesEn() : model.materialNamesJp();
+    const std::wstring index = std::to_wstring(subset);
+    const std::wstring& name = names.at(static_cast<size_t>(subset));
+    std::wstring label = subset == model.materialCount() - 1 ? L"  `-- " : L"  |-- ";
+    label += index + L": ";
+    label += name.empty() ? (english ? L"subset" : L"\u6750\u8cea") + index : name;
+    return label;
+}
+
 void MmeDlgOpenAssignmentDialog()
 {
     // [FUN_180055b10 0x9c45] existing -> SetFocus; new -> CreateDialogParamA
@@ -2122,10 +2116,10 @@ void MmeDlgCommitAssignment()
 // [per-frame FUN_18003fff0(dlg,0) trigger] pick up models registered while
 // the dialog is open (the Hatsune-model-missing-from-the-list case); called
 // from the frame tick. The rebuild keeps the expanded set.
-// [sub_18002BAA0 尾部 0x180045dxx 计划重建触发] 原版在每次 pass 计划重建且
-// planDirty（manager+0x90）置位时刷新对话框（标签页集在重建里重灌）；移植端
-// 以 offscreen 关联签名轮询替代 —— 计划重建/效果重载后签名变化即同步标签页
-// 与行文本。
+// [sub_18002BAA0 tail, plan-rebuild trigger at 0x180045dxx] The original refreshes the dialog whenever the pass plan is rebuilt and
+// planDirty (manager+0x90) is set (the rebuild refills the tab set). The port instead polls
+// an offscreen-association signature: changes after plan rebuild/effect reload synchronize tabs
+// and row text.
 void MmeDlgRefreshIfModelCountChanged()
 {
     if (g_dlgWindow == nullptr) {

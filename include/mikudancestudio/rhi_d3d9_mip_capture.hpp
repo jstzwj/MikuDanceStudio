@@ -8,5 +8,6 @@ namespace mikudancestudio::rhi {
 // Rejects unsupported formats/LOD/filter/caps and clears output on any failure.
 // Diagnostics inspect an application texture; the optional preparation service
 // uses only its own scratch texture populated from original CPU bytes.
-HRESULT CaptureD3D9GeneratedMips(IDirect3DDevice9*,IDirect3DTexture9*,bool sceneActive,ModelTextureData&);
+HRESULT CaptureD3D9GeneratedMips(IDirect3DDevice9*, IDirect3DTexture9*, bool sceneActive,
+                                 ModelTextureData&);
 }

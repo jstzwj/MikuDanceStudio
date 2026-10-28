@@ -5,6 +5,8 @@
 
 namespace mikudancestudio::mdl {
 
+inline constexpr int kAccessorySlotCount = 255;
+
 // Runtime accessory object.  Its first four fields are native pointers;
 // consequently the scalar/string tail starts 16 bytes later in the x64
 // executable.  The opaque block between the resource pointers and editable
@@ -47,36 +49,26 @@ struct AccessoryRecord {
 
 #if defined(_M_X64)
 static_assert(sizeof(AccessoryRecord) == 0x4C0, "accessory x64 size");
-static_assert(offsetof(AccessoryRecord, visible) == 544,
-          "AccessoryRecord.visible x64 ABI");
-static_assert(offsetof(AccessoryRecord, position) == 548,
-          "AccessoryRecord.position x64 ABI");
-static_assert(offsetof(AccessoryRecord, parentModel) == 576,
-          "AccessoryRecord.parentModel x64 ABI");
-static_assert(offsetof(AccessoryRecord, name) == 584,
-          "AccessoryRecord.name x64 ABI");
+static_assert(offsetof(AccessoryRecord, visible) == 544, "AccessoryRecord.visible x64 ABI");
+static_assert(offsetof(AccessoryRecord, position) == 548, "AccessoryRecord.position x64 ABI");
+static_assert(offsetof(AccessoryRecord, parentModel) == 576, "AccessoryRecord.parentModel x64 ABI");
+static_assert(offsetof(AccessoryRecord, name) == 584, "AccessoryRecord.name x64 ABI");
 static_assert(offsetof(AccessoryRecord, shadowEnabled) == 1196,
-          "AccessoryRecord.shadowEnabled x64 ABI");
-static_assert(offsetof(AccessoryRecord, opacity) == 1200,
-          "AccessoryRecord.opacity x64 ABI");
-static_assert(offsetof(AccessoryRecord, rowSelected) == 1212,
-              "rowSelected x64 (+0x4BC)");
+              "AccessoryRecord.shadowEnabled x64 ABI");
+static_assert(offsetof(AccessoryRecord, order) == 1197, "AccessoryRecord.order x64 ABI");
+static_assert(offsetof(AccessoryRecord, opacity) == 1200, "AccessoryRecord.opacity x64 ABI");
+static_assert(offsetof(AccessoryRecord, rowSelected) == 1212, "rowSelected x64 (+0x4BC)");
 #else
 static_assert(sizeof(AccessoryRecord) == 0x4B0, "accessory x86 size");
-static_assert(offsetof(AccessoryRecord, visible) == 528,
-          "AccessoryRecord.visible x86 ABI");
-static_assert(offsetof(AccessoryRecord, position) == 532,
-          "AccessoryRecord.position x86 ABI");
-static_assert(offsetof(AccessoryRecord, parentModel) == 560,
-          "AccessoryRecord.parentModel x86 ABI");
-static_assert(offsetof(AccessoryRecord, name) == 568,
-          "AccessoryRecord.name x86 ABI");
+static_assert(offsetof(AccessoryRecord, visible) == 528, "AccessoryRecord.visible x86 ABI");
+static_assert(offsetof(AccessoryRecord, position) == 532, "AccessoryRecord.position x86 ABI");
+static_assert(offsetof(AccessoryRecord, parentModel) == 560, "AccessoryRecord.parentModel x86 ABI");
+static_assert(offsetof(AccessoryRecord, name) == 568, "AccessoryRecord.name x86 ABI");
 static_assert(offsetof(AccessoryRecord, shadowEnabled) == 1180,
-          "AccessoryRecord.shadowEnabled x86 ABI");
-static_assert(offsetof(AccessoryRecord, opacity) == 1184,
-          "AccessoryRecord.opacity x86 ABI");
-static_assert(offsetof(AccessoryRecord, rowSelected) == 1196,
-              "rowSelected x86 (+0x4AC)");
+              "AccessoryRecord.shadowEnabled x86 ABI");
+static_assert(offsetof(AccessoryRecord, order) == 1181, "AccessoryRecord.order x86 ABI");
+static_assert(offsetof(AccessoryRecord, opacity) == 1184, "AccessoryRecord.opacity x86 ABI");
+static_assert(offsetof(AccessoryRecord, rowSelected) == 1196, "rowSelected x86 (+0x4AC)");
 #endif
 
 inline AccessoryRecord* Accessory(void* object) {
@@ -108,23 +100,15 @@ struct AccessoryKey {
 };
 static_assert(sizeof(AccessoryKey) == 60, "accessory key ABI");
 static_assert(offsetof(AccessoryKey, frame) == 0, "accessory frame ABI");
-static_assert(offsetof(AccessoryKey, previous) == 4,
-              "accessory previous ABI");
+static_assert(offsetof(AccessoryKey, previous) == 4, "accessory previous ABI");
 static_assert(offsetof(AccessoryKey, next) == 8, "accessory next ABI");
-static_assert(offsetof(AccessoryKey, visible) == 12,
-              "accessory visible ABI");
-static_assert(offsetof(AccessoryKey, parentModel) == 16,
-              "accessory attachment ABI");
-static_assert(offsetof(AccessoryKey, selected) == 24,
-              "accessory selection ABI");
-static_assert(offsetof(AccessoryKey, position) == 28,
-              "accessory position ABI");
-static_assert(offsetof(AccessoryKey, rotation) == 40,
-              "accessory rotation ABI");
-static_assert(offsetof(AccessoryKey, scale) == 52,
-              "accessory scale ABI");
-static_assert(offsetof(AccessoryKey, opacity) == 56,
-              "accessory opacity ABI");
+static_assert(offsetof(AccessoryKey, visible) == 12, "accessory visible ABI");
+static_assert(offsetof(AccessoryKey, parentModel) == 16, "accessory attachment ABI");
+static_assert(offsetof(AccessoryKey, selected) == 24, "accessory selection ABI");
+static_assert(offsetof(AccessoryKey, position) == 28, "accessory position ABI");
+static_assert(offsetof(AccessoryKey, rotation) == 40, "accessory rotation ABI");
+static_assert(offsetof(AccessoryKey, scale) == 52, "accessory scale ABI");
+static_assert(offsetof(AccessoryKey, opacity) == 56, "accessory opacity ABI");
 
 // Clipboard form used by the accessory paste command.  It omits the linked
 // list indices and selection flag, and stores a frame offset plus source slot.
@@ -142,17 +126,12 @@ struct AccessoryClipboardKey {
     float scale;
     float opacity;
 };
-static_assert(sizeof(AccessoryClipboardKey) == 52,
-              "accessory clipboard ABI");
+static_assert(sizeof(AccessoryClipboardKey) == 52, "accessory clipboard ABI");
 static_assert(offsetof(AccessoryClipboardKey, parentModel) == 12,
               "accessory clipboard attachment ABI");
-static_assert(offsetof(AccessoryClipboardKey, position) == 20,
-              "accessory clipboard position ABI");
-static_assert(offsetof(AccessoryClipboardKey, rotation) == 32,
-              "accessory clipboard rotation ABI");
-static_assert(offsetof(AccessoryClipboardKey, scale) == 44,
-              "accessory clipboard scale ABI");
-static_assert(offsetof(AccessoryClipboardKey, opacity) == 48,
-              "accessory clipboard opacity ABI");
+static_assert(offsetof(AccessoryClipboardKey, position) == 20, "accessory clipboard position ABI");
+static_assert(offsetof(AccessoryClipboardKey, rotation) == 32, "accessory clipboard rotation ABI");
+static_assert(offsetof(AccessoryClipboardKey, scale) == 44, "accessory clipboard scale ABI");
+static_assert(offsetof(AccessoryClipboardKey, opacity) == 48, "accessory clipboard opacity ABI");
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl

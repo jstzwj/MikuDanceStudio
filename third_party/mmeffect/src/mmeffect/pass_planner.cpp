@@ -254,7 +254,7 @@ long SasHostRunPass(void* /*ctx*/, SasEffect* sas, int kind, int passIndex)
     // here after SetTechnique (SasRunPassCommands / SasApplyCommandImpl), so
     // the remaining sandwich is Begin / BeginPass(passIndex) / the RECORDED
     // DrawIndexedPrimitive / EndPass / End.
-    // [fcn_18005a740 instruction-level, 2026-09-18 审计修正] the original
+    // [fcn_18005a740 instruction-level, 2026-09-18 audit correction] the original
     // resolves the draw through the slot-0 SELF's record - the WALKED
     // CARRIER's persistent ModelData+0x138 snapshot for scene walks, the
     // staged per-draw record for object walks. The carrier snapshot is live:
@@ -263,7 +263,7 @@ long SasHostRunPass(void* /*ctx*/, SasEffect* sas, int kind, int passIndex)
     // L94 precedes L118). The previous "scene carriers never record a draw"
     // note was a misread - without this fallback every Draw=Geometry (and
     // script-less Pass=) inside a scene/sceneorobject technique silently
-    // dropped the carrier's geometry layer (ray 系灯/雾伴生子 fx 丢层).
+    // dropped the carrier's geometry layer (lost layers in companion light/fog child fx in the ray family).
     // The "+0x160 < 0" invalid-DrawState guard is the snapshot's unset
     // subset marker (subset_index < 0).
     SasHostDrawRecord stagedRec;
@@ -819,6 +819,7 @@ void MmeSortPlanObjects(MmeContext* ctx,
         std::set<MaterialBinding*> assignments;
         auto collect = [&](ModelData* model, MaterialBinding* binding, bool visible, ModelData* owner) {
             if (!binding || !binding->sas || !assignments.insert(binding).second) return;
+            SasRefreshViewport(binding->sas, ctx->device);
             MmeUpdateControlObjects(model, binding, owner);
             for (auto& resource : binding->sas->resources) {
                 if (resource.semanticId != 0x2E) continue;
@@ -982,8 +983,8 @@ void MmeRebuildRenderPassPlan()
     // the ctx+0x190 background-fixup map (per-node subtree destroy
     // sub_180003310 + COM Release + node free, then the ctx+0x198 sentinel /
     // ctx+0x1A0 size reset), store the viewport and set ctx+0x18A = 1. The
-    // cached effects' SAS offscreen resources keep their parse-time size -
-    // the original refreshes them only on a device reset (FUN_18002de40).
+    // effect resource resizing is separate: FUN_18000B880 -> FUN_180014270,
+    // handled while resolving assignments above, before building target turns.
     IDirect3DDevice9* device = ctx->device;
     if (device != nullptr) {
         D3DVIEWPORT9 viewport;

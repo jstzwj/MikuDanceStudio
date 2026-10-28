@@ -33,4 +33,4 @@ extern double g_AnglePiTruncated;
 // Current definition in frame_modes.cpp is 0.5; selected by the SelA3 drag mode.
 extern double g_MouseScaleA;
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

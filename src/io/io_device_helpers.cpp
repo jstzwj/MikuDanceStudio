@@ -16,7 +16,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <objbase.h>    // CoInitialize (0x408EF0 DirectShowInit)
+#include <objbase.h> // CoInitialize (0x408EF0 DirectShowInit)
 
 #include <cstdint>
 #include <cwchar>
@@ -49,16 +49,16 @@ namespace mikudancestudio {
 // failed).  Callers: 0x4912F0, 0x492AC0, 0x4C4A10, 0x4C55C0 (the model and
 // accessory renderers, which immediately hand the result to SetTexture).
 void* TextureTableFind(D3DRenderer* wrapper, const wchar_t* name) {
-    if (name[0] == L'\0')                                       // 0x407665
+    if (name[0] == L'\0') // 0x407665
         return nullptr;
     for (int index = 0;;) {
-        const wchar_t* entryName = static_cast<const wchar_t*>(
-            wrapper->resourcePool[index].heapBuffer);
-        if (entryName == nullptr)                               // 0x407684
+        const wchar_t* entryName =
+            static_cast<const wchar_t*>(wrapper->resourcePool[index].heapBuffer);
+        if (entryName == nullptr) // 0x407684
             return nullptr;
-        if (wcscmp(entryName, name) == 0)                       // 0x40768E
+        if (wcscmp(entryName, name) == 0) // 0x40768E
             return wrapper->resourcePool[index].comObject;
-        if (++index >= 10000)                                   // 0x4076BD
+        if (++index >= 10000) // 0x4076BD
             return nullptr;
     }
 }
@@ -72,31 +72,29 @@ void* TextureTableFind(D3DRenderer* wrapper, const wchar_t* name) {
 // multiplies by the double 0.00390625 (dbl_529680 = 0x3F70000000000000)
 // before the fstp dword truncation, so the products are computed in double
 // precision.
-float* TextureTableLookupColor(D3DRenderer* wrapper, float* outRgb,
-                               const wchar_t* name) {
-    outRgb[2] = 1.0f;                                           // 0x407838
-    outRgb[1] = 1.0f;                                           // 0x40783D
-    outRgb[0] = 1.0f;                                           // 0x407844
-    if (name[0] == L'\0')                                       // 0x407846
+float* TextureTableLookupColor(D3DRenderer* wrapper, float* outRgb, const wchar_t* name) {
+    outRgb[2] = 1.0f;     // 0x407838
+    outRgb[1] = 1.0f;     // 0x40783D
+    outRgb[0] = 1.0f;     // 0x407844
+    if (name[0] == L'\0') // 0x407846
         return outRgb;
     for (int index = 0;;) {
-        const wchar_t* entryName = static_cast<const wchar_t*>(
-            wrapper->resourcePool[index].heapBuffer);
-        if (entryName == nullptr)                               // 0x407863
+        const wchar_t* entryName =
+            static_cast<const wchar_t*>(wrapper->resourcePool[index].heapBuffer);
+        if (entryName == nullptr) // 0x407863
             return outRgb;
-        if (wcscmp(entryName, name) == 0) {                     // 0x40789D
-            const unsigned char* spill =                        // 0x4078BC
-                reinterpret_cast<const unsigned char*>(
-                    &wrapper->resourcePool[index].tag);
-            outRgb[0] = static_cast<float>(                    // 0x4078E1
+        if (wcscmp(entryName, name) == 0) { // 0x40789D
+            const unsigned char* spill =    // 0x4078BC
+                reinterpret_cast<const unsigned char*>(&wrapper->resourcePool[index].tag);
+            outRgb[0] = static_cast<float>( // 0x4078E1
                 static_cast<double>(spill[0]) * 0.00390625);
-            outRgb[1] = static_cast<float>(                    // 0x4078ED
+            outRgb[1] = static_cast<float>( // 0x4078ED
                 static_cast<double>(spill[1]) * 0.00390625);
-            outRgb[2] = static_cast<float>(                    // 0x4078F6
+            outRgb[2] = static_cast<float>( // 0x4078F6
                 static_cast<double>(spill[2]) * 0.00390625);
             return outRgb;
         }
-        if (++index >= 10000)                                   // 0x4078A5
+        if (++index >= 10000) // 0x4078A5
             return outRgb;
     }
 }
@@ -121,26 +119,24 @@ constexpr std::uint32_t kNvapiStereoReverseBlitControlId = 0x3CD58F89u;
 int NvapiStereo3CD58F89(void* stereoHandle, unsigned enable) {
     using QueryInterface = void*(__cdecl*)(std::uint32_t);
     using StereoCall = int(__cdecl*)(void*, unsigned);
-    static StereoCall call = nullptr;    // mirrors dword_542668 cache
-    static bool resolved = false;        // mirrors byte_54266C one-shot
+    static StereoCall call = nullptr; // mirrors dword_542668 cache
+    static bool resolved = false;     // mirrors byte_54266C one-shot
     if (!resolved) {
         resolved = true;
-        HMODULE module = LoadLibraryA(sizeof(void*) == 8 ? "nvapi64.dll"
-                                                         : "nvapi.dll");
+        HMODULE module = LoadLibraryA(sizeof(void*) == 8 ? "nvapi64.dll" : "nvapi.dll");
         if (module != nullptr) {
-            auto query = reinterpret_cast<QueryInterface>(
-                GetProcAddress(module, "nvapi_QueryInterface"));
+            auto query =
+                reinterpret_cast<QueryInterface>(GetProcAddress(module, "nvapi_QueryInterface"));
             if (query != nullptr)
-                call = reinterpret_cast<StereoCall>(
-                    query(kNvapiStereoReverseBlitControlId));
+                call = reinterpret_cast<StereoCall>(query(kNvapiStereoReverseBlitControlId));
         }
     }
     if (call == nullptr)
-        return -3;                                               // 0x4CC136
-    return call(stereoHandle, enable);                           // 0x4CC17D
+        return -3;                     // 0x4CC136
+    return call(stereoHandle, enable); // 0x4CC17D
 }
 
-}  // namespace
+} // namespace
 
 // VA 0x00407470 - stereo activation toggle on the 0x1D574 wrapper.
 // thiscall(this = 0x1D574 wrapper, char enable) -> NvAPI status.
@@ -154,9 +150,8 @@ int NvapiStereo3CD58F89(void* stereoHandle, unsigned enable) {
 // The unsigned char* parameter is kept because record_readback.cpp (outside
 // this conversion wave) passes the raw wrapper pointer.
 int StereoActivationToggle(unsigned char* wrapper, std::uint8_t enable) {
-    void* stereoHandle =
-        reinterpret_cast<D3DRenderer*>(wrapper)->stereoHandle;  // 0x407474
-    return NvapiStereo3CD58F89(stereoHandle, enable);           // 0x407484
+    void* stereoHandle = reinterpret_cast<D3DRenderer*>(wrapper)->stereoHandle; // 0x407474
+    return NvapiStereo3CD58F89(stereoHandle, enable);                           // 0x407484
 }
 
 // VA 0x00408EF0 - DirectShowInit.
@@ -167,10 +162,10 @@ int StereoActivationToggle(unsigned char* wrapper, std::uint8_t enable) {
 // body inline in src/window/ui_init.cpp; this standalone definition makes
 // the VA available to the DirectShow cluster without changing that port.
 bool DirectShowInit(HWND hWnd) {
-    if (CoInitialize(nullptr) >= 0)                              // 0x408EFA
-        return true;                                             // 0x408F18
+    if (CoInitialize(nullptr) >= 0) // 0x408EFA
+        return true;                // 0x408F18
     MessageBoxA(hWnd, "Failed CoInitialize!", "DirectShowInit", 0);
-    return false;                                                // 0x408F15
+    return false; // 0x408F15
 }
 
 // ---------------------------------------------------------------------------
@@ -195,4 +190,4 @@ bool DirectShowInit(HWND hWnd) {
 //   and the custom COM interface contract documented there.
 // ---------------------------------------------------------------------------
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

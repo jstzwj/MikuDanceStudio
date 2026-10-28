@@ -36,9 +36,10 @@ int main() {
         if (minimized) ShowWindow(window, SW_SHOWMINNOACTIVE);
         if (GetForegroundWindow() == window || (minimized && !IsIconic(window)))
             return 1;
-        for (int slot : {4, 5, 8}) {
-            std::memset(app->state.dialogFlags, 0, sizeof(app->state.dialogFlags));
-            app->state.dialogFlags[slot] = 1;
+        for (auto key : {mikudancestudio::LetterKey::D, mikudancestudio::LetterKey::A,
+                         mikudancestudio::LetterKey::S}) {
+            std::memset(app->state.letterKeyState, 0, sizeof(app->state.letterKeyState));
+            app->LetterKeyState(key) = 1;
             for (int focusMain = 0; focusMain != 2; ++focusMain) {
                 for (int active = 0; active != 2; ++active) {
                     for (int panelEdit = 0; panelEdit != 2; ++panelEdit) {
@@ -50,7 +51,7 @@ int main() {
                         const int expected = (focusMain || active) && !panelEdit;
                         if (commands - before != expected) {
                             std::fprintf(stderr, "Background key gate mismatch: slot=%d focus=%d active=%d edit=%d\n",
-                                         slot, focusMain, active, panelEdit);
+                                         static_cast<int>(key), focusMain, active, panelEdit);
                             return 1;
                         }
                     }

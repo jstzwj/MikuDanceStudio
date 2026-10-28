@@ -33,7 +33,7 @@ struct RenderSnapshot {
     void*    binding_context;       // +0x20 MME draw/binding context (FUN_180055690 result, ctx+0x68 pool);
                                     //        stored into ModelData+0x158 for cached snapshots [180059ba0]
 #ifndef _WIN64
-    uint32_t pad_ptr_20;            // x86: 指针 4 字节，显式补齐恢复 x64 偏移网格
+    uint32_t pad_ptr_20;            // x86: 4-byte pointers; explicit padding restores the x64 offset grid
 #endif
     // ---- +0x28 ----
     int32_t  subset_index;          // +0x28 GetCurrentSubsetIndex() [180059c60 L53]

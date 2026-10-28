@@ -21,6 +21,7 @@
 #include "mme_log.h"
 #include "mme_util.h"
 #include "model_data.h"
+#include "sas_exec.h"
 
 #include "../include/MMDExport.h"  // ExpGetPmd*/ExpGetAcs* host enumeration
 
@@ -225,8 +226,8 @@ std::string& DefaultEffectRef()
     return path;
 }
 
-// [Object] slot keys resolve against the HOST enumeration (the same indexes
-// the original's Pmd<N>/Acs<N> rows use): ExpGetPmdID(i)/ExpGetAcsID(i).
+// Resolve a host enumeration index through ExpGetPmdID(i)/ExpGetAcsID(i).
+// EMM Pmd<N>/Acs<N> keys instead use the object's absolute draw order.
 ModelData* FindModelBySlot(bool isModel, int slot)
 {
     MmeContext* ctx = g_context;
@@ -259,6 +260,9 @@ ModelData* FindModelBySlot(bool isModel, int slot)
     return it->second;
 }
 
+void ReportEffectLoadFailure(const std::string& effectPath,
+                             const std::shared_ptr<LoadedEffect>& loaded);
+
 // Apply one assignment to a live model: record it in ModelData and load the
 // effect through the engine (the load logs "Loading effect file: ...").
 void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
@@ -274,37 +278,15 @@ void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
         MmeDropMaterialBindings(model);
         return;
     }
+    // Native 0x18002CC4C..0x18002CC61 releases the previous binding before
+    // loading its replacement. 0x18002D0F6..0x18002D10F returns on failure
+    // without erasing the working-map path.
+    MmeEnsureMaterialBinding(0, model, -1, nullptr, effectPath, nullptr);
     MmeContext* ctx = g_context;
     IDirect3DDevice9* device = ctx != nullptr ? ctx->device : nullptr;
-    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath);
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath, model->materialCount());
     if (loaded != nullptr && loaded->effect == nullptr && !loaded->errorText.empty()) {
-        // [0x18000b880] the failed-load path. First log segment is the raw
-        // error text plus one "\n" (0x18000ba10-0x18000ba3b: sub_180005760
-        // appends "\n", sub_180009080(x, 0) writes it) - the extra newline
-        // makes the blank separator line.
-        MmeLogWrite((loaded->errorText + "\n").c_str(), 0);
-        // [0x18000ba43] unload FIRST (sub_18000B210; a null-effect entry logs
-        // nothing), then build the message and message-box it (0x18000bbcf).
-        MmeEngineUnloadEffectFile(effectPath);
-        model->setEffectFile(std::string());
-        // [0x18000ba52-0x18000ba74] the prefix language branch: ExpGetEnglishMode
-        // (fallback byte_1800D99DD = 0, Japanese) selects English
-        // "Failed to load effect file:" (0x1800B3B18) or the Shift-JIS prefix
-        // at 0x1800B3AE8; the MessageBox text is prefix + path + "\n\n" +
-        // errorText with prefix and path directly concatenated.
-        const char* prefix = MmeIsEnglishUiMode()
-            ? "Failed to load effect file:"   // 0x1800b3b18 (EN)
-            // unk_1800B3AE8, Shift-JIS "エフェクトファイルの読み込みに失敗しました:"
-            : "\x83\x47\x83\x74\x83\x46\x83\x4E\x83\x67\x83\x74"
-              "\x83\x40\x83\x43\x83\x8B\x82\xCC\x93\xC7\x82\xDD"
-              "\x8D\x9E\x82\xDD\x82\xC9\x8E\xB8\x94\x73\x82\xB5"
-              "\x82\xDC\x82\xB5\x82\xBD\x3A";
-
-        std::string message = prefix;
-        message += effectPath;
-        message += "\n\n";
-        message += loaded->errorText;
-        MmeLogWrite(message.c_str(), 1);   // dedup + MessageBoxA (FUN_180009080 flag)
+        ReportEffectLoadFailure(effectPath, loaded);
         return;
     }
     // Eager binding build (the original's FUN_18002ca80 runs at ASSIGNMENT
@@ -324,28 +306,22 @@ void ApplyEffectToModel(ModelData* model, const std::string& effectPath)
     }
 }
 
-// One [n] subset row from an EMM section: "" (or "none") clears the subset
-// and rebuilds the bindings from the remaining assignments, mirroring the
-// MmeAssignEffect subset path.
+// An explicit [n]=none selects the standard shader for that material. It is
+// distinct from an absent row, which inherits the whole-object assignment.
 void ApplySubsetEffectToModel(ModelData* model, int subsetIndex, const std::string& rawPath)
 {
     const std::string effectPath = rawPath == kNone ? std::string() : rawPath;
     model->setSubsetEffect(subsetIndex, effectPath);
+    MmeEnsureMaterialBinding(0, model, subsetIndex, nullptr, effectPath, nullptr);
     if (!effectPath.empty()) {
-        MmeResolveSubsetEffectBinding(model, subsetIndex, effectPath);
-        return;
-    }
-    const std::string whole = model->effectFile();
-    MmeDropMaterialBindings(model);
-    if (!whole.empty()) {
-        ApplyEffectToModel(model, whole);
-    }
-    for (std::map<int, std::string>::const_iterator it = model->subsetEffects().begin();
-         it != model->subsetEffects().end(); ++it) {
-        if (!it->second.empty()) {
-            MmeResolveSubsetEffectBinding(model, it->first, it->second);
+        auto loaded = MmeEngineLoadEffectFile(g_context ? g_context->device : nullptr,
+                                              effectPath, model->materialCount());
+        if (!loaded || !loaded->effect) {
+            if (loaded && !loaded->errorText.empty()) ReportEffectLoadFailure(effectPath, loaded);
+            return;
         }
     }
+    MmeResolveSubsetEffectBinding(model, subsetIndex, effectPath);
 }
 
 // --- EmmFile parse state (the EmmFile virtuals, file-local) -----------------
@@ -613,6 +589,176 @@ std::map<unsigned long long, std::map<int, bool>>& SubsetShowRegistry()
     return registry;
 }
 
+struct EmmSaveObject
+{
+    int slot;
+    EmmObjectRecord record;
+    EmmEffectEntry entry;
+    ModelData *model;
+};
+
+void ApplyOwnerSections(const std::vector<EmmEffectSection> &sections,
+                        const std::map<std::string, ModelData *> &byKey)
+{
+    struct OwnerTarget
+    {
+        ModelData *model;
+        SasResource *resource;
+        unsigned turn;
+    };
+    std::map<std::string, OwnerTarget> owners;
+    std::set<const EmmEffectSection *> applied;
+    bool progressed;
+    do
+    {
+        progressed = false;
+        for (const auto &section : sections)
+        {
+            if (section.isDefault())
+                continue;
+            if (applied.count(&section))
+                continue;
+            const auto owner = byKey.find(section.ownerKey);
+            if (owner == byKey.end() || !owner->second)
+                continue;
+            MaterialBinding *binding = nullptr;
+            if (section.ownerMaterialName.empty())
+            {
+                binding = MmeFindMaterialBinding(0, owner->second, section.ownerSubsetIndex, true);
+            }
+            else
+            {
+                const auto parent = owners.find(section.ownerMaterialName);
+                if (parent == owners.end())
+                    continue;
+                binding = MmeResolveTurnEffectBinding(parent->second.turn, *parent->second.resource,
+                                                      parent->second.model, owner->second,
+                                                      section.ownerSubsetIndex);
+            }
+            if (!binding || !binding->sas)
+                continue;
+            for (auto &resource : binding->sas->resources)
+            {
+                if (resource.semanticId != 0x2E || resource.name != section.baseName)
+                    continue;
+                unsigned &turn = binding->offscreenTurns[resource.name];
+                if (!turn)
+                    turn = ++g_ownerManager->nextTurnId;
+                g_ownerManager->turnOwners[turn] = owner->second;
+                owners[section.name.substr(7)] = {owner->second, &resource, turn};
+                applied.insert(&section);
+                progressed = true;
+                for (const auto &entry : section.entries)
+                {
+                    const auto object = byKey.find(entry.key);
+                    if (object == byKey.end() || !object->second)
+                        continue;
+                    const auto id = object->second->objectId();
+                    if (!entry.effectPath.empty())
+                        resource.effectOverrides[{id, -1}] = entry.effectPath;
+                    if (entry.hasShow)
+                        resource.shownOverrides[{id, -1}] = entry.shown;
+                    for (const auto &row : entry.subsetPaths)
+                        if (row.first >= 0 && row.first < object->second->materialCount())
+                            resource.effectOverrides[{id, row.first}] = row.second;
+                    for (const auto &row : entry.subsetShows)
+                        if (row.first >= 0 && row.first < object->second->materialCount())
+                            resource.shownOverrides[{id, row.first}] = row.second;
+                }
+            }
+        }
+    } while (progressed);
+}
+
+std::vector<EmmEffectSection> CollectOwnerSections(const std::vector<EmmSaveObject> &rows)
+{
+    // RVA 30590 walks assignment-owned offscreen resources recursively;
+    // their paths and visibility are scoped to the declaring assignment.
+    std::vector<EmmEffectSection> ownerSections;
+    std::map<std::string, unsigned> nameCounts;
+    if (!g_ownerManager)
+        return ownerSections;
+    std::vector<const EmmSaveObject *> displayRows;
+    for (const auto &row : rows)
+        if (row.model)
+            displayRows.push_back(&row);
+    std::stable_sort(displayRows.begin(), displayRows.end(), [](const EmmSaveObject *a, const EmmSaveObject *b) {
+        return a->model->passPlanScratch().renderOrder < b->model->passPlanScratch().renderOrder;
+    });
+    // Section suffixes follow the native depth-first owner walk, rather
+    // than pointer order in the binding lookup table (RVA 30590 tail).
+    std::set<unsigned> visitedTurns;
+    const auto collect = [&](const auto &self, unsigned turnId, const std::string &parent) -> void {
+        if (!visitedTurns.insert(turnId).second)
+            return;
+        for (const auto *owner : displayRows)
+        {
+            for (int subset = -1; subset < owner->model->materialCount(); ++subset)
+            {
+                const auto assignment = g_ownerManager->bindings.find({turnId, owner->model, subset});
+                if (assignment == g_ownerManager->bindings.end())
+                    continue;
+                auto *binding = assignment->second;
+                if (!binding || !binding->sas)
+                    continue;
+                std::map<std::string, SasResource *> resources;
+                for (auto &resource : binding->sas->resources)
+                    if (resource.semanticId == 0x2E)
+                        resources[resource.name] = &resource;
+                for (const auto &named : resources)
+                {
+                    auto &resource = *named.second;
+                    EmmEffectSection section;
+                    section.baseName = resource.name;
+                    const auto count = nameCounts[resource.name]++;
+                    const auto label = resource.name + (count ? "(" + std::to_string(count) + ")" : "");
+                    section.name = "Effect@" + label;
+                    section.ownerKey = owner->entry.key;
+                    section.ownerSubsetIndex = subset;
+                    section.ownerMaterialName = parent;
+                    const auto turn = binding->offscreenTurns.find(resource.name);
+                    for (const auto &row : rows)
+                    {
+                        if (!row.model)
+                            continue;
+                        EmmEffectEntry entry;
+                        entry.key = row.entry.key;
+                        const auto id = row.model->objectId();
+                        const auto *value = MmeOffscreenEffectValue(resource, row.model, owner->model);
+                        const auto *declared =
+                            MmeFindDefaultEffectRow(resource.defaultEffectMap, row.model, owner->model);
+                        const auto shown = resource.shownOverrides.find({id, -1});
+                        entry.hasShow =
+                            shown != resource.shownOverrides.end() || (declared && declared->second == "hide");
+                        entry.shown = MmeOffscreenObjectShown(resource, row.model, owner->model);
+                        if (row.model->renderClass() == 0)
+                        {
+                            entry.effectPath = !value || *value == "none" || *value == "hide" ? kNone
+                                               : *value == "main_default"                     ? row.entry.effectPath
+                                                                                              : AbsPathCopy(*value);
+                            for (int n = 0; n < row.model->materialCount(); ++n)
+                            {
+                                const auto path = resource.effectOverrides.find({id, n});
+                                if (path != resource.effectOverrides.end())
+                                    entry.subsetPaths[n] = path->second;
+                                const auto show = resource.shownOverrides.find({id, n});
+                                if (show != resource.shownOverrides.end())
+                                    entry.subsetShows[n] = show->second;
+                            }
+                        }
+                        section.entries.push_back(std::move(entry));
+                    }
+                    ownerSections.push_back(std::move(section));
+                    if (turn != binding->offscreenTurns.end() && turn->second)
+                        self(self, turn->second, label);
+                }
+            }
+        }
+    };
+    collect(collect, 0, std::string());
+    return ownerSections;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -774,46 +920,70 @@ bool EmmFile::Save(const char* path) const
     }
     fprintf(file, "\n");
 
+    auto writeEntries = [&](const std::vector<EmmEffectEntry> &entries) {
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            const EmmEffectEntry &entry = entries[i];
+            if (!entry.effectPath.empty())
+            {
+                fprintf(file, "%s = %s\n", entry.key.c_str(), entry.effectPath.c_str());
+            }
+            if (entry.hasShow)
+            {
+                fprintf(file, "%s.show = %s\n", entry.key.c_str(), entry.shown ? "true" : "false");
+            }
+            if (!entry.subsetPaths.empty() || !entry.subsetShows.empty())
+            {
+                int maxIndex = -1;
+                for (std::map<int, std::string>::const_iterator it = entry.subsetPaths.begin();
+                     it != entry.subsetPaths.end(); ++it)
+                {
+                    if (it->first > maxIndex)
+                    {
+                        maxIndex = it->first;
+                    }
+                }
+                for (std::map<int, bool>::const_iterator it = entry.subsetShows.begin();
+                     it != entry.subsetShows.end(); ++it)
+                {
+                    if (it->first > maxIndex)
+                    {
+                        maxIndex = it->first;
+                    }
+                }
+                for (int n = 0; n <= maxIndex; ++n)
+                {
+                    std::map<int, std::string>::const_iterator pit = entry.subsetPaths.find(n);
+                    if (pit != entry.subsetPaths.end())
+                    {
+                        fprintf(file, "%s[%d] = %s\n", entry.key.c_str(), n, pit->second.c_str());
+                    }
+                    std::map<int, bool>::const_iterator sit = entry.subsetShows.find(n);
+                    if (sit != entry.subsetShows.end())
+                    {
+                        fprintf(file, "%s[%d].show = %s\n", entry.key.c_str(), n,
+                                sit->second ? "true" : "false");
+                    }
+                }
+            }
+        }
+        fprintf(file, "\n");
+    };
     fprintf(file, "[Effect]\n");
     fprintf(file, "Default = %s\n", defaultPath_.c_str());
-    for (size_t i = 0; i < defaultEntries_.size(); ++i) {
-        const EmmEffectEntry& entry = defaultEntries_[i];
-        if (!entry.effectPath.empty()) {
-            fprintf(file, "%s = %s\n", entry.key.c_str(), entry.effectPath.c_str());
-        }
-        if (entry.hasShow) {
-            fprintf(file, "%s.show = %s\n", entry.key.c_str(),
-                    entry.shown ? "true" : "false");
-        }
-        if (!entry.subsetPaths.empty() || !entry.subsetShows.empty()) {
-            int maxIndex = -1;
-            for (std::map<int, std::string>::const_iterator it = entry.subsetPaths.begin();
-                 it != entry.subsetPaths.end(); ++it) {
-                if (it->first > maxIndex) {
-                    maxIndex = it->first;
-                }
-            }
-            for (std::map<int, bool>::const_iterator it = entry.subsetShows.begin();
-                 it != entry.subsetShows.end(); ++it) {
-                if (it->first > maxIndex) {
-                    maxIndex = it->first;
-                }
-            }
-            for (int n = 0; n <= maxIndex; ++n) {
-                std::map<int, std::string>::const_iterator pit = entry.subsetPaths.find(n);
-                if (pit != entry.subsetPaths.end()) {
-                    fprintf(file, "%s[%d] = %s\n", entry.key.c_str(), n,
-                            pit->second.c_str());
-                }
-                std::map<int, bool>::const_iterator sit = entry.subsetShows.find(n);
-                if (sit != entry.subsetShows.end()) {
-                    fprintf(file, "%s[%d].show = %s\n", entry.key.c_str(), n,
-                            sit->second ? "true" : "false");
-                }
-            }
-        }
+    writeEntries(defaultEntries_);
+    for (const auto &section : effectSections_)
+    {
+        if (section.isDefault())
+            continue;
+        fprintf(file, "[%s]\nOwner = %s", section.name.c_str(), section.ownerKey.c_str());
+        if (section.ownerSubsetIndex >= 0)
+            fprintf(file, "[%d]", section.ownerSubsetIndex);
+        if (!section.ownerMaterialName.empty())
+            fprintf(file, "@%s", section.ownerMaterialName.c_str());
+        fprintf(file, "\n");
+        writeEntries(section.entries);
     }
-    fprintf(file, "\n");
     fclose(file);
     return true;
 }
@@ -1004,9 +1174,9 @@ void MmeEmmSetDefaultEffect(const std::string& path)
 
 void MmeEmmSetSubsetShown(ModelData* model, int subsetIndex, bool shown)
 {
-    // 写侧共三个入口：EMM 应用（MmeEmmLoad）、EMD 应用（MmeEmdLoad，先整表
-    // 替换）与分配对话框 Hide/Show 的转接缝（原版写入工作映射 (0, object,
-    // subset) 节点的 +0x30）。subsetIndex < 0 属整对象，走 ModelData::setShown。
+    // Three write entry points: applying EMM (MmeEmmLoad), applying EMD (MmeEmdLoad, replacing the whole table
+    // first), and assignment-dialog Hide/Show integration (the original writes working-map (0, object,
+    // subset) node +0x30). subsetIndex < 0 denotes the whole object and uses ModelData::setShown.
     if (model == nullptr || subsetIndex < 0) {
         return;
     }
@@ -1015,7 +1185,7 @@ void MmeEmmSetSubsetShown(ModelData* model, int subsetIndex, bool shown)
 
 bool MmeEmmSubsetShowRecorded(const ModelData* model, int subsetIndex, bool* shown)
 {
-    // hasShow 查询：内层 map 命中 == 该 "[n].show" 行存在。
+    // hasShow query: an inner-map hit means the "[n].show" line exists.
     if (model == nullptr || subsetIndex < 0 || shown == nullptr) {
         return false;
     }
@@ -1034,10 +1204,10 @@ bool MmeEmmSubsetShowRecorded(const ModelData* model, int subsetIndex, bool* sho
 
 bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex)
 {
-    // [FUN_18002DB10 0x18002db10] 绘制/绑定路径的有效可见性查询：
-    // [0x18002db34] 子集节点 hasShow → 取其值；[0x18002db42-0x18002db5b]
-    // 否则回退整对象记录（键 -1；移植侧为 ModelData::shown()）；
-    // [0x18002db61] 都未记录 → 默认可见（true）。
+    // [FUN_18002DB10 0x18002db10] Effective visibility query for drawing/binding paths:
+    // [0x18002db34] If the subset node hasShow, use its value; [0x18002db42-0x18002db5b]
+    // otherwise fall back to the whole-object record (key -1; ModelData::shown() in the port);
+    // [0x18002db61] if neither is recorded, default to visible (true).
     bool shown = false;
     if (MmeEmmSubsetShowRecorded(model, subsetIndex, &shown)) {
         return shown;
@@ -1050,8 +1220,8 @@ bool MmeEmmEffectiveSubsetShown(const ModelData* model, int subsetIndex)
 
 void MmeEmmClearSubsetShows(ModelData* model)
 {
-    // [FUN_180031980] EMD 应用是整表替换：先清对象的整条 show 记录（对应
-    // 原版工作映射对该对象既有节点的擦除），再写入文件中的行。
+    // [FUN_180031980] Applying EMD replaces the whole table: first clear all show records for the object (matching
+    // erasure of its existing working-map nodes in the original), then write the file's lines.
     if (model == nullptr) {
         return;
     }
@@ -1072,6 +1242,19 @@ bool MmeEmmLoad(const char* path)
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return true;
+    }
+
+    // RVA 2E8D0 commits a replacement working map through 2DF80, which
+    // clears manager+0x30 before copying the parsed assignments. Rows absent
+    // from the new file must not retain old subset effects or visibility.
+    for (ModelData* model : ctx->models) {
+        if (model == nullptr) {
+            continue;
+        }
+        model->clearSubsetEffects();
+        MmeEmmClearSubsetShows(model);
+        model->resetShown();
+        ApplyEffectToModel(model, std::string());
     }
 
     // --- live objects (the host enumeration FUN_18002E8D0 walks) -----------
@@ -1107,6 +1290,16 @@ bool MmeEmmLoad(const char* path)
         live.push_back(obj);
     }
 
+    // Original 2E8D0 builds its live walk through a map keyed by +0xEC,
+    // the cached absolute render order. Slot enumeration gives the wrong
+    // duplicate-file match after objects are reordered in the host.
+    std::stable_sort(live.begin(), live.end(),
+                     [](const LiveObject& a, const LiveObject& b) {
+                         const int first = a.model ? a.model->passPlanScratch().renderOrder : 0;
+                         const int second = b.model ? b.model->passPlanScratch().renderOrder : 0;
+                         return first < second;
+                     });
+
     // [Object] records in the writer's slot-sorted order (FUN_18004C150).
     std::vector<EmmObjectRecord> records = emm.objectRecords();
     std::stable_sort(records.begin(), records.end(),
@@ -1131,36 +1324,36 @@ bool MmeEmmLoad(const char* path)
     // --- two-pass type+path identity matching (NOT slot based) -------------
     std::map<std::string, ModelData*> byKey;
     std::vector<const LiveObject*> unmatched;
-    for (size_t i = 0; i < live.size(); ++i) {
-        const LiveObject& obj = live[i];
-        int matched = -1;
-        for (size_t r = 0; r < records.size(); ++r) {
-            if (records[r].isModel != obj.isModel) {
+    // Original 2E8D0 / x86 2B970 consumes each record once. Finish the
+    // exact-path walk for all objects before trying file-name-only matches;
+    // otherwise duplicate files overwrite one key or steal a later exact match.
+    std::vector<int> matches(live.size(), -1);
+    std::vector<bool> claimed(records.size(), false);
+    for (int pass = 0; pass < 2; ++pass) {
+        for (size_t i = 0; i < live.size(); ++i) {
+            if (matches[i] >= 0 || live[i].model == nullptr)
                 continue;
-            }
-            if (ObjectPathMatches(records[r].objectPath, obj.path, emmDir)) {
-                matched = static_cast<int>(r);
-                break;
-            }
-        }
-        if (matched < 0) {
-            // pass 2: file name + extension only (FUN_18002E6F0 compare).
-            const std::string objName = FileNameOf(obj.path);
             for (size_t r = 0; r < records.size(); ++r) {
-                if (records[r].isModel != obj.isModel) {
+                if (claimed[r] || records[r].isModel != live[i].isModel)
                     continue;
-                }
-                if (_stricmp(FileNameOf(records[r].objectPath).c_str(),
-                             objName.c_str()) == 0) {
-                    matched = static_cast<int>(r);
+                const bool same = pass == 0
+                    ? ObjectPathMatches(records[r].objectPath, live[i].path, emmDir)
+                    : _stricmp(FileNameOf(records[r].objectPath).c_str(),
+                               FileNameOf(live[i].path).c_str()) == 0;
+                if (same) {
+                    matches[i] = static_cast<int>(r);
+                    claimed[r] = true;
                     break;
                 }
             }
         }
-        if (matched >= 0 && obj.model != nullptr) {
-            byKey[KeyName(records[matched].isModel, records[matched].slot)] = obj.model;
+    }
+    for (size_t i = 0; i < live.size(); ++i) {
+        if (matches[i] >= 0) {
+            const EmmObjectRecord& record = records[matches[i]];
+            byKey[KeyName(record.isModel, record.slot)] = live[i].model;
         } else {
-            unmatched.push_back(&obj);
+            unmatched.push_back(&live[i]);
         }
     }
 
@@ -1174,13 +1367,15 @@ bool MmeEmmLoad(const char* path)
         MmeLogWrite((std::string(path) + "\n" + kErrFailedMapping + list).c_str(), 1);
     }
 
-    // --- apply every section's rows (file order), then the missing-file
-    // report (the requests carry their own paths; the Owner line assigns
-    // nothing).
+    // Apply base assignments first, then resolve owner-scoped rows against
+    // their declaring offscreen resources. An Owner line alone assigns no path.
     std::vector<std::string> assignedPaths;
     const std::vector<EmmEffectSection>& sections = emm.effectSections();
     for (size_t s = 0; s < sections.size(); ++s) {
         const EmmEffectSection& section = sections[s];
+        // Named rows belong to an offscreen resource, never to the base
+        // scene's (turn 0, object, subset) assignments (RVA 2E8D0).
+        if (!section.isDefault()) continue;
         for (size_t e = 0; e < section.entries.size(); ++e) {
             const EmmEffectEntry& entry = section.entries[e];
             std::map<std::string, ModelData*>::const_iterator it = byKey.find(entry.key);
@@ -1208,11 +1403,11 @@ bool MmeEmmLoad(const char* path)
                     assignedPaths.push_back(sit->second);
                 }
             }
-            // [FUN_18002E8D0 @0x18002fe7c-0x18002ffa9] "[n].show" 行与路径行
-            // 同一循环落地：仅有 show 行（无路径行）的子集也 find-or-create
-            // 一个工作节点（hasShow=+1，值=+0x30），遍历上界是对象材质数
-            // (*(object+0x38))——越界的 n 整行忽略。运行时生效见
-            // MmeEmmEffectiveSubsetShown（绘制门转接缝）。
+            // [FUN_18002E8D0 at 0x18002fe7c-0x18002ffa9] Apply "[n].show" lines in the same loop as path lines:
+            // subsets containing only a show line (without a path line) also find or create
+            // a working node (hasShow=+1, value=+0x30). The iteration bound is the object's material count
+            // (*(object+0x38)); ignore an entire line if n is out of range. Runtime behavior is in
+            // MmeEmmEffectiveSubsetShown (draw-gate integration).
             const int emmShowCount = model->materialCount();
             for (std::map<int, bool>::const_iterator sit = entry.subsetShows.begin();
                  sit != entry.subsetShows.end(); ++sit) {
@@ -1222,6 +1417,8 @@ bool MmeEmmLoad(const char* path)
             }
         }
     }
+
+    ApplyOwnerSections(sections, byKey);
 
     // [0x1800B4DA0] MessageBoxA(0x30): distinct assigned paths that do not
     // exist, sorted and deduplicated like FUN_18003D0C0/FUN_18003D250.
@@ -1250,29 +1447,25 @@ bool MmeEmmLoad(const char* path)
 bool MmeEmmSave(const char* path)
 {
     // [FUN_1800315F0] serialize the live state: every host object in the
-    // enumeration, absolute paths, "none" sentinels; rows ordered by the
-    // slot sort (FUN_18004C150 compares the slot int only).
-    struct SaveRow {
-        int slot;
-        EmmObjectRecord record;
-        EmmEffectEntry entry;
-        ModelData* model;
-    };
-    std::vector<SaveRow> rows;
+    // enumeration, absolute paths, "none" sentinels. FUN_1800315F0 copies
+    // ModelData+0xec (absolute draw order), not the host enumeration index,
+    // into both the key and the sort field (FUN_18004C150). The x86 twin
+    // FUN_1002E5B0 reads ModelData+0x84 at 0x1002E680.
+    std::vector<EmmSaveObject> rows;
     MmeContext* ctx = g_context;
     if (ctx != nullptr) {
         for (int pass = 0; pass < 2; ++pass) {
             const bool isModel = (pass == 0);
             const int num = isModel ? ExpGetPmdNum() : ExpGetAcsNum();
             for (int i = 0; i < num; ++i) {
-                SaveRow row;
-                row.slot = i;
+                EmmSaveObject row;
                 row.record.isModel = isModel;
-                row.record.slot = i;
                 const char* file = isModel ? ExpGetPmdFilename(i) : ExpGetAcsFilename(i);
                 row.record.objectPath = file != nullptr ? AbsPathCopy(file) : "";
                 row.model = FindModelBySlot(isModel, i);
-                row.entry.key = KeyName(isModel, i);
+                row.slot = row.model != nullptr ? row.model->passPlanScratch().renderOrder : 0;
+                row.record.slot = row.slot;
+                row.entry.key = KeyName(isModel, row.slot);
                 if (row.model != nullptr) {
                     const std::string& effect = row.model->effectFile();
                     if (row.model->renderClass() != 0) {
@@ -1284,12 +1477,12 @@ bool MmeEmmSave(const char* path)
                         // effectPath keeps EmmFile::Save from emitting the
                         // row, exactly like the original's empty entry path).
                         row.entry.effectPath.clear();
-                        row.entry.hasShow = true;
+                        row.entry.hasShow = row.model->shownRecorded();
                         row.entry.shown = row.model->shown();
                     } else {
                         row.entry.effectPath =
                             effect.empty() ? kNone : AbsPathCopy(effect);
-                        row.entry.hasShow = true;
+                        row.entry.hasShow = row.model->shownRecorded();
                         row.entry.shown = row.model->shown();
                         for (std::map<int, std::string>::const_iterator it =
                                  row.model->subsetEffects().begin();
@@ -1298,11 +1491,11 @@ bool MmeEmmSave(const char* path)
                                 it->second.empty() ? kNone : AbsPathCopy(it->second);
                         }
                         // [FUN_180030590 @0x180030db2-0x180030e30] "[n].show"
-                        // 行合成：每个 hasShow 的子集节点写一行（值取 +0x30），
-                        // 遍历上界是材质数（*(object+0x38)）——只在管理层的
-                        // 注册表里记录过的子集才输出（原版同：无记录即无行）。
-                        // EmmFile::Save 按 n = 0..max(path,show) 与 "[n]" 行
-                        // 交错输出（[FUN_18004C160]）。
+                        // Line synthesis: write one line for each subset node with hasShow (value from +0x30),
+                        // bounded by material count (*(object+0x38)); output only subsets recorded in the manager's
+                        // registry (as in the original: no record means no line).
+                        // EmmFile::Save interleaves these with "[n]" lines for n = 0..max(path,show)
+                        // ([FUN_18004C160]).
                         bool emmRowShown = false;
                         for (int n = 0; n < row.model->materialCount(); ++n) {
                             if (MmeEmmSubsetShowRecorded(row.model, n, &emmRowShown)) {
@@ -1318,7 +1511,7 @@ bool MmeEmmSave(const char* path)
         }
     }
     std::stable_sort(rows.begin(), rows.end(),
-                     [](const SaveRow& a, const SaveRow& b) { return a.slot < b.slot; });
+                     [](const EmmSaveObject& a, const EmmSaveObject& b) { return a.slot < b.slot; });
 
     EmmFile emm;
     std::vector<EmmObjectRecord> objects;
@@ -1334,6 +1527,7 @@ bool MmeEmmSave(const char* path)
     const std::string& def = DefaultEffectRef();
     emm.SetDefaultEffect(def.empty() ? kNone : AbsPathCopy(def));
     emm.SetDefaultEntries(entries);
+    emm.SetOwnerSections(CollectOwnerSections(rows));
     return emm.Save(path);
 }
 
@@ -1378,6 +1572,7 @@ bool MmeEmdLoad(const char* path, const std::vector<ModelData*>& targets)
         // [FUN_180031980] the replace-first walk also erases the object's
         // show records (hasShow nodes) before the EMD rows are written back.
         MmeEmmClearSubsetShows(model);
+        model->resetShown();
 
         if (!entry.effectPath.empty()) {
             // "none"/"hide"/"main_default" resolve to the empty path.
@@ -1405,8 +1600,8 @@ bool MmeEmdLoad(const char* path, const std::vector<ModelData*>& targets)
                 assignedPaths.push_back(resolved);
             }
         }
-        // "[n].show" 行与 "[n]" 同一界内落地（材质数上界，越界忽略），运行
-        // 时生效见 MmeEmmEffectiveSubsetShown。
+        // Apply "[n].show" within the same bounds as "[n]" (material-count limit; ignore out-of-range lines); runtime
+        // behavior is in MmeEmmEffectiveSubsetShown.
         for (std::map<int, bool>::const_iterator it = entry.subsetShows.begin();
              it != entry.subsetShows.end(); ++it) {
             if (it->first >= 0 && it->first < materialCount) {
@@ -1505,64 +1700,46 @@ bool MmeAssignEffect(unsigned long long objectId, int subsetIndex, const std::st
     }
     ModelData* model = it->second;
     if (subsetIndex >= 0) {
-        model->setSubsetEffect(subsetIndex, path);
-        if (path.empty()) {
-            // Rebuild all bindings so this subset falls back to the current
-            // whole-object assignment.
-            const std::string whole = model->effectFile();
-            MmeDropMaterialBindings(model);
-            if (!whole.empty()) {
-                ApplyEffectToModel(model, whole);
-            }
-            for (const auto& entry : model->subsetEffects()) {
-                if (!entry.second.empty()) {
-                    MmeResolveSubsetEffectBinding(model, entry.first,
-                                                  entry.second);
-                }
-            }
-        } else {
-            MmeResolveSubsetEffectBinding(model, subsetIndex, path);
-        }
+        ApplySubsetEffectToModel(model, subsetIndex, path);
         return true;
     } else {
         model->clearSubsetEffects();
+        MmeDropMaterialBindings(model);
     }
     ApplyEffectToModel(model, path);
     return true;
 }
 
-// --- [FUN_18002DEF0 / sub_18000B880] 热重载的绑定重解析 ----------------------
-// 参见 emm_manager.h 的总注释：这一族入口绝不触碰分配映射（effectFile /
-// subsetEffects / show 记录），只按当前分配表重建绑定对缓存条目的引用。
+// --- [FUN_18002DEF0 / sub_18000B880] Re-resolve bindings during hot reload ----------------------
+// See the general comment in emm_manager.h: these entry points never modify assignment maps (effectFile /
+// subsetEffects / show records); they rebuild binding references to cache entries from current assignments.
 
 namespace {
 
-// path 为空串 = Reload All 的“全部受影响绑定”；否则精确匹配绑定路径。
+// Empty path means all affected bindings for Reload All; otherwise match binding paths exactly.
 bool EffectPathInReloadScope(const std::string& bindingPath, const std::string& path)
 {
     return path.empty() || bindingPath == path;
 }
 
-// [0x18000ba10-0x18000bbcf] sub_18000B880 失败报告块的热重载版：errorText +
-// "\n" 日志、失败缓存条目卸载（[0x18000ba43]）、语言分支的
-// "Failed to load effect file:" 弹窗（dedup 门）。与 ApplyEffectToModel 的
-// 失败块唯一差别：不清除分配——原版重载失败后工作映射原样保留，绑定维持
-// 无效果直到文件再次变化（stamp 已更新，轮询静默）。
-void ReportReloadFailure(const std::string& effectPath,
+// [0x18000ba10-0x18000bbcf] Shared assignment/reload failure reporting.
+// The working-map path survives; only the failed binding loses its effect.
+// A model-specific selection failure must not evict a compatible cached source.
+void ReportEffectLoadFailure(const std::string& effectPath,
                          const std::shared_ptr<LoadedEffect>& loaded)
 {
     if (loaded == nullptr) {
         return;
     }
-    // [0x18000ba10] 第一段：原始 errorText + 一个 "\n"（空行分隔）。
+    // [0x18000ba10] First part: original errorText + one "\n" (blank-line separator).
     MmeLogWrite((loaded->errorText + "\n").c_str(), 0);
-    // [0x18000ba43] 先卸载失败条目，再组装弹窗文本。
-    MmeEngineUnloadEffectFile(effectPath);
-    // [0x18000ba52-0x18000ba74] ExpGetEnglishMode（回退 byte_1800D99DD=0，
-    // 日文）选择前缀；文本 = 前缀 + 路径 + "\n\n" + errorText。
+    // [0x18000ba43] Unload the failed entry before assembling the dialog text.
+    MmeEngineUnloadEffectFile(effectPath, loaded);
+    // [0x18000ba52-0x18000ba74] ExpGetEnglishMode (fallback byte_1800D99DD=0,
+    // Japanese) selects the prefix; text = prefix + path + "\n\n" + errorText.
     const char* prefix = MmeIsEnglishUiMode()
         ? "Failed to load effect file:"   // 0x1800b3b18 (EN)
-        // unk_1800B3AE8, Shift-JIS "エフェクトファイルの読み込みに失敗しました:"
+        // unk_1800B3AE8, Shift-JIS "Failed to load effect file:"
         : "\x83\x47\x83\x74\x83\x46\x83\x4E\x83\x67\x83\x74"
           "\x83\x40\x83\x43\x83\x8B\x82\xCC\x93\xC7\x82\xDD"
           "\x8D\x9E\x82\xDD\x82\xC9\x8E\xB8\x94\x73\x82\xB5"
@@ -1574,24 +1751,24 @@ void ReportReloadFailure(const std::string& effectPath,
     MmeLogWrite(message.c_str(), 1);   // dedup + MessageBoxA (FUN_180009080 flag)
 }
 
-// 装载（失败时已按 sub_18000B880 失败路径报告），成功返回缓存条目。
+// Load (failures have already been reported through sub_18000B880's failure path); return the cached entry on success.
 std::shared_ptr<LoadedEffect> ReloadEffectForRebind(IDirect3DDevice9* device,
-                                                    const std::string& effectPath)
+                                                    const std::string& effectPath, int materialCount)
 {
-    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath);
+    std::shared_ptr<LoadedEffect> loaded = MmeEngineLoadEffectFile(device, effectPath, materialCount);
     if (loaded == nullptr || loaded->effect == nullptr) {
         if (loaded != nullptr && !loaded->errorText.empty()) {
-            ReportReloadFailure(effectPath, loaded);
+            ReportEffectLoadFailure(effectPath, loaded);
         }
-        // errorText 为空 = 文件缺失（stamp==0）：sub_18000BC90 @0x18000bd19
-        // 的静默早退，无日志无弹窗。
+        // Empty errorText = missing file (stamp==0): sub_18000BC90 at 0x18000bd19
+        // returns early and silently, without a log or dialog.
         return std::shared_ptr<LoadedEffect>();
     }
     return loaded;
 }
 
-// [0x18000bc10-0x18000bc53] "done.\n\n"（0x1800B3AE0）的 v11 闩：只有本轮
-// 真正跑过装载器的文件记一次（LoadedEffect::doneLogged），缓存命中静默。
+// [0x18000bc10-0x18000bc53] v11 latch for "done.\n\n" (0x1800B3AE0): log only once for files
+// actually passed through the loader this round (LoadedEffect::doneLogged); cache hits are silent.
 void LogDoneOnce(const std::shared_ptr<LoadedEffect>& loaded)
 {
     if (loaded != nullptr && !loaded->doneLogged) {
@@ -1604,10 +1781,10 @@ void LogDoneOnce(const std::shared_ptr<LoadedEffect>& loaded)
 
 void MmeReleaseEffectBindings(const std::string& path)
 {
-    // 消费半程 A：受影响绑定原位置空 effect/sas/owner（MmeEnsureMaterialBinding
-    // 的原位更新分支），旧缓存条目在最后一个引用死亡时经 ~LoadedEffect 执行
-    // FUN_18000B210 语义。分配映射不动；绑定不存在时创建无效果占位（原版
-    // 工作映射节点在分配时即建立，装载失败的节点同样以无效果绑定存在）。
+    // Consumption phase A: clear effect/sas/owner in affected bindings in place (MmeEnsureMaterialBinding's
+    // in-place update branch); the old cache entry executes FUN_18000B210 semantics through ~LoadedEffect
+    // when its last reference dies. Assignments remain unchanged; absent bindings get no-effect placeholders (the original
+    // creates working-map nodes at assignment time, and failed-load nodes likewise exist as no-effect bindings).
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return;
@@ -1617,12 +1794,12 @@ void MmeReleaseEffectBindings(const std::string& path)
         if (model == nullptr) {
             continue;
         }
-        // 整对象节点 (0, model, -1)
+        // Whole-object node (0, model, -1)
         const std::string& whole = model->effectFile();
         if (!whole.empty() && EffectPathInReloadScope(whole, path)) {
             MmeEnsureMaterialBinding(0, model, -1, nullptr, whole, nullptr);
         }
-        // [n] 子集节点 (0, model, n)——分配表原样遍历，只释放引用
+        // [n] subset node (0, model, n): traverse assignments unchanged, releasing only references
         for (std::map<int, std::string>::const_iterator it = model->subsetEffects().begin();
              it != model->subsetEffects().end(); ++it) {
             if (it->second.empty() || !EffectPathInReloadScope(it->second, path)) {
@@ -1635,11 +1812,10 @@ void MmeReleaseEffectBindings(const std::string& path)
 
 bool MmeRebindEffectAssignments(const std::string& path)
 {
-    // 消费半程 B：按当前分配表重跑解析。逐模型先整对象后子集（原版
-    // sub_18002C910 的遍历序：每对象先 (object, -1) 再 (object, 0..count-1)，
-    // 模型序 = 注册序）。装载失败的分配保留原值，等待文件修复后的下一次
-    // stamp 变化——与 MmeAssignEffect/ApplyEffectToModel 的“失败即清分配”
-    // 语义相反，正是原版热重载的行为。
+    // Consumption phase B: resolve again from current assignments, whole-object then subsets per model (original
+    // sub_18002C910 traversal: (object, -1) followed by (object, 0..count-1) for each object,
+    // in model registration order). Failed-load assignments retain their values, waiting for the next
+    // stamp change after file repair, as in the original working map.
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
         return false;
@@ -1653,10 +1829,10 @@ bool MmeRebindEffectAssignments(const std::string& path)
         }
         const std::string& whole = model->effectFile();
         if (!whole.empty() && EffectPathInReloadScope(whole, path)) {
-            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, whole);
+            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, whole, model->materialCount());
             if (fresh != nullptr) {
-                // 场景类接线（renderClass/drawsGeometry/sceneTechIndex）随解析重建；
-                // 类别降级为 object 时由解析内部 ClearSasBinding。
+                // Rebuild scene-class wiring (renderClass/drawsGeometry/sceneTechIndex) during resolution;
+                // resolution internally calls ClearSasBinding when the class falls back to object.
                 MmeResolveModelEffectBinding(model);
                 LogDoneOnce(fresh);
                 any = true;
@@ -1667,7 +1843,7 @@ bool MmeRebindEffectAssignments(const std::string& path)
             if (it->second.empty() || !EffectPathInReloadScope(it->second, path)) {
                 continue;
             }
-            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, it->second);
+            std::shared_ptr<LoadedEffect> fresh = ReloadEffectForRebind(device, it->second, model->materialCount());
             if (fresh != nullptr) {
                 MmeResolveSubsetEffectBinding(model, it->first, it->second);
                 LogDoneOnce(fresh);
@@ -1680,9 +1856,9 @@ bool MmeRebindEffectAssignments(const std::string& path)
 
 bool MmeAnyEffectBindingForPath(const std::string& path)
 {
-    // [0x18000b972 `if (!*(a1))`] 文件级等价：是否仍有引用该 .fx 且持有
-    // 效果的活绑定。直接走管理器绑定树（不经 MmeFindMaterialBinding 的
-    // offscreen DefaultEffect 短接缝——轮询语义与绘制窗口无关）。
+    // [0x18000b972 `if (!*(a1))`] File-level equivalent: whether any live binding still references this .fx and holds
+    // an effect. Traverse the manager binding tree directly (without MmeFindMaterialBinding's
+    // offscreen DefaultEffect shortcut; polling semantics are independent of the drawing window).
     EffectOwnerManager* manager = g_ownerManager;
     if (manager == nullptr) {
         return false;
@@ -1764,13 +1940,13 @@ void MmeAutoSaveEmmForPmm(const wchar_t* pmmPath)
     if (!MmeBuildEmmPathForPmm(pmmAnsi.c_str(), &emmPath)) {
         return;
     }
-    // [FUN_1800431E0 @0x180043307-0x1800433ea] 无对话框、静默直存（行为级
-    // 一致，非 divergence）：FUN_180057290 把预构建的 .emm 路径作为第二参
-    // 传入（0x1800573ed: mov r8, rbx / Buffer），FUN_1800431E0 在 a2 != NULL
-    // 时直接 strcpy_s 后调 FUN_1800315F0 序列化——GetSaveFileNameA 分支
-    // （a2 == NULL）只属于 40010 菜单命令（sub_180044080 @0x1800451b9:
-    // xor edx, edx）。用户取消对话框（返回 0）时菜单路径不保存，与自动
-    // 保存无关。
+    // [FUN_1800431E0 at 0x180043307-0x1800433ea] Save directly and silently without a dialog (behaviorally
+    // identical, no divergence): FUN_180057290 passes the prebuilt .emm path as the second argument
+    // (0x1800573ed: mov r8, rbx / Buffer); when a2 != NULL, FUN_1800431E0
+    // directly calls strcpy_s then FUN_1800315F0 to serialize. The GetSaveFileNameA branch
+    // (a2 == NULL) belongs only to menu command 40010 (sub_180044080 at 0x1800451b9:
+    // xor edx, edx). Canceling the dialog (return 0) skips saving on the menu path and has no bearing on automatic
+    // saving.
     MmeEmmSave(emmPath.c_str());
 }
 

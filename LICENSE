@@ -1,63 +1,21 @@
-MikuDanceStudio License (Freeware)
-==================================
+MIT License
 
-This project is distributed under the same freeware terms as MikuMikuDance
-(created by Yu Higuchi), as stated in the original MikuMikuDance readme:
+Copyright (c) 2026 MikuDanceStudio contributors
 
-1. This software is free software (freeware).
-2. Copyright (C) Yu Higuchi (樋口優) / MikuDanceStudio contributors.
-   All rights reserved.
-3. You may use and redistribute this software free of charge. Selling this
-   software itself, or charging a fee for its redistribution, is prohibited.
-4. Redistribution of modified versions of this software is prohibited.
-5. The copyright of any data (models, motions, videos, images, etc.) created
-   using this software belongs to the creator of that data.
-6. This software is provided "as is", without warranty of any kind. The
-   authors are not liable for any damages arising from the use of this
-   software.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Third-party components follow their respective licenses:
-- Bullet Physics: zlib license (https://github.com/bulletphysics/bullet3)
-- DirectX SDK / Windows SDK: Microsoft EULA
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
---------------------------------------------------------------------------
-
-MikuDanceStudio 许可条款（免费软件）
-====================================
-
-本工程采用与 MikuMikuDance（樋口優 制作）相同的免费软件条款，
-即原版 MikuMikuDance readme 中声明的条款：
-
-1. 本软件为免费软件（freeware）。
-2. 著作权 (C) 樋口優（Yu Higuchi）及 MikuDanceStudio 贡献者。保留所有权利。
-3. 本软件可免费使用与再发布。禁止出售本软件本身，或以收取费用的方式再发布。
-4. 禁止再发布经过修改的本软件。
-5. 使用本软件创建的数据（模型、动作、视频、图像等）的著作权归该数据的创建者所有。
-6. 本软件按“原样”提供，不作任何担保。作者对使用本软件产生的任何损害不承担责任。
-
-第三方组件遵循各自许可：
-- Bullet Physics：zlib 许可（https://github.com/bulletphysics/bullet3）
-- DirectX SDK / Windows SDK：微软 EULA
-
---------------------------------------------------------------------------
-
-MikuDanceStudio ライセンス（フリーウェア）
-==========================================
-
-本プロジェクトは、MikuMikuDance（樋口優 制作）と同一のフリーウェア条項、
-すなわちオリジナルの MikuMikuDance readme に記載された条項の下で配布されます：
-
-1. 本ソフトウェアはフリーウェアです。
-2. 著作権 (C) 樋口優（Yu Higuchi）および MikuDanceStudio の貢献者。
-   全権利を保有します。
-3. 本ソフトウェアは無料で使用および再配布できます。本ソフトウェア自体の販売、
-   または料金を請求しての再配布は禁止します。
-4. 改造した本ソフトウェアの再配布は禁止します。
-5. 本ソフトウェアを使用して作成したデータ（モデル、モーション、動画、画像等）の
-   著作権は、そのデータの制作者に帰属します。
-6. 本ソフトウェアは「現状有姿」で提供され、いかなる保証も行いません。
-   本ソフトウェアの使用によって生じたいかなる損害に対しても、作者は責任を負いません。
-
-サードパーティコンポーネントはそれぞれのライセンスに従います：
-- Bullet Physics：zlib ライセンス（https://github.com/bulletphysics/bullet3）
-- DirectX SDK / Windows SDK：マイクロソフト EULA
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

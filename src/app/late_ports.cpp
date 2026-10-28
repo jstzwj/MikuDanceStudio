@@ -14,7 +14,7 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <d3d9.h>
-#include <mmsystem.h>   // timeEndPeriod
+#include <mmsystem.h> // timeEndPeriod
 
 #include <cstdint>
 #include <cstdio>
@@ -30,9 +30,8 @@
 namespace mikudancestudio {
 
 // Full-port callees defined in other TUs (local declarations).
-void TeardownDShowGraph(DShowRecorder* rec);   // VA 0x409320 (shutdown_cleanup.cpp)
-void RefreshAfterFrameApply(MMDApp* app);      // VA 0x432FA0 (ui_frame_step.cpp),
-
+void TeardownDShowGraph(DShowRecorder* rec); // VA 0x409320 (shutdown_cleanup.cpp)
+void RefreshAfterFrameApply(MMDApp* app);    // VA 0x432FA0 (ui_frame_step.cpp),
 
 // ---- frame-driver tail targets (0x0046B090) -------------------------------
 // TimelineAdvance (0x460130, actually the frame-capture/screenshot tail)
@@ -63,64 +62,63 @@ void RefreshAfterFrameApply(MMDApp* app);      // VA 0x432FA0 (ui_frame_step.cpp
 // ---------------------------------------------------------------------------
 void FinishAviRecord(MMDApp* app) {
     auto& s = *app;
-    timeEndPeriod(1);                                       // 0x464A07
-    s.state.playbackActive = 0;             // 0x464A11
-    StopPlayback(app);                                         // 0x464A17
-    unsigned char* flag = s.RecordingCompletionFlag();      // 0x464A1C
-    s.state.frameStepPlayback = 0;           // 0x464A22
+    timeEndPeriod(1);                                  // 0x464A07
+    s.state.playbackActive = 0;                        // 0x464A11
+    StopPlayback(app);                                 // 0x464A17
+    unsigned char* flag = s.RecordingCompletionFlag(); // 0x464A1C
+    s.state.frameStepPlayback = 0;                     // 0x464A22
     if (flag != nullptr)
-        *flag = 1;                                          // 0x464A28
-    TeardownDShowGraph(s.Recorder());                       // 0x464A31
+        *flag = 1;                    // 0x464A28
+    TeardownDShowGraph(s.Recorder()); // 0x464A31
     D3DRenderer* r = s.Renderer();
     if (r != nullptr) {
-        IDirect3DDevice9* device = r->device;               // 0x1D4E0
+        IDirect3DDevice9* device = r->device; // 0x1D4E0
         IDirect3DSurface9** backBuffer = &r->backbufferSurface;
-        if (*backBuffer == nullptr)                         // 0x464A3C
+        if (*backBuffer == nullptr) // 0x464A3C
             device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
-                                  backBuffer);              // 0x464A5A
+                                  backBuffer); // 0x464A5A
         if (r->multisampleAvailable == 0)
-            device->SetRenderTarget(0, *backBuffer);        // 0x464A81
+            device->SetRenderTarget(0, *backBuffer); // 0x464A81
     }
-    if (s.state.aviStereoOutput != 0) {                     // 0xA0D61
-        s.state.fullscreenMode = 0;                    // 0x464B0B
-        ApplyFullscreenWindowState(app);                                     // 0x464B11
-        PostDeviceReset(app);                               // 0x464B18
-        s.state.aviStereoOutput = 0;                    // 0x464B1D
+    if (s.state.aviStereoOutput != 0) {  // 0xA0D61
+        s.state.fullscreenMode = 0;      // 0x464B0B
+        ApplyFullscreenWindowState(app); // 0x464B11
+        PostDeviceReset(app);            // 0x464B18
+        s.state.aviStereoOutput = 0;     // 0x464B1D
     } else {
         const std::int32_t winW = s.state.recRTW;
         const std::int32_t winH = s.state.recRTH;
-        if (r != nullptr &&
-            (r->screenWidth > winW || r->screenHeight > winH)) {
-            r->presentParameters.BackBufferWidth = winW;   // 0x1D4FC
-            r->presentParameters.BackBufferHeight = winH;  // 0x1D500
-            r->screenWidth = winW;                          // 0x1D4E4
-            r->screenHeight = winH;                         // 0x1D4E8
-            PostDeviceReset(app);                           // 0x464AF5
+        if (r != nullptr && (r->screenWidth > winW || r->screenHeight > winH)) {
+            r->presentParameters.BackBufferWidth = winW;  // 0x1D4FC
+            r->presentParameters.BackBufferHeight = winH; // 0x1D500
+            r->screenWidth = winW;                        // 0x1D4E4
+            r->screenHeight = winH;                       // 0x1D4E8
+            PostDeviceReset(app);                         // 0x464AF5
         }
-        DestroyWindow(s.RecordingWindow());                 // 0x464B01
+        DestroyWindow(s.RecordingWindow()); // 0x464B01
     }
-    s.RecordingWindow() = nullptr;                          // 0x464B31
-    EnableWindow(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayButton), 1);  // 0x464B3E
-    RefreshMainWindowViewport(app);                                         // 0x464B46
-    RefreshAfterFrameApply(app);                            // 0x464B4D
-    PostViewRefresh(app);                                   // 0x464B54
-    if (IDirect3DSurface9* com = s.CaptureRenderTarget()) {        // 0x464B69
+    s.RecordingWindow() = nullptr;                                                // 0x464B31
+    EnableWindow(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayButton), 1); // 0x464B3E
+    RefreshMainWindowViewport(app);                                               // 0x464B46
+    RefreshAfterFrameApply(app);                                                  // 0x464B4D
+    PostViewRefresh(app);                                                         // 0x464B54
+    if (IDirect3DSurface9* com = s.CaptureRenderTarget()) {                       // 0x464B69
         com->Release();
         s.CaptureRenderTarget() = nullptr;
     }
-    if (IDirect3DSurface9* com = s.CaptureSystemSurface()) {       // 0x464B81
+    if (IDirect3DSurface9* com = s.CaptureSystemSurface()) { // 0x464B81
         com->Release();
         s.CaptureSystemSurface() = nullptr;
     }
-    if (void* buf = s.state.captureReadbackPixels) {                 // 0x464B94
+    if (void* buf = s.state.captureReadbackPixels) { // 0x464B94
         free(buf);
         s.state.captureReadbackPixels = nullptr;
     }
-    if (s.state.aviStereoOutput == 0) {                 // 0x464BA2
-        ShowWindow(static_cast<HWND>(s.Hwnd()), SW_SHOW);   // 5
+    if (s.state.aviStereoOutput == 0) {                   // 0x464BA2
+        ShowWindow(static_cast<HWND>(s.Hwnd()), SW_SHOW); // 5
         HWND separate = s.FloatingWindow();
         if (separate != nullptr)
-            ShowWindow(separate, SW_SHOW);                  // 0x464BC8
+            ShowWindow(separate, SW_SHOW); // 0x464BC8
     }
 }
 
@@ -194,13 +192,13 @@ void RendererInit(D3DRenderer* r) {
     // stereo-capable driver the port now follows the original instead of
     // hard-disabling.
     {
-        int status = NvapiInitChain();                        // 0x406E18
+        int status = NvapiInitChain(); // 0x406E18
         if (status != 0)
-            status = NvapiStereoCaps(1);                      // 0x406E28
+            status = NvapiStereoCaps(1); // 0x406E28
         if (status != 0) {
-            r->stereoEnabled = 0;                             // 0x406E2F
+            r->stereoEnabled = 0; // 0x406E2F
         } else {
-            r->stereoEnabled = (NvapiStereoSupportGate() == 0) ? 1 : 0;  // 0x406E42
+            r->stereoEnabled = (NvapiStereoSupportGate() == 0) ? 1 : 0; // 0x406E42
         }
     }
 }
@@ -271,7 +269,9 @@ void RendererInit(D3DRenderer* r) {
 // 0x4C46F0: the original is the identity ctor `return this;` (verified on
 // the decompile) - callers ignore the return value, so an empty body is
 // the faithful port, not a placeholder.
-void IdentityCtor(void* obj)            { (void)obj; }
+void IdentityCtor(void* obj) {
+    (void)obj;
+}
 // 0x441070 JumpNextKeyframe / 0x4414C0 JumpPrevKeyframe (timeline
 // registration jumps) are full ports in src/app/app_utilities.cpp; the old
 // no-op stubs here were removed (callers rewired in command_frame_register.cpp).
@@ -313,22 +313,32 @@ void IdentityCtor(void* obj)            { (void)obj; }
 // ---------------------------------------------------------------------------
 INT_PTR CALLBACK DialogFuncStub(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
-    if (msg == WM_INITDIALOG) {                                    // 0x410014
+    if (msg == WM_INITDIALOG) { // 0x410014
         MMDApp* app = g_Block;
-        SetWindowTextA(GetDlgItem(hDlg, panel::kScaleFromEdit),
-                       app->state.statusText);
+        SetWindowTextA(GetDlgItem(hDlg, panel::kScaleFromEdit), app->state.statusText);
         return 0;
     }
-    if (msg == WM_COMMAND) {                                       // 0x40FF98
+    if (msg == WM_COMMAND) { // 0x40FF98
         switch (LOWORD(wp)) {
-        case 0x2AF: EndDialog(hDlg, 1); return 0;                  // 0x40FFA2
-        case 0x2B0: EndDialog(hDlg, 3); return 0;                  // 0x40FFBA
-        case 0x2B1: EndDialog(hDlg, 4); return 0;                  // 0x40FFD2
-        case 0x2B2: EndDialog(hDlg, 5); return 0;                  // 0x40FFEA
-        case 2:     EndDialog(hDlg, 2); return 0;                  // 0x410002
-        default: break;
+        case 0x2AF:
+            EndDialog(hDlg, IDOK);
+            return 0; // 0x40FFA2
+        case 0x2B0:
+            EndDialog(hDlg, 3);
+            return 0; // 0x40FFBA
+        case 0x2B1:
+            EndDialog(hDlg, 4);
+            return 0; // 0x40FFD2
+        case 0x2B2:
+            EndDialog(hDlg, 5);
+            return 0; // 0x40FFEA
+        case IDCANCEL:
+            EndDialog(hDlg, IDCANCEL);
+            return 0; // 0x410002
+        default:
+            break;
         }
     }
-    return 0;                                                      // 0x410038
+    return 0; // 0x410038
 }
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

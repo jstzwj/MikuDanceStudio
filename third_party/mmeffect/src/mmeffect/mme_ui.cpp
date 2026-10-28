@@ -501,10 +501,10 @@ bool MmeUiInstallHooks(bool invertLanguageFlag)
         char text[32];
         memset(text, 0, sizeof(text));
         // [0x180055938/0x180055960] GetMenuStringA(menu, 0x104, ..., 0x20, 0)
-        // 成功且 strstr 命中 "English" → v4=1=日文。MMD 的语言菜单显示的是
-        // “可切换到”的语言：显示 English 说明当前 UI 是日文，故装日文菜单
-        // 101/0x65；探针成功但不含 "English"（显示日文项 → 当前英文）才装
-        // 英文菜单 107/0x6b。方向与 v4（=byte_1800D99DD，1=日文）一致。
+        // If it succeeds and strstr finds "English", v4=1=Japanese. MMD's language menu shows
+        // the language to switch to: English means the current UI is Japanese, so load Japanese menus
+        // 101/0x65; only a successful probe without "English" (a Japanese item, meaning English UI) loads
+        // English menus 107/0x6b. This agrees with v4 (=byte_1800D99DD, 1=Japanese).
         if (GetMenuStringA(menu, 0x104, text, 0x20, MF_BYCOMMAND) != 0) {
             japanese = strstr(text, "English") != nullptr;
         }
@@ -613,63 +613,63 @@ void MmeUiOpenAssignmentDialog()
 
 void MmeUiReloadAllEffects()
 {
-    // [40004 = FUN_18002DEF0] “全部重载”的打标记式语义（行为级移植）。
+    // [40004 = FUN_18002DEF0] Flag-based "reload all" semantics (behavioral port).
     //
-    // 原版只做两件事（@0x18002def0-0x18002df6d）：
-    //   1. 逆序遍历管理器绑定树（qword_1800D9A40+0xA0），给每个活绑定的
-    //      0x1D8 对象打标记 *(WORD*)(binding+56)=0x100（@0x18002df0f）——
-    //      位义 loaded(+56)=0 / unloadRequest(+57)=1；工作映射（分配表）
-    //      一个字节不动；
-    //   2. sub_18000A990 清效果/纹理两棵缓存树（表头 0x1800D9C68 /
-    //      0x1800D9C88），只丢缓存侧 shared_ptr 引用。
-    // 各（owner=0, object, subset）绑定节点（含全部 [n] 子集节点）在下次
-    // apply 时经 sub_18000B880 消费标记（@0x18000b8e6-0x18000b930）：先
-    // sub_18000B210 释放旧条目引用，再因 loaded=0 走首装路径 sub_18000BC90
-    // 重编译（缓存已清空必失配），新条目入缓存后切回绑定。
+    // The original does only two things (@0x18002def0-0x18002df6d):
+    //   1. Traverse the manager's binding tree (qword_1800D9A40+0xA0) in reverse, marking each live
+    //      0x1D8 binding object with *(WORD*)(binding+56)=0x100 (@0x18002df0f):
+    //      the bits mean loaded(+56)=0 / unloadRequest(+57)=1; the working map (assignment table)
+    //      remains byte-for-byte unchanged;
+    //   2. sub_18000A990 clears the effect/texture cache trees (headers 0x1800D9C68 /
+    //      0x1800D9C88), dropping only the cache-side shared_ptr references.
+    // Each (owner=0, object, subset) binding node (including all [n] subset nodes) consumes the flag on the next
+    // apply via sub_18000B880 (@0x18000b8e6-0x18000b930): first
+    // sub_18000B210 releases the old entry reference; then loaded=0 takes the initial-load path sub_18000BC90
+    // to recompile (the cleared cache guarantees a miss), cache the new entry, and bind it.
     //
-    // 移植绑定不逐帧轮询（分配时解析），故在此同步执行同一消费链：
+    // This port resolves bindings at assignment time rather than polling each frame, so run the same consumption chain synchronously here:
     //   MmeEngineClearCaches()            —— sub_18000A990；
-    //   MmeReleaseEffectBindings("")      —— 标记消费·引用释放半程（B210），
-    //                                         旧条目随最后一个 owner 引用死亡
-    //                                         打出 "Unload effect file" 日志；
-    //   MmeRebindEffectAssignments("")    —— 标记消费·重装载半程（BC90），
-    //                                         按当前分配表（effectFile +
-    //                                         subsetEffects）重建绑定。
-    // 绝不调用 MmeAssignEffect：整对象重派会 clearSubsetEffects() 抹掉全部
-    // [n] 材质子集分配且不重建（移植缺陷，本次消灭）。子集分配原样保留，
-    // 由重解析按原值重建各自的 (0, model, [n]) 绑定。
+    //   MmeReleaseEffectBindings("")      -- flag consumption/reference release half (B210);
+    //                                         the old entry dies with its last owner reference,
+    //                                         producing the "Unload effect file" log;
+    //   MmeRebindEffectAssignments("")    -- flag consumption/reload half (BC90);
+    //                                         rebuild bindings from the current assignment table (effectFile +
+    //                                         subsetEffects).
+    // Never call MmeAssignEffect: whole-object reassignment calls clearSubsetEffects(), erasing all
+    // [n] material subset assignments without rebuilding them (the porting defect fixed here). Preserve subset assignments unchanged;
+    // re-resolution rebuilds each (0, model, [n]) binding from its existing value.
     MmeEngineClearCaches();                     // [sub_18000A990]
-    MmeReleaseEffectBindings(std::string());    // unloadRequest 位的消费
-    MmeRebindEffectAssignments(std::string());  // loaded=0 位的消费
+    MmeReleaseEffectBindings(std::string());    // Consume the unloadRequest bit
+    MmeRebindEffectAssignments(std::string());  // Consume the loaded=0 bit
 }
 
 void MmeUiTickAutoReload()
 {
-    // [sub_18000B880 @0x18000b93c-0x18000b9b2] 自动重载轮询。原版按绑定节点
-    // 逐个轮询：每个 (owner=0, object, subset) 节点自带 100ms 节流
-    // （binding+64）与 stamp/grace 状态，驱动链 = MME_RebuildRenderPassPlan
+    // [sub_18000B880 @0x18000b93c-0x18000b9b2] Automatic reload polling. The original polls each binding node
+    // separately: each (owner=0, object, subset) node has its own 100ms throttle
+    // (binding+64) and stamp/grace state, driven by MME_RebuildRenderPassPlan
     // (0x18005b9e0) → sub_18002BAA0 (@0x18002be1f) → sub_18002C910 →
-    // sub_18002CA80（整对象 @0x18002cede；[n] 子集 @0x18002d0ef，仅
-    // scriptOrder(+0x364)==0 的对象、按材质数(+0x38)逐个）→ sub_18000B880。
-    // 移植按“文件”聚合轮询（同一 .fx 的全部绑定共享一份 stamp/grace 状态），
-    // 受影响绑定集合由 MmeReleaseEffectBindings / MmeRebindEffectAssignments
-    // 以路径过滤——每 .fx 一次重编译、多绑定共享同一缓存条目，与原版
-    // (path,stamp) 缓存命中的可观察行为（日志各记一次）一致。
+    // sub_18002CA80 (whole object @0x18002cede; [n] subsets @0x18002d0ef, only
+    // objects with scriptOrder(+0x364)==0, one call per material (+0x38)) -> sub_18000B880.
+    // This port groups polling by file (all bindings for one .fx share stamp/grace state).
+    // MmeReleaseEffectBindings / MmeRebindEffectAssignments select affected bindings
+    // by path: one recompilation per .fx, with multiple bindings sharing the cache entry, matching the original's
+    // observable (path,stamp) cache-hit behavior (one log entry for each action).
     struct WatchState {
-        unsigned long stamp;   // binding+40：sub_18000B7F0 的文件时间戳
-        bool grace;            // binding+59：删文件宽限标记
+        unsigned long stamp;   // binding+40: file timestamp from sub_18000B7F0
+        bool grace;            // binding+59: file-deletion grace flag
     };
     static DWORD s_lastCheck = 0;
     static std::map<std::string, WatchState> s_stamps;
 
-    if (g_autoReload == 0) {                        // [0x18000b93c] byte_1800D72E1 门
-        // 原版门只跳过 stamp 检查（跳转 LABEL_22），绑定侧 stamp（+40）与
-        // 节流时刻（+64）原样保留——关闭期间改动过的文件在重新开启后的
-        // 首个轮询即重载。故此处不清状态，仅跳过。
+    if (g_autoReload == 0) {                        // [0x18000b93c] byte_1800D72E1 gate
+        // The original gate skips only the stamp check (jumps to LABEL_22), preserving the binding's stamp (+40) and
+        // throttle time (+64). Files changed while disabled therefore reload on the
+        // first poll after re-enabling. Skip here without clearing state.
         return;
     }
     DWORD now = GetTickCount();
-    if (s_lastCheck != 0 && now - s_lastCheck < 100) {   // [0x18000b952] 100ms 节流
+    if (s_lastCheck != 0 && now - s_lastCheck < 100) {   // [0x18000b952] 100ms throttle
         return;
     }
     s_lastCheck = now;
@@ -679,12 +679,12 @@ void MmeUiTickAutoReload()
         return;
     }
 
-    // 监视集 = 活绑定持有的 .fx（B880 的 a1+88 路径非空门）：每模型的整对象
-    // effectFile + 全部 [n] 子集分配。EMM "Pmd<N>[k]" 行与 EMD "Obj[k]" 行
-    // 同栖 subsetEffects 表，均在原版轮询范围内（sub_18002C910 对
-    // scriptOrder==0 的对象逐子集驱动 CA80）。未被任何绑定引用的缓存条目
-    // （如未被采用的 (default) 行值——经 MmeFindEffectFileForModel 自动分配
-    // 的模型自带 effectFile，无需在此单列）不轮询，与原版一致。
+    // Watch set = .fx files held by live bindings (B880's nonempty a1+88 path gate): each model's whole-object
+    // effectFile + all [n] subset assignments. EMM "Pmd<N>[k]" rows and EMD "Obj[k]" rows
+    // share the subsetEffects table, and both are polled by the original (sub_18002C910 drives
+    // CA80 per subset for scriptOrder==0 objects). Cache entries referenced by no binding
+    // (e.g. unused (default) row values; models automatically assigned through MmeFindEffectFileForModel
+    // already have effectFile and need no separate entry here) are not polled, matching the original.
     std::vector<std::string> watched;
     for (size_t i = 0; i < ctx->models.size(); ++i) {
         ModelData* model = ctx->models[i];
@@ -710,7 +710,7 @@ void MmeUiTickAutoReload()
         unsigned long stamp = MmeEngineQueryFileStamp(file);   // [sub_18000B7F0]
         std::map<std::string, WatchState>::iterator prev = s_stamps.find(file);
         if (prev == s_stamps.end()) {
-            // 首次观测只记录（绑定的 stamp 已在装载时由引擎写入条目）。
+            // On first observation, only record the state (the engine already stored the binding's stamp in the entry at load time).
             WatchState state;
             state.stamp = stamp;
             state.grace = false;
@@ -718,39 +718,39 @@ void MmeUiTickAutoReload()
             continue;
         }
         if (stamp == prev->second.stamp) {
-            continue;   // [0x18000b99a] 未变
+            continue;   // [0x18000b99a] Unchanged
         }
         if (stamp != 0) {
-            // [0x18000b99c-0x18000b9b2] stamp 变化（含删后恢复）→ 立即重载：
-            // 缓存条目卸载 + 绑定旧引用释放 + 按当前分配表重解析（B210 +
-            // BC90 链，分配映射不动）。重载链必经 B210（尾部 WORD@+59=0x100）
-            // → 宽限标记复位。
+            // [0x18000b99c-0x18000b9b2] A stamp change (including restoration after deletion) reloads immediately:
+            // unload the cache entry, release old binding references, and re-resolve current assignments (B210 +
+            // BC90 chain; assignment map unchanged). Reload always passes through B210 (trailing WORD@+59=0x100),
+            // resetting the grace flag.
             prev->second.stamp = stamp;
             prev->second.grace = false;
             MmeEngineUnloadEffectFile(file);
             MmeReleaseEffectBindings(file);
             MmeRebindEffectAssignments(file);
         } else if (!MmeAnyEffectBindingForPath(file)) {
-            // [0x18000b972 `if (!*(a1))`] 引用该文件的绑定全都没有效果
-            // （此前装载失败/已卸载）：原版静默返回，stamp/grace 状态均不
-            // 推进（+40 维持旧值，文件原样恢复时不重试——与原版一致）。
+            // [0x18000b972 `if (!*(a1))`] No binding referencing this file has an effect
+            // (previous load failure/already unloaded): the original returns silently without advancing stamp/grace
+            // state (+40 keeps its old value; restoring an identical file does not retry, matching the original).
             continue;
         } else if (prev->second.grace) {
-            // [0x18000b978-0x18000b990] 第二个周期仍缺失：卸载（绑定转无
-            // 效果、分配保留）并把 stamp 清零（+40=0）；卸载链（B210 尾部）
-            // 清宽限标记。不重解析——文件仍缺失，重装载等于 sub_18000BC90
-            // 的 stamp==0 静默早退，绑定保持无效果等待文件恢复。
+            // [0x18000b978-0x18000b990] Still missing on the second cycle: unload (bindings lose their
+            // effects, assignments remain) and zero the stamp (+40=0); the unload chain (end of B210)
+            // clears the grace flag. Do not re-resolve: the file is still missing, so reloading would take sub_18000BC90's
+            // silent stamp==0 early return, leaving bindings without effects until the file returns.
             prev->second.stamp = 0;
             prev->second.grace = false;
             MmeEngineUnloadEffectFile(file);
             MmeReleaseEffectBindings(file);
         } else {
-            // [0x18000b97e] 首个缺失周期：只记宽限标记（stamp 保持旧值，
-            // 文件在下一周期内恢复则走上面的变化分支，不触发卸载）。
+            // [0x18000b97e] First missing cycle: set only the grace flag (preserve the old stamp;
+            // restoration before the next cycle takes the change branch above without unloading).
             prev->second.grace = true;
         }
     }
-    // 分配撤销/模型删除后收尾：监视项随原版工作映射节点的销毁一起消失。
+    // Cleanup after assignment removal/model deletion: watch entries disappear with the original working-map nodes.
     for (std::map<std::string, WatchState>::iterator it = s_stamps.begin();
          it != s_stamps.end(); ) {
         if (std::find(watched.begin(), watched.end(), it->first) == watched.end()) {

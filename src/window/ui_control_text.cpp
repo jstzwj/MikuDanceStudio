@@ -30,31 +30,31 @@ namespace mikudancestudio {
 void DrawControlText(MMDApp* app, HWND hwnd, HDC hdc, RECT rc) {
     char text[0x100];
     GetWindowTextA(hwnd, text, 0x100);
-    SetBkMode(hdc, TRANSPARENT);  // push 1
+    SetBkMode(hdc, TRANSPARENT); // push 1
 
     // Zero-initialized LOGFONTA on the global heap (GPTR | sizeof(LOGFONTA));
     // fields the original never touches rely on that zero-init.
     LOGFONTA* lf = static_cast<LOGFONTA*>(GlobalAlloc(GPTR, sizeof(LOGFONTA)));
-    if (app->EnglishUI() != 0) {                       // this+0xA0B4C
+    if (app->EnglishUI() != 0) { // this+0xA0B4C
         strcpy_s(lf->lfFaceName, sizeof(lf->lfFaceName), "Tahoma");
-        lf->lfHeight = 13;                             // 0x0D
+        lf->lfHeight = 13; // 0x0D
     } else {
         // "MS P Gothic" as the original Shift-JIS bytes (0x52B7C4).
         strcpy_s(lf->lfFaceName, sizeof(lf->lfFaceName),
                  "\x82\x6c\x82\x72 \x82\x6f\x83\x53\x83\x56\x83\x62\x83\x4e");
-        lf->lfHeight = 12;                             // 0x0C
+        lf->lfHeight = 12; // 0x0C
     }
-    lf->lfWeight = 700;                                // FW_BOLD (0x2BC)
+    lf->lfWeight = 700; // FW_BOLD (0x2BC)
     lf->lfEscapement = 0;
     lf->lfWidth = 0;
     lf->lfItalic = FALSE;
     lf->lfUnderline = FALSE;
-    lf->lfCharSet = 0x80;                              // SHIFTJIS_CHARSET
+    lf->lfCharSet = 0x80; // SHIFTJIS_CHARSET
 
     HFONT font = CreateFontIndirectA(lf);
     HGDIOBJ oldFont = SelectObject(hdc, font);
     DrawTextA(hdc, text, -1, &rc,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);  // 0x25
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE); // 0x25
     SelectObject(hdc, oldFont);
     DeleteObject(font);
     GlobalFree(lf);
@@ -70,13 +70,9 @@ void DrawControlText(MMDApp* app, HWND hwnd, HDC hdc, RECT rc) {
 // Reference: ../translated/MikuMikuDance/fcn_00429770.cpp
 // =========================================================================//
 
-// VA 0x004C2680 - defined in ui_refresh.cpp; original is __thiscall on the
-// 0x25C streaming-file sub-object.
-void CloseDataFile(void* file);
-
 void HandleTimer100(MMDApp* app) {
-    CloseDataFile(app->Audio());                           // this+204 (0xCC)
-    app->AudioSeekReady() = 1;                             // this+656054
+    CloseDataFile(app->Audio()); // this+204 (0xCC)
+    app->AudioSeekReady() = 1;   // this+656054
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

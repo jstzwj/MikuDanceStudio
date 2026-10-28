@@ -74,7 +74,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <mmsystem.h>   // WAVEFORMATEX for dsound.h
+#include <mmsystem.h> // WAVEFORMATEX for dsound.h
 #include <dsound.h>
 
 #include <cmath>
@@ -102,51 +102,56 @@ namespace {
 // option MIKUDANCESTUDIO_DIAG, default OFF); the OFF stubs keep the call
 // sites valid and inline away to nothing.
 #ifdef MIKUDANCESTUDIO_DIAG
-bool MIKUDANCESTUDIO_WAVE_TRACE() { return getenv("MIKUDANCESTUDIO_TRACE_WAVE") != nullptr; }
+bool MIKUDANCESTUDIO_WAVE_TRACE() {
+    return getenv("MIKUDANCESTUDIO_TRACE_WAVE") != nullptr;
+}
 void WaveTrace(const char* fmt, ...) {
     FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_WAVE"), "a");
-    if (!tf) return;
-    va_list ap; va_start(ap, fmt);
+    if (!tf)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
     vfprintf(tf, fmt, ap);
     va_end(ap);
     fclose(tf);
 }
 #else
-inline bool MIKUDANCESTUDIO_WAVE_TRACE() { return false; }
-inline void WaveTrace(const char*, ...) {}
+inline bool MIKUDANCESTUDIO_WAVE_TRACE() {
+    return false;
+}
+inline void WaveTrace(const char*, ...) {
+}
 #endif
 
-// 0x52BB2C: "DirectSoundの初期化に失敗しているため、WAVは鳴らせません"
+// 0x52BB2C: "WAV playback is unavailable because DirectSound initialization failed"
 static const char kMsgWaveNoSoundJp[] =
     "DirectSound\x82\xCC\x8F\x89\x8A\xFA\x89\xBB\x82\xC9\x8E\xB8\x94\x73"
     "\x82\xB5\x82\xC4\x82\xA2\x82\xE9\x82\xBD\x82\xDF\x81\x41WAV\x82\xCD"
     "\x96\xC2\x82\xE7\x82\xB9\x82\xDC\x82\xB9\x82\xF1";
 // 0x52BB68: "DirectSoundエラー"
-static const char kMsgWaveErrCaptionJp[] =
-    "DirectSound\x83\x47\x83\x89\x81\x5B";
-// 0x531728: "WAVEファイルが見つかりません"
+static const char kMsgWaveErrCaptionJp[] = "DirectSound\x83\x47\x83\x89\x81\x5B";
+// 0x531728: "WAVE file not found"
 static const char kMsgWaveNotFoundJp[] =
     "WAVE\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xAA\x8C\xA9\x82\xC2\x82\xA9"
     "\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
-// 0x531748: "WAVE読込"
+// 0x531748: "Load WAVE"
 static const char kMsgWaveCaptionJp[] = "WAVE\x93\xC7\x8D\x9E";
 // 0x5316D0: "WAVE(PCM)ファイルではありません"
 static const char kMsgWaveNotPcmJp[] =
     "WAVE(PCM)\x83\x74\x83\x40\x83\x43\x83\x8B\x82\xC5\x82\xCD\x82\xA0"
     "\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // VA 0x004C2660 - WaveCtxReset: zero the four read-context fields.
 // __thiscall(ctx); the tail (jmp) target of CloseDataFile (0x4C2680).
 // ---------------------------------------------------------------------------
-void WaveCtxReset(void* obj) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
-    audio->parseStream = nullptr;               // 0x4C2662 (+0x2C)
-    audio->feedThread = 0;                      // 0x4C2665 (+0x234)
-    audio->streamingBuffer = nullptr;           // 0x4C266B (+0x14)
-    audio->fileHandle = nullptr;                // 0x4C266E (+0x244)
+void WaveCtxReset(WaveAudioContext* audio) {
+    audio->parseStream = nullptr;     // 0x4C2662 (+0x2C)
+    audio->feedThread = 0;            // 0x4C2665 (+0x234)
+    audio->streamingBuffer = nullptr; // 0x4C266B (+0x14)
+    audio->fileHandle = nullptr;      // 0x4C266E (+0x244)
 }
 
 // ---------------------------------------------------------------------------
@@ -156,11 +161,10 @@ void WaveCtxReset(void* obj) {
 // (the data-chunk file offset) in ctx+0x240.  The original spins at EOF;
 // return false for missing or truncated chunks instead.
 // ---------------------------------------------------------------------------
-bool WaveFindDataChunk(void* obj, FILE* stream) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveFindDataChunk(WaveAudioContext* audio, FILE* stream) {
     if (!ScanWaveDataChunk(stream, audio->dataSize, audio->dataOffset))
         return false;
-    audio->readCursor = 0;                                        // 0x4C2742
+    audio->readCursor = 0; // 0x4C2742
     return true;
 }
 
@@ -170,49 +174,43 @@ bool WaveFindDataChunk(void* obj, FILE* stream) {
 // cursor and zero-fill the tail (0 for 16-bit, 0x80 for 8-bit silence).
 // Returns 1 on a full read.
 // ---------------------------------------------------------------------------
-bool WaveStreamRead(void* obj, void* buf, int bytes) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveStreamRead(WaveAudioContext* audio, void* buf, int bytes) {
     const std::int32_t cursor = audio->readCursor;
     const std::int32_t size = audio->dataSize;
-    std::int32_t toRead;                                   // 0x4C2975..0x4C2982
+    std::int32_t toRead; // 0x4C2975..0x4C2982
     if (cursor + bytes < size)
         toRead = bytes;
     else
         toRead = size - cursor;
     DWORD got = 0;
-    if (!ReadFile(audio->fileHandle, buf,
-                  static_cast<DWORD>(toRead), &got, nullptr))       // 0x4C2996
+    if (!ReadFile(audio->fileHandle, buf, static_cast<DWORD>(toRead), &got, nullptr)) // 0x4C2996
         got = 0;
-    audio->readCursor += static_cast<std::int32_t>(got);           // 0x4C29A0
+    audio->readCursor += static_cast<std::int32_t>(got); // 0x4C29A0
     if (static_cast<std::int32_t>(got) >= bytes)
-        return true;                                               // 0x4C29ED
+        return true; // 0x4C29ED
     const unsigned short bits = audio->format.wBitsPerSample;
-    if (bits == 16)                                                // 0x4C29B2
-        memset(static_cast<unsigned char*>(buf) + got, 0,
-               static_cast<size_t>(bytes - got));
-    else if (bits == 8)                                            // 0x4C29CC
-        memset(static_cast<unsigned char*>(buf) + got, 0x80,
-               static_cast<size_t>(bytes - got));
+    if (bits == 16) // 0x4C29B2
+        memset(static_cast<unsigned char*>(buf) + got, 0, static_cast<size_t>(bytes - got));
+    else if (bits == 8) // 0x4C29CC
+        memset(static_cast<unsigned char*>(buf) + got, 0x80, static_cast<size_t>(bytes - got));
     return false;
 }
 
 // ---------------------------------------------------------------------------
 // VA 0x004C2C90 - WaveStreamFeed(this, buf, bytes, buf2, bytes2): read
 // (buf, bytes) and then, when buf2 != 0, (buf2, bytes2); returns 0 on any
-// short read.  注意：x64 sub_7FF7CB4FAC90 里并不自增 failureCount——计数统一
-// 由调用方完成（装载循环 0x7FF7CB4FA755/0x7FF7CB4FA770、推流线程
-// 0x7FF7CB4FAE1A/0x7FF7CB4FAF35，每回合至多 +1），这里保持纯读。
+// short read. Note: x64 sub_7FF7CB4FAC90 does not increment failureCount; counting is always
+// done by callers (load loop 0x7FF7CB4FA755/0x7FF7CB4FA770, streaming thread
+// 0x7FF7CB4FAE1A/0x7FF7CB4FAF35, at most +1 per iteration). Keep this function read-only.
 // ---------------------------------------------------------------------------
-bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2,
-                    int bytes2) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
-    if (!WaveStreamRead(audio, buf, bytes))                        // 0x4C29C1
+bool WaveStreamFeed(WaveAudioContext* audio, void* buf, int bytes, void* buf2, int bytes2) {
+    if (!WaveStreamRead(audio, buf, bytes)) // 0x4C29C1
         return false;
-    if (buf2 != nullptr) {                                         // 0x4C2CBB
-        if (!WaveStreamRead(audio, buf2, bytes2))                  // 0x4C2CC5
+    if (buf2 != nullptr) {                        // 0x4C2CBB
+        if (!WaveStreamRead(audio, buf2, bytes2)) // 0x4C2CC5
             return false;
     }
-    return true;                                                   // 0x4C2CCE
+    return true; // 0x4C2CCE
 }
 
 // ---------------------------------------------------------------------------
@@ -227,74 +225,68 @@ bool WaveStreamFeed(void* obj, void* buf, int bytes, void* buf2,
 //      buffer, one column per `colBytes` bytes.
 // Returns 1 on success (the message boxes report the failure paths).
 // ---------------------------------------------------------------------------
-bool WaveLoadFile(void* obj, const wchar_t* path,
-                  PathResolutionWorkspace& paths) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveLoadFile(WaveAudioContext* audio, const wchar_t* path, PathResolutionWorkspace& paths) {
     HWND hwnd = audio->mainWindow;
     const unsigned char english = audio->englishUI;
 
-    if (audio->parseStream != nullptr)                              // 0x4C2F8B
-        CloseDataFile(audio);                                      // 0x4C2680
-    std::memset(&audio->format, 0, sizeof audio->format);           // 0x4C2FA0
+    if (audio->parseStream != nullptr)                    // 0x4C2F8B
+        CloseDataFile(audio);                             // 0x4C2680
+    std::memset(&audio->format, 0, sizeof audio->format); // 0x4C2FA0
 
-    ResolveUserFilePath(paths, path);                                  // 0x4089F0
-    wcscpy_s(audio->path, 0x100, paths.resolvedPath);              // 0x506292
+    ResolveUserFilePath(paths, path);                 // 0x4089F0
+    wcscpy_s(audio->path, 0x100, paths.resolvedPath); // 0x506292
 
     FILE*& stream = audio->parseStream;
-    _wfopen_s(&stream, audio->path, L"rb");                         // 0x50801A
-    if (stream == nullptr) {                                       // 0x4C2FDE
+    _wfopen_s(&stream, audio->path, L"rb"); // 0x50801A
+    if (stream == nullptr) {                // 0x4C2FDE
         MessageBoxA(hwnd,
-                    english ? "Cannot find Wave file!!"
-                            : kMsgWaveNotFoundJp,                  // 0x531728
-                    english ? "open wave" : kMsgWaveCaptionJp,     // 0x531748
+                    english ? "Cannot find Wave file!!" : kMsgWaveNotFoundJp, // 0x531728
+                    english ? "open wave" : kMsgWaveCaptionJp,                // 0x531748
                     0);
-        return false;                                              // 0x4C3489
+        return false; // 0x4C3489
     }
 
     char riff[4] = {};
-    std::fread(riff, 4, 1, stream);                                // 0x4C3017
-    bool pcm = riff[0] == 'R' && riff[1] == 'I' &&                 // 0x4C301F
+    std::fread(riff, 4, 1, stream);                // 0x4C3017
+    bool pcm = riff[0] == 'R' && riff[1] == 'I' && // 0x4C301F
                riff[2] == 'F' && riff[3] == 'F';
     if (pcm) {
-        std::fseek(stream, 0x10, SEEK_CUR);                        // 0x4C3052
+        std::fseek(stream, 0x10, SEEK_CUR); // 0x4C3052
         unsigned short tag = 0;
-        std::fread(&tag, 2, 1, stream);                            // 0x4C3063
-        pcm = tag == 1;                                            // 0x4C306B
+        std::fread(&tag, 2, 1, stream); // 0x4C3063
+        pcm = tag == 1;                 // 0x4C306B
     }
     if (!pcm) {
         // 0x4C3455: "This is not WAVE(PCM) file" (0x5316F0/0x5316D0),
         // caption "WAVE" (0x53170C)
-        MessageBoxA(hwnd,
-                    english ? "This is not WAVE(PCM) file"
-                            : kMsgWaveNotPcmJp,
-                    "WAVE", 0);
-        return false;                                              // 0x4C3489
+        MessageBoxA(hwnd, english ? "This is not WAVE(PCM) file" : kMsgWaveNotPcmJp, "WAVE", 0);
+        return false; // 0x4C3489
     }
 
-    std::memset(&audio->format, 0, sizeof audio->format);           // 0x4C3081
-    audio->format.wFormatTag = WAVE_FORMAT_PCM;                     // 0x4C309A
-    audio->format.cbSize = 0x12;                                    // 0x4C30A0
-    std::fread(&audio->format.nChannels, 2, 1, stream);             // 0x4C30A6
-    std::fread(&audio->format.nSamplesPerSec, 4, 1, stream);        // 0x4C30B6
+    std::memset(&audio->format, 0, sizeof audio->format);    // 0x4C3081
+    audio->format.wFormatTag = WAVE_FORMAT_PCM;              // 0x4C309A
+    audio->format.cbSize = 0x12;                             // 0x4C30A0
+    std::fread(&audio->format.nChannels, 2, 1, stream);      // 0x4C30A6
+    std::fread(&audio->format.nSamplesPerSec, 4, 1, stream); // 0x4C30B6
     std::fread(&audio->format.nAvgBytesPerSec, 4, 1, stream);
     std::fread(&audio->format.nBlockAlign, 2, 1, stream);
-    std::fread(&audio->format.wBitsPerSample, 2, 1, stream);        // 0x4C30EE
+    std::fread(&audio->format.wBitsPerSample, 2, 1, stream); // 0x4C30EE
     if (!WaveFindDataChunk(audio, stream)) {
         std::fclose(stream);
         stream = nullptr;
         return false;
     }
 
-    const float avgF = static_cast<float>(
-        static_cast<std::uint32_t>(audio->format.nAvgBytesPerSec));
+    const float avgF =
+        static_cast<float>(static_cast<std::uint32_t>(audio->format.nAvgBytesPerSec));
     const int blockAlign = audio->format.nBlockAlign;
     if (blockAlign == 0) {
         std::fclose(stream);
         stream = nullptr;
         return false;
     }
-    const int colUnits = static_cast<int>(
-        avgF * (1.0f / 30.0f) / 13.0f / static_cast<float>(blockAlign));
+    const int colUnits =
+        static_cast<int>(avgF * (1.0f / 30.0f) / 13.0f / static_cast<float>(blockAlign));
     const int colBytes = colUnits * blockAlign;
     if (colBytes <= 0) {
         std::fclose(stream);
@@ -302,22 +294,20 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
         return false;
     }
 
-    audio->bufferBytes = static_cast<std::int32_t>(
-        audio->format.nAvgBytesPerSec * 2);                         // 0x4C310C
-    HANDLE file = CreateFileW(audio->path,
-                              GENERIC_READ, 1, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                              nullptr);                            // 0x4C311C
+    audio->bufferBytes = static_cast<std::int32_t>(audio->format.nAvgBytesPerSec * 2); // 0x4C310C
+    HANDLE file =
+        CreateFileW(audio->path, GENERIC_READ, 1, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                    nullptr); // 0x4C311C
     audio->fileHandle = file == INVALID_HANDLE_VALUE ? nullptr : file;
     if (file != INVALID_HANDLE_VALUE)
         SetFilePointer(file, audio->dataOffset, nullptr, FILE_BEGIN);
-    std::fclose(stream);                                           // 0x4C313D
+    std::fclose(stream); // 0x4C313D
     stream = nullptr;
     if (file == INVALID_HANDLE_VALUE)
-        return false;                                              // 0x4C347F
+        return false; // 0x4C347F
 
-    free(audio->waveformMax);                                      // 0x4C3158
-    free(audio->waveformMin);                                      // 0x4C3167
+    free(audio->waveformMax); // 0x4C3158
+    free(audio->waveformMin); // 0x4C3167
 
     // bytes per waveform column: (int)(avgBytes * (1/30) / 13 / blockAlign)
     // then * blockAlign.  x64 0x7FF7CB4FA61E..0x7FF7CB4FA64A: avg is read
@@ -325,27 +315,25 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
     // 2^32 fixup collapses to the zero extension), then mulss 1/30f,
     // divss 13.0f, divss (float)blockAlign, cvttss2si, integer imul.
     unsigned char* scratch = static_cast<unsigned char*>(malloc(colBytes));
-    memset(scratch, 0, static_cast<size_t>(colBytes));              // 0x4C31BE
+    memset(scratch, 0, static_cast<size_t>(colBytes)); // 0x4C31BE
 
-    const std::int32_t columns =
-        audio->dataSize / colBytes + 1;                             // 0x4C31C5
-    audio->waveformColumns = columns;                              // 0x4C31CB
+    const std::int32_t columns = audio->dataSize / colBytes + 1; // 0x4C31C5
+    audio->waveformColumns = columns;                            // 0x4C31CB
     unsigned char* arrMax = static_cast<unsigned char*>(malloc(columns));
     memset(arrMax, 0, static_cast<size_t>(columns));
-    audio->waveformMax = arrMax;                                   // 0x4C31E0
+    audio->waveformMax = arrMax; // 0x4C31E0
     unsigned char* arrMin = static_cast<unsigned char*>(malloc(columns));
     memset(arrMin, 0, static_cast<size_t>(columns));
-    audio->waveformMin = arrMin;                                   // 0x4C31FD
+    audio->waveformMin = arrMin; // 0x4C31FD
 
     // channel stride 0x4C3208: mono -> (blockAlign != 1), else
     // (blockAlign != 2) + 2  (0/1 = 8/16-bit mono, 2/3 = 8/16-bit stereo).
     const unsigned short channels = audio->format.nChannels;
-    const int k = channels == 1 ? (blockAlign != 1 ? 1 : 0)
-                                : (blockAlign != 2 ? 3 : 2);
+    const int k = channels == 1 ? (blockAlign != 1 ? 1 : 0) : (blockAlign != 2 ? 3 : 2);
 
-    if (columns > 0) {                                             // 0x4C323C
-        int i = 0;                                                 // 0x4C3238
-        int bytesSoFar = 0;                                        // ebp
+    if (columns > 0) {      // 0x4C323C
+        int i = 0;          // 0x4C3238
+        int bytesSoFar = 0; // ebp
         do {
             // x64 0x7FF7CB4FA715..0x7FF7CB4FA745, all single precision:
             // t = (int)((i / 390.0f) * avgF)  [movd/cvtdq2ss i, divss
@@ -353,67 +341,66 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
             // skip = (unsigned)(t - bytesSoFar) / (unsigned)blockAlign.
             // (x86 computed avg * (i / -390.0) in double and negated -
             // algebraically identical, IEEE sign-symmetric.)
-            const float d = static_cast<float>(
-                static_cast<std::uint32_t>(audio->format.nAvgBytesPerSec));
-            const int t = static_cast<int>(
-                (static_cast<float>(i) / 390.0f) * d);
-            const unsigned skipBlocks =
-                static_cast<unsigned>(t - bytesSoFar) /
-                static_cast<unsigned>(blockAlign);                 // 0x4C32AA
-            if (static_cast<int>(skipBlocks) > 0) {                // 0x4C32B0
+            const float d =
+                static_cast<float>(static_cast<std::uint32_t>(audio->format.nAvgBytesPerSec));
+            const int t = static_cast<int>((static_cast<float>(i) / 390.0f) * d);
+            const unsigned skipBlocks = static_cast<unsigned>(t - bytesSoFar) /
+                                        static_cast<unsigned>(blockAlign); // 0x4C32AA
+            if (static_cast<int>(skipBlocks) > 0) {                        // 0x4C32B0
                 const int skip = blockAlign * static_cast<int>(skipBlocks);
-                // x64 0x7FF7CB4FA74C/0x7FF7CB4FA755：skip 段读失败同样
-                // 自增 failureCount，不因是跳过段而不计。
-                if (!WaveStreamFeed(audio, scratch, skip, nullptr, 0))  // 0x4C32C1
-                    ++audio->failureCount;                         // 0x7FF7CB4FA755
-                bytesSoFar += skip;                                // 0x4C32C6
+                // x64 0x7FF7CB4FA74C/0x7FF7CB4FA755: a failed skip-section read also
+                // increments failureCount; skipped sections are still counted.
+                if (!WaveStreamFeed(audio, scratch, skip, nullptr, 0)) // 0x4C32C1
+                    ++audio->failureCount;                             // 0x7FF7CB4FA755
+                bytesSoFar += skip;                                    // 0x4C32C6
             }
-            const bool ok =
-                WaveStreamFeed(audio, scratch, colBytes, nullptr, 0); // 0x4C32D4
-            if (!ok)                                               // 0x7FF7CB4FA770
+            const bool ok = WaveStreamFeed(audio, scratch, colBytes, nullptr, 0); // 0x4C32D4
+            if (!ok)                                                              // 0x7FF7CB4FA770
                 ++audio->failureCount;
-            bytesSoFar += colBytes;                                // 0x4C32D9
+            bytesSoFar += colBytes; // 0x4C32D9
 
             int maxV = 0, minV = 0;                                // 0x4C32DF
             for (int off = 0; off < colBytes; off += blockAlign) { // 0x4C3300
                 int sampleL, sampleR;
-                if (k == 3) {          // 16-bit stereo 0x4C3309
+                if (k == 3) { // 16-bit stereo 0x4C3309
                     sampleL = (static_cast<signed char>(scratch[off + 1]) << 8) +
-                         static_cast<signed char>(scratch[off]);
+                              static_cast<signed char>(scratch[off]);
                     sampleR = (static_cast<signed char>(scratch[off + 3]) << 8) +
-                         static_cast<signed char>(scratch[off + 2]);
-                } else if (k == 2) {   // 8-bit stereo 0x4C334D
+                              static_cast<signed char>(scratch[off + 2]);
+                } else if (k == 2) { // 8-bit stereo 0x4C334D
                     sampleL = static_cast<signed char>(scratch[off]);
                     sampleR = static_cast<signed char>(scratch[off + 1]);
-                } else if (k == 1) {   // 16-bit mono 0x4C3379
+                } else if (k == 1) { // 16-bit mono 0x4C3379
                     sampleL = (static_cast<signed char>(scratch[off + 1]) << 8) +
-                         static_cast<signed char>(scratch[off]);
+                              static_cast<signed char>(scratch[off]);
                     sampleR = sampleL;
-                } else {               // 8-bit mono 0x4C3389
+                } else { // 8-bit mono 0x4C3389
                     sampleL = static_cast<signed char>(scratch[off]);
                     sampleR = sampleL;
                 }
-                if (maxV < sampleL) maxV = sampleL;                          // 0x4C33260x4C3326
-                if (minV > sampleL) minV = sampleL;
-                if (maxV < sampleR) maxV = sampleR;
-                if (minV > sampleR) minV = sampleR;
+                if (maxV < sampleL)
+                    maxV = sampleL; // 0x4C33260x4C3326
+                if (minV > sampleL)
+                    minV = sampleL;
+                if (maxV < sampleR)
+                    maxV = sampleR;
+                if (minV > sampleR)
+                    minV = sampleR;
             }
             // 0x4C33AF..0x4C33F6: value*25, >>7 (8-bit modes k==0/k==2) or
             // >>15 (16-bit k==1/k==3), + 25; max -> ctx+0x00 array, min ->
             // ctx+0x04 array.  The 0x4C3242 flag is (k==2)|(k==0), NOT a
             // blockAlign test.
             const int shift = (k == 0 || k == 2) ? 7 : 15;
-            arrMax[i] = static_cast<unsigned char>(
-                (maxV * 0x19 >> shift) + 0x19);
-            arrMin[i] = static_cast<unsigned char>(
-                (minV * 0x19 >> shift) + 0x19);
-            if (!ok)                                                // 0x4C33F9
+            arrMax[i] = static_cast<unsigned char>((maxV * 0x19 >> shift) + 0x19);
+            arrMin[i] = static_cast<unsigned char>((minV * 0x19 >> shift) + 0x19);
+            if (!ok) // 0x4C33F9
                 break;
-            ++i;                                                    // 0x4C3400
+            ++i; // 0x4C3400
         } while (i < audio->waveformColumns);
     }
-    free(scratch);                                                  // 0x4C3413
-    return true;                                                    // 0x4C341F
+    free(scratch); // 0x4C3413
+    return true;   // 0x4C341F
 }
 
 // ---------------------------------------------------------------------------
@@ -423,62 +410,59 @@ bool WaveLoadFile(void* obj, const wchar_t* path,
 // src/app/subsystem_init.cpp); neither the x86 original (ret at 0x4C2955)
 // nor the x64 twin 0x7FF7CB4FA930 spawns it from here.
 // ---------------------------------------------------------------------------
-bool WaveStartPlayback(void* obj) {
-    auto* audio = static_cast<WaveAudioContext*>(obj);
+bool WaveStartPlayback(WaveAudioContext* audio) {
     FILE*& stream = audio->parseStream;
-    if (stream != nullptr)                                          // 0x4C2779
+    if (stream != nullptr) // 0x4C2779
         CloseDataFile(audio);
 
-    std::memset(&audio->format, 0, sizeof audio->format);            // 0x4C2782
-    _wfopen_s(&stream, audio->path, L"rb");                          // 0x4C27DC
-    if (stream == nullptr)                                          // 0x4C27E6
+    std::memset(&audio->format, 0, sizeof audio->format); // 0x4C2782
+    _wfopen_s(&stream, audio->path, L"rb");               // 0x4C27DC
+    if (stream == nullptr)                                // 0x4C27E6
         return false;
     {
-        char riff[8] = {};                                          // 0x4C27F8
-        std::fread(riff, 4, 1, stream);                             // result unchecked
-        std::fseek(stream, 0x10, SEEK_CUR);                         // 0x4C2804
-        std::fread(riff, 2, 1, stream);   // dummy: consume wFormatTag
-        std::memset(&audio->format, 0, sizeof audio->format);        // 0x4C281A
-        audio->format.wFormatTag = WAVE_FORMAT_PCM;                 // 0x4C2836
-        audio->format.cbSize = 0x12;                                // 0x4C283B
+        char riff[8] = {};                                    // 0x4C27F8
+        std::fread(riff, 4, 1, stream);                       // result unchecked
+        std::fseek(stream, 0x10, SEEK_CUR);                   // 0x4C2804
+        std::fread(riff, 2, 1, stream);                       // dummy: consume wFormatTag
+        std::memset(&audio->format, 0, sizeof audio->format); // 0x4C281A
+        audio->format.wFormatTag = WAVE_FORMAT_PCM;           // 0x4C2836
+        audio->format.cbSize = 0x12;                          // 0x4C283B
         std::fread(&audio->format.nChannels, 2, 1, stream);
         std::fread(&audio->format.nSamplesPerSec, 4, 1, stream);
         std::fread(&audio->format.nAvgBytesPerSec, 4, 1, stream);
         std::fread(&audio->format.nBlockAlign, 2, 1, stream);
         std::fread(&audio->format.wBitsPerSample, 2, 1, stream);
     }
-    if (!WaveFindDataChunk(audio, stream) ||
-        audio->format.nBlockAlign == 0 ||
+    if (!WaveFindDataChunk(audio, stream) || audio->format.nBlockAlign == 0 ||
         audio->format.nAvgBytesPerSec == 0) {
         std::fclose(stream);
         stream = nullptr;
         return false;
     }
 
-    const std::int32_t bufBytes = static_cast<std::int32_t>(
-        audio->format.nAvgBytesPerSec * 2);                         // 0x4C28A8
-    audio->bufferBytes = bufBytes;                                  // 0x4C28B0
-    HANDLE file = CreateFileW(audio->path,
-                              GENERIC_READ, 1, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                              nullptr);                             // 0x4C28BF
+    const std::int32_t bufBytes =
+        static_cast<std::int32_t>(audio->format.nAvgBytesPerSec * 2); // 0x4C28A8
+    audio->bufferBytes = bufBytes;                                    // 0x4C28B0
+    HANDLE file =
+        CreateFileW(audio->path, GENERIC_READ, 1, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                    nullptr); // 0x4C28BF
     audio->fileHandle = file == INVALID_HANDLE_VALUE ? nullptr : file;
     if (file != INVALID_HANDLE_VALUE)
         SetFilePointer(file, audio->dataOffset, nullptr, FILE_BEGIN);
-    std::fclose(stream);                                            // 0x4C28E0
-    stream = nullptr;                                               // 0x4C28EF
+    std::fclose(stream); // 0x4C28E0
+    stream = nullptr;    // 0x4C28EF
     if (file == INVALID_HANDLE_VALUE)
         return false;
 
-    DSBUFFERDESC desc = {};                                         // 0x4C27C4..
-    desc.dwSize = sizeof(desc);                                     // 0x24
+    DSBUFFERDESC desc = {};     // 0x4C27C4..
+    desc.dwSize = sizeof(desc); // 0x24
     desc.dwFlags = 0x81E0;
     desc.dwBufferBytes = static_cast<DWORD>(bufBytes);
-    desc.lpwfxFormat = &audio->format;                              // ctx+0x18
+    desc.lpwfxFormat = &audio->format; // ctx+0x18
     IDirectSound*& dsound = audio->directSound;
     IDirectSoundBuffer*& buffer = audio->streamingBuffer;
     const HRESULT csbHr = dsound->CreateSoundBuffer(&desc, &buffer,
-                                                     nullptr);      // 0x4C290B
+                                                    nullptr); // 0x4C290B
     if (MIKUDANCESTUDIO_WAVE_TRACE())
         WaveTrace("CSB hr=%08lx ds=%p tag=%02x%02x ch=%02x%02x "
                   "rate=%08lx avg=%08lx align=%04x bits=%04x cb=%04x "
@@ -489,20 +473,18 @@ bool WaveStartPlayback(void* obj) {
                   reinterpret_cast<unsigned char*>(&audio->format)[2],
                   reinterpret_cast<unsigned char*>(&audio->format)[3],
                   (unsigned long)audio->format.nSamplesPerSec,
-                  (unsigned long)audio->format.nAvgBytesPerSec,
-                  (unsigned)audio->format.nBlockAlign,
-                  (unsigned)audio->format.wBitsPerSample,
-                  (unsigned)audio->format.cbSize,
+                  (unsigned long)audio->format.nAvgBytesPerSec, (unsigned)audio->format.nBlockAlign,
+                  (unsigned)audio->format.wBitsPerSample, (unsigned)audio->format.cbSize,
                   (unsigned long)desc.dwBufferBytes);
-    if (FAILED(csbHr)) {  // 0x4C290B
-        buffer = nullptr;                                           // 0x4C2915
-        if (stream != nullptr) {                                    // 0x4C2911
+    if (FAILED(csbHr)) {         // 0x4C290B
+        buffer = nullptr;        // 0x4C2915
+        if (stream != nullptr) { // 0x4C2911
             std::fclose(stream);
             stream = nullptr;
         }
-        return false;                                               // 0x4C292F
+        return false; // 0x4C292F
     }
-    return true;                                                    // 0x4C294B
+    return true; // 0x4C294B
 }
 
 // ---------------------------------------------------------------------------
@@ -514,27 +496,26 @@ void LoadWaveFile(MMDApp* app) {
     auto& s = *app;
     HWND hwnd = static_cast<HWND>(s.Hwnd());
 
-    if (s.DirectSoundAvailable() == 0) {                            // 0x418506
-        if (s.EnglishUI() != 0)                                     // 0x41850F
+    if (s.DirectSoundAvailable() == 0) { // 0x418506
+        if (s.EnglishUI() != 0)          // 0x41850F
             MessageBoxA(hwnd,
                         "You cannot play WAVE because failed "
-                        "initialization of DirectSound!",            // 0x52BB80
-                        "DirectSound error", 0);                    // 0x52BBC4
+                        "initialization of DirectSound!", // 0x52BB80
+                        "DirectSound error", 0);          // 0x52BBC4
         else
             MessageBoxA(hwnd, kMsgWaveNoSoundJp, kMsgWaveErrCaptionJp,
-                        0);                                         // 0x52BB2C/68
+                        0); // 0x52BB2C/68
         return;
     }
 
-    auto* audio = s.Audio();                                      // app+0xCC
-    unsigned char* ctx = reinterpret_cast<unsigned char*>(audio);
-    WaveCtxReset(ctx);                                              // 0x4C2660
-    const bool ok = WaveLoadFile(ctx, s.WavePath(),
-                                 app->PathWorkspace());             // 0x4C2F70
+    auto* audio = s.Audio(); // app+0xCC
+    WaveCtxReset(audio);     // 0x4C2660
+    const bool ok = WaveLoadFile(audio, s.WavePath(),
+                                 app->PathWorkspace()); // 0x4C2F70
 
-    if (!ok) {                                                      // 0x41857F
-        s.WaveEnabled() = 0;                                        // 0x41858C
-        swprintf_s(s.WavePath(), 0x100, L"");                       // 0x507499
+    if (!ok) {                                // 0x41857F
+        s.WaveEnabled() = 0;                  // 0x41858C
+        swprintf_s(s.WavePath(), 0x100, L""); // 0x507499
         // blank the timeline strip (hdc = app+0x2E0) 0x41859A..0x418667
         HDC hdc = s.TimelineDC();
         HPEN white = CreatePen(PS_SOLID, 1, 0xFFFFFF);
@@ -552,21 +533,19 @@ void LoadWaveFile(MMDApp* app) {
         LineTo(hdc, 0xEF, 0x19);
         SelectObject(hdc, oldPen2);
         DeleteObject(black);
-        RECT rect{6, 0x64, 0xF7, 0x97};                             // 0x41866A..
+        RECT rect{6, 0x64, 0xF7, 0x97}; // 0x41866A..
         InvalidateRect(hwnd, &rect, FALSE);
         return;
     }
 
-    wcscpy_s(s.WavePath(), 0x100, audio->path);                    // 0x4186B6
-    WaveStartPlayback(ctx);                                         // 0x4C2760
-    s.WaveEnabled() = 1;                                            // 0x4186DD
+    wcscpy_s(s.WavePath(), 0x100, audio->path); // 0x4186B6
+    WaveStartPlayback(audio);                   // 0x4C2760
+    s.WaveEnabled() = 1;                        // 0x4186DD
     TimelineDrawTicks(s.TimelineStartFrame(), s.SidebarWidth());
-    RECT rect{6, 0x5F,
-              s.SidebarWidth() - 3,
-              0x92};                                                // 0x4186F5..
+    RECT rect{6, 0x5F, s.SidebarWidth() - 3, 0x92}; // 0x4186F5..
     InvalidateRect(hwnd, &rect, FALSE);
-    PanelPaint(app);                                                // 0x414610
-    SetFrameNormalized(s.FrameNormalization());                     // 0x4C2B80
+    PanelPaint(app);                            // 0x414610
+    SetFrameNormalized(s.FrameNormalization()); // 0x4C2B80
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -32,6 +32,5 @@ bool ReadPmdVertex(ReadModelBytes, void*, PmdVertexData&);
 bool ReadPmdIndex(ReadModelBytes, void*, std::uint16_t&);
 bool ReadPmxVertex(ReadModelBytes, void*, std::uint8_t additionalUvCount,
                    std::uint8_t boneIndexSize, PmxVertexData&);
-bool ReadPmxVertexIndex(ReadModelBytes, void*, std::uint8_t indexSize,
-                        std::int32_t&);
-}  // namespace mikudancestudio::format
+bool ReadPmxVertexIndex(ReadModelBytes, void*, std::uint8_t indexSize, std::int32_t&);
+} // namespace mikudancestudio::format

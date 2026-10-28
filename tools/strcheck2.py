@@ -23,9 +23,10 @@ Matching strategy (ordered, first hit wins):
                    original string but no code literal carries it).
 
 Usage:
-  python build/strcheck2.py [--exe PATH] [--repo PATH] [--json OUT]
+  python tools/strcheck2.py [--exe PATH] [--repo PATH] [--json OUT]
 
 Defaults point at the canonical x64 binary and this repository.
+The generated report defaults to out/audits/strcheck2_result.json.
 Exit code 0 always; this is an audit, not a gate.
 """
 
@@ -455,7 +456,7 @@ def main():
     ap.add_argument("--exe", default=DEFAULT_EXE)
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--json", default=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "strcheck2_result.json"))
+        DEFAULT_REPO, "out", "audits", "strcheck2_result.json"))
     ap.add_argument("--min-ascii", type=int, default=5)
     ap.add_argument("--rebase", type=lambda x: int(x, 0), default=0x7FF68B420000,
                     help="IDA rebase delta (IDA VA = file VA + delta); "
@@ -544,6 +545,7 @@ def main():
             print("  %-18s %-12s %s" % (",".join(r["vas"]), r["status"], label))
         print()
 
+    os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
     with open(args.json, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=1)
     print("details -> %s" % args.json)

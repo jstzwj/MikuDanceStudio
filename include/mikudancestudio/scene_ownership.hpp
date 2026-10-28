@@ -13,4 +13,4 @@ void ReleaseSceneModels(MMDApp& app);
 void ReleaseGlobalTimelineTracks(MMDApp& app);
 void ReleaseAccessoriesAndTracks(MMDApp& app);
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

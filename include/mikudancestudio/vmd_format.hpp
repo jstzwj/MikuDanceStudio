@@ -7,7 +7,10 @@
 
 namespace mikudancestudio::format {
 
-enum class VmdVersion { V1, V2 };
+enum class VmdVersion {
+    V1,
+    V2
+};
 
 struct VmdBoneKey {
     std::array<char, 15> name{};
@@ -73,4 +76,4 @@ struct VmdDocument {
 bool ReadVmd(std::FILE* stream, VmdDocument& document);
 bool WriteVmd(std::FILE* stream, const VmdDocument& document);
 
-}  // namespace mikudancestudio::format
+} // namespace mikudancestudio::format

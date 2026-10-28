@@ -216,7 +216,7 @@ int main() {
         bone.type = mdl::BoneType::RotateMove;
         bone.slotIndex = -1;
     }
-    auto* raw = reinterpret_cast<unsigned char*>(model.get());
+    auto* raw = model.get();
     app->ModelSlot(source.slot) = raw;
     app->CameraKeys() = cameraKeys.data();
     app->LightKeys() = lightKeys.data();
@@ -357,7 +357,7 @@ int main() {
     second->boneKeys = secondBoneKeys.data();
     second->morphKeys = secondMorphKeys.data();
     second->displayKeys = secondDisplays.data();
-    auto* secondRaw = reinterpret_cast<unsigned char*>(second.get());
+    auto* secondRaw = second.get();
     app->AttachPortableSceneSession(std::move(multi));
     app->ModelSlot(secondSlot) = secondRaw;
     active = app->PortableSceneSession();

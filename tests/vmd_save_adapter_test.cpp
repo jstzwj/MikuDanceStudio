@@ -99,7 +99,7 @@ int main() {
     displayKeys[0].visible = 1;
     displayKeys[0].ikStates = ikStates;
     app->state.optflag[0] = 0;
-    app->SelectedModel() = reinterpret_cast<unsigned char*>(model.get());
+    app->SelectedModel() = model.get();
     g_Block = app.get();
     if (!GetTempFileNameW(directory, L"vmd", 0, path)) return 1;
     SaveVmdFile(path);

@@ -180,7 +180,7 @@ int main() {
     (*displayKeys)[0].allocated = 1;
     (*displayKeys)[0].ikStates = ikStates;
     (*displayKeys)[0].selectorStates = rigidStates;
-    app->ModelSlots()[0] = reinterpret_cast<unsigned char*>(model.get());
+    app->ModelSlots()[0] = model.get();
     if (SendMessageA(models, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>("synthetic")) < 0 ||
         !GetTempFileNameW(directory, L"pmm", 0, path)) return 5;

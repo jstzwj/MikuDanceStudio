@@ -69,16 +69,12 @@ static_assert(sizeof(CameraKey) == 84, "camera key ABI");
 static_assert(offsetof(CameraKey, frame) == 0, "camera frame ABI");
 static_assert(offsetof(CameraKey, previous) == 4, "camera previous ABI");
 static_assert(offsetof(CameraKey, next) == 8, "camera next ABI");
-static_assert(offsetof(CameraKey, interpolation) == 40,
-              "camera interpolation ABI");
-static_assert(offsetof(CameraKey, perspective) == 64,
-              "camera perspective ABI");
+static_assert(offsetof(CameraKey, interpolation) == 40, "camera interpolation ABI");
+static_assert(offsetof(CameraKey, perspective) == 64, "camera perspective ABI");
 static_assert(offsetof(CameraKey, fov) == 68, "camera fov ABI");
 static_assert(offsetof(CameraKey, selected) == 72, "camera selected ABI");
-static_assert(offsetof(CameraKey, parentModel) == 76,
-              "camera parent model ABI");
-static_assert(offsetof(CameraKey, parentBone) == 80,
-              "camera parent bone ABI");
+static_assert(offsetof(CameraKey, parentModel) == 76, "camera parent model ABI");
+static_assert(offsetof(CameraKey, parentBone) == 80, "camera parent bone ABI");
 static_assert(sizeof(LightKey) == 40, "light key ABI");
 static_assert(offsetof(LightKey, frame) == 0, "light frame ABI");
 static_assert(offsetof(LightKey, previous) == 4, "light previous ABI");
@@ -88,25 +84,19 @@ static_assert(offsetof(LightKey, direction) == 12, "light direction ABI");
 static_assert(offsetof(LightKey, color) == 24, "light color ABI");
 static_assert(sizeof(SelfShadowKey) == 24, "self-shadow key ABI");
 static_assert(offsetof(SelfShadowKey, frame) == 0, "self-shadow frame ABI");
-static_assert(offsetof(SelfShadowKey, previous) == 4,
-              "self-shadow previous ABI");
+static_assert(offsetof(SelfShadowKey, previous) == 4, "self-shadow previous ABI");
 static_assert(offsetof(SelfShadowKey, next) == 8, "self-shadow next ABI");
-static_assert(offsetof(SelfShadowKey, selected) == 20,
-              "self-shadow selected ABI");
+static_assert(offsetof(SelfShadowKey, selected) == 20, "self-shadow selected ABI");
 static_assert(offsetof(SelfShadowKey, mode) == 12, "self-shadow mode ABI");
-static_assert(offsetof(SelfShadowKey, distance) == 16,
-              "self-shadow distance ABI");
+static_assert(offsetof(SelfShadowKey, distance) == 16, "self-shadow distance ABI");
 static_assert(sizeof(GravityKey) == 36, "gravity key ABI");
 static_assert(offsetof(GravityKey, frame) == 0, "gravity frame ABI");
 static_assert(offsetof(GravityKey, previous) == 4, "gravity previous ABI");
 static_assert(offsetof(GravityKey, next) == 8, "gravity next ABI");
 static_assert(offsetof(GravityKey, selected) == 33, "gravity selected ABI");
-static_assert(offsetof(GravityKey, acceleration) == 12,
-              "gravity acceleration ABI");
-static_assert(offsetof(GravityKey, direction) == 16,
-              "gravity direction ABI");
+static_assert(offsetof(GravityKey, acceleration) == 12, "gravity acceleration ABI");
+static_assert(offsetof(GravityKey, direction) == 16, "gravity direction ABI");
 static_assert(offsetof(GravityKey, noise) == 28, "gravity noise ABI");
-static_assert(offsetof(GravityKey, noiseEnabled) == 32,
-              "gravity noise enabled ABI");
+static_assert(offsetof(GravityKey, noiseEnabled) == 32, "gravity noise enabled ABI");
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl

@@ -1,8 +1,11 @@
 #pragma once
 namespace mikudancestudio {
 class MMDApp;
+namespace mdl {
+struct ModelRecord;
+}
 // Windows-only timeline bridge for a loaded PMM v1/v2 scene.
-void SeekPortableSceneModel(unsigned char* model, int frame);
+void SeekPortableSceneModel(mdl::ModelRecord* model, int frame);
 void StartPortableScenePlayback(MMDApp* app);
 void AdvancePortableScenePlayback(MMDApp* app);
 void SeekPortableSceneCamera(MMDApp* app, int frame);

@@ -33,6 +33,8 @@
 #endif
 #endif
 
+class btRigidBody;
+
 namespace mikudancestudio::mdl {
 
 // PMD vertex and vertex-morph records contain no pointers. Their ABI is
@@ -75,8 +77,7 @@ struct BoneMorphOffsetRecord {
     float translation[3];
     float rotation[4];
 };
-static_assert(sizeof(BoneMorphOffsetRecord) == 32,
-              "bone morph offset ABI");
+static_assert(sizeof(BoneMorphOffsetRecord) == 32, "bone morph offset ABI");
 
 struct PmxUvMorphEntry {
     std::int32_t vertexIndex;
@@ -99,30 +100,22 @@ struct MaterialMorphChannels {
     float sphereTint[4];
     float toonTint[4];
 };
-static_assert(sizeof(MaterialMorphChannels) == 120,
-              "material morph channel ABI");
-static_assert(offsetof(MaterialMorphChannels, diffuse) == 0,
-              "material morph diffuse ABI");
-static_assert(offsetof(MaterialMorphChannels, specular) == 16,
-              "material morph specular ABI");
+static_assert(sizeof(MaterialMorphChannels) == 120, "material morph channel ABI");
+static_assert(offsetof(MaterialMorphChannels, diffuse) == 0, "material morph diffuse ABI");
+static_assert(offsetof(MaterialMorphChannels, specular) == 16, "material morph specular ABI");
 static_assert(offsetof(MaterialMorphChannels, reserved0) == 28,
               "material morph first internal gap ABI");
 static_assert(offsetof(MaterialMorphChannels, specularPower) == 32,
               "material morph specular power ABI");
-static_assert(offsetof(MaterialMorphChannels, ambient) == 36,
-              "material morph ambient ABI");
+static_assert(offsetof(MaterialMorphChannels, ambient) == 36, "material morph ambient ABI");
 static_assert(offsetof(MaterialMorphChannels, reserved1) == 48,
               "material morph second internal gap ABI");
-static_assert(offsetof(MaterialMorphChannels, edgeColor) == 52,
-              "material morph edge color ABI");
-static_assert(offsetof(MaterialMorphChannels, edgeSize) == 68,
-              "material morph edge size ABI");
+static_assert(offsetof(MaterialMorphChannels, edgeColor) == 52, "material morph edge color ABI");
+static_assert(offsetof(MaterialMorphChannels, edgeSize) == 68, "material morph edge size ABI");
 static_assert(offsetof(MaterialMorphChannels, textureTint) == 72,
               "material morph texture tint ABI");
-static_assert(offsetof(MaterialMorphChannels, sphereTint) == 88,
-              "material morph sphere tint ABI");
-static_assert(offsetof(MaterialMorphChannels, toonTint) == 104,
-              "material morph toon tint ABI");
+static_assert(offsetof(MaterialMorphChannels, sphereTint) == 88, "material morph sphere tint ABI");
+static_assert(offsetof(MaterialMorphChannels, toonTint) == 104, "material morph toon tint ABI");
 
 struct PmxMaterialMorphEntry {
     std::int32_t materialIndex;
@@ -130,10 +123,8 @@ struct PmxMaterialMorphEntry {
     unsigned char operationPadding[3];
     MaterialMorphChannels channels;
 };
-static_assert(sizeof(PmxMaterialMorphEntry) == 128,
-              "PMX material morph ABI");
-static_assert(offsetof(PmxMaterialMorphEntry, channels) == 8,
-              "PmxMaterialMorphEntry.channels ABI");
+static_assert(sizeof(PmxMaterialMorphEntry) == 128, "PMX material morph ABI");
+static_assert(offsetof(PmxMaterialMorphEntry, channels) == 8, "PmxMaterialMorphEntry.channels ABI");
 
 // Load-time base data and the additive/multiplicative material-morph pools
 // use the same channel layout but do not carry a material index or operation.
@@ -142,8 +133,7 @@ struct MaterialMorphPool {
     MaterialMorphChannels channels;
 };
 static_assert(sizeof(MaterialMorphPool) == 128, "material morph pool ABI");
-static_assert(offsetof(MaterialMorphPool, channels) == 8,
-              "material morph pool channel base ABI");
+static_assert(offsetof(MaterialMorphPool, channels) == 8, "material morph pool channel base ABI");
 
 enum class PmxWeightType : std::uint8_t {
     bdef1 = 0,
@@ -196,8 +186,7 @@ static_assert(offsetof(PmxVertex, sdef.center) == 132, "PMX SDEF center");
 static_assert(offsetof(PmxVertex, sdef.r0Offset) == 144, "PMX SDEF R0 offset");
 static_assert(offsetof(PmxVertex, sdef.r1Offset) == 156, "PMX SDEF R1 offset");
 static_assert(offsetof(PmxVertex, edgeScale) == 168, "PMX edge scale");
-static_assert(offsetof(PmxVertex, hasPmxEdgeData) == 172,
-              "PMX edge data marker");
+static_assert(offsetof(PmxVertex, hasPmxEdgeData) == 172, "PMX edge data marker");
 static_assert(offsetof(PmxVertex, uvMorphBaseZW) == 176, "PMX UV base ZW");
 static_assert(offsetof(PmxVertex, materialIndex) == 184, "PMX material");
 
@@ -252,10 +241,8 @@ static_assert(offsetof(ModelMaterialRecord, faceVertexCount) == 1188,
               "ModelMaterialRecord.faceVertexCount ABI");
 static_assert(offsetof(ModelMaterialRecord, edgeColor) == 1196,
               "ModelMaterialRecord.edgeColor ABI");
-static_assert(offsetof(ModelMaterialRecord, toonPath) == 1216,
-              "ModelMaterialRecord.toonPath ABI");
-static_assert(offsetof(ModelMaterialRecord, flags) == 2240,
-              "ModelMaterialRecord.flags ABI");
+static_assert(offsetof(ModelMaterialRecord, toonPath) == 1216, "ModelMaterialRecord.toonPath ABI");
+static_assert(offsetof(ModelMaterialRecord, flags) == 2240, "ModelMaterialRecord.flags ABI");
 
 // ---- morph records --------------------------------------------------------
 enum class MorphPanel : std::uint8_t {
@@ -267,37 +254,37 @@ enum class MorphPanel : std::uint8_t {
 };
 
 struct MorphRecord {
-    char name[20];              // 0    SJIS
-    char nameEn[20];            // 20
-    wchar_t* jpText;            // 40   read-text buffer (PMX)
-    wchar_t* enText;            // 44
-    float value;                // 48   current morph value (keyframes)
-    std::int32_t offsetCount;   // 52   generic count / cleared per type
-    std::int32_t uvCounts[5];   // 56   uv1..uv5 entry counts
-    std::int32_t boneCount;     // 76
-    std::int32_t groupCount;    // 80
-    std::int32_t materialCount; // 84
-    MorphPanel panel;           // 88
-    std::uint8_t type;          // 89   0 group 1 vertex 2 bone 3-7 uv 8 mat
-    PmdVertexMorphEntry* vertexEntries;  // 92   16-byte entries
-    PmxBoneMorphEntry* boneEntries;     // 96   32-byte entries
-    PmxGroupMorphEntry* groupEntries;   // 100  8-byte entries
-    PmxUvMorphEntry* uvEntries[5];      // 104  20-byte entries per family
+    char name[20];                          // 0    SJIS
+    char nameEn[20];                        // 20
+    wchar_t* jpText;                        // 40   read-text buffer (PMX)
+    wchar_t* enText;                        // 44
+    float value;                            // 48   current morph value (keyframes)
+    std::int32_t offsetCount;               // 52   generic count / cleared per type
+    std::int32_t uvCounts[5];               // 56   uv1..uv5 entry counts
+    std::int32_t boneCount;                 // 76
+    std::int32_t groupCount;                // 80
+    std::int32_t materialCount;             // 84
+    MorphPanel panel;                       // 88
+    std::uint8_t type;                      // 89   0 group 1 vertex 2 bone 3-7 uv 8 mat
+    PmdVertexMorphEntry* vertexEntries;     // 92   16-byte entries
+    PmxBoneMorphEntry* boneEntries;         // 96   32-byte entries
+    PmxGroupMorphEntry* groupEntries;       // 100  8-byte entries
+    PmxUvMorphEntry* uvEntries[5];          // 104  20-byte entries per family
     PmxMaterialMorphEntry* materialEntries; // 124  128-byte entries
-    unsigned char* impulseEntries;  // 128  188-byte entries (type 9)
-    unsigned char* impulse2Entries; // 132  (type 10, unused by v9.32)
+    unsigned char* impulseEntries;          // 128  188-byte entries (type 9)
+    unsigned char* impulse2Entries;         // 132  (type 10, unused by v9.32)
 };
 
 // ---- rigid body records ---------------------------------------------------
 struct RigidRecord {
-    char name[20];              // 0    SJIS
-    wchar_t* jpText;            // 20   read-text buffer (PMX)
-    wchar_t* enText;            // 24
-    std::int32_t boneIndex;     // 28
-    std::uint8_t group;         // 32
+    char name[20];          // 0    SJIS
+    wchar_t* jpText;        // 20   read-text buffer (PMX)
+    wchar_t* enText;        // 24
+    std::int32_t boneIndex; // 28
+    std::uint8_t group;     // 32
     std::uint8_t padGroup;
-    std::uint16_t noCollapse;   // 34
-    std::uint8_t shape;         // 36   0 sphere 1 box 2 capsule
+    std::uint16_t noCollapse; // 34
+    std::uint8_t shape;       // 36   0 sphere 1 box 2 capsule
     unsigned char padShape[3];
     float size[3];              // 40
     float position[3];          // 52
@@ -307,166 +294,159 @@ struct RigidRecord {
     std::uint8_t kinematicFlag; // 81   set when mode == 2
     std::uint8_t staticFlag;    // 82   set when mode == 0
     unsigned char padMode;
-    void* keyData;              // 84   CreateRigidBody out[0]
-    float linearDamping;        // 88
-    float angularDamping;       // 92
-    float restitution;          // 96
-    float friction;             // 100
-    void* body;                 // 104  CreateRigidBody out[1] (btRigidBody*)
-    float invTransform[16];     // 108  0x40 inverse bone-relative matrix
+    std::intptr_t bodyId; // 84   Bullet debug ID; editor scratch copies reuse this as a combo index
+    float linearDamping;  // 88
+    float angularDamping; // 92
+    float restitution;    // 96
+    float friction;       // 100
+    btRigidBody* body;    // 104  owned Bullet body
+    float invTransform[16]; // 108  0x40 inverse bone-relative matrix
 };
 
 // ---- joint records --------------------------------------------------------
 struct JointRecord {
-    char name[20];              // 0    SJIS
-    wchar_t* jpText;            // 20   read-text buffer (PMX)
-    wchar_t* enText;            // 24
-    std::int32_t rigidA;        // 28
-    std::int32_t rigidB;        // 32
-    float position[3];          // 36
-    float rotation[3];          // 48
+    char name[20];       // 0    SJIS
+    wchar_t* jpText;     // 20   read-text buffer (PMX)
+    wchar_t* enText;     // 24
+    std::int32_t rigidA; // 28
+    std::int32_t rigidB; // 32
+    float position[3];   // 36
+    float rotation[3];   // 48
     // The original stores the four limit vectors in a shuffled order
     // (see the PMX loader reads: 72,76,80 then 60,64,68 then 96,100,104
     // then 84,88,92 on x86).
-    float limits[12];           // 60
-    float springs[6];           // 108
-    std::int32_t constraint;    // 132  CreatePhysJoint UID (int, NOT a
-                                //      pointer - x64 stores edx @+0x90)
-    float radiusBound;          // 136  distA + distB + limit radius
+    float limits[12];        // 60
+    float springs[6];        // 108
+    std::int32_t constraint; // 132  CreatePhysJoint UID (int, NOT a
+                             //      pointer - x64 stores edx @+0x90)
+    float radiusBound;       // 136  distA + distB + limit radius
 };
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl
 
 // ---- x86 pins (byte-exact against the ported loader call sites) -----------
 #if !MIKUDANCESTUDIO_X64
 static_assert(sizeof(mikudancestudio::mdl::MorphRecord) == 136, "morph x86 size");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, jpText) == 40,
-          "MorphRecord.jpText x86 ABI");
+              "MorphRecord.jpText x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, value) == 48,
-          "MorphRecord.value x86 ABI");
+              "MorphRecord.value x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, offsetCount) == 52,
-          "MorphRecord.offsetCount x86 ABI");
+              "MorphRecord.offsetCount x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, uvCounts) == 56,
-          "MorphRecord.uvCounts x86 ABI");
+              "MorphRecord.uvCounts x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, boneCount) == 76,
-          "MorphRecord.boneCount x86 ABI");
+              "MorphRecord.boneCount x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, groupCount) == 80,
-          "MorphRecord.groupCount x86 ABI");
+              "MorphRecord.groupCount x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, materialCount) == 84,
-          "MorphRecord.materialCount x86 ABI");
+              "MorphRecord.materialCount x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, panel) == 88,
-          "MorphRecord.panel x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::MorphRecord, type) == 89,
-          "MorphRecord.type x86 ABI");
+              "MorphRecord.panel x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::MorphRecord, type) == 89, "MorphRecord.type x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, vertexEntries) == 92,
-          "MorphRecord.vertexEntries x86 ABI");
+              "MorphRecord.vertexEntries x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, boneEntries) == 96,
-          "MorphRecord.boneEntries x86 ABI");
+              "MorphRecord.boneEntries x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, groupEntries) == 100,
-          "MorphRecord.groupEntries x86 ABI");
+              "MorphRecord.groupEntries x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, uvEntries) == 104,
-          "MorphRecord.uvEntries x86 ABI");
+              "MorphRecord.uvEntries x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, materialEntries) == 124,
-          "MorphRecord.materialEntries x86 ABI");
+              "MorphRecord.materialEntries x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, impulseEntries) == 128,
-          "MorphRecord.impulseEntries x86 ABI");
+              "MorphRecord.impulseEntries x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, impulse2Entries) == 132,
-          "MorphRecord.impulse2Entries x86 ABI");
+              "MorphRecord.impulse2Entries x86 ABI");
 
 static_assert(sizeof(mikudancestudio::mdl::RigidRecord) == 172, "rigid x86 size");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, jpText) == 20,
-          "RigidRecord.jpText x86 ABI");
+              "RigidRecord.jpText x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, enText) == 24,
-          "RigidRecord.enText x86 ABI");
+              "RigidRecord.enText x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, boneIndex) == 28,
-          "RigidRecord.boneIndex x86 ABI");
+              "RigidRecord.boneIndex x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, group) == 32,
-          "RigidRecord.group x86 ABI");
+              "RigidRecord.group x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, noCollapse) == 34,
-          "RigidRecord.noCollapse x86 ABI");
+              "RigidRecord.noCollapse x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, shape) == 36,
-          "RigidRecord.shape x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, size) == 40,
-          "RigidRecord.size x86 ABI");
+              "RigidRecord.shape x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, size) == 40, "RigidRecord.size x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, position) == 52,
-          "RigidRecord.position x86 ABI");
+              "RigidRecord.position x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, rotation) == 64,
-          "RigidRecord.rotation x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, mass) == 76,
-          "RigidRecord.mass x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, mode) == 80,
-          "RigidRecord.mode x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, keyData) == 84,
-          "RigidRecord.keyData x86 ABI");
+              "RigidRecord.rotation x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, mass) == 76, "RigidRecord.mass x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, mode) == 80, "RigidRecord.mode x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, bodyId) == 84,
+              "RigidRecord.bodyId x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, linearDamping) == 88,
-          "RigidRecord.linearDamping x86 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, body) == 104,
-          "RigidRecord.body x86 ABI");
+              "RigidRecord.linearDamping x86 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, body) == 104, "RigidRecord.body x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, invTransform) == 108,
-          "RigidRecord.invTransform x86 ABI");
+              "RigidRecord.invTransform x86 ABI");
 
 static_assert(sizeof(mikudancestudio::mdl::JointRecord) == 140, "joint x86 size");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, jpText) == 20,
-          "JointRecord.jpText x86 ABI");
+              "JointRecord.jpText x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, enText) == 24,
-          "JointRecord.enText x86 ABI");
+              "JointRecord.enText x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, rigidA) == 28,
-          "JointRecord.rigidA x86 ABI");
+              "JointRecord.rigidA x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, rigidB) == 32,
-          "JointRecord.rigidB x86 ABI");
+              "JointRecord.rigidB x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, position) == 36,
-          "JointRecord.position x86 ABI");
+              "JointRecord.position x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, rotation) == 48,
-          "JointRecord.rotation x86 ABI");
+              "JointRecord.rotation x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, limits) == 60,
-          "JointRecord.limits x86 ABI");
+              "JointRecord.limits x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, springs) == 108,
-          "JointRecord.springs x86 ABI");
+              "JointRecord.springs x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, constraint) == 132,
-          "JointRecord.constraint x86 ABI");
+              "JointRecord.constraint x86 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, radiusBound) == 136,
-          "JointRecord.radiusBound x86 ABI");
+              "JointRecord.radiusBound x86 ABI");
 #else
 // ---- x64 anchors (natural regrowth, mined from the original binary) -------
 static_assert(sizeof(mikudancestudio::mdl::MorphRecord) == 192, "morph x64 size");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, panel) == 0x60,
-          "MorphRecord.panel x64 ABI");
+              "MorphRecord.panel x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, type) == 0x61,
-          "MorphRecord.type x64 ABI");
+              "MorphRecord.type x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::MorphRecord, vertexEntries) == 0x68,
-          "MorphRecord.vertexEntries x64 ABI");
+              "MorphRecord.vertexEntries x64 ABI");
 
 static_assert(sizeof(mikudancestudio::mdl::RigidRecord) == 192, "rigid x64 size 0xC0");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, jpText) == 24,
-          "RigidRecord.jpText x64 ABI");
+              "RigidRecord.jpText x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, enText) == 32,
-          "RigidRecord.enText x64 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, size) == 52,
-          "RigidRecord.size x64 ABI");
+              "RigidRecord.enText x64 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, size) == 52, "RigidRecord.size x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, rotation) == 0x4C,
-          "RigidRecord.rotation x64 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, keyData) == 96,
-          "RigidRecord.keyData x64 ABI");
-static_assert(offsetof(mikudancestudio::mdl::RigidRecord, body) == 120,
-          "RigidRecord.body x64 ABI");
+              "RigidRecord.rotation x64 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, bodyId) == 96,
+              "RigidRecord.bodyId x64 ABI");
+static_assert(offsetof(mikudancestudio::mdl::RigidRecord, body) == 120, "RigidRecord.body x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::RigidRecord, invTransform) == 128,
-          "RigidRecord.invTransform x64 ABI");
+              "RigidRecord.invTransform x64 ABI");
 
 static_assert(sizeof(mikudancestudio::mdl::JointRecord) == 152, "joint x64 size 0x98");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, jpText) == 24,
-          "JointRecord.jpText x64 ABI");
+              "JointRecord.jpText x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, enText) == 32,
-          "JointRecord.enText x64 ABI");
+              "JointRecord.enText x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, rigidA) == 0x28,
-          "JointRecord.rigidA x64 ABI");
+              "JointRecord.rigidA x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, rigidB) == 0x2C,
-          "JointRecord.rigidB x64 ABI");
+              "JointRecord.rigidB x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, limits) == 0x48,
-          "JointRecord.limits x64 ABI");
+              "JointRecord.limits x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, springs) == 0x78,
-          "JointRecord.springs x64 ABI");
+              "JointRecord.springs x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, constraint) == 0x90,
-          "JointRecord.constraint x64 ABI");
+              "JointRecord.constraint x64 ABI");
 static_assert(offsetof(mikudancestudio::mdl::JointRecord, radiusBound) == 0x94,
-          "JointRecord.radiusBound x64 ABI");
+              "JointRecord.radiusBound x64 ABI");
 #endif

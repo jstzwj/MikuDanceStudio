@@ -2,20 +2,26 @@
 #include "rhi_backend.hpp"
 #include "rhi_scene_renderer.hpp"
 namespace mikudancestudio::rhi {
-enum class PreviewState { Closed, Ready, Suspended, Blocked, Failed };
+enum class PreviewState {
+    Closed,
+    Ready,
+    Suspended,
+    Blocked,
+    Failed
+};
 // Single render-thread controller. A platform host owns the actual window and
 // forwards its extent; this class owns device replacement and scene lifetime.
 // No legacy GPU objects, capture APIs or platform window types enter this layer.
 class ScenePreviewController {
 public:
-    ScenePreviewController()=default;
+    ScenePreviewController() = default;
     ~ScenePreviewController();
-    ScenePreviewController(const ScenePreviewController&)=delete;
-    ScenePreviewController& operator=(const ScenePreviewController&)=delete;
-    bool Open(const SwapchainDesc&,const BackendOptions&);
-    bool Resize(std::uint32_t width,std::uint32_t height);
+    ScenePreviewController(const ScenePreviewController&) = delete;
+    ScenePreviewController& operator=(const ScenePreviewController&) = delete;
+    bool Open(const SwapchainDesc&, const BackendOptions&);
+    bool Resize(std::uint32_t width, std::uint32_t height);
     bool ReplaceDevice();
-    bool Draw(const ModelReplayStream&,RgbaImage* acceptanceImage=nullptr);
+    bool Draw(const ModelReplayStream&, RgbaImage* acceptanceImage = nullptr);
     bool Unload();
     bool Close();
     void Block(const char* reason);
@@ -26,15 +32,16 @@ public:
     Device* GetDevice() const { return backend.device.get(); }
     SceneRenderer* GetRenderer() const { return renderer.get(); }
     const BackendOptions& Options() const { return options; }
+
 private:
     bool Fail(const char*);
     BackendDevice backend;
     std::unique_ptr<SceneRenderer> renderer;
     PreparedModelFrame prepared;
-    bool hasPrepared=false,hasScene=false;
+    bool hasPrepared = false, hasScene = false;
     BackendOptions options;
     SwapchainDesc description;
-    PreviewState state=PreviewState::Closed;
+    PreviewState state = PreviewState::Closed;
     std::string reason;
 };
 }

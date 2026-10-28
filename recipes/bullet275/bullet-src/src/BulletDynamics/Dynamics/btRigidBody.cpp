@@ -14,6 +14,7 @@ subject to the following restrictions:
 */
 
 #include "btRigidBody.h"
+#include "LinearMath/btMmdMath.h"
 #include <cstdio>
 #include <cstdlib>
 #include "BulletCollision/CollisionShapes/btConvexShape.h"
@@ -23,10 +24,10 @@ subject to the following restrictions:
 #include "BulletDynamics/ConstraintSolver/btTypedConstraint.h"
 #if defined(_MSC_VER) && defined(_M_IX86)
 #include <xmmintrin.h>
-extern "C" void __cdecl _CIacos(void);
 #endif
 
 #if defined(_MSC_VER) && defined(_M_IX86)
+#if defined(BT_USE_DOUBLE_PRECISION)
 static SIMD_FORCE_INLINE btScalar mmdInertiaMul(btScalar a, btScalar b)
 {
 	return _mm_cvtss_f32(_mm_mul_ss(_mm_set_ss(a), _mm_set_ss(b)));
@@ -85,215 +86,6 @@ static SIMD_FORCE_INLINE btScalar mmdInertiaElement210(
 	return mmdInertiaAdd(mmdInertiaAdd(p2, p1), p0);
 }
 
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-/* Verbatim transcription of MMD's btRigidBody::updateInertiaTensor
-   (0x4F0590..0x4F095B): the nine invInertiaTensorWorld elements mix
-   term orders and reuse stack slots in ways no fold-permutation of the
-   stock scaled(basis)*transpose(basis) reproduces, so the instruction
-   stream is copied exactly.  this (the btRigidBody) arrives in the
-   body argument; all reads/writes are body-relative like the
-   original. */
-__declspec(naked)
-static void mmdUpdateInertiaAsm(unsigned char* /*body*/)
-{
-	__asm
-	{
-		mov ecx, [esp+4]
-		push ebp
-		mov ebp, esp
-		and esp, 0FFFFFFF0h
-		sub esp, 60h
-		movss xmm2, dword ptr [ecx+38h]
-		movss xmm7, dword ptr [ecx+1B8h]
-		movss xmm5, dword ptr [ecx+30h]
-		movss xmm1, dword ptr [ecx+28h]
-		movss xmm0, dword ptr [ecx+14h]
-		movss xmm4, dword ptr [ecx+20h]
-		movss xmm3, dword ptr [ecx+10h]
-		movaps xmm6, xmm2
-		mulss xmm6, xmm7
-		movss [esp+0Ch], xmm6
-		movss xmm7, dword ptr [ecx+1B4h]
-		movss xmm6, dword ptr [ecx+34h]
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B0h]
-		movss [esp+08h], xmm6
-		movaps xmm6, xmm5
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B8h]
-		movss [esp+10h], xmm6
-		movss [esp+40h], xmm0
-		movss xmm0, dword ptr [ecx+24h]
-		movaps xmm6, xmm1
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B4h]
-		movss [esp+18h], xmm6
-		movss xmm6, dword ptr [ecx+24h]
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B0h]
-		movss [esp+14h], xmm6
-		movss [esp+44h], xmm0
-		movss xmm0, dword ptr [ecx+34h]
-		movss [esp+48h], xmm0
-		movss xmm0, dword ptr [ecx+18h]
-		movaps xmm6, xmm4
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B8h]
-		movss [esp+1Ch], xmm6
-		movaps xmm6, xmm0
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B4h]
-		movss [esp+24h], xmm6
-		movss xmm6, dword ptr [ecx+14h]
-		mulss xmm6, xmm7
-		movss xmm7, dword ptr [ecx+1B0h]
-		movss [esp+28h], xmm6
-		movaps xmm6, xmm3
-		mulss xmm6, xmm7
-		movss [esp+20h], xmm6
-		movaps xmm6, xmm2
-		mulss xmm6, [esp+0Ch]
-		movss [esp+04h], xmm6
-		movss xmm7, [esp+04h]
-		movss xmm6, [esp+48h]
-		mulss xmm6, [esp+08h]
-		addss xmm7, xmm6
-		movss [esp+04h], xmm7
-		movaps xmm6, xmm5
-		mulss xmm6, [esp+10h]
-		addss xmm7, xmm6
-		movss xmm6, [esp+44h]
-		mulss xmm6, [esp+08h]
-		movss [esp+04h], xmm6
-		movss [esp+2Ch], xmm7
-		movss xmm7, [esp+04h]
-		movaps xmm6, xmm1
-		mulss xmm6, [esp+0Ch]
-		addss xmm7, xmm6
-		movss [esp+04h], xmm7
-		movaps xmm6, xmm4
-		mulss xmm6, [esp+10h]
-		addss xmm7, xmm6
-		movss xmm6, [esp+40h]
-		mulss xmm6, [esp+08h]
-		movss [esp+08h], xmm6
-		movss [esp+04h], xmm7
-		movss xmm7, [esp+08h]
-		movaps xmm6, xmm0
-		mulss xmm6, [esp+0Ch]
-		addss xmm7, xmm6
-		movss [esp+08h], xmm7
-		movaps xmm6, xmm3
-		mulss xmm6, [esp+10h]
-		addss xmm7, xmm6
-		movss [esp+08h], xmm7
-		movaps xmm6, xmm2
-		mulss xmm6, [esp+18h]
-		movss [esp+10h], xmm6
-		movss xmm7, [esp+10h]
-		movss xmm6, [esp+48h]
-		mulss xmm6, [esp+14h]
-		addss xmm7, xmm6
-		movss [esp+10h], xmm7
-		movaps xmm6, xmm5
-		mulss xmm6, [esp+1Ch]
-		addss xmm7, xmm6
-		movss xmm6, [esp+44h]
-		mulss xmm6, [esp+14h]
-		mulss xmm5, [esp+20h]
-		movss [esp+10h], xmm6
-		movaps xmm6, xmm1
-		mulss xmm6, [esp+18h]
-		movss [esp+0Ch], xmm7
-		movss xmm7, [esp+10h]
-		addss xmm7, xmm6
-		movss [esp+10h], xmm7
-		movaps xmm6, xmm4
-		mulss xmm6, [esp+1Ch]
-		addss xmm7, xmm6
-		movss xmm6, [esp+40h]
-		mulss xmm6, [esp+14h]
-		movss [esp+14h], xmm6
-		movss [esp+10h], xmm7
-		movss xmm7, [esp+14h]
-		movaps xmm6, xmm0
-		mulss xmm6, [esp+18h]
-		addss xmm7, xmm6
-		movaps xmm6, xmm3
-		mulss xmm6, [esp+1Ch]
-		movss [esp+14h], xmm7
-		addss xmm7, xmm6
-		movss xmm6, [esp+24h]
-		mulss xmm2, xmm6
-		addss xmm2, xmm5
-		movss xmm5, [esp+48h]
-		mulss xmm1, xmm6
-		movss [esp+1Ch], xmm7
-		movss xmm7, [esp+28h]
-		mulss xmm5, xmm7
-		addss xmm2, xmm5
-		movss xmm5, [esp+44h]
-		mulss xmm5, xmm7
-		addss xmm1, xmm5
-		movss xmm5, [esp+20h]
-		mulss xmm0, xmm6
-		mulss xmm3, xmm5
-		addss xmm0, xmm3
-		movss xmm3, [esp+40h]
-		mulss xmm4, xmm5
-		addss xmm1, xmm4
-		movss [esp+34h], xmm1
-		movss xmm1, [esp+1Ch]
-		movss [esp+40h], xmm1
-		movss xmm1, [esp+10h]
-		movss [esp+44h], xmm1
-		movss xmm1, [esp+0Ch]
-		movss [esp+48h], xmm1
-		movss xmm1, [esp+08h]
-		mulss xmm3, xmm7
-		addss xmm0, xmm3
-		movss [esp+50h], xmm1
-		movss xmm1, [esp+04h]
-		movss [esp+30h], xmm0
-		xorps xmm0, xmm0
-		mov eax, [esp+30h]
-		movss [esp+54h], xmm1
-		movss xmm1, [esp+2Ch]
-		movss [esp+38h], xmm2
-		movss [esp+3Ch], xmm0
-		movss [esp+4Ch], xmm0
-		movss [esp+58h], xmm1
-		movss [esp+5Ch], xmm0
-		mov [ecx+110h], eax
-		mov edx, [esp+34h]
-		mov eax, [esp+38h]
-		mov [ecx+114h], edx
-		mov edx, [esp+3Ch]
-		mov [ecx+118h], eax
-		mov eax, [esp+40h]
-		mov [ecx+11Ch], edx
-		mov edx, [esp+44h]
-		mov [ecx+120h], eax
-		mov eax, [esp+48h]
-		mov [ecx+124h], edx
-		mov edx, [esp+4Ch]
-		mov [ecx+128h], eax
-		mov eax, [esp+50h]
-		mov [ecx+12Ch], edx
-		mov edx, [esp+54h]
-		mov [ecx+130h], eax
-		mov eax, [esp+58h]
-		mov [ecx+134h], edx
-		mov edx, [esp+5Ch]
-		mov [ecx+138h], eax
-		mov [ecx+13Ch], edx
-		mov esp, ebp
-		pop ebp
-		ret
-	}
-}
-#endif
-
 static btMatrix3x3 mmdInertiaTensorWorldVc9(
 	const btMatrix3x3& basis, const btVector3& local)
 {
@@ -314,6 +106,8 @@ static btMatrix3x3 mmdInertiaTensorWorldVc9(
 		mmdInertiaElement120(basis, local, 2, 1),
 		mmdInertiaElement210(basis, local, 2, 2));
 }
+
+#endif
 
 static SIMD_FORCE_INLINE btScalar mmdVelocitySub(btScalar a, btScalar b)
 {
@@ -412,7 +206,6 @@ static void mmdVelocityQuaternionVc9(
 	const btMatrix3x3& matrix, btScalar quaternion[4])
 {
 	const btScalar zero = btScalar(0.0);
-	const btScalar one = btScalar(1.0);
 	const btScalar half = btScalar(0.5);
 	btScalar trace = mmdVelocityAdd(
 		mmdVelocityAdd(matrix[0][0], matrix[1][1]), matrix[2][2]);
@@ -421,15 +214,7 @@ static void mmdVelocityQuaternionVc9(
 	{
 		btScalar root;
 		btScalar halfRoot;
-		__asm
-		{
-			fld trace
-			fadd one
-			fsqrt
-			fst root
-			fmul half
-			fstp halfRoot
-		}
+		btMmdMath::quaternionRootParts(trace, 0.0f, 0.0f, true, &root, &halfRoot);
 		const btScalar scale = mmdVelocityDiv(half, root);
 		quaternion[0] = mmdVelocityMul(
 			mmdVelocitySub(matrix[2][1], matrix[1][2]), scale);
@@ -453,17 +238,7 @@ static void mmdVelocityQuaternionVc9(
 	btScalar diagonalK = matrix[k][k];
 	btScalar root;
 	btScalar halfRoot;
-	__asm
-	{
-		fld diagonalI
-		fsub diagonalJ
-		fsub diagonalK
-		fadd one
-		fsqrt
-		fst root
-		fmul half
-		fstp halfRoot
-	}
+	btMmdMath::quaternionRootParts(diagonalI, diagonalJ, diagonalK, false, &root, &halfRoot);
 	const btScalar scale = mmdVelocityDiv(half, root);
 	quaternion[i] = halfRoot;
 	quaternion[3] = mmdVelocityMul(
@@ -482,39 +257,12 @@ static void mmdVelocityAxisAngleVc9(
 		mmdVelocityRelativeBasisVc9(oldBasis, newBasis);
 	btScalar quaternion[4];
 	mmdVelocityQuaternionVc9(relative, quaternion);
-	// _CIacos is called from inline assembly below.  MSVC cannot see that call's
-	// XMM clobbers, so these values must cross the boundary in memory.  VC9's
-	// original code likewise reloads qx/qy/qz after _CIacos returns.
-	volatile btScalar qx = quaternion[0];
-	volatile btScalar qy = quaternion[1];
-	volatile btScalar qz = quaternion[2];
-	volatile btScalar qw = quaternion[3];
+	btScalar qx = quaternion[0];
+	btScalar qy = quaternion[1];
+	btScalar qz = quaternion[2];
 	btScalar quaternionInverseLength;
 	btScalar computedAngle;
-	__asm
-	{
-		fld qz
-		fmul st, st
-		fld qw
-		fld st
-		fmul st, st(1)
-		faddp st(2), st
-		fld qy
-		fmul st, st
-		faddp st(2), st
-		fld qx
-		fmul st, st
-		faddp st(2), st
-		fxch st(1)
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fst quaternionInverseLength
-		fmulp st(1), st
-		call _CIacos
-		fadd st, st
-		fstp computedAngle
-	}
+	btMmdMath::quaternionAngle(quaternion, &quaternionInverseLength, &computedAngle);
 	angle = computedAngle;
 
 	qx = mmdVelocityMul(qx, quaternionInverseLength);
@@ -530,25 +278,8 @@ static void mmdVelocityAxisAngleVc9(
 		return;
 	}
 
-	btScalar axisX;
-	btScalar axisY;
-	btScalar axisZ;
-	__asm
-	{
-		fld axisLength2
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fld qx
-		fmul st, st(1)
-		fstp axisX
-		fld qy
-		fmul st, st(1)
-		fstp axisY
-		fmul qz
-		fstp axisZ
-	}
-	axis.setValue(axisX, axisY, axisZ);
+	axis.setValue(qx, qy, qz);
+	btMmdMath::normalize(axis, axisLength2);
 }
 
 static void mmdCalculateVelocityVc9(
@@ -576,7 +307,6 @@ static void mmdCalculateVelocityVc9(
 btScalar	gDeactivationTime = btScalar(2.);
 bool	gDisableDeactivation = false;
 static int uniqueId = 0;
-
 
 btRigidBody::btRigidBody(const btRigidBody::btRigidBodyConstructionInfo& constructionInfo)
 {
@@ -640,7 +370,6 @@ void	btRigidBody::setupRigidBody(const btRigidBody::btRigidBodyConstructionInfo&
 
 }
 
-
 void btRigidBody::predictIntegratedTransform(btScalar timeStep,btTransform& predictedTransform) 
 {
 	btTransformUtil::integrateTransform(m_worldTransform,m_linearVelocity,m_angularVelocity,timeStep,predictedTransform);
@@ -673,9 +402,6 @@ void	btRigidBody::getAabb(btVector3& aabbMin,btVector3& aabbMax) const
 	getCollisionShape()->getAabb(m_worldTransform,aabbMin,aabbMax);
 }
 
-
-
-
 void btRigidBody::setGravity(const btVector3& acceleration) 
 {
 	if (m_inverseMass != btScalar(0.0))
@@ -685,19 +411,11 @@ void btRigidBody::setGravity(const btVector3& acceleration)
 	m_gravity_acceleration = acceleration;
 }
 
-
-
-
-
-
 void btRigidBody::setDamping(btScalar lin_damping, btScalar ang_damping)
 {
 	m_linearDamping = GEN_clamped(lin_damping, (btScalar)btScalar(0.0), (btScalar)btScalar(1.0));
 	m_angularDamping = GEN_clamped(ang_damping, (btScalar)btScalar(0.0), (btScalar)btScalar(1.0));
 }
-
-
-
 
 ///applyDamping damps the velocity, using the given m_linearDamping and m_angularDamping
 void			btRigidBody::applyDamping(btScalar timeStep)
@@ -777,7 +495,6 @@ void			btRigidBody::applyDamping(btScalar timeStep)
 	}
 }
 
-
 void btRigidBody::applyGravity()
 {
 	if (isStaticOrKinematicObject())
@@ -837,17 +554,17 @@ void btRigidBody::updateInertiaTensor()
 			}
 		}
 	}
-	mmdUpdateInertiaAsm(reinterpret_cast<unsigned char*>(this));
-	return;
 #endif
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
+    m_invInertiaTensorWorld = btMmdMath::inverseInertiaTensor(
+        m_worldTransform.getBasis(), m_invInertiaLocal);
+#elif defined(_MSC_VER) && defined(_M_IX86)
 	m_invInertiaTensorWorld = mmdInertiaTensorWorldVc9(
 		m_worldTransform.getBasis(), m_invInertiaLocal);
 #else
 	m_invInertiaTensorWorld = m_worldTransform.getBasis().scaled(m_invInertiaLocal) * m_worldTransform.getBasis().transpose();
 #endif
 }
-
 
 void btRigidBody::integrateVelocities(btScalar step) 
 {
@@ -890,7 +607,6 @@ void btRigidBody::setCenterOfMassTransform(const btTransform& xform)
 	m_worldTransform = xform;
 	updateInertiaTensor();
 }
-
 
 bool btRigidBody::checkCollideWithOverride(btCollisionObject* co)
 {

@@ -122,17 +122,17 @@ inline float& Cursor(MMDApp* app) {
 // The UI owns target/end/loop policy; the shared CPU scheduler owns every
 // catch-up substep and the remaining dt budget. Both old blocks walk forward.
 void CatchupAdvance(void* user, CpuSimulationState& state, bool substep) {
-    auto& app=*static_cast<MMDApp*>(user);
-    app.PlaybackCursorSeconds()=state.cursorSeconds;
-    PlaybackPoseAdvance(&app,substep ? 1 : 0);
+    auto& app = *static_cast<MMDApp*>(user);
+    app.PlaybackCursorSeconds() = state.cursorSeconds;
+    PlaybackPoseAdvance(&app, substep ? 1 : 0);
     // Final global-track evaluation can change gravity/reset state. Pull those
     // edits back before exporting the session, without touching its dt budget.
     ImportCpuSimulation(app);
 }
-void CatchupStepTrace(void*,const CpuSimulationState&,CpuSimulationEvent event,int,float) {
+void CatchupStepTrace(void*, const CpuSimulationState&, CpuSimulationEvent event, int, float) {
 #ifdef MIKUDANCESTUDIO_DIAG
-    if(event==CpuSimulationEvent::CatchupBeforeStep && getenv("MIKUDANCESTUDIO_TRACE_STEPS"))
-        fprintf(stderr,"CATCHUP step (cursor behind target)\n");
+    if (event == CpuSimulationEvent::CatchupBeforeStep && getenv("MIKUDANCESTUDIO_TRACE_STEPS"))
+        fprintf(stderr, "CATCHUP step (cursor behind target)\n");
 #endif
 }
 
@@ -145,9 +145,7 @@ void FrameStepBeyondEnd(MMDApp* app) {
     auto& s = *app;
     DShowRecorder* recorder = s.Recorder();
     IPushSource* push =
-        recorder != nullptr
-            ? static_cast<IPushSource*>(recorder->framePush)
-            : nullptr;
+        recorder != nullptr ? static_cast<IPushSource*>(recorder->framePush) : nullptr;
     unsigned char* flagPtr = s.RecordingCompletionFlag();
 
     // The original guards BOTH capture calls with a null test on the
@@ -155,7 +153,7 @@ void FrameStepBeyondEnd(MMDApp* app) {
     // AVI-dump dialog opened the interface stays null and the calls are
     // skipped entirely.  Omitting the guards null-dereferences on the
     // first frame-step click past the end.
-    auto capture = [&]() -> long {                          // 0x46F070/9B
+    auto capture = [&]() -> long { // 0x46F070/9B
 #ifdef MIKUDANCESTUDIO_DIAG
         static int capCount = 0;
 #endif
@@ -169,9 +167,7 @@ void FrameStepBeyondEnd(MMDApp* app) {
             if (++capCount <= 5 || capCount % 60 == 0) {
                 FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_REC"), "a");
                 if (tf) {
-                    fprintf(tf,
-                            "capture#%d push=%p flag=%d\n",
-                            capCount, static_cast<void*>(push),
+                    fprintf(tf, "capture#%d push=%p flag=%d\n", capCount, static_cast<void*>(push),
                             (int)*flagPtr);
                     fclose(tf);
                 }
@@ -182,64 +178,60 @@ void FrameStepBeyondEnd(MMDApp* app) {
     };
 
     capture();
-    while (*flagPtr == 0) {                                 // 0x46F08C
-        if (push == nullptr)                                // 0x46F0A4 jz
+    while (*flagPtr == 0) {  // 0x46F08C
+        if (push == nullptr) // 0x46F0A4 jz
             break;
-        if (capture() == static_cast<long>(0x80004005))     // E_FAIL
-            break;                                          // 0x46F0B1
+        if (capture() == static_cast<long>(0x80004005)) // E_FAIL
+            break;                                      // 0x46F0B1
         MSG msg;
         while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);                         // 0x46F0D8
+            TranslateMessage(&msg); // 0x46F0D8
             DispatchMessageA(&msg);
         }
-        Sleep(1);                                           // 0x46F102
+        Sleep(1); // 0x46F102
     }
-    Sleep(500);                                             // 0x46F115
-    FinishAviRecord(app);                                         // 0x46F122
+    Sleep(500);           // 0x46F115
+    FinishAviRecord(app); // 0x46F122
 }
 
 // Past-end path while playing (0x46F2AF..0x46F3D1).
 void PlayingBeyondEnd(MMDApp* app) {
     auto& s = *app;
-    WaveAudioContext* audio = s.Audio();                    // app+0xCC
+    WaveAudioContext* audio = s.Audio(); // app+0xCC
     if (s.WaveEnabled() != 0) {
-        CloseDataFile(audio);                                // 0x46F2C4
-        WaveStartPlayback(audio);                            // 0x4C2760
+        CloseDataFile(audio);     // 0x46F2C4
+        WaveStartPlayback(audio); // 0x4C2760
     }
 
     if (s.PlaybackLoopEnabled() != 0) {
         char text[8];
-        GetWindowTextA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayStartFrameEdit),
-                       text, 8);
+        GetWindowTextA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayStartFrameEdit), text,
+                       8);
         const std::int32_t frame = std::atol(text);
         // x64 0x7FF7CB44BC3E..0x7FF7CB44BC4B: cvtsi2ss of the
         // zero-extended frame, then divss by the 30.0f slot.
         s.PlaybackStartSeconds() = UnsigFlt(frame) / 30.0f;
         s.PlaybackPhysicsMode() = s.SavedPlaybackPhysicsMode();
         Cursor(app) = s.PlaybackStartSeconds();
-        UpdateBoneFrames(app);                              // 0x433A40
-        if (s.WaveEnabled() != 0 &&
-            s.AutomaticFrameAdvanceEnabled() == 0) {
-            SetFrameNormalized(
-                s.FrameNormalization());
-            WaveSeekAndFeed(audio, static_cast<double>(
-                                   s.PlaybackStartSeconds()));
+        UpdateBoneFrames(app); // 0x433A40
+        if (s.WaveEnabled() != 0 && s.AutomaticFrameAdvanceEnabled() == 0) {
+            SetFrameNormalized(s.FrameNormalization());
+            WaveSeekAndFeed(audio, static_cast<double>(s.PlaybackStartSeconds()));
         }
-        s.PlaybackClockAnchorLow() =
-            s.TimeNowLow();
+        s.PlaybackClockAnchorLow() = s.TimeNowLow();
         s.PlaybackClockAnchorHigh() = s.TimeNowHigh();
-        PlaybackPoseAdvance(app, 0);                        // 0x46F56C
+        PlaybackPoseAdvance(app, 0); // 0x46F56C
         return;
     }
 
     // stop playback (0x46F3A5..0x46F3D1); the final 0x4175A0(0) is skipped.
     s.PlaybackActive() = 0;
-    StopPlayback(app);                                         // 0x4341E0
-    SendMessageA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayButton),
-                 BM_SETCHECK, 0, 0);               // 0x46F3CB
+    StopPlayback(app); // 0x4341E0
+    SendMessageA(GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPlayButton), BM_SETCHECK, 0,
+                 0); // 0x46F3CB
 }
 
-}  // namespace
+} // namespace
 
 // Physics-cursor catch-up of the FrameDriver (0x46EEE0..0x46F575).
 // selActive is the var_14A1 local computed in FrameDriver (0x46DCA6).
@@ -255,34 +247,32 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         const std::int32_t n = s.state.recordedFrameCount;
         const std::int32_t frameA = s.AviRecordStartFrame();
         const float fps = s.AviRecordFps();
-        const int shown = static_cast<int>(
-            static_cast<float>(n * 30) / fps + UnsigFlt(frameA));
+        const int shown = static_cast<int>(static_cast<float>(n * 30) / fps + UnsigFlt(frameA));
         wchar_t buf[0x100];
         if (s.state.englishUI != 0) {
-            swprintf_s(buf, 0x100, L" %dframe recording(until %dframe)",
-                       shown, s.AviRecordEndFrame());
+            swprintf_s(buf, 0x100, L" %dframe recording(until %dframe)", shown,
+                       s.AviRecordEndFrame());
         } else {
             swprintf_s(buf, 0x100, L" %d", shown);
         }
         SetWindowTextW(s.RecordingWindow(), buf);
     }
-    s.state.recordedFrameCount += 1;                                     // 0x46EFB7
+    s.state.recordedFrameCount += 1; // 0x46EFB7
 
     // ---- 2./3. gates (0x46EFBE..0x46EFEE) --------------------------------
     if (s.state.messageSeen == 0)
-        return;                                    // -> 0x46FEC4 (post)
+        return; // -> 0x46FEC4 (post)
     // var_14C8 = app+0xA06BC unconditionally (0x46EFDE); overwritten with
     // 1/fps when the frame-advance byte AND the frame-step flag are both
     // set (0x46F00D, x87 double divide, one rounding at the store).  The
     // BLOCK loops below decrement it by 1/60 per substep (0x46F226 and the
     // BLOCK 2 twin) and the settle main step consumes the REMAINDER - see
     // the per-scene CpuSimulationState budget.
-    s.CpuSimulation().remainingSeconds = s.state.deltaTime;                   // 0xA06BC
+    s.CpuSimulation().remainingSeconds = s.state.deltaTime; // 0xA06BC
     if (s.PlaybackActive() == 0)
-        return;                                    // -> 0x46F575
+        return; // -> 0x46F575
 
-    const int count =
-        s.PlaybackPhysicsMode();
+    const int count = s.PlaybackPhysicsMode();
 
     if (s.FrameStepPlayback() != 0) {
         // ---- 4. frame-step mode (0x46EFFB..0x46F25B) --------------------
@@ -293,7 +283,7 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         const std::int32_t n = s.state.recordedFrameCount;
         const std::int32_t frameA = s.AviRecordStartFrame();
         const float fps = s.AviRecordFps();
-        s.CpuSimulation().remainingSeconds = 1.0f / fps;                     // 0x46F00D
+        s.CpuSimulation().remainingSeconds = 1.0f / fps; // 0x46F00D
         // x64 0x7FF7CB44B92E..0x7FF7CB44B984, all single precision:
         //   term   = ((float)N * 30.0f) / fps + (float)(u32)frameA
         //            [movd/cvtdq2ss N, mulss 30.0f, divss fps,
@@ -306,22 +296,19 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         // recording cursor at 0.  NOTE: the display formula above
         // multiplies N*30 as INTEGERS first; this path multiplies as
         // float - keep the two apart.
-        const float term = static_cast<float>(n) * 30.0f / fps +
-                           UnsigFlt(frameA);
-        const float target = term / 30.0f;                  // 0x46F054
-        const std::uint32_t gate = static_cast<std::uint32_t>(
-            static_cast<std::int64_t>(term));
-        const std::uint32_t limit = static_cast<std::uint32_t>(
-            s.AviRecordEndFrame() + 1);
-        if (gate < limit) {                                 // 0x46F06A jb
-            auto& simulation=ImportCpuSimulation(s);
-            RunCpuSimulationCatchup(simulation,EditorCpuSimulationContext(s),target,-1,
-                                    {app,CatchupAdvance,CatchupStepTrace});
-            ExportCpuSimulation(s,simulation);
+        const float term = static_cast<float>(n) * 30.0f / fps + UnsigFlt(frameA);
+        const float target = term / 30.0f; // 0x46F054
+        const std::uint32_t gate = static_cast<std::uint32_t>(static_cast<std::int64_t>(term));
+        const std::uint32_t limit = static_cast<std::uint32_t>(s.AviRecordEndFrame() + 1);
+        if (gate < limit) { // 0x46F06A jb
+            auto& simulation = ImportCpuSimulation(s);
+            RunCpuSimulationCatchup(simulation, EditorCpuSimulationContext(s), target, -1,
+                                    {app, CatchupAdvance, CatchupStepTrace});
+            ExportCpuSimulation(s, simulation);
             return;
         }
-        FrameStepBeyondEnd(app);                            // 0x46F070
-        return;                                             // -> 0x46F575
+        FrameStepBeyondEnd(app); // 0x46F070
+        return;                  // -> 0x46F575
     }
 
     // ---- 5. playing (0x46F264..) ------------------------------------------
@@ -335,39 +322,30 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         if (tracePlayLeft < 0) {
             FILE* tf = fopen(tp, "a");
             if (tf) {
-                fprintf(tf, "play-start end=%f cursor=%f count=%d\n",
-                        s.PlaybackEndSeconds(), Cursor(app),
-                        count);
+                fprintf(tf, "play-start end=%f cursor=%f count=%d\n", s.PlaybackEndSeconds(),
+                        Cursor(app), count);
                 fclose(tf);
             }
             tracePlayLeft = 400;
             tracePassLeft = 100;
-            unsigned char* mdl = s.ModelSlot(0);
+            mdl::ModelRecord* model = s.ModelSlot(0);
             FILE* tf2 = fopen(tp, "a");
-            if (tf2 && mdl != nullptr) {
-                const std::int32_t boneCnt = mdl::Mdl(mdl)->boneCount;
-                unsigned char* const active =
-                    mdl::Mdl(mdl)->boneTrackActive;
-                std::uint32_t* const cursors =
-                    mdl::Mdl(mdl)->boneKeyCursors;
-                mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(mdl);
-                const mdl::BoneKey* const keyList = mdl::BoneKeys(mdl);
+            if (tf2 && model != nullptr) {
+                const std::int32_t boneCnt = model->boneCount;
+                unsigned char* const active = model->boneTrackActive;
+                std::uint32_t* const cursors = model->boneKeyCursors;
+                mikudancestudio::mdl::BoneRecord* const bones = model->boneTable;
+                const mdl::BoneKey* const keyList = model->boneKeys;
                 fprintf(tf2, "loadstate boneCnt=%d\n", boneCnt);
                 for (int b = 0; b < boneCnt && b < 12; ++b)
                     fprintf(tf2,
                             "bone%d active=%d cursor=%d quat=%08X "
                             "keyframe=%d nextframe=%d\n",
-                            b, active ? active[b] : -1,
-                            cursors ? cursors[b] : -1,
-                            *reinterpret_cast<std::uint32_t*>(
-                                &bones[b].rotQuat[0]),
-                            (keyList && cursors)
-                                ? static_cast<int>(keyList[cursors[b]].frame)
-                                : -1,
-                            (keyList && cursors &&
-                             keyList[cursors[b]].next != 0)
-                                ? static_cast<int>(
-                                      keyList[keyList[cursors[b]].next].frame)
+                            b, active ? active[b] : -1, cursors ? cursors[b] : -1,
+                            *reinterpret_cast<std::uint32_t*>(&bones[b].rotQuat[0]),
+                            (keyList && cursors) ? static_cast<int>(keyList[cursors[b]].frame) : -1,
+                            (keyList && cursors && keyList[cursors[b]].next != 0)
+                                ? static_cast<int>(keyList[keyList[cursors[b]].next].frame)
                                 : -1);
                 fclose(tf2);
             } else if (tf2) {
@@ -376,19 +354,15 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         }
     }
 #endif
-    const std::uint64_t now =
-        (static_cast<std::uint64_t>(s.TimeNowHigh()) << 32) | s.TimeNowLow();
-    const std::uint64_t t0 =
-        (static_cast<std::uint64_t>(s.PlaybackClockAnchorHigh()) << 32) |
-        s.PlaybackClockAnchorLow();
+    const std::uint64_t now = (static_cast<std::uint64_t>(s.TimeNowHigh()) << 32) | s.TimeNowLow();
+    const std::uint64_t t0 = (static_cast<std::uint64_t>(s.PlaybackClockAnchorHigh()) << 32) |
+                             s.PlaybackClockAnchorLow();
     // x64 0x7FF7CB44BB86..0x7FF7CB44BBB3, all single precision: the 64-bit
     // tick delta goes straight into a float (cvtsi2ss rax), then mulss by
     // MilliToSec and addss the start seconds.  The old port widened
     // everything to double and rounded once at the store.
-    const std::int64_t elapsed =
-        static_cast<std::int64_t>(now - t0);
-    const float target = static_cast<float>(elapsed) * s.MilliToSec() +
-                         s.PlaybackStartSeconds();
+    const std::int64_t elapsed = static_cast<std::int64_t>(now - t0);
+    const float target = static_cast<float>(elapsed) * s.MilliToSec() + s.PlaybackStartSeconds();
     const float end = s.PlaybackEndSeconds();
 
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -398,67 +372,62 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
             fprintf(tf,
                     "pass cursor=%.5f target=%.5f end=%.5f elapsed=%.3f "
                     "b330=%d sel=%d\n",
-                    Cursor(app), target, end, static_cast<double>(elapsed),
-                    s.PlaybackActive(), selSkip);
+                    Cursor(app), target, end, static_cast<double>(elapsed), s.PlaybackActive(),
+                    selSkip);
             fclose(tf);
         }
     }
 #endif
 
-    if (!(end < target)) {                                  // 0x46F2A9 jp
-        auto& simulation=ImportCpuSimulation(s);
-        CpuSimulationHooks hooks{app,CatchupAdvance,nullptr};
+    if (!(end < target)) { // 0x46F2A9 jp
+        auto& simulation = ImportCpuSimulation(s);
+        CpuSimulationHooks hooks{app, CatchupAdvance, nullptr};
 #ifdef MIKUDANCESTUDIO_DIAG
-        struct Trace { MMDApp* app; int* left; float target; } trace{app,&tracePlayLeft,target};
-        hooks.user=&trace;
-        hooks.advance=[](void* user,CpuSimulationState& state,bool substep) {
-            CatchupAdvance(static_cast<Trace*>(user)->app,state,substep);
+        struct Trace {
+            MMDApp* app;
+            int* left;
+            float target;
+        } trace{app, &tracePlayLeft, target};
+        hooks.user = &trace;
+        hooks.advance = [](void* user, CpuSimulationState& state, bool substep) {
+            CatchupAdvance(static_cast<Trace*>(user)->app, state, substep);
         };
-        hooks.observe=[](void* user,const CpuSimulationState& state,CpuSimulationEvent event,int,float) {
-            auto& trace=*static_cast<Trace*>(user);
-            auto& owner=*trace.app;
-            if(event==CpuSimulationEvent::CatchupBeforeStep && getenv("MIKUDANCESTUDIO_TRACE_STEPS"))
-                fprintf(stderr,"CATCHUP step (cursor behind target)\n");
-            if(event==CpuSimulationEvent::CatchupAfterStep) {
-                    if (*trace.left > 0 && getenv("MIKUDANCESTUDIO_TRACE_PLAY")) {
-                        --*trace.left;
-                        unsigned char* mdl = owner.ModelSlot(0);
-                        FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_PLAY"), "a");
-                        if (tf) {
-                            if (mdl != nullptr) {
-                                mikudancestudio::mdl::BoneRecord* bones =
-                                    mikudancestudio::mdl::Bones(mdl);
-                                const std::int32_t boneCount = static_cast<std::int32_t>(
-                                    mikudancestudio::mdl::Mdl(mdl)->boneCount);
-                                fprintf(tf,
-                                        "sub cursor=%.5f target=%.5f bones=",
-                                        state.cursorSeconds, trace.target);
-                                for (int bi = 0; bi < boneCount && bi < 8;
-                                     ++bi)
-                                    fprintf(tf, "%08X%08X%08X%08X,",
-                                            *reinterpret_cast<
-                                                std::uint32_t*>(
-                                                &bones[bi].rotQuat[0]),
-                                            *reinterpret_cast<
-                                                std::uint32_t*>(
-                                                &bones[bi].rotQuat[1]),
-                                            *reinterpret_cast<
-                                                std::uint32_t*>(
-                                                &bones[bi].rotQuat[2]),
-                                            *reinterpret_cast<
-                                                std::uint32_t*>(
-                                                &bones[bi].rotQuat[3]));
-                                fputc('\n', tf);
-                            }
-                            fclose(tf);
+        hooks.observe = [](void* user, const CpuSimulationState& state, CpuSimulationEvent event,
+                           int, float) {
+            auto& trace = *static_cast<Trace*>(user);
+            auto& owner = *trace.app;
+            if (event == CpuSimulationEvent::CatchupBeforeStep &&
+                getenv("MIKUDANCESTUDIO_TRACE_STEPS"))
+                fprintf(stderr, "CATCHUP step (cursor behind target)\n");
+            if (event == CpuSimulationEvent::CatchupAfterStep) {
+                if (*trace.left > 0 && getenv("MIKUDANCESTUDIO_TRACE_PLAY")) {
+                    --*trace.left;
+                    mdl::ModelRecord* mdl = owner.ModelSlot(0);
+                    FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_PLAY"), "a");
+                    if (tf) {
+                        if (mdl != nullptr) {
+                            mikudancestudio::mdl::BoneRecord* bones = (mdl)->boneTable;
+                            const std::int32_t boneCount =
+                                static_cast<std::int32_t>(mdl->boneCount);
+                            fprintf(tf, "sub cursor=%.5f target=%.5f bones=", state.cursorSeconds,
+                                    trace.target);
+                            for (int bi = 0; bi < boneCount && bi < 8; ++bi)
+                                fprintf(tf, "%08X%08X%08X%08X,",
+                                        *reinterpret_cast<std::uint32_t*>(&bones[bi].rotQuat[0]),
+                                        *reinterpret_cast<std::uint32_t*>(&bones[bi].rotQuat[1]),
+                                        *reinterpret_cast<std::uint32_t*>(&bones[bi].rotQuat[2]),
+                                        *reinterpret_cast<std::uint32_t*>(&bones[bi].rotQuat[3]));
+                            fputc('\n', tf);
                         }
+                        fclose(tf);
                     }
+                }
             }
         };
 #endif
-        const int skip=selSkip && s.state.optflag[0]==0 ? s.SelectedModelSlot() : -1;
-        RunCpuSimulationCatchup(simulation,EditorCpuSimulationContext(s),target,skip,hooks);
-        ExportCpuSimulation(s,simulation);
+        const int skip = selSkip && s.state.optflag[0] == 0 ? s.SelectedModelSlot() : -1;
+        RunCpuSimulationCatchup(simulation, EditorCpuSimulationContext(s), target, skip, hooks);
+        ExportCpuSimulation(s, simulation);
         return;
     }
 
@@ -467,4 +436,4 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
     PlayingBeyondEnd(app);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

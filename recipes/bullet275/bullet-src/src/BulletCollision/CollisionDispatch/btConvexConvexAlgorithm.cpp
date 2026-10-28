@@ -18,6 +18,7 @@ subject to the following restrictions:
 ///with reproduction case
 //define BT_DISABLE_CAPSULE_CAPSULE_COLLIDER 1
 
+#include "LinearMath/btMmdMath.h"
 #include "btConvexConvexAlgorithm.h"
 
 //#include <stdio.h>
@@ -63,16 +64,7 @@ static BT_NOINLINE btScalar mmdCapsuleDistance(btScalar lenSqr,
                                                        btScalar radiusB)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar result;
-	__asm
-	{
-		fld dword ptr [lenSqr]
-		fsqrt
-		fsub dword ptr [radiusA]
-		fsub dword ptr [radiusB]
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::capsuleDistance(lenSqr, radiusA, radiusB);
 #else
 	return btSqrt(lenSqr) - radiusA - radiusB;
 #endif
@@ -85,28 +77,7 @@ static BT_NOINLINE void mmdCapsuleNormal(btVector3& normal,
                                                  btScalar lenSqr)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar* n = &normal.m_floats[0];
-	const btScalar* p = &pts.m_floats[0];
-	__asm
-	{
-		mov eax, n
-		mov edx, p
-		fld dword ptr [lenSqr]
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fchs
-		fld dword ptr [edx]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [edx+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [edx+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::capsuleNormal(normal, pts, lenSqr);
 #else
 	normal = pts * -btRecipSqrt(lenSqr);
 #endif
@@ -119,45 +90,7 @@ static BT_NOINLINE void mmdCapsulePlaneSpace(btVector3& normal,
                                                      bool zBranch)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar* n = &normal.m_floats[0];
-	int useZ = zBranch;
-	__asm
-	{
-		mov eax, n
-		fld dword ptr [a]
-		fmul st, st
-		fld dword ptr [b]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		cmp useZ, 0
-		jz  else_branch
-		fld dword ptr [b]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fld dword ptr [a]
-		fmul st, st(1)
-		fchs
-		fstp dword ptr [eax+4]
-		xorps xmm0, xmm0
-		movss dword ptr [eax], xmm0
-		fstp st(0)
-		jmp done
-else_branch:
-		fld dword ptr [a]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [b]
-		fmul st, st(1)
-		fchs
-		fstp dword ptr [eax]
-		xorps xmm0, xmm0
-		movss dword ptr [eax+8], xmm0
-		fstp st(0)
-done:
-	}
+	btMmdMath::planeSpace(normal, a, b, zBranch);
 #else
 	const btScalar inv = btScalar(1.)/btSqrt(a*a + b*b);
 	if (zBranch)
@@ -178,6 +111,12 @@ static SIMD_FORCE_INLINE void segmentsClosestPoints(
 {
 	// compute the parameters of the closest points on each line segment
 
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	// MMD x64 RVA 0xF6180: all three dot products use (x+y)+z.
+	const btScalar dirA_dot_dirB = dirA.dot(dirB);
+	const btScalar dirA_dot_trans = dirA.dot(translation);
+	const btScalar dirB_dot_trans = dirB.dot(translation);
+#else
 	// VC9 (MMD 0x4E18B0): dirA_dot_dirB and dirA_dot_trans are grouped
 	// (z + x) + y, dirB_dot_trans is grouped (z + y) + x.
 	btScalar dirA_dot_dirB = (dirB.z()*dirA.z() + dirB.x()*dirA.x())
@@ -186,6 +125,7 @@ static SIMD_FORCE_INLINE void segmentsClosestPoints(
 		+ translation.x()*dirA.x()) + translation.y()*dirA.y();
 	btScalar dirB_dot_trans = (translation.z()*dirB.z()
 		+ translation.y()*dirB.y()) + translation.x()*dirB.x();
+#endif
 
 	btScalar denom = 1.0f - dirA_dot_dirB * dirA_dot_dirB;
 
@@ -260,10 +200,14 @@ static SIMD_FORCE_INLINE btScalar capsuleCapsuleDistance(
 	segmentsClosestPoints( ptsVector, offsetA, offsetB, tA, tB, translation,
 						   directionA, capsuleLengthA, directionB, capsuleLengthB );
 
+#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
+	const btScalar lenSqr = ptsVector.length2();
+#else
 	// VC9 (MMD 0x4E18B0): lenSqr is ((z*z + y*y) + x*x); the distance keeps
 	// the sqrt and both radius subtractions extended.
 	const btScalar lenSqr = (ptsVector.z()*ptsVector.z()
 		+ ptsVector.y()*ptsVector.y()) + ptsVector.x()*ptsVector.x();
+#endif
 	btScalar distance = mmdCapsuleDistance(lenSqr, capsuleRadiusA,
 		capsuleRadiusB);
 

@@ -19,18 +19,16 @@ option(MIKUDANCESTUDIO_FORMATS_ONLY "Build only the portable format library and 
 
 if (MSVC)
     add_compile_options(/W3 /permissive-)
+    # Make source and literal encoding independent of the system code page.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
     # The original binary tolerates implicit narrowing everywhere; keep the
     # port close to VC9 behaviour rather than modern strictness.
     add_compile_options(/wd4267 /wd4244 /wd4245)
-    # VC9 had no C++17 aligned operator new/delete (P0035).  Without this
-    # switch our TUs allocate over-aligned Bullet objects (e.g. the 1456-byte
-    # btGeneric6DofSpringConstraint, align 16) through _aligned_malloc while
-    # the bullet275 static library's deleting destructors free them with the
-    # plain operator delete - free() on an _aligned_malloc block, which
-    # corrupts the heap and kills the process at teardown (0xC0000374,
-    # see ShutdownCleanup -> DisposePhysicsWorld).  The original shipped
-    # exactly the plain-new pairing, so this is also the faithful setting.
+    # Match VC9's plain new/delete convention on both sides of the Bullet
+    # boundary. The Bullet recipe must use this switch too: on x86, C++17
+    # otherwise pairs a plain constraint allocation with an aligned deleting
+    # destructor (or the reverse with a C++14 library), corrupting the heap.
     add_compile_options(/Zc:alignedNew-)
 else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
@@ -455,9 +453,11 @@ add_library(mikudancestudio_core STATIC
     src/app/mmd_app.cpp
     src/app/globals.cpp
     src/app/app_ctor.cpp
+    src/app/runtime_state.cpp
     src/app/app_defaults.cpp
     src/main/charset_conv.cpp
     src/math/color_lerp.cpp
+    src/math/math_runtime.cpp
     src/window/path_utils.cpp
     src/window/window_init.cpp
     src/window/ui_init.cpp
@@ -509,6 +509,7 @@ add_library(mikudancestudio_core STATIC
     src/app/record_readback.cpp
     src/app/dshow_record_graph.cpp
     src/model/model_init.cpp
+    src/model/pose_trace.cpp
     src/model/path_resolve.cpp
     src/model/pmd_load.cpp
     src/model/runtime_cpu_model.cpp
@@ -520,6 +521,7 @@ add_library(mikudancestudio_core STATIC
     src/model/bone_transform.cpp
     src/model/model_keyframe_advance.cpp
     src/model/model_keyframe_edit.cpp
+    src/model/model_key_reduction.cpp
     src/model/bone_edit_undo.cpp
     src/model/model_frame_seek.cpp
     src/model/vmd_load.cpp
@@ -543,12 +545,14 @@ add_library(mikudancestudio_core STATIC
     src/window/dialog_procs.cpp
     src/window/frame_range_apply.cpp
     src/io/pmm_save.cpp
+    src/io/pmd_save.cpp
     src/io/io_device_helpers.cpp
     src/io/vpd_file.cpp
     src/io/vmd_save.cpp
     src/io/pmm_load_dispatch.cpp
     src/io/pmm_v1_layout_win.cpp
     src/io/pmm_load_v2.cpp
+    src/io/pmm_playback_options.cpp
     src/io/pmm_load_v1.cpp
     src/window/ui_scroll_mouse.cpp
     src/window/ui_panel_paint.cpp
@@ -561,6 +565,7 @@ add_library(mikudancestudio_core STATIC
       src/window/ui_model_reload.cpp
       src/window/ui_selection_reeval.cpp
     src/window/ui_editor_click.cpp
+    src/window/timeline_selection.cpp
     src/window/ui_frame_step.cpp
     src/window/ui_frame_refresh.cpp
     src/window/ui_mousemove.cpp
@@ -582,11 +587,18 @@ add_library(mikudancestudio_core STATIC
     src/window/command_file_menu.cpp
     src/window/command_view_menu.cpp
     src/window/physics_model_dialog.cpp
-    src/window/model_edge_dialog.cpp
+    src/window/model_order_dialog.cpp
+    src/window/gravity_setting_dialog.cpp
+    src/window/english_name_dialog.cpp
+    src/window/edge_thickness_dialog.cpp
     src/window/enhance_model_io.cpp
     src/window/misc_dialogs.cpp
     src/window/command_frame_edit.cpp
+    src/window/frame_clipboard.cpp
+    src/model/global_key_registration.cpp
     src/window/command_panel_toggles.cpp
+    src/window/bone_pose_clipboard.cpp
+    src/window/bone_pose_edit.cpp
     src/window/command_frame_register.cpp
     src/features/dialog_helpers.cpp
     src/features/audio_pose_helpers.cpp
@@ -599,7 +611,7 @@ add_library(mikudancestudio_core STATIC
 )
 
 target_include_directories(mikudancestudio_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# 内置 MMEffect 的宿主集成面（mme_bridge → MmeHost* 声明）。
+# Host integration surface for embedded MMEffect (mme_bridge -> MmeHost* declarations).
 target_include_directories(mikudancestudio_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include)
 target_link_libraries(mikudancestudio_core PUBLIC
@@ -750,16 +762,16 @@ target_include_directories(MMEffect PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/src/mmhack   # mmhack_state.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp（运行时 d3dx9 转发）
+    ${CMAKE_CURRENT_SOURCE_DIR}/include          # d3dx_dyn.hpp (runtime d3dx9 forwarding)
 )
 target_compile_definitions(MMEffect PUBLIC MIKUDANCESTUDIO_MME_EMBEDDED=1)
 target_link_libraries(MMEffect PUBLIC D3DXRuntime)
 target_link_libraries(MMEffect PRIVATE
-    user32       # 窗口/菜单/消息
-    gdi32        # GDI+ 底层
-    gdiplus      # 动画纹理（GIF/APNG 解码）
-    comctl32     # 分配对话框列表视图
-    comdlg32     # 特效文件选择对话框
+    user32       # Windows, menus and messages
+    gdi32        # GDI+ backend
+    gdiplus      # Animated textures (GIF/APNG decoding)
+    comctl32     # Assignment dialog list view
+    comdlg32     # Effect file selection dialog
     shell32
     ole32
     winmm        # timeGetTime
@@ -817,6 +829,62 @@ if(BUILD_TESTING)
     target_link_libraries(vmd_load_adapter_test PRIVATE
         mikudancestudio_core MMEffect dsound)
     add_test(NAME vmd_load_adapter COMMAND vmd_load_adapter_test)
+    add_executable(vmd_record_decode_test tests/vmd_record_decode_test.cpp src/model/vmd_load.cpp src/model/vmd_track_apply.cpp)
+    target_link_libraries(vmd_record_decode_test PRIVATE mikudancestudio_formats)
+    target_include_directories(vmd_record_decode_test PRIVATE include)
+    target_link_libraries(vmd_record_decode_test PRIVATE user32)
+    add_test(NAME vmd_record_decode COMMAND vmd_record_decode_test)
+    add_executable(key_registrars_test tests/key_registrars_test.cpp src/model/key_registrars.cpp)
+    target_include_directories(key_registrars_test PRIVATE include)
+    target_link_libraries(key_registrars_test PRIVATE user32 D3DXRuntime)
+    add_test(NAME key_registrars COMMAND key_registrars_test)
+    add_executable(bullet_allocation_test tests/bullet_allocation_test.cpp)
+    target_link_libraries(bullet_allocation_test PRIVATE BULLET275::BULLET275)
+    add_test(NAME bullet_allocation COMMAND bullet_allocation_test)
+    add_executable(background_quad_test tests/background_quad_test.cpp)
+    target_include_directories(background_quad_test PRIVATE include)
+    add_test(NAME background_quad COMMAND background_quad_test)
+    add_executable(background_picture_test tests/background_picture_test.cpp)
+    target_link_libraries(background_picture_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(background_picture_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_link_options(background_picture_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    add_test(NAME background_picture COMMAND background_picture_test)
+    set_tests_properties(background_picture PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(mmdxshow_protocol_test tests/mmdxshow_protocol_test.cpp)
+    target_link_libraries(mmdxshow_protocol_test PRIVATE ole32 strmiids)
+    add_dependencies(mmdxshow_protocol_test MMDxShow)
+    add_test(NAME mmdxshow_protocol COMMAND mmdxshow_protocol_test $<TARGET_FILE:MMDxShow>)
+    add_executable(model_frame_seek_test tests/model_frame_seek_test.cpp
+        src/model/model_frame_seek.cpp)
+    target_include_directories(model_frame_seek_test PRIVATE include)
+    target_link_libraries(model_frame_seek_test PRIVATE mikudancestudio_formats)
+    add_test(NAME model_frame_seek COMMAND model_frame_seek_test)
+    add_executable(model_playback_physics_test tests/model_playback_physics_test.cpp)
+    target_link_libraries(model_playback_physics_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_playback_physics COMMAND model_playback_physics_test)
+    add_executable(global_key_registration_test tests/global_key_registration_test.cpp
+        src/model/global_key_registration.cpp)
+    target_include_directories(global_key_registration_test PRIVATE include)
+    target_link_libraries(global_key_registration_test PRIVATE user32)
+    add_test(NAME global_key_registration COMMAND global_key_registration_test)
+    add_executable(pmm_display_group_save_test tests/pmm_display_group_save_test.cpp)
+    target_include_directories(pmm_display_group_save_test PRIVATE src/io)
+    target_link_libraries(pmm_display_group_save_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_display_group_save COMMAND pmm_display_group_save_test)
+    add_executable(pmm_playback_options_test tests/pmm_playback_options_test.cpp
+        src/io/pmm_playback_options.cpp)
+    target_include_directories(pmm_playback_options_test PRIVATE include src/io)
+    target_link_libraries(pmm_playback_options_test PRIVATE user32)
+    add_test(NAME pmm_playback_options COMMAND pmm_playback_options_test)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        add_executable(mmd_math_test tests/mmd_math_test.cpp
+            tests/mmd_math_x87_reference.cpp)
+        target_link_libraries(mmd_math_test PRIVATE BULLET275::BULLET275)
+        add_test(NAME mmd_math COMMAND mmd_math_test)
+    endif()
     add_executable(wave_data_chunk_test tests/wave_data_chunk_test.cpp
         src/media/wave_data_chunk.cpp)
     target_include_directories(wave_data_chunk_test PRIVATE include)
@@ -1040,9 +1108,202 @@ if(BUILD_TESTING)
     add_executable(input_sequence_test tests/input_sequence_test.cpp)
     target_link_libraries(input_sequence_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME input_sequence COMMAND input_sequence_test)
+    add_executable(model_ui_edit_test tests/model_ui_edit_test.cpp)
+    target_link_libraries(model_ui_edit_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_ui_edit COMMAND model_ui_edit_test)
+    add_executable(model_ui_navigation_test tests/model_ui_navigation_test.cpp)
+    target_link_libraries(model_ui_navigation_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_ui_navigation COMMAND model_ui_navigation_test)
     add_executable(bone_pick_test tests/bone_pick_test.cpp)
     target_link_libraries(bone_pick_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME bone_pick COMMAND bone_pick_test)
+    add_executable(model_viewport_test tests/model_viewport_test.cpp)
+    target_link_libraries(model_viewport_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_viewport COMMAND model_viewport_test)
+    add_executable(model_effect_query_test tests/model_effect_query_test.cpp)
+    target_link_libraries(model_effect_query_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_effect_query COMMAND model_effect_query_test)
+    add_executable(native_host_query_test tests/native_host_query_test.cpp)
+    target_include_directories(native_host_query_test PRIVATE third_party/mmeffect/include)
+    target_link_libraries(native_host_query_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(native_host_query_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_link_options(native_host_query_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    add_executable(mmh_host_parity_test tests/mmh_host_parity_test.cpp tests/mmh_oracle_host.cpp)
+    target_include_directories(mmh_host_parity_test PRIVATE third_party/mmeffect/include third_party/mmeffect/src third_party/mmeffect/src/mmhack third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mmh_host_parity_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(mmh_host_parity_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_link_options(mmh_host_parity_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    add_test(NAME mmh_host_parity COMMAND mmh_host_parity_test)
+    add_test(NAME mmh_host_pmx_parity COMMAND mmh_host_parity_test --pmx 1)
+    set_tests_properties(mmh_host_parity mmh_host_pmx_parity PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(native_host_render_test tests/native_host_render_test.cpp tests/mme_native_oracle.cpp)
+    target_include_directories(native_host_render_test PRIVATE third_party/mmeffect/include third_party/mmeffect/src third_party/mmeffect/src/mmhack third_party/mmeffect/src/mmeffect)
+    target_link_libraries(native_host_render_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(native_host_render_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_link_options(native_host_render_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    add_executable(native_scene_render_test tests/native_scene_render_test.cpp tests/mme_native_oracle.cpp)
+    target_include_directories(native_scene_render_test PRIVATE third_party/mmeffect/include third_party/mmeffect/src third_party/mmeffect/src/mmhack third_party/mmeffect/src/mmeffect)
+    target_link_libraries(native_scene_render_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(native_scene_render_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_link_options(native_scene_render_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    set(MDS_ORIGINAL_MMD_EXE "" CACHE FILEPATH "Optional original MMD executable for native rendering comparisons")
+    if(MDS_ORIGINAL_MMD_EXE)
+        set(background_picture_launcher)
+        if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+            list(APPEND background_picture_launcher ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_native_render.py)
+        endif()
+        add_test(NAME background_picture_native COMMAND ${background_picture_launcher} $<TARGET_FILE:background_picture_test> --original ${MDS_ORIGINAL_MMD_EXE})
+        set_tests_properties(background_picture_native PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    endif()
+    set(MDS_ORIGINAL_MME_DIR "" CACHE PATH "Optional directory containing original MMHack.dll and MMEffect.dll")
+    set(MDS_NATIVE_PMX_FILE "" CACHE FILEPATH "Optional local PMX for the full native rendering chain")
+    set(MDS_NATIVE_RAY_DIR "" CACHE PATH "Optional local ray-mmd repository for native effect comparisons")
+    if(MDS_ORIGINAL_MMD_EXE AND MDS_ORIGINAL_MME_DIR)
+        set(native_scene_launcher)
+        if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+            list(APPEND native_scene_launcher ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_native_render.py)
+        endif()
+        add_test(NAME native_scene_render
+            COMMAND ${native_scene_launcher} $<TARGET_FILE:native_scene_render_test>
+                --original ${MDS_ORIGINAL_MMD_EXE}
+                --mmhack ${MDS_ORIGINAL_MME_DIR}/MMHack.dll
+                --mme ${MDS_ORIGINAL_MME_DIR}/MMEffect.dll
+                --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene)
+        set_tests_properties(native_scene_render PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+        set_tests_properties(native_scene_render PROPERTIES FIXTURES_SETUP native_scene_emm)
+        function(add_native_scene_case name)
+            add_test(NAME native_scene_${name}
+                COMMAND ${native_scene_launcher} $<TARGET_FILE:native_scene_render_test>
+                    --original ${MDS_ORIGINAL_MMD_EXE}
+                    --mmhack ${MDS_ORIGINAL_MME_DIR}/MMHack.dll
+                    --mme ${MDS_ORIGINAL_MME_DIR}/MMEffect.dll
+                    --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene-${name} ${ARGN})
+            set_tests_properties(native_scene_${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800 RUN_SERIAL TRUE)
+        endfunction()
+        add_native_scene_case(features --features 1)
+        add_test(NAME native_scene_numeric
+            COMMAND ${native_scene_launcher} $<TARGET_FILE:scene_render_gpu_test>
+                --original ${MDS_ORIGINAL_MMD_EXE} --numeric-only 1 --features 1
+                --output ${CMAKE_CURRENT_BINARY_DIR}/native-scene-numeric)
+        set_tests_properties(native_scene_numeric PROPERTIES TIMEOUT 120)
+        add_native_scene_case(cross --cross-load ${CMAKE_CURRENT_BINARY_DIR}/native-scene/port_assigned.emm)
+        set_tests_properties(native_scene_cross PROPERTIES FIXTURES_REQUIRED native_scene_emm)
+        if(MDS_NATIVE_PMX_FILE)
+            add_native_scene_case(pmx --model ${MDS_NATIVE_PMX_FILE})
+            if(MDS_NATIVE_RAY_DIR)
+                add_native_scene_case(material --model ${MDS_NATIVE_PMX_FILE}
+                    --model-effect ${MDS_NATIVE_RAY_DIR}/Main/main.fx)
+                add_native_scene_case(outline --model ${MDS_NATIVE_PMX_FILE}
+                    --model-effect "${MDS_NATIVE_RAY_DIR}/Outline/Fixed Color/outline.fx")
+                add_native_scene_case(post --model ${MDS_NATIVE_PMX_FILE}
+                    --model-effect ${MDS_NATIVE_RAY_DIR}/Main/main.fx
+                    --scene-effect ${MDS_NATIVE_RAY_DIR}/ray.fx)
+            endif()
+        endif()
+    endif()
+    add_executable(model_render_test tests/model_render_test.cpp)
+    target_link_libraries(model_render_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_render COMMAND model_render_test)
+    add_executable(model_render_gpu_test tests/model_render_gpu_test.cpp)
+    target_link_libraries(model_render_gpu_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_render_gpu COMMAND model_render_gpu_test)
+    set_tests_properties(model_render_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(scene_render_gpu_test tests/scene_render_gpu_test.cpp)
+    target_link_libraries(scene_render_gpu_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(scene_render_gpu_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME scene_render_gpu COMMAND scene_render_gpu_test)
+    set_tests_properties(scene_render_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(scene_effect_gpu_test tests/scene_effect_gpu_test.cpp)
+    target_include_directories(scene_effect_gpu_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(scene_effect_gpu_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(scene_effect_gpu_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME scene_effect_gpu COMMAND scene_effect_gpu_test)
+    set_tests_properties(scene_effect_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        # Leave the non-relocatable original x86 EXE's 0x400000..0x5A3000 free.
+        target_link_options(scene_render_gpu_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+        target_link_options(scene_effect_gpu_test PRIVATE /BASE:0x20000000 /DYNAMICBASE:NO)
+    endif()
+    add_executable(scene_mme_gpu_test tests/scene_mme_gpu_test.cpp tests/mme_oracle_host.cpp tests/mme_native_oracle.cpp)
+    target_include_directories(scene_mme_gpu_test PRIVATE third_party/mmeffect/src third_party/mmeffect/src/mmhack third_party/mmeffect/src/mmeffect)
+    target_link_libraries(scene_mme_gpu_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    target_compile_definitions(scene_mme_gpu_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME scene_mme_gpu COMMAND scene_mme_gpu_test)
+    set_tests_properties(scene_mme_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    add_executable(model_file_io_test tests/model_file_io_test.cpp)
+    target_include_directories(model_file_io_test PRIVATE src/io)
+    target_link_libraries(model_file_io_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_file_io COMMAND model_file_io_test)
+    add_executable(scene_roundtrip_test tests/scene_roundtrip_test.cpp)
+    target_link_libraries(scene_roundtrip_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME scene_roundtrip COMMAND scene_roundtrip_test)
+    set_tests_properties(scene_roundtrip PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_executable(physics_trajectory_test tests/physics_trajectory_test.cpp)
+    target_link_libraries(physics_trajectory_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    add_test(NAME physics_trajectory COMMAND physics_trajectory_test)
+    set_tests_properties(physics_trajectory PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_test(NAME physics_trajectory_d3dx_amd COMMAND physics_trajectory_test --d3dx-dispatch amd)
+        set_tests_properties(physics_trajectory_d3dx_amd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+        add_test(NAME bullet_kernel_parity COMMAND physics_trajectory_test --kernels 1)
+        set_tests_properties(bullet_kernel_parity PROPERTIES TIMEOUT 30)
+    endif()
+    add_executable(pmd_save_test tests/pmd_save_test.cpp)
+    target_link_libraries(pmd_save_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmd_save COMMAND pmd_save_test)
+    add_executable(kinect_tracking_test tests/kinect_tracking_test.cpp)
+    target_link_libraries(kinect_tracking_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME kinect_tracking COMMAND kinect_tracking_test)
+    add_executable(openni_loader_test tests/openni_loader_test.cpp)
+    target_link_libraries(openni_loader_test PRIVATE mikudancestudio_core MMEffect dsound)
+    set(ONI_PREFIX "")
+    set(ONI_INIT_SUFFIX "")
+    set(ONI_VOID_SUFFIX "")
+    set(ONI_ARG_SUFFIX "")
+    set(ONI_TWO_SUFFIX "")
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        set(ONI_PREFIX "_")
+        set(ONI_INIT_SUFFIX "@20")
+        set(ONI_VOID_SUFFIX "@0")
+        set(ONI_ARG_SUFFIX "@4")
+        set(ONI_TWO_SUFFIX "@8")
+    endif()
+    set(ONI_VERSION_EXPORT "?OpenNIGetVersion@@YGXPAM@Z=${ONI_PREFIX}FixtureVersion${ONI_ARG_SUFFIX}")
+    # Replace only our placeholders: configure_file would interpret portions of
+    # MSVC's decorated export names as @VARIABLE@ expressions.
+    file(READ tests/openni_fixture.def.in ONI_DEF_TEMPLATE)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/openni_fixture.def.in")
+    set(ONI_DEF "${ONI_DEF_TEMPLATE}")
+    foreach(ONI_VAR ONI_PREFIX ONI_INIT_SUFFIX ONI_VOID_SUFFIX ONI_ARG_SUFFIX ONI_TWO_SUFFIX ONI_VERSION_EXPORT)
+        string(REPLACE "@${ONI_VAR}@" "${${ONI_VAR}}" ONI_DEF "${ONI_DEF}")
+    endforeach()
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/openni_fixture.def "${ONI_DEF}")
+    add_library(openni_fixture SHARED tests/openni_fixture.cpp ${CMAKE_CURRENT_BINARY_DIR}/openni_fixture.def)
+    target_include_directories(openni_fixture PRIVATE include)
+    string(REPLACE "${ONI_VERSION_EXPORT}" "" ONI_DEF "${ONI_DEF}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/openni_incomplete_fixture.def "${ONI_DEF}")
+    add_library(openni_incomplete_fixture SHARED tests/openni_fixture.cpp ${CMAKE_CURRENT_BINARY_DIR}/openni_incomplete_fixture.def)
+    target_include_directories(openni_incomplete_fixture PRIVATE include)
+    add_dependencies(openni_loader_test openni_fixture openni_incomplete_fixture)
+    add_test(NAME openni_loader COMMAND openni_loader_test $<TARGET_FILE:openni_fixture> $<TARGET_FILE:openni_incomplete_fixture>)
+    set_tests_properties(kinect_tracking openni_loader PROPERTIES TIMEOUT 30)
+    add_executable(timeline_selection_test tests/timeline_selection_test.cpp
+        src/window/timeline_selection.cpp)
+    target_include_directories(timeline_selection_test PRIVATE include)
+    add_test(NAME timeline_selection COMMAND timeline_selection_test)
+    add_executable(model_key_reduction_test tests/model_key_reduction_test.cpp
+        src/model/model_key_reduction.cpp)
+    target_include_directories(model_key_reduction_test PRIVATE include)
+    add_test(NAME model_key_reduction COMMAND model_key_reduction_test)
     add_executable(model_key_selection_test tests/model_key_selection_test.cpp)
     target_link_libraries(model_key_selection_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_key_selection COMMAND model_key_selection_test)
@@ -1059,6 +1320,16 @@ if(BUILD_TESTING)
     add_executable(camera_position_test tests/camera_position_test.cpp)
     target_link_libraries(camera_position_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME camera_position COMMAND camera_position_test)
+    add_executable(camera_world_transform_test tests/camera_world_transform_test.cpp)
+    target_link_libraries(camera_world_transform_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME camera_world_transform COMMAND camera_world_transform_test)
+    if(MSVC)
+        add_executable(pmx_outline_test tests/pmx_outline_test.cpp)
+        target_compile_options(pmx_outline_test PRIVATE /openmp /Gy)
+        target_link_options(pmx_outline_test PRIVATE /OPT:REF)
+        target_link_libraries(pmx_outline_test PRIVATE mikudancestudio_core MMEffect dsound)
+        add_test(NAME pmx_outline COMMAND pmx_outline_test)
+    endif()
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_executable(drag_precision_test tests/drag_precision_test.cpp)
         target_link_libraries(drag_precision_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -1068,7 +1339,7 @@ if(BUILD_TESTING)
             target_include_directories(pmd_skinning_test PRIVATE include third_party/mmeffect/include)
             target_compile_options(pmd_skinning_test PRIVATE /openmp /Gy)
             target_link_options(pmd_skinning_test PRIVATE /OPT:REF)
-            target_link_libraries(pmd_skinning_test PRIVATE D3DXRuntime mikudancestudio_rhi)
+            target_link_libraries(pmd_skinning_test PRIVATE D3DXRuntime mikudancestudio_rhi BULLET275::BULLET275)
             add_test(NAME pmd_skinning COMMAND pmd_skinning_test)
         endif()
     endif()
@@ -1082,7 +1353,7 @@ if(BUILD_TESTING)
         target_compile_options(model_cpu_geometry_test PRIVATE /openmp)
     endif()
     target_link_options(model_cpu_geometry_test PRIVATE /OPT:REF)
-    target_link_libraries(model_cpu_geometry_test PRIVATE mikudancestudio_rhi mikudancestudio_formats D3DXRuntime)
+    target_link_libraries(model_cpu_geometry_test PRIVATE mikudancestudio_rhi mikudancestudio_formats D3DXRuntime BULLET275::BULLET275)
     add_test(NAME model_cpu_geometry COMMAND model_cpu_geometry_test)
     add_executable(accessory_selection_test tests/accessory_selection_test.cpp
         src/app/app_utilities.cpp src/window/ui_refresh.cpp)
@@ -1091,6 +1362,47 @@ if(BUILD_TESTING)
     target_link_options(accessory_selection_test PRIVATE /OPT:REF)
     target_link_libraries(accessory_selection_test PRIVATE user32)
     add_test(NAME accessory_selection COMMAND accessory_selection_test)
+    add_executable(edit_target_layout_test tests/edit_target_layout_test.cpp
+        src/window/ui_init.cpp src/model/model_query_helpers.cpp)
+    target_include_directories(edit_target_layout_test PRIVATE include)
+    target_link_libraries(edit_target_layout_test PRIVATE mikudancestudio_rhi)
+    target_compile_options(edit_target_layout_test PRIVATE /Gy)
+    target_link_options(edit_target_layout_test PRIVATE /OPT:REF)
+    target_link_libraries(edit_target_layout_test PRIVATE user32 dsound D3DXRuntime)
+    add_test(NAME edit_target_layout COMMAND edit_target_layout_test)
+    add_executable(physics_floor_test tests/physics_floor_test.cpp)
+    target_link_libraries(physics_floor_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME physics_floor COMMAND physics_floor_test)
+    add_executable(frame_state_dump_test tests/frame_state_dump_test.cpp)
+    target_include_directories(frame_state_dump_test PRIVATE include)
+    target_compile_definitions(frame_state_dump_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
+    target_link_libraries(frame_state_dump_test PRIVATE user32)
+    add_test(NAME frame_state_dump COMMAND frame_state_dump_test)
+    add_executable(bone_mirror_paste_test tests/bone_mirror_paste_test.cpp
+        src/window/bone_pose_clipboard.cpp src/window/accessory_paste.cpp
+        src/window/bone_pose_edit.cpp src/model/bone_edit_undo.cpp
+        src/model/model_keyframe_edit.cpp)
+    target_include_directories(bone_mirror_paste_test PRIVATE include)
+    target_compile_options(bone_mirror_paste_test PRIVATE /Gy)
+    target_link_options(bone_mirror_paste_test PRIVATE /OPT:REF)
+    target_link_libraries(bone_mirror_paste_test PRIVATE user32 D3DXRuntime)
+    add_test(NAME bone_mirror_paste COMMAND bone_mirror_paste_test)
+    add_executable(option_dialog_test tests/option_dialog_test.cpp
+        src/window/model_order_dialog.cpp src/window/gravity_setting_dialog.cpp
+        src/model/global_key_registration.cpp)
+    target_include_directories(option_dialog_test PRIVATE include)
+    target_compile_options(option_dialog_test PRIVATE /Gy)
+    target_link_options(option_dialog_test PRIVATE /OPT:REF)
+    target_link_libraries(option_dialog_test PRIVATE user32 comctl32 BULLET275::BULLET275 D3DXRuntime)
+    add_test(NAME option_dialog COMMAND option_dialog_test)
+    add_executable(edge_thickness_dialog_test tests/edge_thickness_dialog_test.cpp)
+    target_link_libraries(edge_thickness_dialog_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_dependencies(edge_thickness_dialog_test MikuDanceStudio)
+    add_test(NAME edge_thickness_dialog
+        COMMAND edge_thickness_dialog_test $<TARGET_FILE:MikuDanceStudio>)
+    add_executable(app_runtime_state_test tests/app_runtime_state_test.cpp)
+    target_link_libraries(app_runtime_state_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME app_runtime_state COMMAND app_runtime_state_test)
     add_executable(mme_anime_timeline_test tests/mme_anime_timeline_test.cpp)
     target_include_directories(mme_anime_timeline_test PRIVATE
         third_party/mmeffect/include third_party/mmeffect/src/mmhack)
@@ -1132,7 +1444,8 @@ if(BUILD_TESTING)
     add_executable(bone_binding_test tests/bone_binding_test.cpp src/model/bone_sort.cpp)
     add_executable(dialog_order_arrays_test tests/dialog_order_arrays_test.cpp)
     add_executable(undo_frame_test tests/undo_frame_test.cpp
-        src/model/model_keyframe_edit.cpp)
+        src/model/model_keyframe_edit.cpp src/window/frame_line_edit.cpp
+        src/window/ui_frame_step.cpp)
     target_compile_options(undo_frame_test PRIVATE /Gy)
     target_link_options(undo_frame_test PRIVATE /OPT:REF)
     target_link_libraries(undo_frame_test PRIVATE user32)
@@ -1140,6 +1453,12 @@ if(BUILD_TESTING)
         src/physics/scene_dispose.cpp)
     target_compile_definitions(physics_scene_dispose_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
     target_link_libraries(physics_scene_dispose_test PRIVATE mikudancestudio_physics)
+    add_executable(bullet_diagnostics_fixture tests/bullet_diagnostics_fixture.cpp)
+    target_link_libraries(bullet_diagnostics_fixture PRIVATE BULLET275::BULLET275)
+    add_test(NAME bullet_diagnostics COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_bullet_diagnostics.py
+        $<TARGET_FILE:bullet_diagnostics_fixture>)
+    set_tests_properties(bullet_diagnostics PROPERTIES TIMEOUT 60)
     add_executable(physics_gizmo_reset_test tests/physics_gizmo_reset_test.cpp)
     target_include_directories(physics_gizmo_reset_test PRIVATE include)
     target_link_libraries(physics_gizmo_reset_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -1155,6 +1474,20 @@ if(BUILD_TESTING)
     target_include_directories(mme_effect_mapping_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_effect_mapping_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME mme_effect_mapping COMMAND mme_effect_mapping_test)
+    add_executable(mme_technique_validation_test tests/mme_technique_validation_test.cpp)
+    target_include_directories(mme_technique_validation_test PRIVATE
+        third_party/mmeffect/include third_party/mmeffect/src/mmhack
+        third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_technique_validation_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_technique_validation COMMAND mme_technique_validation_test)
+    add_test(NAME scene_comparison_inputs COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_freeze_scene_compare.py)
+    add_test(NAME gui_export_comparison COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_compare_gui_exports.py)
+    add_executable(mme_emm_save_test tests/mme_emm_save_test.cpp)
+    target_include_directories(mme_emm_save_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_emm_save_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_emm_save COMMAND mme_emm_save_test)
     add_executable(background_hotkeys_test tests/background_hotkeys_test.cpp)
     target_link_libraries(background_hotkeys_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME background_hotkeys COMMAND background_hotkeys_test)
@@ -1163,6 +1496,10 @@ if(BUILD_TESTING)
     target_link_libraries(mme_buffer_pass_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME mme_buffer_pass_gpu COMMAND mme_buffer_pass_test)
     set_tests_properties(mme_buffer_pass_gpu PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(mme_pass_readback_test tests/mme_pass_readback_test.cpp)
+    target_link_libraries(mme_pass_readback_test PRIVATE d3d9 user32)
+    add_test(NAME mme_pass_readback_gpu COMMAND mme_pass_readback_test)
+    set_tests_properties(mme_pass_readback_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     add_executable(mme_ray_smoke_test tests/mme_ray_smoke_test.cpp)
     target_include_directories(mme_ray_smoke_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_ray_smoke_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -1221,4 +1558,12 @@ if(BUILD_TESTING)
     add_dependencies(embedded_mme_resources_test MikuDanceStudio)
     add_test(NAME embedded_mme_resources
         COMMAND embedded_mme_resources_test $<TARGET_FILE:MikuDanceStudio>)
+    # These tests do not create windows, devices or modal dialogs. Safe while
+    # the interactive desktop is in use: ctest -L cpu_no_windows.
+    set_tests_properties(bullet_allocation mme_technique_validation scene_comparison_inputs
+        gui_export_comparison mme_effect_mapping mme_emm_save mme_initialization_test
+        mme_host_object_cache embedded_mme_resources PROPERTIES LABELS cpu_no_windows)
+    if (TEST mmd_math)
+        set_tests_properties(mmd_math PROPERTIES LABELS cpu_no_windows)
+    endif()
 endif()

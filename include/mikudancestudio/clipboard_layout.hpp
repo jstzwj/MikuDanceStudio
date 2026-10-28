@@ -1,8 +1,17 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace mikudancestudio::mdl {
+
+// Current bone poses copied by the bone panel, without timeline key data.
+struct BonePoseClipboardRecord {
+    char name[20];
+    float position[3];
+    float rotation[4];
+};
+static_assert(sizeof(BonePoseClipboardRecord) == 0x30, "bone pose clipboard ABI");
 
 struct ClipboardSelectionCounts {
     std::uint32_t bones;
@@ -14,8 +23,7 @@ struct ClipboardSelectionCounts {
     std::uint32_t gravity;
     std::uint32_t accessories;
 };
-static_assert(sizeof(ClipboardSelectionCounts) == 32,
-              "clipboard selection counts ABI");
+static_assert(sizeof(ClipboardSelectionCounts) == 32, "clipboard selection counts ABI");
 
 struct BoneClipboardRecord {
     char name[30];
@@ -28,6 +36,11 @@ struct BoneClipboardRecord {
     std::uint8_t reserved1[3];
 };
 static_assert(sizeof(BoneClipboardRecord) == 84, "bone clipboard ABI");
+static_assert(offsetof(BoneClipboardRecord, frame) == 32);
+static_assert(offsetof(BoneClipboardRecord, rotation) == 36);
+static_assert(offsetof(BoneClipboardRecord, position) == 52);
+static_assert(offsetof(BoneClipboardRecord, physicsDisabled) == 64);
+static_assert(offsetof(BoneClipboardRecord, interpolation) == 65);
 
 struct MorphClipboardRecord {
     char name[30];
@@ -36,6 +49,8 @@ struct MorphClipboardRecord {
     float value;
 };
 static_assert(sizeof(MorphClipboardRecord) == 40, "morph clipboard ABI");
+static_assert(offsetof(MorphClipboardRecord, frame) == 32);
+static_assert(offsetof(MorphClipboardRecord, value) == 36);
 
 struct IkClipboardState {
     char boneName[20];
@@ -48,8 +63,7 @@ struct SelectorClipboardState {
     std::int32_t modelIndex;
     std::int32_t boneIndex;
 };
-static_assert(sizeof(SelectorClipboardState) == 28,
-              "selector clipboard state ABI");
+static_assert(sizeof(SelectorClipboardState) == 28, "selector clipboard state ABI");
 
 struct DisplayClipboardRecord {
     std::uint32_t frame;
@@ -61,11 +75,19 @@ struct DisplayClipboardRecord {
     SelectorClipboardState* selectorStates;
 };
 #if defined(_M_X64)
-static_assert(sizeof(DisplayClipboardRecord) == 40,
-              "display clipboard x64 ABI");
+static_assert(sizeof(DisplayClipboardRecord) == 40, "display clipboard x64 ABI");
+static_assert(offsetof(DisplayClipboardRecord, ikStates) == 16, "display clipboard x64 IK pointer");
+static_assert(offsetof(DisplayClipboardRecord, selectorCount) == 24,
+              "display clipboard x64 selector count");
+static_assert(offsetof(DisplayClipboardRecord, selectorStates) == 32,
+              "display clipboard x64 selector pointer");
 #else
-static_assert(sizeof(DisplayClipboardRecord) == 24,
-              "display clipboard x86 ABI");
+static_assert(sizeof(DisplayClipboardRecord) == 24, "display clipboard x86 ABI");
+static_assert(offsetof(DisplayClipboardRecord, ikStates) == 12, "display clipboard x86 IK pointer");
+static_assert(offsetof(DisplayClipboardRecord, selectorCount) == 16,
+              "display clipboard x86 selector count");
+static_assert(offsetof(DisplayClipboardRecord, selectorStates) == 20,
+              "display clipboard x86 selector pointer");
 #endif
 
 struct CameraClipboardRecord {
@@ -107,4 +129,4 @@ struct GravityClipboardRecord {
 };
 static_assert(sizeof(GravityClipboardRecord) == 28, "gravity clipboard ABI");
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl

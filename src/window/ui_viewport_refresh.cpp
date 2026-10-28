@@ -15,7 +15,7 @@
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
-void PicBgOverlayRefresh(MMDApp* app);  // VA 0x00417130
+void PicBgOverlayRefresh(MMDApp* app); // VA 0x00417130
 namespace {
 
 struct ScreenVertex {
@@ -29,39 +29,38 @@ struct ScreenVertex {
 };
 static_assert(sizeof(ScreenVertex) == 28);
 
-void WriteQuad(IDirect3DVertexBuffer9* buffer, float left, float top,
-               float right, float bottom, float uRight, float vBottom) {
+void WriteQuad(IDirect3DVertexBuffer9* buffer, float left, float top, float right, float bottom,
+               float uRight, float vBottom) {
     if (buffer == nullptr)
         return;
 
     ScreenVertex* out = nullptr;
-    if (FAILED(buffer->Lock(0, 6 * sizeof(ScreenVertex),
-                            reinterpret_cast<void**>(&out), 0)) ||
+    if (FAILED(buffer->Lock(0, 6 * sizeof(ScreenVertex), reinterpret_cast<void**>(&out), 0)) ||
         out == nullptr)
         return;
 
     const ScreenVertex vertices[6] = {
-        {right, top,    0.0f, 1.0f, 0xFFFFFFFFu, uRight, 0.0f},
+        {right, top, 0.0f, 1.0f, 0xFFFFFFFFu, uRight, 0.0f},
         {right, bottom, 0.0f, 1.0f, 0xFFFFFFFFu, uRight, vBottom},
-        {left,  top,    0.0f, 1.0f, 0xFFFFFFFFu, 0.0f,   0.0f},
-        {left,  top,    0.0f, 1.0f, 0xFFFFFFFFu, 0.0f,   0.0f},
+        {left, top, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+        {left, top, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
         {right, bottom, 0.0f, 1.0f, 0xFFFFFFFFu, uRight, vBottom},
-        {left,  bottom, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f,   vBottom},
+        {left, bottom, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, vBottom},
     };
     std::copy(std::begin(vertices), std::end(vertices), out);
     buffer->Unlock();
 }
 
-}  // namespace
+} // namespace
 
 void RefreshMainWindowViewport(MMDApp* app) {
     auto& s = *app;
-    RECT& view = s.ViewportRect();                     // 0xA0D40
+    RECT& view = s.ViewportRect(); // 0xA0D40
     const HWND hwnd = app->MainWindow();
     if (hwnd == nullptr)
         return;
 
-    GetClientRect(hwnd, &view);                         // 0x42C82D/85F
+    GetClientRect(hwnd, &view); // 0x42C82D/85F
 
     // A0D38 selects the separate render window.  The original delegates the
     // remainder to 0x4290F0; its main-window-independent RECT/sidebar stores
@@ -82,15 +81,14 @@ void RefreshMainWindowViewport(MMDApp* app) {
     const int availableWidth = view.right - sidebar - 9;
     const int fittedWidth = availableHeight * renderWidth / renderHeight;
 
-    if (availableWidth >= fittedWidth) {                // 0x42C8DD
+    if (availableWidth >= fittedWidth) { // 0x42C8DD
         view.top += 25;
         view.bottom -= 192;
         const int center = availableWidth / 2 + sidebar + 9;
         view.left = center - fittedWidth / 2;
         view.right = center + fittedWidth / 2;
-    } else {                                            // 0x42C89C
-        const int fittedHeight =
-            availableWidth * renderHeight / renderWidth;
+    } else { // 0x42C89C
+        const int fittedHeight = availableWidth * renderHeight / renderWidth;
         view.left = sidebar + 9;
         view.top = availableHeight / 2 - fittedHeight / 2 + 25;
         view.bottom = fittedHeight / 2 + availableHeight / 2 + 25;
@@ -115,11 +113,11 @@ void RefreshMainWindowViewport(MMDApp* app) {
     D3DVIEWPORT9 viewport{};
     if (s.RecordingWindow() != nullptr) {
         viewport.Width = wrapper->multisampleAvailable == 0
-            ? static_cast<DWORD>(wrapper->screenWidth)
-            : static_cast<DWORD>(renderWidth);
+                             ? static_cast<DWORD>(wrapper->screenWidth)
+                             : static_cast<DWORD>(renderWidth);
         viewport.Height = wrapper->multisampleAvailable == 0
-            ? static_cast<DWORD>(wrapper->screenHeight)
-            : static_cast<DWORD>(renderHeight);
+                              ? static_cast<DWORD>(wrapper->screenHeight)
+                              : static_cast<DWORD>(renderHeight);
     } else {
         viewport.X = static_cast<DWORD>(view.left);
         viewport.Y = static_cast<DWORD>(view.top);
@@ -128,41 +126,31 @@ void RefreshMainWindowViewport(MMDApp* app) {
     }
     viewport.MinZ = 0.0f;
     viewport.MaxZ = 1.0f;
-    SetCpuRenderViewport(app,{viewport.X,viewport.Y,viewport.Width,viewport.Height,viewport.MinZ,viewport.MaxZ});
-    SetCpuProjectionPolicy(app,render::FovConversion::FloatMultiply);
-    device->SetViewport(&viewport);                     // 0x42C9E5
+    SetCpuRenderViewport(app, {viewport.X, viewport.Y, viewport.Width, viewport.Height,
+                               viewport.MinZ, viewport.MaxZ});
+    SetCpuProjectionPolicy(app, render::FovConversion::FloatMultiply);
+    device->SetViewport(&viewport); // 0x42C9E5
 
-    const float aspect = static_cast<float>(renderWidth) /
-                         static_cast<float>(renderHeight);
+    const float aspect = static_cast<float>(renderWidth) / static_cast<float>(renderHeight);
     wrapper->aspectRatio = aspect;
     auto& api = d3dx::Get();
     d3dx::D3DXMATRIXF projection{};
-    const float fovRadians =
-        s.CameraFov() * 0.01745329238474369f;
-    api.perspectiveFovLH(&projection, fovRadians, aspect,
-                         1.0f, 100000.0f);
-    device->SetTransform(D3DTS_PROJECTION,
-        reinterpret_cast<const D3DMATRIX*>(&projection));
+    const float fovRadians = s.CameraFov() * 0.01745329238474369f;
+    api.perspectiveFovLH(&projection, fovRadians, aspect, 1.0f, 100000.0f);
+    device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&projection));
 
-    wrapper->viewScale = static_cast<float>(
-        static_cast<double>(viewport.Width) * 1.2 / 1280.0);
+    wrapper->viewScale = static_cast<float>(static_cast<double>(viewport.Width) * 1.2 / 1280.0);
 
     const float width = static_cast<float>(view.right - view.left);
-    WriteQuad(s.LeftViewportVertices(),
-              static_cast<float>(view.right) - width / 3.0f,
-              static_cast<float>(view.top),
-              static_cast<float>(view.right),
-              static_cast<float>(view.top) + width / 3.0f,
-              1.0f, 1.0f);
-    WriteQuad(s.RightViewportVertices(),
-              static_cast<float>(view.right) - 220.0f,
-              static_cast<float>(view.top),
-              static_cast<float>(view.right) - 60.0f,
-              static_cast<float>(view.top) + 120.0f,
-              0.625f, 0.9375f);
+    WriteQuad(s.LeftViewportVertices(), static_cast<float>(view.right) - width / 3.0f,
+              static_cast<float>(view.top), static_cast<float>(view.right),
+              static_cast<float>(view.top) + width / 3.0f, 1.0f, 1.0f);
+    WriteQuad(s.RightViewportVertices(), static_cast<float>(view.right) - 220.0f,
+              static_cast<float>(view.top), static_cast<float>(view.right) - 60.0f,
+              static_cast<float>(view.top) + 120.0f, 0.625f, 0.9375f);
 }
 
-void RefreshSeparateWindowViewport(MMDApp* app) {  // 0x4290F0..0x42976B
+void RefreshSeparateWindowViewport(MMDApp* app) { // 0x4290F0..0x42976B
     auto& s = *app;
     RECT& view = s.ViewportRect();
     const int renderWidth = s.RenderWidth();
@@ -171,9 +159,7 @@ void RefreshSeparateWindowViewport(MMDApp* app) {  // 0x4290F0..0x42976B
         return;
 
     const bool fullScreen = s.FullscreenMode() != 0;
-    HWND target = fullScreen
-        ? app->MainWindow()
-        : s.FloatingWindow();
+    HWND target = fullScreen ? app->MainWindow() : s.FloatingWindow();
     if (target == nullptr || !GetClientRect(target, &view))
         return;
 
@@ -217,11 +203,11 @@ void RefreshSeparateWindowViewport(MMDApp* app) {  // 0x4290F0..0x42976B
     D3DVIEWPORT9 viewport{};
     if (s.RecordingWindow() != nullptr) {
         viewport.Width = wrapper->multisampleAvailable == 0
-            ? static_cast<DWORD>(wrapper->screenWidth)
-            : static_cast<DWORD>(renderWidth);
+                             ? static_cast<DWORD>(wrapper->screenWidth)
+                             : static_cast<DWORD>(renderWidth);
         viewport.Height = wrapper->multisampleAvailable == 0
-            ? static_cast<DWORD>(wrapper->screenHeight)
-            : static_cast<DWORD>(renderHeight);
+                              ? static_cast<DWORD>(wrapper->screenHeight)
+                              : static_cast<DWORD>(renderHeight);
     } else {
         viewport.X = static_cast<DWORD>(view.left);
         viewport.Y = static_cast<DWORD>(view.top);
@@ -230,42 +216,33 @@ void RefreshSeparateWindowViewport(MMDApp* app) {  // 0x4290F0..0x42976B
     }
     viewport.MinZ = 0.0f;
     viewport.MaxZ = 1.0f;
-    SetCpuRenderViewport(app,{viewport.X,viewport.Y,viewport.Width,viewport.Height,viewport.MinZ,viewport.MaxZ});
-    SetCpuProjectionPolicy(app,render::FovConversion::FloatMultiply);
+    SetCpuRenderViewport(app, {viewport.X, viewport.Y, viewport.Width, viewport.Height,
+                               viewport.MinZ, viewport.MaxZ});
+    SetCpuProjectionPolicy(app, render::FovConversion::FloatMultiply);
     device->SetViewport(&viewport);
 
-    const float aspect = static_cast<float>(renderWidth) /
-                         static_cast<float>(renderHeight);
+    const float aspect = static_cast<float>(renderWidth) / static_cast<float>(renderHeight);
     wrapper->aspectRatio = aspect;
     auto& api = d3dx::Get();
     d3dx::D3DXMATRIXF projection{};
-    api.perspectiveFovLH(&projection,
-        s.CameraFov() * 0.01745329238474369f,
-        aspect, 1.0f, 100000.0f);
-    device->SetTransform(D3DTS_PROJECTION,
-        reinterpret_cast<const D3DMATRIX*>(&projection));
-    wrapper->viewScale = static_cast<float>(
-        static_cast<double>(view.right - view.left) * 1.2 / 1280.0);
+    api.perspectiveFovLH(&projection, s.CameraFov() * 0.01745329238474369f, aspect, 1.0f,
+                         100000.0f);
+    device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&projection));
+    wrapper->viewScale =
+        static_cast<float>(static_cast<double>(view.right - view.left) * 1.2 / 1280.0);
 
     if (s.WaveEnabled() != 0)
-        TimelineDrawTicks(s.TimelineStartFrame(),
-                          s.SidebarWidth());
+        TimelineDrawTicks(s.TimelineStartFrame(), s.SidebarWidth());
     if (s.PictureBackgroundEnabled() != 0)
         PicBgOverlayRefresh(app);
 
     const float width = static_cast<float>(view.right - view.left);
-    WriteQuad(s.LeftViewportVertices(),
-              static_cast<float>(view.right) - width / 3.0f,
-              static_cast<float>(view.top),
-              static_cast<float>(view.right),
-              static_cast<float>(view.top) + width / 3.0f,
-              1.0f, 1.0f);
-    WriteQuad(s.RightViewportVertices(),
-              static_cast<float>(view.right) - 220.0f,
-              static_cast<float>(view.top),
-              static_cast<float>(view.right) - 60.0f,
-              static_cast<float>(view.top) + 120.0f,
-              0.625f, 0.9375f);
+    WriteQuad(s.LeftViewportVertices(), static_cast<float>(view.right) - width / 3.0f,
+              static_cast<float>(view.top), static_cast<float>(view.right),
+              static_cast<float>(view.top) + width / 3.0f, 1.0f, 1.0f);
+    WriteQuad(s.RightViewportVertices(), static_cast<float>(view.right) - 220.0f,
+              static_cast<float>(view.top), static_cast<float>(view.right) - 60.0f,
+              static_cast<float>(view.top) + 120.0f, 0.625f, 0.9375f);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

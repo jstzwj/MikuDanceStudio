@@ -5,8 +5,18 @@
 #include <vector>
 namespace mikudancestudio::format {
 using ReadModelBytes = bool (*)(void*, void*, std::size_t);
-enum class ModelHeaderStatus { Ok, Truncated, InvalidVersion, InvalidSettings, UnsupportedEncoding };
-enum class ModelKind { Pmd, Pmx, Unknown };
+enum class ModelHeaderStatus {
+    Ok,
+    Truncated,
+    InvalidVersion,
+    InvalidSettings,
+    UnsupportedEncoding
+};
+enum class ModelKind {
+    Pmd,
+    Pmx,
+    Unknown
+};
 ModelKind IdentifyModel(const std::array<char, 3>& signature);
 struct PmdHeader {
     float version = 0;
@@ -32,4 +42,4 @@ ModelHeaderStatus ReadPmxHeader(ReadModelBytes, void*, PmxHeader&);
 ModelHeaderStatus ReadPmxTexts(ReadModelBytes, void*, PmxTexts&);
 ModelHeaderStatus ReadPmxText(ReadModelBytes, void*, std::vector<std::uint8_t>&);
 ModelHeaderStatus SkipPmxText(ReadModelBytes, void*);
-}  // namespace mikudancestudio::format
+} // namespace mikudancestudio::format

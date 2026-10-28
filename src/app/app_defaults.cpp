@@ -11,10 +11,12 @@
 
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/math_runtime.hpp"
 
 namespace mikudancestudio {
 
 void MMDApp::InitDefaults() {
+    InitializeMathRuntime();
     auto& s = *this;
 
     s.ViewOffsetX() = 0.0f;
@@ -26,16 +28,16 @@ void MMDApp::InitDefaults() {
     s.CameraRotation()[1] = 0.0f;
     s.DirectSoundAvailable() = 1;
     s.CameraRotation()[2] = 0.0f;
-    s.UiOptionFlag(0) = 1;
+    s.CameraMode() = 1;
     s.CameraPosition()[0] = 0.0f;
-    s.UiOptionFlag(1) = 1;
-    s.UiOptionFlag(2) = 1;
+    s.PanelExpanded(UiPanel::Camera) = 1;
+    s.PanelExpanded(UiPanel::Light) = 1;
     s.CameraPosition()[1] = 10.0f;
-    s.UiOptionFlag(3) = 1;
-    s.UiOptionFlag(4) = 1;
+    s.PanelExpanded(UiPanel::Accessory) = 1;
+    s.PanelExpanded(UiPanel::Bone) = 1;
     s.CameraPosition()[2] = 0.0f;
-    s.UiOptionFlag(5) = 1;
-    s.UiOptionFlag(6) = 1;
+    s.PanelExpanded(UiPanel::Morph) = 1;
+    s.PanelExpanded(UiPanel::SelfShadow) = 1;
     s.CameraPerspective() = 0;
     s.GroundGridEnabled() = 1;
     s.ViewportInputActive() = 1;
@@ -57,7 +59,7 @@ void MMDApp::InitDefaults() {
     s.BoneBoxSelectionActive() = 0;
     s.TimelineStartFrame() = 0;
     s.CurrentFrame() = 0;
-    s.PendingTimelineSelectionRow() = TimelineSelectionRow::None;
+    s.DraggedInterpolationPoint() = InterpolationControlPoint::None;
 
     // 6-iteration light-default loop
     for (int i = 0; i < 6; ++i) {
@@ -67,9 +69,9 @@ void MMDApp::InitDefaults() {
         state.lightD[i] = 127;
     }
 
-    state.boneCopyRecords = nullptr;
-    state.copiedBoneCount = 0;
-    state.clipboardCounts = mdl::ClipboardSelectionCounts{};
+    BonePoseClipboard() = nullptr;
+    BonePoseClipboardCount() = 0;
+    ClipboardCounts() = mdl::ClipboardSelectionCounts{};
     s.CameraKeys() = nullptr;
     s.LightKeys() = nullptr;
     s.ShadowKeys() = nullptr;
@@ -83,7 +85,8 @@ void MMDApp::InitDefaults() {
     state.modelOffsetX = 0.0f;
     s.LastRegisteredFrame() = 0;
     state.modelOffsetY = 0.0f;
-    s.AviBackgroundTexture() = nullptr; s.CpuNativeBackgroundTexturePresent()=false;
+    s.AviBackgroundTexture() = nullptr;
+    s.CpuNativeBackgroundTexturePresent() = false;
     state.modelOffsetZ = 0.0f;
     s.AviBackgroundSurface() = nullptr;
     s.PictureBackgroundTexture() = nullptr;
@@ -97,7 +100,8 @@ void MMDApp::InitDefaults() {
     state.blinkPhase = 0;
     s.DisplayObjectListMatchCount() = 0;
     s.DisplayObjectListScrollPosition() = 0;
-    s.CaptureTexture() = nullptr; s.CpuNativeCaptureTexturePresent()=false;
+    s.CaptureTexture() = nullptr;
+    s.CpuNativeCaptureTexturePresent() = false;
     state.groundGridVertices = nullptr;
     s.CaptureRenderTarget() = nullptr;
     s.FrameStepPlayback() = 0;
@@ -106,14 +110,14 @@ void MMDApp::InitDefaults() {
     s.PlaybackStartsAtCurrentFrame() = 0;
     state.a0B10 = 0;
     s.GroundShadowColorDialog() = nullptr;
-    state.edgeThicknessDialog = nullptr;
+    EdgeThicknessDialog() = nullptr;
     state.projectedShadowBlendEnabled = 1;
     state.coordinateSystem = 0;
     state.englishUI = 1;
-    FrameRangeDialog() = nullptr;
+    EnglishNameDialog() = nullptr;
     s.EnhancedModelDirty() = 0;
-    state.frameCopyDialog = nullptr;
-    state.rigidScratchArray = nullptr;
+    FrameCopyOrPhysicsDialog() = nullptr;
+    RigidScratchArray() = nullptr;
     // Frame-config trio 0xA0B00/0xA0B04/0xA0B08 (start frame / end frame /
     // fps).  Original InitDefaults leaves these alone - the ONLY writer in
     // the whole binary is the frame-range dialog OK handler (0x40F3C4:
@@ -144,18 +148,19 @@ void MMDApp::InitDefaults() {
     // fcn_0040a730 lines 161-182: six dwords zeroed in two blocks of three
     // around the RecentFile sprintf calls - 0x9EE20/0x9EE1C/0x9EE18 first,
     // then 0x9EE14/0x9EE10/0x9EE0C.
-    state.sceneFontTexture = nullptr;      // 0x9EE20
-    state.textOverlayPrimitiveCount = 0;   // 0x9EE1C
-    state.overlayVertices = nullptr;       // 0x9EE18
+    state.sceneFontTexture = nullptr;    // 0x9EE20
+    state.textOverlayPrimitiveCount = 0; // 0x9EE1C
+    state.overlayVertices = nullptr;     // 0x9EE18
     sprintf_s(RecentFile(0), 0x100, "%s", g_Locale);
     sprintf_s(RecentFile(1), 0x100, "%s", g_Locale);
     sprintf_s(RecentFile(2), 0x100, "%s", g_Locale);
     state.overlayTexture = nullptr;        // 0x9EE14
     state.spriteOverlayPrimitiveCount = 0; // 0x9EE10
-    state.spriteOverlayVertices = nullptr;        // 0x9EE0C
+    state.spriteOverlayVertices = nullptr; // 0x9EE0C
     state.lineOverlayPrimitiveCount = 0;
     state.groundPlaneVertices = nullptr;
-    s.AviBackgroundTexture() = nullptr; s.CpuNativeBackgroundTexturePresent()=false;                    // original writes twice
+    s.AviBackgroundTexture() = nullptr;
+    s.CpuNativeBackgroundTexturePresent() = false; // original writes twice
     s.PictureOverlayVertices() = nullptr;
     state.separateWindowMouseSeen = 0;
     s.RecordingWindow() = nullptr;
@@ -164,7 +169,7 @@ void MMDApp::InitDefaults() {
     s.LeftViewportVertices() = nullptr;
     s.RightViewportVertices() = nullptr;
     state.selfShadowCompositionEnabled = 0;
-    s.PhysicsInterval() = 0.01125f;
+    s.ShadowDistance() = 0.01125f;
     s.FloatingWindow() = nullptr;
     state.selectionBoxDragging = 0;
     state.blackBackgroundEnabled = 0;
@@ -180,7 +185,7 @@ void MMDApp::InitDefaults() {
     state.activeRenderPass = 0;
     state.renderPassCount = 0;
     s.FullscreenMode() = 0;
-    s.SavedPlacement().length = sizeof(WINDOWPLACEMENT);  // 44
+    s.SavedPlacement().length = sizeof(WINDOWPLACEMENT); // 44
     state.fullscreenFlagsSaved = 0;
     state.stereoActivated = 0;
     state.recordFullscreenActive = 0;
@@ -190,12 +195,7 @@ void MMDApp::InitDefaults() {
     s.AviStereoWidthMultiplier() = 2;
     state.depthDeviceEnabled = 0;
     state.oniModule = nullptr;
-    state.oniExportSlot0 = nullptr;
-    state.oniExportSlot1 = nullptr;
-    state.oniExportSlot2 = 0;
-    state.depthTextureCallback = nullptr;
-    state.oniExportSlot4 = 0;
-    s.OpenniTrackingCallback() = nullptr;
+    OpenNi() = {};
     state.kinectMirrorEnabled = 1;
     state.kinectInitLostBone = 0;
     state.depthTextureCompositionEnabled = 1;
@@ -204,14 +204,14 @@ void MMDApp::InitDefaults() {
     state.globalTrackSelected[1] = 0;
     state.globalTrackSelected[2] = 0;
     state.globalTrackSelected[3] = 0;
-    state.selectionActiveLatch = 0;   // x64 0x7FF7CB42CA4C: `mov [app+0xA137C], di`
+    state.selectionActiveLatch = 0; // x64 0x7FF7CB42CA4C: `mov [app+0xA137C], di`
     state.automaticFrameAdvanceEnabled = 0;
     state.messageSeen = 1;
     s.TimelineSelectionChanged() = 0;
     s.MainModelComboSelection() = 0;
     s.CameraParentModel() = -1;
     s.CameraParentBone() = 0;
-    state.displayClipboard = nullptr;
+    DisplayClipboard() = nullptr;
     s.FrameVolumeControlEnabled() = 0;
     s.FrameNormalization() = 100;
     state.axisMeshObject = nullptr;
@@ -228,12 +228,12 @@ void MMDApp::InitDefaults() {
     s.CameraAttachmentTransformSuppressed() = 0;
     state.modelReloadPending = 0;
     s.WindowLayoutReady() = 1;
-    std::memset(state.buf656632, 0, 0xC8);
-    state.timelineRangeApplyEnabled = 0;
+    ClearPanelRowFlags();
+    TimelineRangeApplyEnabled() = 0;
     state.viewDirty = 0;
     state.b6568482 = 0;
     state.mouseJumped = 0;
-    state.selectNavRecords = 0;
+    SelectNavRecords() = 0;
     state.accessoryEditDialogOpen = 0;
     state.physicsBodiesMoved = 0;
     state.playbackAlwaysOnOffMode = 0;
@@ -242,4 +242,4 @@ void MMDApp::InitDefaults() {
     state.a06B6 = 0;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

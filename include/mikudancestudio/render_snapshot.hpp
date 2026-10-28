@@ -8,14 +8,25 @@
 #include <vector>
 
 namespace mikudancestudio::render {
-enum class TextureEncoding { Cp932, Utf8, Utf16LE, SharedToon };
+enum class TextureEncoding {
+    Cp932,
+    Utf8,
+    Utf16LE,
+    SharedToon
+};
 struct TextureReference {
     std::int32_t index = -1;
     TextureEncoding encoding = TextureEncoding::Cp932;
     bool defaultFallback = false;
     std::vector<std::uint8_t> path;
 };
-enum class BatchDependency { Independent, Ik, Physics, Unsupported, Invalid };
+enum class BatchDependency {
+    Independent,
+    Ik,
+    Physics,
+    Unsupported,
+    Invalid
+};
 struct MaterialBatch {
     std::uint32_t firstIndex = 0, indexCount = 0;
     std::uint32_t materialIndex = 0;
@@ -58,9 +69,7 @@ struct SceneSnapshot {
     std::vector<MaterialDraw> materialDraws;
     std::vector<AccessorySnapshot> accessories;
 };
-bool CaptureSceneSnapshot(const format::SceneSession& session,
-                          SceneSnapshot& output);
+bool CaptureSceneSnapshot(const format::SceneSession& session, SceneSnapshot& output);
 BatchDependency ClassifyBatchDependency(const format::ModelDocument& model,
-                                        std::uint32_t firstIndex,
-                                        std::uint32_t indexCount);
+                                        std::uint32_t firstIndex, std::uint32_t indexCount);
 }

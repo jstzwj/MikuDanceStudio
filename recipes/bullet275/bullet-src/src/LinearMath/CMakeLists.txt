@@ -4,6 +4,7 @@ INCLUDE_DIRECTORIES(
 )
 
 SET(LinearMath_SRCS
+	btMmdMath.cpp
 	btAlignedAllocator.cpp
 		btConvexHull.cpp
 		btGeometryUtil.cpp
@@ -11,6 +12,7 @@ SET(LinearMath_SRCS
 )
 
 SET(LinearMath_HDRS
+	btMmdMath.h
 	btAabbUtil2.h
 	btAlignedAllocator.h
 		btAlignedObjectArray.h
@@ -53,3 +55,11 @@ IF (APPLE AND BUILD_SHARED_LIBS AND FRAMEWORK)
 	SET_TARGET_PROPERTIES(LinearMath PROPERTIES FRAMEWORK true)
 	SET_TARGET_PROPERTIES(LinearMath PROPERTIES PUBLIC_HEADER "${LinearMath_HDRS}")
 ENDIF (APPLE AND BUILD_SHARED_LIBS AND FRAMEWORK)
+
+# MMD's x86 arithmetic requires x87 intermediates and native math intrinsics.
+# Compile this TU consistently in every configuration; the rest of Bullet keeps
+# its existing compiler settings. /GL- preserves the noinline rounding boundaries.
+if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set_source_files_properties(btMmdMath.cpp PROPERTIES
+        COMPILE_OPTIONS "/arch:IA32;/fp:precise;/O2;/Oi;/GL-;/RTC-")
+endif()

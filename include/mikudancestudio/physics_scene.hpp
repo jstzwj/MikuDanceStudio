@@ -35,40 +35,45 @@ namespace mikudancestudio {
 
 class D3DRenderer;
 
+// Runtime creation result: the first value is an integer ID, not a pointer.
+struct RigidBodyCreationResult {
+    std::intptr_t id;
+    btRigidBody* body;
+};
+
 class PhysicsScene {
 public:
-    D3DRenderer* owner;              // 0 / 0     set by SceneConstruct
+    D3DRenderer* owner; // 0 / 0     set by SceneConstruct
 
     // Gizmo geometry for the bone/selection manipulators (FVF 0x42,
     // XYZ | DIFFUSE, D3DUSAGE_WRITEONLY, D3DPOOL_MANAGED; INDEX16).
-    IDirect3DVertexBuffer9* gizmoSphereVB;     // 4 / 8
-    IDirect3DIndexBuffer9* gizmoSphereIB;      // 8 / 0x10
-    IDirect3DVertexBuffer9* gizmoCubeVB;       // 12 / 0x18
-    IDirect3DIndexBuffer9* gizmoCubeIB;        // 16 / 0x20
-    IDirect3DVertexBuffer9* gizmoSphere33VB;   // 20 / 0x28
-    IDirect3DIndexBuffer9* gizmoSphere33IB;    // 24 / 0x30
-    IDirect3DVertexBuffer9* gizmoArrowVB;      // 28 / 0x38
-    IDirect3DIndexBuffer9* gizmoIdentityIB;    // 32 / 0x40
-    IDirect3DVertexBuffer9* gizmoBoxSelVB;     // 36 / 0x48
-    IDirect3DIndexBuffer9* gizmoBoxSelIB;      // 40 / 0x50
+    IDirect3DVertexBuffer9* gizmoSphereVB;   // 4 / 8
+    IDirect3DIndexBuffer9* gizmoSphereIB;    // 8 / 0x10
+    IDirect3DVertexBuffer9* gizmoCubeVB;     // 12 / 0x18
+    IDirect3DIndexBuffer9* gizmoCubeIB;      // 16 / 0x20
+    IDirect3DVertexBuffer9* gizmoSphere33VB; // 20 / 0x28
+    IDirect3DIndexBuffer9* gizmoSphere33IB;  // 24 / 0x30
+    IDirect3DVertexBuffer9* gizmoArrowVB;    // 28 / 0x38
+    IDirect3DIndexBuffer9* gizmoIdentityIB;  // 32 / 0x40
+    IDirect3DVertexBuffer9* gizmoBoxSelVB;   // 36 / 0x48
+    IDirect3DIndexBuffer9* gizmoBoxSelIB;    // 40 / 0x50
 
     // Bullet world stack (allocation sizes are the x86 originals).
-    btDefaultCollisionConfiguration* collisionConfig;        // 44 / 0x58
-    btCollisionDispatcher* dispatcher;                       // 48 / 0x60
-    bt32BitAxisSweep3* broadphase;                           // 52 / 0x68
-    std::int32_t constraintId;        // 56 / 0x70  starts 0, bumped per joint
-    btSequentialImpulseConstraintSolver* solver;             // 60 / 0x78
-    btDiscreteDynamicsWorld* world;                          // 64 / 0x80
-    btRigidBody* groundBody;                                 // 68 / 0x88
+    btDefaultCollisionConfiguration* collisionConfig; // 44 / 0x58
+    btCollisionDispatcher* dispatcher;                // 48 / 0x60
+    bt32BitAxisSweep3* broadphase;                    // 52 / 0x68
+    std::int32_t constraintId;                        // 56 / 0x70  starts 0, bumped per joint
+    btSequentialImpulseConstraintSolver* solver;      // 60 / 0x78
+    btDiscreteDynamicsWorld* world;                   // 64 / 0x80
+    btRigidBody* groundBody;                          // 68 / 0x88
     // static plane (0,1,0,0), group 0x8000 / mask -1, restitution 0.88
 };
 
 static_assert(sizeof(PhysicsScene) == 0x48 || sizeof(PhysicsScene) == 0x90,
               "size must be the x86 or x64 original allocation size");
 
-#define MIKUDANCESTUDIO_SCENE_OFF(f, x86off, x64off)                              \
-    static_assert(offsetof(PhysicsScene, f) ==                            \
-                      (sizeof(void*) == 8 ? (x64off) : (x86off)),         \
+#define MIKUDANCESTUDIO_SCENE_OFF(f, x86off, x64off)                                               \
+    static_assert(offsetof(PhysicsScene, f) == (sizeof(void*) == 8 ? (x64off) : (x86off)),         \
                   #f " offset must match the original binary")
 
 MIKUDANCESTUDIO_SCENE_OFF(owner, 0, 0);
@@ -94,4 +99,4 @@ MIKUDANCESTUDIO_SCENE_OFF(groundBody, 68, 136);
 
 void DisposePhysicsWorld(PhysicsScene* scene);
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -29,8 +29,7 @@ std::int32_t GcdBySubtraction(std::int32_t a, std::int32_t b) {
     return a;
 }
 
-std::uint32_t PackAverage(std::int32_t b, std::int32_t g,
-                          std::int32_t r, std::int32_t a,
+std::uint32_t PackAverage(std::int32_t b, std::int32_t g, std::int32_t r, std::int32_t a,
                           std::int32_t divisor) {
     return static_cast<std::uint32_t>(b / divisor) |
            (static_cast<std::uint32_t>(g / divisor) << 8) |
@@ -38,7 +37,7 @@ std::uint32_t PackAverage(std::int32_t b, std::int32_t g,
            (static_cast<std::uint32_t>(a / divisor) << 24);
 }
 
-}  // namespace
+} // namespace
 
 ULONG DownsampleCaptureSurface(MMDApp* app) {
     D3DRenderer* sub = app->Renderer();
@@ -48,26 +47,20 @@ ULONG DownsampleCaptureSurface(MMDApp* app) {
     const auto format = sub->backbufferFormat;
 
     IDirect3DSurface9* systemSurface = nullptr;
-    device->CreateOffscreenPlainSurface(sourceWidth, sourceHeight, format,
-                                        D3DPOOL_SYSTEMMEM, &systemSurface,
-                                        nullptr);
+    device->CreateOffscreenPlainSurface(sourceWidth, sourceHeight, format, D3DPOOL_SYSTEMMEM,
+                                        &systemSurface, nullptr);
     mme::PreRenderTargetCopy(app, device, sub->captureSurface);
-    device->GetRenderTargetData(sub->captureSurface,
-                                systemSurface);
+    device->GetRenderTargetData(sub->captureSurface, systemSurface);
 
     D3DLOCKED_RECT locked{};
     systemSurface->LockRect(&locked, nullptr, 0);
 
-    const std::int32_t targetWidth =
-        app->state.renderW;
-    const std::int32_t targetHeight =
-        app->state.renderH;
-    const std::int32_t widthGcd =
-        GcdBySubtraction(sourceWidth, targetWidth);
+    const std::int32_t targetWidth = app->state.renderW;
+    const std::int32_t targetHeight = app->state.renderH;
+    const std::int32_t widthGcd = GcdBySubtraction(sourceWidth, targetWidth);
     const std::int32_t targetWidthRatio = targetWidth / widthGcd;
     const std::int32_t sourceWidthRatio = sourceWidth / widthGcd;
-    const std::int32_t heightGcd =
-        GcdBySubtraction(sourceHeight, targetHeight);
+    const std::int32_t heightGcd = GcdBySubtraction(sourceHeight, targetHeight);
     const std::int32_t targetHeightRatio = targetHeight / heightGcd;
     const std::int32_t sourceHeightRatio = sourceHeight / heightGcd;
 
@@ -144,10 +137,8 @@ ULONG DownsampleCaptureSurface(MMDApp* app) {
     systemSurface->UnlockRect();
     RECT sourceRect{0, 0, targetWidth, targetHeight};
     POINT destinationPoint{0, 0};
-    device->UpdateSurface(systemSurface, &sourceRect,
-                          sub->backbufferSurface,
-                          &destinationPoint);
+    device->UpdateSurface(systemSurface, &sourceRect, sub->backbufferSurface, &destinationPoint);
     return systemSurface->Release();
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

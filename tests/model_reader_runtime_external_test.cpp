@@ -53,9 +53,9 @@ int main() {
     renderer->device = device;
     mikudancestudio::PhysicsScene scene{};
     Check(mikudancestudio::SceneConstruct(&scene, renderer.get()), "build physics scene");
-    std::vector<unsigned char> storage(mikudancestudio::mdl::kSize, 0);
-    mikudancestudio::ModelInitDefaults(storage.data());
-    auto& runtime = *mikudancestudio::mdl::Mdl(storage.data());
+    auto storage = std::make_unique<mikudancestudio::mdl::ModelRecord>();
+    mikudancestudio::ModelInitDefaults(storage.get());
+    auto& runtime = *storage.get();
     runtime.hwnd = window;
     runtime.scenePtr = &scene;
     runtime.physicsFlags = 1;
@@ -65,7 +65,7 @@ int main() {
     wcsncpy_s(runtime.modelDirectory, path, filename - path + 1);
     mikudancestudio::PathResolutionWorkspace paths{};
     std::fprintf(stderr, "real PMX: loading runtime\n");
-    Check(mikudancestudio::LoadPMX(storage.data(), renderer.get(), 0, 1, paths, file),
+    Check(mikudancestudio::LoadPMX(storage.get(), renderer.get(), 0, 1, paths, file),
           "load real PMX runtime");
     std::fprintf(stderr, "real PMX: comparing\n");
     Check(runtime.vertexCount == disk.pmx.vertices.size() &&
@@ -91,7 +91,7 @@ int main() {
         Check(runtime.jointTable[0].rigidA == disk.pmx.joints[0].fields.rigidA,
               "real PMX joint");
     std::fprintf(stderr, "real PMX: disposing model\n");
-    mikudancestudio::ModelDispose(storage.data());
+    mikudancestudio::ModelDispose(storage.get());
     std::fprintf(stderr, "real PMX: disposing scene\n");
     mikudancestudio::DisposePhysicsWorld(&scene);
     std::fprintf(stderr, "real PMX: releasing D3D\n");

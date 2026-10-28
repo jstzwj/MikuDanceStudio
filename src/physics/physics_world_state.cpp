@@ -7,23 +7,21 @@
 namespace mikudancestudio {
 namespace {
 
-template <typename T>
-void DeleteOwned(T*& value) {
+template <typename T> void DeleteOwned(T*& value) {
     delete value;
     value = nullptr;
 }
 
-}  // namespace
+} // namespace
 
 void CreatePhysicsWorld(PhysicsWorldState& state) {
     state.collisionConfig = new btDefaultCollisionConfiguration();
     state.dispatcher = new btCollisionDispatcher(state.collisionConfig);
-    state.broadphase = new bt32BitAxisSweep3(
-        btVector3(-10000.0f, -10000.0f, -10000.0f),
-        btVector3(10000.0f, 10000.0f, 10000.0f), 1500000);
+    state.broadphase = new bt32BitAxisSweep3(btVector3(-10000.0f, -10000.0f, -10000.0f),
+                                             btVector3(10000.0f, 10000.0f, 10000.0f), 1500000);
     state.solver = new btSequentialImpulseConstraintSolver();
-    state.world = new PhysicsWorld(state.dispatcher, state.broadphase,
-                                   state.solver, state.collisionConfig);
+    state.world =
+        new PhysicsWorld(state.dispatcher, state.broadphase, state.solver, state.collisionConfig);
     auto* world = state.world;
 
     world->getSolverInfo().m_solverMode &= ~1;
@@ -31,14 +29,12 @@ void CreatePhysicsWorld(PhysicsWorldState& state) {
     world->setGravity(btVector3(0.0f, -98.0f, 0.0f));
 
     auto* plane = new btStaticPlaneShape(btVector3(0.0f, 1.0f, 0.0f), 0.0f);
-    auto* motionState = new btDefaultMotionState(
-        btTransform::getIdentity(), btTransform::getIdentity());
+    auto* motionState =
+        new btDefaultMotionState(btTransform::getIdentity(), btTransform::getIdentity());
     btVector3 zeroInertia(0.0f, 0.0f, 0.0f);
-    btRigidBody::btRigidBodyConstructionInfo ci(
-        0.0f, motionState, plane, zeroInertia);
+    btRigidBody::btRigidBodyConstructionInfo ci(0.0f, motionState, plane, zeroInertia);
     state.groundBody = new btRigidBody(ci);
-    world->addRigidBody(state.groundBody,
-                        static_cast<short>(0x8000), static_cast<short>(-1));
+    world->addRigidBody(state.groundBody, static_cast<short>(0x8000), static_cast<short>(-1));
     state.groundBody->setRestitution(0.88f);
 }
 
@@ -69,4 +65,4 @@ void DestroyPhysicsWorld(PhysicsWorldState& state) {
     DeleteOwned(state.collisionConfig);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

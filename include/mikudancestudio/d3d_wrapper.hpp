@@ -29,7 +29,7 @@
 
 #include <d3d9.h>
 
-struct ID3DXEffect;  // d3dx9.h - forward decl, pointer-only use here
+struct ID3DXEffect; // d3dx9.h - forward decl, pointer-only use here
 
 namespace mikudancestudio {
 
@@ -46,66 +46,64 @@ struct ResourcePoolEntry {
 class D3DRenderer {
 public:
     // -- window / locale --------------------------------------------------
-    HWND hwnd;                    // +0        main window handle
+    HWND hwnd; // +0        main window handle
 
-    ResourcePoolEntry resourcePool[10000];  // x86 +4 / x64 +8
+    ResourcePoolEntry resourcePool[10000]; // x86 +4 / x64 +8
 
-    _locale_t localeTable[4];     // x86 +120004 / x64 +240008 (_locale_t is
-                                  // itself a pointer typedef)
-                                  // [0]=_create_locale(0,"Locale")
-                                  // [1]=".OCP" [2]=".ACP" [3]="JPN"
-    void* stereoHandle;          // 120020 / 240040  NVAPI stereo-3D probe
-                                  // object (released by x86 0x4CB4F0)
+    _locale_t localeTable[4]; // x86 +120004 / x64 +240008 (_locale_t is
+                              // itself a pointer typedef)
+                              // [0]=_create_locale(0,"Locale")
+                              // [1]=".OCP" [2]=".ACP" [3]="JPN"
+    void* stereoHandle;       // 120020 / 240040  NVAPI stereo-3D probe
+                              // object (released by x86 0x4CB4F0)
 
     // -- device / mode ----------------------------------------------------
-    std::int32_t shaderModelCaps; // 120024 / 240048  ctor=1; caps-derived
-                                  // dword (x86 reads D3DCAPS9+0x70)
-    IDirect3D9* d3d9;            // 120028 / 240056
-    IDirect3DDevice9* device;    // 120032 / 240064  ~500+ read sites
-    std::int32_t screenWidth;    // 120036 / 240072  monitor max (fnEnum)
-    std::int32_t screenHeight;   // 120040 / 240076
-    float aspectRatio;           // 120044 / 240080  = W/H
-    float viewScale;             // 120048 / 240084  seeded 1.0f by InitD3D;
-                                  // read as the viewport/UI scale by the
-                                  // cursor, media and overlay paths
-    IDirect3DVertexBuffer9* lineVertexBuffer;  // 120052 / 240088 selection/
-                                  // wireframe line VB (CreateVertexBuffer
-                                  // out-param at 0x467509; dtor-released)
-    unsigned char multisampleAvailable;  // 120056 / 240096
+    std::int32_t shaderModelCaps;             // 120024 / 240048  ctor=1; caps-derived
+                                              // dword (x86 reads D3DCAPS9+0x70)
+    IDirect3D9* d3d9;                         // 120028 / 240056
+    IDirect3DDevice9* device;                 // 120032 / 240064  ~500+ read sites
+    std::int32_t screenWidth;                 // 120036 / 240072  monitor max (fnEnum)
+    std::int32_t screenHeight;                // 120040 / 240076
+    float aspectRatio;                        // 120044 / 240080  = W/H
+    float viewScale;                          // 120048 / 240084  seeded 1.0f by InitD3D;
+                                              // read as the viewport/UI scale by the
+                                              // cursor, media and overlay paths
+    IDirect3DVertexBuffer9* lineVertexBuffer; // 120052 / 240088 selection/
+                                              // wireframe line VB (CreateVertexBuffer
+                                              // out-param at 0x467509; dtor-released)
+    unsigned char multisampleAvailable;       // 120056 / 240096
 
-    D3DPRESENT_PARAMETERS presentParameters;  // 120060 / 240104
-                                  // x86 56B / x64 64B (HWND widens+aligns)
+    D3DPRESENT_PARAMETERS presentParameters; // 120060 / 240104
+                                             // x86 56B / x64 64B (HWND widens+aligns)
 
     // -- surfaces / effects -----------------------------------------------
-    IDirect3DSurface9* captureSurface;       // 120116 / 240168 lockable RT
-    IDirect3DSurface9* backbufferSurface;    // 120120 / 240176
-    IDirect3DSurface9* depthStencilSurface;  // 120124 / 240184
-    D3DFORMAT backbufferFormat;              // 120128 / 240192 21/22 cache
-    unsigned char postProcessEnabled;        // 120132 / 240196 HDR switch
-    IDirect3DTexture9* hdrTexture;           // 120136 / 240200 fmt 114
-    IDirect3DTexture9* spriteTexture;        // 120140 / 240208 PNG res 0x67
-    IDirect3DSurface9* shadowSurface;        // 120144 / 240216 shadow RT
-    IDirect3DSurface9* shadowDepthSurface;   // 120148 / 240224 D24X8=77
-    std::int32_t renderTargetWidth;          // 120152 / 240232 <=2048
-    std::int32_t renderTargetHeight;         // 120156 / 240236
-    ID3DXEffect* effect;                     // 120160 / 240240
-    unsigned char d3dInitialized;            // 120164 / 240248 ctor=1
-    unsigned char shaderModel3;              // 120165 / 240249 SM3 flag
-    unsigned char stereoEnabled;             // 120166 / 240250
-    std::int32_t maxTextureWidth;            // 120168 / 240252 caps
-    std::int32_t maxTextureHeight;           // 120172 / 240256 caps
-    unsigned char runtimeToggle;             // 120176 / 240260 ctor=1,
-                                  // flipped from config - meaning TBD
+    IDirect3DSurface9* captureSurface;      // 120116 / 240168 lockable RT
+    IDirect3DSurface9* backbufferSurface;   // 120120 / 240176
+    IDirect3DSurface9* depthStencilSurface; // 120124 / 240184
+    D3DFORMAT backbufferFormat;             // 120128 / 240192 21/22 cache
+    unsigned char postProcessEnabled;       // 120132 / 240196 HDR switch
+    IDirect3DTexture9* hdrTexture;          // 120136 / 240200 fmt 114
+    IDirect3DTexture9* spriteTexture;       // 120140 / 240208 PNG res 0x67
+    IDirect3DSurface9* shadowSurface;       // 120144 / 240216 shadow RT
+    IDirect3DSurface9* shadowDepthSurface;  // 120148 / 240224 D24X8=77
+    std::int32_t renderTargetWidth;         // 120152 / 240232 <=2048
+    std::int32_t renderTargetHeight;        // 120156 / 240236
+    ID3DXEffect* effect;                    // 120160 / 240240
+    unsigned char d3dInitialized;           // 120164 / 240248 ctor=1
+    unsigned char shaderModel3;             // 120165 / 240249 SM3 flag
+    unsigned char stereoEnabled;            // 120166 / 240250
+    std::int32_t maxTextureWidth;           // 120168 / 240252 caps
+    std::int32_t maxTextureHeight;          // 120172 / 240256 caps
+    unsigned char runtimeToggle;            // 120176 / 240260 ctor=1,
+                                            // flipped from config - meaning TBD
 };
 
 // -- layout pinned to the two original binaries --------------------------
-static_assert(sizeof(D3DRenderer) == 0x1D574 ||
-              sizeof(D3DRenderer) == 0x3AA88,
+static_assert(sizeof(D3DRenderer) == 0x1D574 || sizeof(D3DRenderer) == 0x3AA88,
               "size must be the x86 or x64 original allocation size");
 
-#define MIKUDANCESTUDIO_WRAPPER_OFF(f, x86off, x64off)                            \
-    static_assert(offsetof(D3DRenderer, f) ==                             \
-                      (sizeof(void*) == 8 ? (x64off) : (x86off)),         \
+#define MIKUDANCESTUDIO_WRAPPER_OFF(f, x86off, x64off)                                             \
+    static_assert(offsetof(D3DRenderer, f) == (sizeof(void*) == 8 ? (x64off) : (x86off)),          \
                   #f " offset must match the original binary")
 
 MIKUDANCESTUDIO_WRAPPER_OFF(hwnd, 0, 0);
@@ -143,4 +141,4 @@ MIKUDANCESTUDIO_WRAPPER_OFF(runtimeToggle, 120176, 240260);
 
 #undef MIKUDANCESTUDIO_WRAPPER_OFF
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

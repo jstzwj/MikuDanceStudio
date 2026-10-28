@@ -9,8 +9,8 @@
 // the per-frame PMX vertex/UV morph restore+apply pass that feeds them
 // (x64 RVA 0xC1415..0xC2670), and the SDEF quaternion blend helper
 // (x64 RVA 0xC2D20). Binary identity and address verification are recorded
-// in reports/fix21_source_evidence.md. The PMD arithmetic keeps its x87 __asm bit-parity
-// branch; the PMX arithmetic follows the x64 SSE orderings, which is the
+// in reports/fix21_source_evidence.md. The PMD arithmetic uses the shared C++ x87 parity kernels
+// on x86; the PMX arithmetic follows the x64 SSE orderings, which is the
 // behavior baseline for this port.
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +26,7 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
+#include "LinearMath/btMmdMath.h"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/scene_preview_ui.hpp"
 #include "mikudancestudio/model_cpu_bridge.hpp"
@@ -38,32 +39,30 @@ namespace {
 // site valid and inlines away to nothing.
 #ifdef MIKUDANCESTUDIO_DIAG
 bool ModelVbCaptureReady(char directory[MAX_PATH]) {
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return false;
 
     char stable[2]{};
-    if (GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_STABLE_CAPTURE", stable,
-                                sizeof(stable)) != 1 || stable[0] != '1')
+    if (GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_STABLE_CAPTURE", stable, sizeof(stable)) != 1 ||
+        stable[0] != '1')
         return true;
 
     char requireLine[2]{};
-    const bool refreshed =
-        GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_REQUIRE_LINE", requireLine,
-                                sizeof(requireLine)) == 1 &&
-        requireLine[0] == '1';
+    const bool refreshed = GetEnvironmentVariableA("MIKUDANCESTUDIO_AB_REQUIRE_LINE", requireLine,
+                                                   sizeof(requireLine)) == 1 &&
+                           requireLine[0] == '1';
     char gate[MAX_PATH]{};
     std::snprintf(gate, sizeof(gate), "%s\\%s", directory,
                   refreshed ? "vb.capture.active" : "vb.capture.ready");
     const DWORD attributes = GetFileAttributesA(gate);
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
 void WriteBytes(const char* path, const void* bytes, DWORD size) {
-    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return;
     DWORD written = 0;
@@ -71,10 +70,9 @@ void WriteBytes(const char* path, const void* bytes, DWORD size) {
     CloseHandle(file);
 }
 
-void DumpModelVertexBuffers(MMDApp* app, unsigned char* model,
+void DumpModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model,
                             const mdl::SkinnedVertexBase* mainVertices,
-                            const mdl::EdgeVertex* edgeVertices,
-                            std::uint32_t count,
+                            const mdl::EdgeVertex* edgeVertices, std::uint32_t count,
                             std::uint32_t mainStride) {
     char directory[MAX_PATH]{};
     if (!ModelVbCaptureReady(directory))
@@ -99,29 +97,24 @@ void DumpModelVertexBuffers(MMDApp* app, unsigned char* model,
 
     CreateDirectoryA(directory, nullptr);
     char path[MAX_PATH]{};
-    std::snprintf(path, sizeof(path), "%s\\model.%03d.main.bin",
-                  directory, slot);
+    std::snprintf(path, sizeof(path), "%s\\model.%03d.main.bin", directory, slot);
     WriteBytes(path, mainVertices, mainStride * count);
-    std::snprintf(path, sizeof(path), "%s\\model.%03d.edge.bin",
-                  directory, slot);
+    std::snprintf(path, sizeof(path), "%s\\model.%03d.edge.bin", directory, slot);
     WriteBytes(path, edgeVertices, sizeof(*edgeVertices) * count);
-    std::snprintf(path, sizeof(path), "%s\\model.%03d.meta.json",
-                  directory, slot);
+    std::snprintf(path, sizeof(path), "%s\\model.%03d.meta.json", directory, slot);
     char metadata[160]{};
-    const mdl::ModelRecord& state = *mdl::Mdl(model);
-    const int chars = std::snprintf(
-        metadata, sizeof(metadata),
-        "{\"schema\":1,\"slot\":%d,\"format\":%u,"
-        "\"vertex_count\":%u,\"main_stride\":%u,\"edge_stride\":16}\n",
-        slot, static_cast<unsigned>(state.physicsMode),
-        count, mainStride);
+    const mdl::ModelRecord& state = *model;
+    const int chars =
+        std::snprintf(metadata, sizeof(metadata),
+                      "{\"schema\":1,\"slot\":%d,\"format\":%u,"
+                      "\"vertex_count\":%u,\"main_stride\":%u,\"edge_stride\":16}\n",
+                      slot, static_cast<unsigned>(state.physicsMode), count, mainStride);
     WriteBytes(path, metadata, static_cast<DWORD>(chars));
 }
 #else
-inline void DumpModelVertexBuffers(MMDApp*, unsigned char*,
-                                   const mdl::SkinnedVertexBase*,
-                                   const mdl::EdgeVertex*, std::uint32_t,
-                                   std::uint32_t) {}
+inline void DumpModelVertexBuffers(MMDApp*, mdl::ModelRecord*, const mdl::SkinnedVertexBase*,
+                                   const mdl::EdgeVertex*, std::uint32_t, std::uint32_t) {
+}
 #endif
 
 void TransformPosition(float out[3], const float in[3], const float* m) {
@@ -145,16 +138,21 @@ void Blend3(float out[3], const float a[3], const float b[3], float wa) {
 
 float EdgeComponent(float position, float normal, float amount) {
 #if defined(_M_IX86)
-    float result = 0.0f;
-    __asm {
-        fld dword ptr [normal]
-        fmul dword ptr [amount]
-        fadd dword ptr [position]
-        fstp dword ptr [result]
-    }
-    return result;
+    return btMmdMath::edgeComponent(position, normal, amount);
 #else
     return position + normal * amount;
+#endif
+}
+
+float PmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
+                       float materialSize) {
+#if defined(_M_IX86)
+    return btMmdMath::pmxEdgeComponent(position, normal, frameScale, vertexScale, materialSize);
+#else
+    float amount = frameScale * normal;
+    amount *= vertexScale;
+    amount *= materialSize;
+    return position + amount;
 #endif
 }
 
@@ -163,86 +161,33 @@ float EdgeComponent(float position, float normal, float amount) {
 // identity. The upper bound is a port-side guard against corrupt files -
 // every loader-produced index is inside the table.
 constexpr float kPmxZeroMatrix[16] = {
-    0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
 };
 
-const float* PmxSkinMatrix(const mdl::BoneRecord* bones, int boneCount,
-                           std::int32_t boneIndex) {
-    return boneIndex >= 0 && boneIndex < boneCount
-        ? bones[boneIndex].matInit
-        : kPmxZeroMatrix;
+const float* PmxSkinMatrix(const mdl::BoneRecord* bones, int boneCount, std::int32_t boneIndex) {
+    return boneIndex >= 0 && boneIndex < boneCount ? bones[boneIndex].matInit : kPmxZeroMatrix;
 }
 
 // x64 PMX worker RVA 0x11F991: BDEF1 transforms position with the full
 // matrix and normal without translation into the 32-byte base record.
-void SkinPmxBdef1(const mdl::PmxVertex& source,
-                  const mdl::BoneRecord* bones, int boneCount,
+void SkinPmxBdef1(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, int boneCount,
                   mdl::SkinnedVertexBase& destination) {
     const float* matrix = PmxSkinMatrix(bones, boneCount, source.bone[0]);
     TransformPosition(destination.position, source.position, matrix);
     TransformNormal(destination.normal, source.normal, matrix);
 }
 
-float BlendTransformComponent(const float* input, const float* matrix0,
-                              const float* matrix1, int component,
-                              float weight0, bool position) {
+float BlendTransformComponent(const float* input, const float* matrix0, const float* matrix1,
+                              int component, float weight0, bool position) {
 #if defined(_M_IX86)
-    float result = 0.0f;
-    const int byteOffset = component * 4;
-    const float weight1 = 1.0f - weight0;
-    __asm {
-        mov eax, input
-        mov ecx, matrix0
-        mov edx, matrix1
-        mov ebx, byteOffset
-
-        // Original 0x4A95E0 family: bone 1 is accumulated first, multiplied
-        // by (1-weight), then bone 0 is accumulated and multiplied by
-        // weight.  No transformed component is rounded to float in between.
-        fld dword ptr [eax]
-        fmul dword ptr [edx+ebx]
-        fld dword ptr [eax+4]
-        fmul dword ptr [edx+ebx+16]
-        faddp st(1), st
-        fld dword ptr [eax+8]
-        fmul dword ptr [edx+ebx+32]
-        faddp st(1), st
-        cmp position, 0
-        je no_translation_1
-        fadd dword ptr [edx+ebx+48]
-no_translation_1:
-        fmul dword ptr [weight1]
-
-        fld dword ptr [eax]
-        fmul dword ptr [ecx+ebx]
-        fld dword ptr [eax+4]
-        fmul dword ptr [ecx+ebx+16]
-        faddp st(1), st
-        fld dword ptr [eax+8]
-        fmul dword ptr [ecx+ebx+32]
-        faddp st(1), st
-        cmp position, 0
-        je no_translation_0
-        fadd dword ptr [ecx+ebx+48]
-no_translation_0:
-        fmul dword ptr [weight0]
-        faddp st(1), st
-        fstp dword ptr [result]
-    }
-    return result;
+    return btMmdMath::blendTransformComponent(input, matrix0, matrix1, component, weight0,
+                                              position);
 #else
     const float weight1 = 1.0f - weight0;
-    const float a = input[0] * matrix0[component] +
-                    input[1] * matrix0[component + 4] +
-                    input[2] * matrix0[component + 8] +
-                    (position ? matrix0[component + 12] : 0.0f);
-    const float b = input[0] * matrix1[component] +
-                    input[1] * matrix1[component + 4] +
-                    input[2] * matrix1[component + 8] +
-                    (position ? matrix1[component + 12] : 0.0f);
+    const float a = input[0] * matrix0[component] + input[1] * matrix0[component + 4] +
+                    input[2] * matrix0[component + 8] + (position ? matrix0[component + 12] : 0.0f);
+    const float b = input[0] * matrix1[component] + input[1] * matrix1[component + 4] +
+                    input[2] * matrix1[component + 8] + (position ? matrix1[component + 12] : 0.0f);
     return b * weight1 + a * weight0;
 #endif
 }
@@ -250,22 +195,21 @@ no_translation_0:
 // x64 PMX worker RVA 0x11F513: BDEF2 uses bone 1 first with (1-weight),
 // then adds bone 0 scaled by weight. BlendTransformComponent preserves that
 // source order on the x64 path (and bit-exactly on the x87 path).
-void SkinPmxBdef2(const mdl::PmxVertex& source,
-                  const mdl::BoneRecord* bones, int boneCount,
+void SkinPmxBdef2(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, int boneCount,
                   mdl::SkinnedVertexBase& destination) {
     const float* matrix0 = PmxSkinMatrix(bones, boneCount, source.bone[0]);
     const float* matrix1 = PmxSkinMatrix(bones, boneCount, source.bone[1]);
     const float weight0 = source.weight[0];
     for (int component = 0; component < 3; ++component) {
-        destination.position[component] = BlendTransformComponent(
-            source.position, matrix0, matrix1, component, weight0, true);
-        destination.normal[component] = BlendTransformComponent(
-            source.normal, matrix0, matrix1, component, weight0, false);
+        destination.position[component] =
+            BlendTransformComponent(source.position, matrix0, matrix1, component, weight0, true);
+        destination.normal[component] =
+            BlendTransformComponent(source.normal, matrix0, matrix1, component, weight0, false);
     }
 }
 
-float TransformComponent(const float input[3], const float matrix[16],
-                         int component, bool position) {
+float TransformComponent(const float input[3], const float matrix[16], int component,
+                         bool position) {
     float value = input[0] * matrix[component];
     value += input[1] * matrix[component + 4];
     value += input[2] * matrix[component + 8];
@@ -280,8 +224,7 @@ float TransformComponent(const float input[3], const float matrix[16],
 // accumulates bone 1 first and then bones 0, 2 and 3, while the normal
 // starts from bone 0. Float addition does not associate, so both orders
 // are spelled out instead of being hidden in one generic loop.
-void SkinPmxBdef4(const mdl::PmxVertex& source,
-                  const mdl::BoneRecord* bones, int boneCount,
+void SkinPmxBdef4(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, int boneCount,
                   mdl::SkinnedVertexBase& destination) {
     const float* matrix0 = PmxSkinMatrix(bones, boneCount, source.bone[0]);
     const float* matrix1 = PmxSkinMatrix(bones, boneCount, source.bone[1]);
@@ -289,31 +232,20 @@ void SkinPmxBdef4(const mdl::PmxVertex& source,
     const float* matrix3 = PmxSkinMatrix(bones, boneCount, source.bone[3]);
     for (int component = 0; component < 3; ++component) {
         float position =
-            TransformComponent(source.position, matrix1, component, true) *
-            source.weight[1];
+            TransformComponent(source.position, matrix1, component, true) * source.weight[1];
         position +=
-            TransformComponent(source.position, matrix0, component, true) *
-            source.weight[0];
+            TransformComponent(source.position, matrix0, component, true) * source.weight[0];
         position +=
-            TransformComponent(source.position, matrix2, component, true) *
-            source.weight[2];
+            TransformComponent(source.position, matrix2, component, true) * source.weight[2];
         position +=
-            TransformComponent(source.position, matrix3, component, true) *
-            source.weight[3];
+            TransformComponent(source.position, matrix3, component, true) * source.weight[3];
         destination.position[component] = position;
 
         float normal =
-            TransformComponent(source.normal, matrix0, component, false) *
-            source.weight[0];
-        normal +=
-            TransformComponent(source.normal, matrix1, component, false) *
-            source.weight[1];
-        normal +=
-            TransformComponent(source.normal, matrix2, component, false) *
-            source.weight[2];
-        normal +=
-            TransformComponent(source.normal, matrix3, component, false) *
-            source.weight[3];
+            TransformComponent(source.normal, matrix0, component, false) * source.weight[0];
+        normal += TransformComponent(source.normal, matrix1, component, false) * source.weight[1];
+        normal += TransformComponent(source.normal, matrix2, component, false) * source.weight[2];
+        normal += TransformComponent(source.normal, matrix3, component, false) * source.weight[3];
         destination.normal[component] = normal;
     }
 }
@@ -321,10 +253,8 @@ void SkinPmxBdef4(const mdl::PmxVertex& source,
 // x64 helper RVA 0xC2D20: SDEF rotates through a blended quaternion that
 // the original builds with a dot-sign-corrected normalized lerp (not a
 // true slerp). `t` reaches 1 - weight0, so weight0 = 1 keeps q0.
-void BlendSdefQuaternions(float out[4], const float from[4],
-                          const float to[4], float t) {
-    const float dot = ((to[0] * from[0] + to[3] * from[3]) +
-                       to[1] * from[1]) + to[2] * from[2];
+void BlendSdefQuaternions(float out[4], const float from[4], const float to[4], float t) {
+    const float dot = ((to[0] * from[0] + to[3] * from[3]) + to[1] * from[1]) + to[2] * from[2];
     float delta[4];
     if (dot >= 0.0f) {
         delta[0] = to[0] - from[0];
@@ -342,9 +272,8 @@ void BlendSdefQuaternions(float out[4], const float from[4],
     out[1] = delta[1] * t + from[1];
     out[2] = delta[2] * t + from[2];
     out[3] = delta[3] * t + from[3];
-    const float length = std::sqrt(
-        ((out[0] * out[0] + out[1] * out[1]) + out[2] * out[2]) +
-        out[3] * out[3]);
+    const float length =
+        std::sqrt(((out[0] * out[0] + out[1] * out[1]) + out[2] * out[2]) + out[3] * out[3]);
     if (length <= 0.0f) {
         out[0] = 0.0f;
         out[1] = 0.0f;
@@ -369,9 +298,8 @@ void BlendSdefQuaternions(float out[4], const float from[4],
 // D3DXQuaternionRotationMatrix on both bone matrices, the nlerp above, and
 // D3DXMatrixRotationQuaternion - the very entry points the x64 imports, so
 // even degenerate zero-matrix references produce identical bits.
-void SkinPmxSdef(d3dx::Api& d3dxApi, const mdl::PmxVertex& source,
-                 const mdl::BoneRecord* bones, int boneCount,
-                 mdl::SkinnedVertexBase& destination) {
+void SkinPmxSdef(d3dx::Api& d3dxApi, const mdl::PmxVertex& source, const mdl::BoneRecord* bones,
+                 int boneCount, mdl::SkinnedVertexBase& destination) {
     const float* matrix0 = PmxSkinMatrix(bones, boneCount, source.bone[0]);
     const float* matrix1 = PmxSkinMatrix(bones, boneCount, source.bone[1]);
     const float weight0 = source.weight[0];
@@ -382,36 +310,28 @@ void SkinPmxSdef(d3dx::Api& d3dxApi, const mdl::PmxVertex& source,
 
     float pivot[3];
     for (int component = 0; component < 3; ++component) {
-        const float blendedCenter =
-            TransformComponent(center, matrix0, component, true) * weight0 +
-            TransformComponent(center, matrix1, component, true) * weight1;
-        const float blendedArms =
-            TransformComponent(r0, matrix0, component, false) * weight0 +
-            TransformComponent(r1, matrix1, component, false) * weight1;
-        pivot[component] = ((blendedArms + blendedCenter) + blendedCenter) *
-                           0.5f;
+        const float blendedCenter = TransformComponent(center, matrix0, component, true) * weight0 +
+                                    TransformComponent(center, matrix1, component, true) * weight1;
+        const float blendedArms = TransformComponent(r0, matrix0, component, false) * weight0 +
+                                  TransformComponent(r1, matrix1, component, false) * weight1;
+        pivot[component] = ((blendedArms + blendedCenter) + blendedCenter) * 0.5f;
     }
 
     float quaternion0[4];
     float quaternion1[4];
     float quaternion[4];
-    d3dxApi.quatFromMatrix(
-        quaternion0, reinterpret_cast<const d3dx::D3DXMATRIXF*>(matrix0));
-    d3dxApi.quatFromMatrix(
-        quaternion1, reinterpret_cast<const d3dx::D3DXMATRIXF*>(matrix1));
+    d3dxApi.quatFromMatrix(quaternion0, reinterpret_cast<const d3dx::D3DXMATRIXF*>(matrix0));
+    d3dxApi.quatFromMatrix(quaternion1, reinterpret_cast<const d3dx::D3DXMATRIXF*>(matrix1));
     BlendSdefQuaternions(quaternion, quaternion0, quaternion1, weight1);
     d3dx::D3DXMATRIXF blended;
     d3dxApi.matrixRotationQuaternion(&blended, quaternion);
     const float* rotation = &blended.m[0][0];
 
-    const float delta[3] = {
-        source.position[0] - center[0],
-        source.position[1] - center[1],
-        source.position[2] - center[2]};
+    const float delta[3] = {source.position[0] - center[0], source.position[1] - center[1],
+                            source.position[2] - center[2]};
     for (int component = 0; component < 3; ++component) {
         destination.position[component] =
-            TransformComponent(delta, rotation, component, false) +
-            pivot[component];
+            TransformComponent(delta, rotation, component, false) + pivot[component];
         destination.normal[component] =
             TransformComponent(source.normal, rotation, component, false);
     }
@@ -420,17 +340,14 @@ void SkinPmxSdef(d3dx::Api& d3dxApi, const mdl::PmxVertex& source,
 // x64 PMX common tail 0x140120A01/0x140120A9C: both branches truncate the
 // material's edge channels to 8 bits. The self-shadow render pass forces an
 // opaque alpha word; the regular pass keeps the material's own edge alpha.
-std::uint32_t PackPmxEdgeColor(const mdl::ModelMaterialRecord& material,
-                               bool opaqueAlpha) {
+std::uint32_t PackPmxEdgeColor(const mdl::ModelMaterialRecord& material, bool opaqueAlpha) {
     const auto channel = [](float value) -> std::uint32_t {
-        return static_cast<std::uint8_t>(static_cast<std::int32_t>(
-            value * 255.0f));
+        return static_cast<std::uint8_t>(static_cast<std::int32_t>(value * 255.0f));
     };
     const std::uint32_t red = channel(material.edgeColor[0]);
     const std::uint32_t green = channel(material.edgeColor[1]);
     const std::uint32_t blue = channel(material.edgeColor[2]);
-    const std::uint32_t alpha =
-        opaqueAlpha ? 0xFFu : channel(material.edgeColor[3]);
+    const std::uint32_t alpha = opaqueAlpha ? 0xFFu : channel(material.edgeColor[3]);
     return (alpha << 24) | (red << 16) | (green << 8) | blue;
 }
 
@@ -443,18 +360,17 @@ void CopyPmxAdditionalUvs(const mdl::PmxVertex& source,
     destination.base.uv[0] = source.uv[0];
     destination.base.uv[1] = source.uv[1];
     if constexpr (AdditionalUvCount > 0)
-    for (std::size_t uv = 0; uv < AdditionalUvCount; ++uv)
-        for (std::size_t component = 0; component < 4; ++component)
-            destination.additionalUv[uv][component] =
-                source.additionalUvByComponent[component][uv];
+        for (std::size_t uv = 0; uv < AdditionalUvCount; ++uv)
+            for (std::size_t component = 0; component < 4; ++component)
+                destination.additionalUv[uv][component] =
+                    source.additionalUvByComponent[component][uv];
 }
 
 // One PMX morph's vertex/UV contribution (the x64 direct ladder at
 // RVA 0xC2030..0xC2659; group references RVA 0xC1870 reuse it with the
 // group weight folded in after the morph value, one multiply at a time).
 // Bone (2) and material (8) morphs live in ModelApplyMorphs instead.
-void AccumPmxVertexMorph(mdl::PmxVertex* vertices,
-                         const mdl::MorphRecord& morph, float value,
+void AccumPmxVertexMorph(mdl::PmxVertex* vertices, const mdl::MorphRecord& morph, float value,
                          float groupWeight) {
     if (morph.type == 1) {
         const int count = morph.offsetCount;
@@ -491,15 +407,15 @@ void AccumPmxVertexMorph(mdl::PmxVertex* vertices,
 // flattened UV base tables restore every morph-targeted component first,
 // then each morph (including morph zero - unlike PMD) accumulates its
 // weighted offsets; group morphs scale the vertex/UV morphs they reference.
-void ApplyPmxVertexMorphs(unsigned char* model) {
-    mdl::ModelRecord& record = *mdl::Mdl(model);
-    mdl::MorphRecord* morphs = mdl::Morphs(model);
+void ApplyPmxVertexMorphs(mdl::ModelRecord* model) {
+    mdl::ModelRecord& record = *model;
+    mdl::MorphRecord* morphs = (model)->morphs;
     mdl::PmxVertex* vertices = record.pmxVertices;
     if (morphs == nullptr || vertices == nullptr)
         return;
 
-    const mdl::PmdVertexMorphEntry* base = mdl::BaseVertexMorphTable(model);
-    const std::uint32_t baseCount = mdl::BaseVertexMorphCount(model);
+    const mdl::PmdVertexMorphEntry* base = (model)->morph0Table;
+    const std::uint32_t baseCount = (model)->morph0Count;
     if (base != nullptr) {
         for (std::uint32_t i = 0; i < baseCount; ++i) {
             mdl::PmxVertex& vertex = vertices[base[i].vertexIndex];
@@ -510,9 +426,8 @@ void ApplyPmxVertexMorphs(unsigned char* model) {
     }
 
     for (int family = 0; family < 5; ++family) {
-        const mdl::PmxUvMorphEntry* entries =
-            mdl::UvMorphTables(model).byFamily[family];
-        const std::int32_t count = mdl::UvMorphCounts(model).byFamily[family];
+        const mdl::PmxUvMorphEntry* entries = (model)->uvMorphTables.byFamily[family];
+        const std::int32_t count = (model)->uvMorphCounts.byFamily[family];
         if (entries == nullptr || count <= 0)
             continue;
         for (int i = 0; i < count; ++i) {
@@ -541,19 +456,18 @@ void ApplyPmxVertexMorphs(unsigned char* model) {
         const int groupCount = morph.groupCount;
         for (int k = 0; k < groupCount; ++k) {
             const mdl::PmxGroupMorphEntry& ref = morph.groupEntries[k];
-            AccumPmxVertexMorph(vertices, morphs[ref.morphIndex], weight,
-                                ref.weight);
+            AccumPmxVertexMorph(vertices, morphs[ref.morphIndex], weight, ref.weight);
         }
     }
 }
 
 // 0x4B0C74..0x4B0CE9 and 0x4B1C9C..0x4B1D8B.  PMD morph zero is
 // the base table; all following morphs contain offsets indexed through it.
-void ApplyPmdVertexMorphs(unsigned char* model) {
-    mdl::ModelRecord& record = *mdl::Mdl(model);
+void ApplyPmdVertexMorphs(mdl::ModelRecord* model) {
+    mdl::ModelRecord& record = *model;
     mdl::PmdVertex* vertices = record.rawVertices;
-    const mdl::PmdVertexMorphEntry* base = mdl::BaseVertexMorphTable(model);
-    const std::uint32_t baseCount = mdl::BaseVertexMorphCount(model);
+    const mdl::PmdVertexMorphEntry* base = (model)->morph0Table;
+    const std::uint32_t baseCount = (model)->morph0Count;
     if (vertices == nullptr || base == nullptr)
         return;
 
@@ -565,7 +479,7 @@ void ApplyPmdVertexMorphs(unsigned char* model) {
         vertex.position[2] = entry.offset[2];
     }
 
-    mikudancestudio::mdl::MorphRecord* morphs = mikudancestudio::mdl::Morphs(model);
+    mikudancestudio::mdl::MorphRecord* morphs = (model)->morphs;
     const int morphCount = record.morphCount;
     if (morphs == nullptr || morphCount <= 1)
         return;
@@ -589,17 +503,16 @@ void ApplyPmdVertexMorphs(unsigned char* model) {
 }
 
 } // namespace
-float CpuModelEdgeDistance(unsigned char* model,const float frameWorld[16],const float camera[3],float fov) {
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
-    auto* bones = mdl::Bones(model);
+float CpuModelEdgeDistance(mdl::ModelRecord* model, const float frameWorld[16],
+                           const float camera[3], float fov) {
+    const mdl::ModelRecord& record = *model;
+    auto* bones = (model)->boneTable;
     const int boneCount = record.boneCount;
     float modelPoint[3]{};
     if (bones != nullptr && boneCount > 0) {
         mikudancestudio::mdl::BoneRecord* bone = &bones[(boneCount > 1 ? 1 : 0)];
-        const float bind[3] = {bone->position[0], bone->position[1],
-                               bone->position[2]};
-        TransformPosition(modelPoint, bind,
-                          bone->matInit);
+        const float bind[3] = {bone->position[0], bone->position[1], bone->position[2]};
+        TransformPosition(modelPoint, bind, bone->matInit);
     }
     float worldPoint[3];
     TransformPosition(worldPoint, modelPoint, frameWorld);
@@ -611,22 +524,25 @@ float CpuModelEdgeDistance(unsigned char* model,const float frameWorld[16],const
     const float dy = worldPoint[1] - camera[1];
     const float dz = worldPoint[2] - camera[2];
     const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-    return distance * 0.00004500000068219379f *
-           (fov * 0.6000000238418579f + 1.0f) *
+#if defined(_M_IX86)
+    return btMmdMath::edgeDistanceScale(distance, fov, record.edgeScale);
+#else
+    return distance * 0.00004500000068219379f * (fov * 0.6000000238418579f + 1.0f) *
            record.edgeScale;
+#endif
 }
 namespace {
-float PmdEdgeDistance(MMDApp* app,unsigned char* model,const float world[16]){
-    return CpuModelEdgeDistance(model,world,app->CameraPosition(),app->CameraFov());
+float PmdEdgeDistance(MMDApp* app, mdl::ModelRecord* model, const float world[16]) {
+    const float eye[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
+    return CpuModelEdgeDistance(model, world, eye, app->CameraFov());
 }
 
-void SkinPmd(unsigned char* model, float edgeDistance,
-             mdl::EdgeVertex* edgeVertices,
+void SkinPmd(const mdl::ModelRecord* model, float edgeDistance, mdl::EdgeVertex* edgeVertices,
              mdl::SkinnedVertexBase* mainVertices) {
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
+    const mdl::ModelRecord& record = *model;
     const std::uint32_t vertexCount = record.vertexCount;
     auto* vertices = record.rawVertices;
-    auto* bones = mdl::Bones(model);
+    auto* bones = model->boneTable;
     const int boneCount = record.boneCount;
     if (vertices == nullptr || bones == nullptr)
         return;
@@ -648,30 +564,25 @@ void SkinPmd(unsigned char* model, float edgeDistance,
         const float* normal = src.normal;
         const int bone0 = src.bone[0];
         const int bone1 = src.bone[1];
-        const float weight0 = static_cast<float>(
-            src.weightPercent) * 0.009999999776482582f;
-        const float* matrix0 = bone0 >= 0 && bone0 < boneCount
-            ? bones[bone0].matInit
-            : nullptr;
-        const float* matrix1 = bone1 >= 0 && bone1 < boneCount
-            ? bones[bone1].matInit
-            : nullptr;
+        const float weight0 = static_cast<float>(src.weightPercent) * 0.009999999776482582f;
+        const float* matrix0 = bone0 >= 0 && bone0 < boneCount ? bones[bone0].matInit : nullptr;
+        const float* matrix1 = bone1 >= 0 && bone1 < boneCount ? bones[bone1].matInit : nullptr;
         static const float zero[16]{};
-        if (matrix0 == nullptr) matrix0 = zero;
-        if (matrix1 == nullptr) matrix1 = zero;
+        if (matrix0 == nullptr)
+            matrix0 = zero;
+        if (matrix1 == nullptr)
+            matrix1 = zero;
 
         for (int component = 0; component < 3; ++component) {
-            main.position[component] = BlendTransformComponent(
-                position, matrix0, matrix1, component, weight0, true);
-            main.normal[component] = BlendTransformComponent(
-                normal, matrix0, matrix1, component, weight0, false);
+            main.position[component] =
+                BlendTransformComponent(position, matrix0, matrix1, component, weight0, true);
+            main.normal[component] =
+                BlendTransformComponent(normal, matrix0, matrix1, component, weight0, false);
         }
         main.uv[0] = src.uv[0];
         main.uv[1] = src.uv[1];
 
-        const float amount = src.edgeDisabled != 0
-            ? -0.004999999888241291f
-            : edgeDistance;
+        const float amount = src.edgeDisabled != 0 ? -0.004999999888241291f : edgeDistance;
         edge.position[0] = EdgeComponent(main.position[0], main.normal[0], amount);
         edge.position[1] = EdgeComponent(main.position[1], main.normal[1], amount);
         edge.position[2] = EdgeComponent(main.position[2], main.normal[2], amount);
@@ -686,14 +597,13 @@ void SkinPmd(unsigned char* model, float edgeDistance,
 // expansion normal * frame scale * vertex scale * material size and the
 // fixed 0.005 shrink.
 template <std::size_t AdditionalUvCount>
-void SkinPmx(unsigned char* model, float edgeDistance, bool opaqueEdge,
-             mdl::EdgeVertex* edgeVertices,
-             mdl::SkinnedVertex<AdditionalUvCount>* mainVertices) {
-    const mdl::ModelRecord& record = *mdl::Mdl(model);
+void SkinPmx(const mdl::ModelRecord* model, float edgeDistance, bool opaqueEdge,
+             mdl::EdgeVertex* edgeVertices, mdl::SkinnedVertex<AdditionalUvCount>* mainVertices) {
+    const mdl::ModelRecord& record = *model;
     const std::uint32_t vertexCount = record.vertexCount;
     const mdl::PmxVertex* vertices = record.pmxVertices;
-    const mdl::BoneRecord* bones = mdl::Bones(model);
-    const mdl::ModelMaterialRecord* materials = mdl::Materials(model);
+    const mdl::BoneRecord* bones = model->boneTable;
+    const mdl::ModelMaterialRecord* materials = model->materials;
     const int boneCount = static_cast<int>(record.boneCount);
     d3dx::Api& d3dxApi = d3dx::Get();
     if (vertices == nullptr || bones == nullptr || materials == nullptr)
@@ -726,93 +636,144 @@ void SkinPmx(unsigned char* model, float edgeDistance, bool opaqueEdge,
         }
         CopyPmxAdditionalUvs(source, main);
 
-        const mdl::ModelMaterialRecord& material =
-            materials[source.materialIndex];
+        const mdl::ModelMaterialRecord& material = materials[source.materialIndex];
         edge.diffuse = PackPmxEdgeColor(material, opaqueEdge);
         if (source.hasPmxEdgeData == 0) {
             for (int component = 0; component < 3; ++component)
                 edge.position[component] =
-                    main.base.position[component] -
-                    main.base.normal[component] * 0.004999999888241291f;
+                    EdgeComponent(main.base.position[component], main.base.normal[component],
+                                  -0.004999999888241291f);
         } else {
             for (int component = 0; component < 3; ++component) {
-                float amount = edgeDistance * main.base.normal[component];
-                amount *= source.edgeScale;
-                amount *= material.edgeSize;
                 edge.position[component] =
-                    main.base.position[component] + amount;
+                    PmxEdgeComponent(main.base.position[component], main.base.normal[component],
+                                     edgeDistance, source.edgeScale, material.edgeSize);
             }
         }
     }
 }
 
-void SkinPmxDispatch(unsigned char* model,float distance,bool opaque,
-    unsigned uv,mdl::EdgeVertex* edge,void* main) {
-    switch(uv){
-    case 0:SkinPmx<0>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<0>*>(main));break;
-    case 1:SkinPmx<1>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<1>*>(main));break;
-    case 2:SkinPmx<2>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<2>*>(main));break;
-    case 3:SkinPmx<3>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<3>*>(main));break;
-    case 4:SkinPmx<4>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<4>*>(main));break;
+void SkinPmxDispatch(mdl::ModelRecord* model, float distance, bool opaque, unsigned uv,
+                     mdl::EdgeVertex* edge, void* main) {
+    switch (uv) {
+    case 0:
+        SkinPmx<0>(model, distance, opaque, edge, static_cast<mdl::SkinnedVertex<0>*>(main));
+        break;
+    case 1:
+        SkinPmx<1>(model, distance, opaque, edge, static_cast<mdl::SkinnedVertex<1>*>(main));
+        break;
+    case 2:
+        SkinPmx<2>(model, distance, opaque, edge, static_cast<mdl::SkinnedVertex<2>*>(main));
+        break;
+    case 3:
+        SkinPmx<3>(model, distance, opaque, edge, static_cast<mdl::SkinnedVertex<3>*>(main));
+        break;
+    case 4:
+        SkinPmx<4>(model, distance, opaque, edge, static_cast<mdl::SkinnedVertex<4>*>(main));
+        break;
     }
 }
 bool CpuGeometryOption(const char* name) {
-    char flag[2]{};return GetEnvironmentVariableA(name,flag,2)==1 && flag[0]=='1';
+    char flag[2]{};
+    return GetEnvironmentVariableA(name, flag, 2) == 1 && flag[0] == '1';
 }
 bool AcceptedCpuInputRoute() {
-    if(CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT"))return true;
+    if (CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT"))
+        return true;
 #ifdef MIKUDANCESTUDIO_DIAG
-    return CpuGeometryOption("MDS_RHI_CPU_INPUTS") && CpuGeometryOption("MDS_RHI_CPU_INPUTS_ACCEPTED") && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT");
+    return CpuGeometryOption("MDS_RHI_CPU_INPUTS") &&
+           CpuGeometryOption("MDS_RHI_CPU_INPUTS_ACCEPTED") &&
+           !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT");
 #else
     return false;
 #endif
 }
-ModelCpuFrame* ProduceCpuGeometry(MMDApp* app,unsigned char* model,float distance,bool opaque) {
-    const auto found=app->CpuModelFrames().find(model);
-    if(found==app->CpuModelFrames().end() || found->second->failed)return nullptr;
-    auto& frame=*found->second;auto& geometry=frame.geometry;
+ModelCpuFrame* ProduceCpuGeometry(MMDApp* app, mdl::ModelRecord* model, float distance,
+                                  bool opaque) {
+    const auto found = app->CpuModelFrames().find(model);
+    if (found == app->CpuModelFrames().end() || found->second->failed)
+        return nullptr;
+    auto& frame = *found->second;
+    auto& geometry = frame.geometry;
     // A previous arithmetic gate does not make an unverified new output ready
     // for drawing (for example if the legacy buffer cannot be locked).
-    frame.ready=false;
-    const auto& state=*mdl::Mdl(model);
-    if(state.physicsMode==2)SkinPmxDispatch(model,distance,opaque,geometry.AdditionalUvCount(),geometry.Edges().data(),geometry.MainData());
-    else SkinPmd(model,distance,geometry.Edges().data(),static_cast<mdl::SkinnedVertexBase*>(geometry.MainData()));
-    if(!geometry.Publish()){frame.failed=true;return nullptr;}
+    frame.ready = false;
+    const auto& state = *model;
+    if (state.physicsMode == 2)
+        SkinPmxDispatch(model, distance, opaque, geometry.AdditionalUvCount(),
+                        geometry.Edges().data(), geometry.MainData());
+    else
+        SkinPmd(model, distance, geometry.Edges().data(),
+                static_cast<mdl::SkinnedVertexBase*>(geometry.MainData()));
+    if (!geometry.Publish()) {
+        frame.failed = true;
+        return nullptr;
+    }
     // The accepted external audit covers this producer. Direct mode must not
     // require a native buffer read to publish its current CPU result.
-    if(AcceptedCpuInputRoute())frame.verified=frame.ready=true;
+    if (AcceptedCpuInputRoute())
+        frame.verified = frame.ready = true;
     return &frame;
 }
 bool CpuUploadAllowed(const ModelCpuFrame* frame) {
-    return frame && frame->verified && !frame->failed && CpuGeometryOption("MDS_RHI_CPU_GEOMETRY_UPLOAD");
+    return frame && frame->verified && !frame->failed &&
+           CpuGeometryOption("MDS_RHI_CPU_GEOMETRY_UPLOAD");
 }
-void CompleteCpuGeometry(MMDApp* app,unsigned char* model,ModelCpuFrame* frame,
-    const void* main,const void* edge,bool uploaded) {
-    if(!frame)return;
-    const auto& geometry=frame->geometry;
-    const auto different=[](const void* a,const void* b,std::size_t size){
-        auto* x=static_cast<const unsigned char*>(a);auto* y=static_cast<const unsigned char*>(b);
-        std::size_t count=0;for(std::size_t i=0;i<size;++i)count+=x[i]!=y[i];return count;
+void CompleteCpuGeometry(MMDApp* app, mdl::ModelRecord* model, ModelCpuFrame* frame,
+                         const void* main, const void* edge, bool uploaded) {
+    if (!frame)
+        return;
+    const auto& geometry = frame->geometry;
+    const auto different = [](const void* a, const void* b, std::size_t size) {
+        auto* x = static_cast<const unsigned char*>(a);
+        auto* y = static_cast<const unsigned char*>(b);
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < size; ++i)
+            count += x[i] != y[i];
+        return count;
     };
-    const bool direct=AcceptedCpuInputRoute();
-    const auto mainDiff=direct?0:different(main,geometry.MainData(),geometry.MainSize());
-    const auto edgeDiff=direct?0:different(edge,geometry.Edges().data(),geometry.Edges().size()*16);
-    frame->failed=mainDiff || edgeDiff;frame->verified=frame->ready=!frame->failed;++frame->frames;
+    const bool direct = AcceptedCpuInputRoute();
+    const auto mainDiff = direct ? 0 : different(main, geometry.MainData(), geometry.MainSize());
+    const auto edgeDiff =
+        direct ? 0 : different(edge, geometry.Edges().data(), geometry.Edges().size() * 16);
+    frame->failed = mainDiff || edgeDiff;
+    frame->verified = frame->ready = !frame->failed;
+    ++frame->frames;
     char directory[MAX_PATH]{};
-    const auto length=GetEnvironmentVariableA("MDS_RHI_CPU_GEOMETRY_DIR",directory,MAX_PATH);
-    if(!length || length>=MAX_PATH)return;
-    CreateDirectoryA(directory,nullptr);char path[MAX_PATH]{};
-    if(std::snprintf(path,sizeof(path),"%s\\cpu_geometry.csv",directory)>=MAX_PATH)return;
-    const bool fresh=GetFileAttributesA(path)==INVALID_FILE_ATTRIBUTES;
-    FILE* file=nullptr;if(fopen_s(&file,path,"a") || !file)return;
-    if(fresh)std::fputs("slot,frame,updates,vertices,stride,id,mainVersion,edgeVersion,mainDifferentBytes,edgeDifferentBytes,mode,playing\n",file);
-    int slot=-1;for(int i=0;i<kModelSlotCount;++i)if(app->ModelSlot(i)==model){slot=i;break;}
-    const auto& snapshot=geometry.Snapshot();
-    const auto* session=app->PortableSceneSession();
-    const int evaluatedFrame=session && session->Loaded()?static_cast<int>(session->Pose().frame):app->CurrentFrame();
-    std::fprintf(file,"%d,%d,%llu,%u,%u,%llu,%llu,%llu,%zu,%zu,%s,%u\n",slot,evaluatedFrame,
-        frame->frames,snapshot.vertexCount,32+16*snapshot.additionalUvCount,snapshot.main.key.id,
-        snapshot.main.key.version,snapshot.edge.key.version,mainDiff,edgeDiff,direct?"cpu_source":uploaded?"upload":"independent_compare",app->PlaybackActive()!=0);
+    const auto length = GetEnvironmentVariableA("MDS_RHI_CPU_GEOMETRY_DIR", directory, MAX_PATH);
+    if (!length || length >= MAX_PATH)
+        return;
+    CreateDirectoryA(directory, nullptr);
+    char path[MAX_PATH]{};
+    if (std::snprintf(path, sizeof(path), "%s\\cpu_geometry.csv", directory) >= MAX_PATH)
+        return;
+    const bool fresh = GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES;
+    FILE* file = nullptr;
+    if (fopen_s(&file, path, "a") || !file)
+        return;
+    if (fresh)
+        std::fputs(
+            "slot,frame,updates,vertices,stride,id,mainVersion,edgeVersion,mainDifferentBytes,edgeDifferentBytes,mode,playing\n",
+            file);
+    int slot = -1;
+    for (int i = 0; i < kModelSlotCount; ++i)
+        if (app->ModelSlot(i) == model) {
+            slot = i;
+            break;
+        }
+    const auto& snapshot = geometry.Snapshot();
+    const auto* session = app->PortableSceneSession();
+    const int evaluatedFrame = session && session->Loaded()
+                                   ? static_cast<int>(session->Pose().frame)
+                                   : app->CurrentFrame();
+    std::fprintf(file, "%d,%d,%llu,%u,%u,%llu,%llu,%llu,%zu,%zu,%s,%u\n", slot, evaluatedFrame,
+                 frame->frames, snapshot.vertexCount, 32 + 16 * snapshot.additionalUvCount,
+                 snapshot.main.key.id, snapshot.main.key.version, snapshot.edge.key.version,
+                 mainDiff, edgeDiff,
+                 direct     ? "cpu_source"
+                 : uploaded ? "upload"
+                            : "independent_compare",
+                 app->PlaybackActive() != 0);
     std::fclose(file);
 }
 
@@ -822,105 +783,127 @@ void CompleteCpuGeometry(MMDApp* app,unsigned char* model,ModelCpuFrame* frame,
 // A count above four matches no worker and the original leaves both
 // buffers untouched that frame. The frame edge scale is the same
 // camera-distance value the PMD path uses (x64 computes it once for both).
-void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model,
-                                 const float frameWorld[16]) {
-    mdl::ModelRecord& state = *mdl::Mdl(model);
+void UpdatePmxModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float frameWorld[16]) {
+    mdl::ModelRecord& state = *model;
     ApplyPmxVertexMorphs(model);
 
     const unsigned int additionalUv = state.pmxAdditionalUvCount;
     if (additionalUv > 4)
         return;
-    const bool hasCpu=app->CpuModelFrames().count(model)!=0;
-    const float cpuDistance=hasCpu?PmdEdgeDistance(app,model,(CpuScenePreviewRequested() || CpuGeometryOption("MDS_RHI_CPU_INPUTS")) && app->CpuRenderFrameReady()?app->CpuRenderFrame().world.data():frameWorld):0;
-    auto* cpu=hasCpu?ProduceCpuGeometry(app,model,cpuDistance,app->state.selfShadowEnabled!=0):nullptr;
-    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
-        state.vertexBuffer);
-    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
-        state.vertexBuffer2);
+    const bool hasCpu = app->CpuModelFrames().count(model) != 0;
+    const float cpuDistance = hasCpu ? PmdEdgeDistance(app, model,
+                                                       (CpuScenePreviewRequested() ||
+                                                        CpuGeometryOption("MDS_RHI_CPU_INPUTS")) &&
+                                                               app->CpuRenderFrameReady()
+                                                           ? app->CpuRenderFrame().world.data()
+                                                           : frameWorld)
+                                     : 0;
+    auto* cpu = hasCpu
+                    ? ProduceCpuGeometry(app, model, cpuDistance, app->state.selfShadowEnabled != 0)
+                    : nullptr;
+    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer);
+    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer2);
     if (mainVb == nullptr || edgeVb == nullptr)
         return;
     const UINT count = state.vertexCount;
     const UINT stride = 32 + 16 * additionalUv;
     mdl::SkinnedVertexBase* mainVertices = nullptr;
     mdl::EdgeVertex* edgeVertices = nullptr;
-    if (FAILED(mainVb->Lock(0, stride * count,
-                            reinterpret_cast<void**>(&mainVertices), 0)))
+    if (FAILED(mainVb->Lock(0, stride * count, reinterpret_cast<void**>(&mainVertices), 0)))
         return;
-    if (FAILED(edgeVb->Lock(0, 16 * count,
-                            reinterpret_cast<void**>(&edgeVertices), 0))) {
+    if (FAILED(edgeVb->Lock(0, 16 * count, reinterpret_cast<void**>(&edgeVertices), 0))) {
         mainVb->Unlock();
         return;
     }
 
-    const float edgeDistance = hasCpu?cpuDistance:PmdEdgeDistance(app, model, frameWorld);
+    const float edgeDistance = hasCpu ? cpuDistance : PmdEdgeDistance(app, model, frameWorld);
     const bool opaqueEdge = app->state.selfShadowEnabled != 0;
-    const bool uploaded=CpuUploadAllowed(cpu);
-    if(uploaded){
-        std::memcpy(mainVertices,cpu->geometry.MainData(),cpu->geometry.MainSize());
-        std::memcpy(edgeVertices,cpu->geometry.Edges().data(),count*16);
-    }else{
-        SkinPmxDispatch(model,edgeDistance,opaqueEdge,additionalUv,edgeVertices,mainVertices);
+    const bool uploaded = CpuUploadAllowed(cpu);
+    if (uploaded) {
+        std::memcpy(mainVertices, cpu->geometry.MainData(), cpu->geometry.MainSize());
+        std::memcpy(edgeVertices, cpu->geometry.Edges().data(), count * 16);
+    } else {
+        SkinPmxDispatch(model, edgeDistance, opaqueEdge, additionalUv, edgeVertices, mainVertices);
     }
-    CompleteCpuGeometry(app,model,cpu,mainVertices,edgeVertices,uploaded);
-    DumpModelVertexBuffers(app, model, mainVertices, edgeVertices, count,
-                           stride);
+    CompleteCpuGeometry(app, model, cpu, mainVertices, edgeVertices, uploaded);
+    DumpModelVertexBuffers(app, model, mainVertices, edgeVertices, count, stride);
     mainVb->Unlock();
     edgeVb->Unlock();
 }
 
-}  // namespace
+} // namespace
 
-void InitializeModelCpuGeometry(MMDApp* app,unsigned char* model,bool required) {
-    if(!app || !model)return;
+void InitializeModelCpuGeometry(MMDApp* app, mdl::ModelRecord* model, bool required) {
+    if (!app || !model)
+        return;
     app->CpuModelFrames().erase(model);
-    if(!required && !CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_GEOMETRY"))return;
-    const auto& state=*mdl::Mdl(model);const bool pmx=state.physicsMode==2;
-    const unsigned uv=pmx?state.pmxAdditionalUvCount:0;
-    if(!state.vertexCount || !state.indexCount || uv>4 || !state.indices ||
-       (pmx?!state.pmxVertices:!state.rawVertices))return;
-    const auto id=app->AllocateCpuGeometryIds();if(!id)return;
-    auto frame=std::make_unique<ModelCpuFrame>(id,state.vertexCount,uv);
-    auto& geometry=frame->geometry;auto* main=static_cast<unsigned char*>(geometry.MainData());
-    for(std::uint32_t i=0;i<state.vertexCount;++i){
-        auto* destination=main+std::size_t(i)*(32+16*uv);
-        if(pmx){
-            const auto& source=state.pmxVertices[i];std::memcpy(destination,source.position,32);
-            for(unsigned n=0;n<uv;++n)for(unsigned c=0;c<4;++c)
-                std::memcpy(destination+32+n*16+c*4,&source.additionalUvByComponent[c][n],4);
-            std::memcpy(geometry.Edges()[i].position,source.position,12);
-        }else{
-            std::memcpy(destination,&state.rawVertices[i],32);
-            std::memcpy(geometry.Edges()[i].position,state.rawVertices[i].position,12);
+    if (!required && !CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_GEOMETRY"))
+        return;
+    const auto& state = *model;
+    const bool pmx = state.physicsMode == 2;
+    const unsigned uv = pmx ? state.pmxAdditionalUvCount : 0;
+    if (!state.vertexCount || !state.indexCount || uv > 4 || !state.indices ||
+        (pmx ? !state.pmxVertices : !state.rawVertices))
+        return;
+    const auto id = app->AllocateCpuGeometryIds();
+    if (!id)
+        return;
+    auto frame = std::make_unique<ModelCpuFrame>(id, state.vertexCount, uv);
+    auto& geometry = frame->geometry;
+    auto* main = static_cast<unsigned char*>(geometry.MainData());
+    for (std::uint32_t i = 0; i < state.vertexCount; ++i) {
+        auto* destination = main + std::size_t(i) * (32 + 16 * uv);
+        if (pmx) {
+            const auto& source = state.pmxVertices[i];
+            std::memcpy(destination, source.position, 32);
+            for (unsigned n = 0; n < uv; ++n)
+                for (unsigned c = 0; c < 4; ++c)
+                    std::memcpy(destination + 32 + n * 16 + c * 4,
+                                &source.additionalUvByComponent[c][n], 4);
+            std::memcpy(geometry.Edges()[i].position, source.position, 12);
+        } else {
+            std::memcpy(destination, &state.rawVertices[i], 32);
+            std::memcpy(geometry.Edges()[i].position, state.rawVertices[i].position, 12);
         }
-        geometry.Edges()[i].diffuse=0xff000000u;
+        geometry.Edges()[i].diffuse = 0xff000000u;
     }
-    const bool wide=pmx && state.pmxVertexIndexSize>=4;
-    std::vector<std::uint8_t> indices(std::size_t(state.indexCount)*(wide?4:2));
-    for(std::uint32_t i=0;i<state.indexCount;++i){
-        const auto value=pmx?static_cast<std::uint32_t>(mdl::PmxIndices(model)[i]):mdl::Indices(model)[2*i];
-        if(value>=state.vertexCount || (!wide && value>0xffffu))return;
-        std::memcpy(indices.data()+std::size_t(i)*(wide?4:2),&value,wide?4:2);
+    const bool wide = pmx && state.pmxVertexIndexSize >= 4;
+    std::vector<std::uint8_t> indices(std::size_t(state.indexCount) * (wide ? 4 : 2));
+    for (std::uint32_t i = 0; i < state.indexCount; ++i) {
+        const auto value = static_cast<std::uint32_t>(state.indices[i]);
+        if (value >= state.vertexCount || (!wide && value > 0xffffu))
+            return;
+        std::memcpy(indices.data() + std::size_t(i) * (wide ? 4 : 2), &value, wide ? 4 : 2);
     }
-    if(!geometry.SetIndices(wide?rhi::IndexFormat::UInt32:rhi::IndexFormat::UInt16,indices.data(),indices.size()))return;
-    app->CpuModelFrames().emplace(model,std::move(frame));
+    if (!geometry.SetIndices(wide ? rhi::IndexFormat::UInt32 : rhi::IndexFormat::UInt16,
+                             indices.data(), indices.size()))
+        return;
+    app->CpuModelFrames().emplace(model, std::move(frame));
 }
 
-bool UpdateCpuOnlyModelGeometry(MMDApp* app,unsigned char* model,float edgeDistance,bool opaqueEdge) {
-    if(!app || !model || !std::isfinite(edgeDistance) || edgeDistance<0)return false;
-    const auto& state=*mdl::Mdl(model);
-    if(!state.loadComplete || !state.vertexCount)return false;
-    if(state.physicsMode==2)ApplyPmxVertexMorphs(model);else ApplyPmdVertexMorphs(model);
-    auto* frame=ProduceCpuGeometry(app,model,edgeDistance,opaqueEdge);
-    if(!frame)return false;
-    frame->ready=true;++frame->frames;
+bool UpdateCpuOnlyModelGeometry(MMDApp* app, mdl::ModelRecord* model, float edgeDistance,
+                                bool opaqueEdge) {
+    if (!app || !model || !std::isfinite(edgeDistance) || edgeDistance < 0)
+        return false;
+    const auto& state = *model;
+    if (!state.loadComplete || !state.vertexCount)
+        return false;
+    if (state.physicsMode == 2)
+        ApplyPmxVertexMorphs(model);
+    else
+        ApplyPmdVertexMorphs(model);
+    auto* frame = ProduceCpuGeometry(app, model, edgeDistance, opaqueEdge);
+    if (!frame)
+        return false;
+    frame->ready = true;
+    ++frame->frames;
     return true;
 }
 
-void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
-                              const float frameWorld[16]) {
+void UpdateModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float frameWorld[16]) {
     if (app == nullptr || model == nullptr || frameWorld == nullptr)
         return;
-    mdl::ModelRecord& state = *mdl::Mdl(model);
+    mdl::ModelRecord& state = *model;
     if (state.loadComplete == 0 || state.vertexCount == 0)
         return;
 
@@ -933,39 +916,42 @@ void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
     }
 
     ApplyPmdVertexMorphs(model);
-    const bool hasCpu=app->CpuModelFrames().count(model)!=0;
-    const float cpuDistance=hasCpu?PmdEdgeDistance(app,model,(CpuScenePreviewRequested() || CpuGeometryOption("MDS_RHI_CPU_INPUTS")) && app->CpuRenderFrameReady()?app->CpuRenderFrame().world.data():frameWorld):0;
-    auto* cpu=hasCpu?ProduceCpuGeometry(app,model,cpuDistance,false):nullptr;
-    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
-        state.vertexBuffer);
-    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
-        state.vertexBuffer2);
+    const bool hasCpu = app->CpuModelFrames().count(model) != 0;
+    const float cpuDistance = hasCpu ? PmdEdgeDistance(app, model,
+                                                       (CpuScenePreviewRequested() ||
+                                                        CpuGeometryOption("MDS_RHI_CPU_INPUTS")) &&
+                                                               app->CpuRenderFrameReady()
+                                                           ? app->CpuRenderFrame().world.data()
+                                                           : frameWorld)
+                                     : 0;
+    auto* cpu = hasCpu ? ProduceCpuGeometry(app, model, cpuDistance, false) : nullptr;
+    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer);
+    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer2);
     if (mainVb == nullptr || edgeVb == nullptr)
         return;
 
     const UINT count = state.vertexCount;
     mdl::SkinnedVertexBase* mainVertices = nullptr;
     mdl::EdgeVertex* edgeVertices = nullptr;
-    if (FAILED(mainVb->Lock(0, 32 * count,
-                            reinterpret_cast<void**>(&mainVertices), 0)))
+    if (FAILED(mainVb->Lock(0, 32 * count, reinterpret_cast<void**>(&mainVertices), 0)))
         return;
-    if (FAILED(edgeVb->Lock(0, 16 * count,
-                            reinterpret_cast<void**>(&edgeVertices), 0))) {
+    if (FAILED(edgeVb->Lock(0, 16 * count, reinterpret_cast<void**>(&edgeVertices), 0))) {
         mainVb->Unlock();
         return;
     }
 
-    const bool uploaded=CpuUploadAllowed(cpu);
-    if(uploaded){
-        std::memcpy(mainVertices,cpu->geometry.MainData(),cpu->geometry.MainSize());
-        std::memcpy(edgeVertices,cpu->geometry.Edges().data(),count*16);
-    }else{
-        SkinPmd(model,hasCpu?cpuDistance:PmdEdgeDistance(app,model,frameWorld),edgeVertices,mainVertices);
+    const bool uploaded = CpuUploadAllowed(cpu);
+    if (uploaded) {
+        std::memcpy(mainVertices, cpu->geometry.MainData(), cpu->geometry.MainSize());
+        std::memcpy(edgeVertices, cpu->geometry.Edges().data(), count * 16);
+    } else {
+        SkinPmd(model, hasCpu ? cpuDistance : PmdEdgeDistance(app, model, frameWorld), edgeVertices,
+                mainVertices);
     }
-    CompleteCpuGeometry(app,model,cpu,mainVertices,edgeVertices,uploaded);
+    CompleteCpuGeometry(app, model, cpu, mainVertices, edgeVertices, uploaded);
     DumpModelVertexBuffers(app, model, mainVertices, edgeVertices, count, 32);
     mainVb->Unlock();
     edgeVb->Unlock();
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

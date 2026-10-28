@@ -23,15 +23,9 @@
 //   * function bodies -> Hex-Rays decompilation via IDA (ground truth; the
 //     corpus under translated/MMDxShow/*.cpp was used as a cross-check only).
 //
-// PHASING
-//   Phase A (this file + dll_main.cpp + enumerators.cpp):
-//     - CClassFactory, CEnumPins, CEnumMediaTypes are FULLY implemented.
-//     - module state, exports, registration plumbing.
-//   Phase B (later agents, in their own .cpp files):
-//     - CBaseFilter / CSource / CPushSourceDIBSq
-//     - CAMThread / CBasePin / CBaseOutputPin / CSourceStream / CPushPinDIBSq
-//     All of their virtuals are DECLARED here but NOT defined; Phase B must
-//     provide the out-of-line definitions.
+// Implementations: dll_main.cpp and enumerators.cpp handle COM construction;
+// source_base.cpp, push_source.cpp and push_pin.cpp implement the filter.
+// Native class layouts remain pinned independently for both original ABIs.
 //
 // =============================================================================
 
@@ -45,8 +39,8 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstdlib>
-#include <strmif.h>     // IBaseFilter, IPin, IEnumPins, IEnumMediaTypes,
-                        // IFilterMapper, IFilterMapper2, REGFILTER2, ...
+#include <strmif.h> // IBaseFilter, IPin, IEnumPins, IEnumMediaTypes,
+                    // IFilterMapper, IFilterMapper2, REGFILTER2, ...
 
 #ifndef VFW_E_ENUM_OUT_OF_SYNC
 #define VFW_E_ENUM_OUT_OF_SYNC ((HRESULT)0x80040203L)
@@ -72,10 +66,9 @@ inline void MMDXTrace(const char* fmt, ...) {
 // -----------------------------------------------------------------------------
 #ifndef __IAMovieSetup_INTERFACE_DEFINED__
 #define __IAMovieSetup_INTERFACE_DEFINED__
-#undef  INTERFACE
+#undef INTERFACE
 #define INTERFACE IAMovieSetup
-DECLARE_INTERFACE_(IAMovieSetup, IUnknown)
-{
+DECLARE_INTERFACE_(IAMovieSetup, IUnknown) {
     STDMETHOD(Register)(THIS) PURE;
     STDMETHOD(Unregister)(THIS) PURE;
 };
@@ -90,16 +83,16 @@ DECLARE_INTERFACE_(IAMovieSetup, IUnknown)
 // AMOVIESETUP_FILTER blob at 0x100083C0.  Matches the EXE-side contract
 // document (IID 2F1713B8-DD1F-4186-93BE-FDA50BF687C7).
 // {2F1713B8-DD1F-4186-93BE-FDA50BF687C7}
-DEFINE_GUID(MMDXSHOW_CLSID_PushSourceDIBSq,
-    0x2f1713b8, 0xdd1f, 0x4186, 0x93, 0xbe, 0xfd, 0xa5, 0xb, 0xf6, 0x87, 0xc7);
+DEFINE_GUID(MMDXSHOW_CLSID_PushSourceDIBSq, 0x2f1713b8, 0xdd1f, 0x4186, 0x93, 0xbe, 0xfd, 0xa5, 0xb,
+            0xf6, 0x87, 0xc7);
 
 // --- the custom frame-push interface the MMD EXE talks to -------------------
 // .rdata 0x1000830C.  Matches the EXE-side contract document
 // (IID ECFAB031-72BA-4120-B9F7-8A3D5FD38DEC).
 // Second base of CPushSourceDIBSq at object offset +0x70; 5 methods.
 // {ECFAB031-72BA-4120-B9F7-8A3D5FD38DEC}
-DEFINE_GUID(MMDXSHOW_IID_IPushSource,
-    0xecfab031, 0x72ba, 0x4120, 0xb9, 0xf7, 0x8a, 0x3d, 0x5f, 0xd3, 0x8d, 0xec);
+DEFINE_GUID(MMDXSHOW_IID_IPushSource, 0xecfab031, 0x72ba, 0x4120, 0xb9, 0xf7, 0x8a, 0x3d, 0x5f,
+            0xd3, 0x8d, 0xec);
 
 // --- ActiveMovie-1.0-era IID_IEnumMediaTypes --------------------------------
 // .rdata 0x10008620.  NOTE: this is NOT the modern DirectShow
@@ -107,8 +100,8 @@ DEFINE_GUID(MMDXSHOW_IID_IPushSource,
 // against old ActiveMovie headers and CEnumMediaTypes::QueryInterface
 // compares against THIS value only.  Kept bit-faithful.
 // {89C31040-846B-11CE-97D3-00AA0055595A}
-DEFINE_GUID(MMDXSHOW_IID_IEnumMediaTypes,
-    0x89c31040, 0x846b, 0x11ce, 0x97, 0xd3, 0x0, 0xaa, 0x0, 0x55, 0x59, 0x5a);
+DEFINE_GUID(MMDXSHOW_IID_IEnumMediaTypes, 0x89c31040, 0x846b, 0x11ce, 0x97, 0xd3, 0x0, 0xaa, 0x0,
+            0x55, 0x59, 0x5a);
 
 // The remaining GUIDs used by the registration path are the standard
 // CLSID_FilterMapper2 {CDA42200-...} / IID_IFilterMapper2 {B79BB0B0-...} /
@@ -124,11 +117,11 @@ DEFINE_GUID(MMDXSHOW_IID_IEnumMediaTypes,
 // .data 0x1000B2FC ("Addend").  Object/module reference count.
 // Incremented by every CClassFactory/CUnknown-ish construction
 // (0x10004F80: InterlockedIncrement), decremented in 0x10004FA0.
-extern LONG  g_cModuleRef;
+extern LONG g_cModuleRef;
 
 // .data 0x1000B3A4.  IClassFactory::LockServer(TRUE/FALSE) counter
 // (plain ++/--, NOT interlocked — faithful to 0x100058D0).
-extern LONG  g_cServerLocks;
+extern LONG g_cServerLocks;
 
 // .data 0x1000B310.  Instance handle stored by DllMain (0x10005930);
 // used by DllRegisterServer's GetModuleFileNameA.
@@ -148,8 +141,8 @@ extern OSVERSIONINFOA g_osVer;
 extern HMODULE g_hOle32Lib;
 
 // --- module lock helpers (0x10004F80 / 0x10004FA0) --------------------------
-void MMDxShow_LockModule(void);     // InterlockedIncrement(&g_cModuleRef)
-void MMDxShow_UnlockModule(void);   // InterlockedDecrement + FreeLibrary shim
+void MMDxShow_LockModule(void);   // InterlockedIncrement(&g_cModuleRef)
+void MMDxShow_UnlockModule(void); // InterlockedDecrement + FreeLibrary shim
 
 // 0x10001000 — 16-byte comparator used everywhere the original compares
 // IIDs/CLSIDs.  Returns nonzero when the two GUIDs are EQUAL (the "lexicographic
@@ -170,8 +163,8 @@ HRESULT MMDxShow_ReturnSelf(void* pSelf, void** ppv);
 // (InitMediaType/FreeMediaType are defined in enumerators.cpp — Phase A —
 //  because the enumerators need them; Phase B code reuses them.)
 // =============================================================================
-void    MMDxShow_InitMediaType(AM_MEDIA_TYPE* pmt);
-void    MMDxShow_FreeMediaType(AM_MEDIA_TYPE* pmt);
+void MMDxShow_InitMediaType(AM_MEDIA_TYPE* pmt);
+void MMDxShow_FreeMediaType(AM_MEDIA_TYPE* pmt);
 HRESULT MMDxShow_CopyMediaType(AM_MEDIA_TYPE* pmtDst, const AM_MEDIA_TYPE* pmtSrc);
 
 // =============================================================================
@@ -179,23 +172,21 @@ HRESULT MMDxShow_CopyMediaType(AM_MEDIA_TYPE* pmtDst, const AM_MEDIA_TYPE* pmtSr
 // =============================================================================
 
 // 0x10008394 : { &MEDIATYPE_Video (0x10008720), &GUID_NULL (0x100089EC) }
-struct MMDXSHOW_MEDIATYPE_SETUP
-{
-    const CLSID* clsMajorType;  // 0x10008720 MEDIATYPE_Video
-    const CLSID* clsSubType;    // 0x100089EC GUID_NULL (unspecified)
+struct MMDXSHOW_MEDIATYPE_SETUP {
+    const CLSID* clsMajorType; // 0x10008720 MEDIATYPE_Video
+    const CLSID* clsSubType;   // 0x100089EC GUID_NULL (unspecified)
 };
 
 // 0x1000839C (36 bytes — identical layout to AMOVIESETUP_PIN / REGFILTERPINS)
-struct MMDXSHOW_PIN_SETUP
-{
-    const WCHAR* strName;               // 0x10008374 L"Output"
-    BOOL         bRendered;             // FALSE
-    BOOL         bOutput;               // TRUE
-    BOOL         bZero;                 // FALSE
-    BOOL         bMany;                 // FALSE
-    const CLSID* clsConnectsToFilter;   // 0x100089EC GUID_NULL
-    const WCHAR* strConnectsToPin;      // NULL
-    UINT         nMediaTypes;           // 1
+struct MMDXSHOW_PIN_SETUP {
+    const WCHAR* strName;                        // 0x10008374 L"Output"
+    BOOL bRendered;                              // FALSE
+    BOOL bOutput;                                // TRUE
+    BOOL bZero;                                  // FALSE
+    BOOL bMany;                                  // FALSE
+    const CLSID* clsConnectsToFilter;            // 0x100089EC GUID_NULL
+    const WCHAR* strConnectsToPin;               // NULL
+    UINT nMediaTypes;                            // 1
     const MMDXSHOW_MEDIATYPE_SETUP* lpMediaType; // 0x10008394
 };
 
@@ -203,12 +194,11 @@ struct MMDXSHOW_PIN_SETUP
 // (which lacks a name member); the original defined its own struct with the
 // friendly name at [1].  RegisterFilterMapper2 (0x100055F0) builds a REGFILTER2
 // {1, dwMerit, nPins, lpPin} from fields [2..4] of this struct.
-struct MMDXSHOW_FILTER_SETUP
-{
-    const CLSID*      clsID;    // 0x10008384 {2F1713B8-...}
-    const WCHAR*      szName;   // 0x10008328 L"PushSource DIBBitmap Sequence Filter"
-    DWORD             dwMerit;  // 0x00200000
-    UINT              nPins;    // 1
+struct MMDXSHOW_FILTER_SETUP {
+    const CLSID* clsID;              // 0x10008384 {2F1713B8-...}
+    const WCHAR* szName;             // 0x10008328 L"PushSource DIBBitmap Sequence Filter"
+    DWORD dwMerit;                   // 0x00200000
+    UINT nPins;                      // 1
     const MMDXSHOW_PIN_SETUP* lpPin; // 0x1000839C
 };
 
@@ -224,16 +214,15 @@ typedef CUnknown* (*MMDXSHOW_LPNEWCOMOBJECT)(LPUNKNOWN pUnkOuter, HRESULT* phr);
 CUnknown* MMDxShow_NewPushSourceDIBSq(LPUNKNOWN pUnkOuter, HRESULT* phr);
 
 // 0x1000B208 — g_Templates; 0x1000B21C — g_cTemplates (= 1)
-struct CFactoryTemplate
-{
-    const WCHAR*              m_Name;                 // 0x1000B208 -> 0x10008328
-    const CLSID*              m_ClsID;                // 0x1000B20C -> 0x10008384
-    MMDXSHOW_LPNEWCOMOBJECT   m_lpfnNew;              // 0x1000B210 -> 0x10001B70
+struct CFactoryTemplate {
+    const WCHAR* m_Name;                                    // 0x1000B208 -> 0x10008328
+    const CLSID* m_ClsID;                                   // 0x1000B20C -> 0x10008384
+    MMDXSHOW_LPNEWCOMOBJECT m_lpfnNew;                      // 0x1000B210 -> 0x10001B70
     void (*m_lpfnInit)(BOOL bLoading, const CLSID* rclsid); // 0x1000B214 -> NULL
     const MMDXSHOW_FILTER_SETUP* m_pAMovieSetup_Filter;     // 0x1000B218 -> 0x100083C0
 };
 extern const CFactoryTemplate g_Templates[1];
-extern const int              g_cTemplates;
+extern const int g_cTemplates;
 
 // =============================================================================
 // Class hierarchy (exactly as the RTTI says)
@@ -280,12 +269,12 @@ extern const int              g_cTemplates;
 // The vtable at object offset +0x00 of every filter/pin IS this interface plus
 // whatever virtuals the derived classes append.
 // -----------------------------------------------------------------------------
-class INonDelegatingUnknown
-{
+class INonDelegatingUnknown {
 public:
-    virtual HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid, void** ppv) = 0;  // +0x00
-    virtual ULONG   STDMETHODCALLTYPE NonDelegatingAddRef()  = 0;                               // +0x04
-    virtual ULONG   STDMETHODCALLTYPE NonDelegatingRelease() = 0;                               // +0x08
+    virtual HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid,
+                                                                  void** ppv) = 0; // +0x00
+    virtual ULONG STDMETHODCALLTYPE NonDelegatingAddRef() = 0;                     // +0x04
+    virtual ULONG STDMETHODCALLTYPE NonDelegatingRelease() = 0;                    // +0x08
 };
 
 // -----------------------------------------------------------------------------
@@ -301,19 +290,18 @@ public:
 //   re-increments to 1 before invoking the deleting dtor on zero).  Derived
 //   classes override QI only (filter 0x10002790, pin 0x10002DC0).
 // -----------------------------------------------------------------------------
-class CUnknown : public INonDelegatingUnknown
-{
+class CUnknown : public INonDelegatingUnknown {
 public:
-    virtual HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid, void** ppv);  // +0x00
-    virtual ULONG   STDMETHODCALLTYPE NonDelegatingAddRef();   // +0x04 0x10005080
-    virtual ULONG   STDMETHODCALLTYPE NonDelegatingRelease();  // +0x08 0x100050A0
-    virtual ~CUnknown();                                       // vtable +0x0C
+    virtual HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid, void** ppv); // +0x00
+    virtual ULONG STDMETHODCALLTYPE NonDelegatingAddRef();  // +0x04 0x10005080
+    virtual ULONG STDMETHODCALLTYPE NonDelegatingRelease(); // +0x08 0x100050A0
+    virtual ~CUnknown();                                    // vtable +0x0C
 protected:
     CUnknown(const char* /*pName*/, LPUNKNOWN pUnkOuter)
-        : m_pOuterUnknown(pUnkOuter ? pUnkOuter : (LPUNKNOWN)(INonDelegatingUnknown*)this)
-        , m_cRef(0) {}
-    LPUNKNOWN m_pOuterUnknown;   // object +0x04
-    LONG      m_cRef;            // object +0x08 (interlocked)
+        : m_pOuterUnknown(pUnkOuter ? pUnkOuter : (LPUNKNOWN)(INonDelegatingUnknown*)this),
+          m_cRef(0) {}
+    LPUNKNOWN m_pOuterUnknown; // object +0x04
+    LONG m_cRef;               // object +0x08 (interlocked)
 };
 
 // -----------------------------------------------------------------------------
@@ -347,51 +335,51 @@ protected:
 //                                    returns m_ppPins[n]+0x48 == CBasePin subobj)
 //     +0x20  GetSetupData                            0x100011D0  (returns NULL)
 // -----------------------------------------------------------------------------
-class CBaseFilter : public CUnknown, public IBaseFilter, public IAMovieSetup
-{
+class CBaseFilter : public CUnknown, public IBaseFilter, public IAMovieSetup {
 public:
     // --- primary (INonDelegatingUnknown) vtable, continued ---
     // StreamTime — was Filter_v10_StreamTime (primary vtable +0x10).  strmbase
     // spells it StreamTime(CRefTime&); the binary ABI is the same single
     // pointer argument (retn 4) to the 64-bit time cell.
-    virtual HRESULT StreamTime(REFERENCE_TIME* prtStream);   // +0x10  0x100028B0
-    virtual LONG    GetPinVersion();                         // +0x14  0x10002AB0
-    virtual int     GetPinCount() = 0;                       // +0x18  CSource 0x10002090
-    virtual class CBasePin* GetPin(int n) = 0;               // +0x1C  CSource 0x100020B0
+    virtual HRESULT StreamTime(REFERENCE_TIME* prtStream); // +0x10  0x100028B0
+    virtual LONG GetPinVersion();                          // +0x14  0x10002AB0
+    virtual int GetPinCount() = 0;                         // +0x18  CSource 0x10002090
+    virtual class CBasePin* GetPin(int n) = 0;             // +0x1C  CSource 0x100020B0
     // GetSetupData — was Filter_v20 (primary vtable +0x20).  strmbase:
     // virtual LPAMOVIESETUP_FILTER GetSetupData(); the 0x100011D0 stub is
     // `xor eax,eax; ret` -> NULL, so Register/Unregister take the S_FALSE path.
-    virtual const MMDXSHOW_FILTER_SETUP* GetSetupData();     // +0x20  0x100011D0
+    virtual const MMDXSHOW_FILTER_SETUP* GetSetupData(); // +0x20  0x100011D0
 
     // --- IBaseFilter overrides (sub-vtable at object +0x0C, canonical) ---
     // Delegating IUnknown for the IBaseFilter/IAMovieSetup branches
     // (binary: per-branch small forwards 0x10001180/0x10001710/0x100011A0).
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv);
-    ULONG   STDMETHODCALLTYPE AddRef();
-    ULONG   STDMETHODCALLTYPE Release();
-    STDMETHOD(GetClassID)(CLSID* pClassID);                  // 0x10002860
-    STDMETHOD(Stop)();                                       // 0x100037A0
-    STDMETHOD(Pause)();                                      // 0x10003850
-    STDMETHOD(Run)(REFERENCE_TIME tStart);                   // 0x10003910
-    STDMETHOD(GetState)(DWORD dwMillis, FILTER_STATE* pState); // 0x10002890
-    STDMETHOD(SetSyncSource)(IReferenceClock* pClock);       // 0x10003680
-    STDMETHOD(GetSyncSource)(IReferenceClock** ppClock);     // 0x10003700
-    STDMETHOD(EnumPins)(IEnumPins** ppEnum);                 // 0x10004A10
-    STDMETHOD(FindPin)(LPCWSTR Id, IPin** ppPin);            // 0x10001CA0
-    STDMETHOD(QueryFilterInfo)(FILTER_INFO* pInfo);          // 0x100028F0
+    ULONG STDMETHODCALLTYPE AddRef();
+    ULONG STDMETHODCALLTYPE Release();
+    STDMETHOD(GetClassID)(CLSID* pClassID);                          // 0x10002860
+    STDMETHOD(Stop)();                                               // 0x100037A0
+    STDMETHOD(Pause)();                                              // 0x10003850
+    STDMETHOD(Run)(REFERENCE_TIME tStart);                           // 0x10003910
+    STDMETHOD(GetState)(DWORD dwMillis, FILTER_STATE* pState);       // 0x10002890
+    STDMETHOD(SetSyncSource)(IReferenceClock* pClock);               // 0x10003680
+    STDMETHOD(GetSyncSource)(IReferenceClock** ppClock);             // 0x10003700
+    STDMETHOD(EnumPins)(IEnumPins** ppEnum);                         // 0x10004A10
+    STDMETHOD(FindPin)(LPCWSTR Id, IPin** ppPin);                    // 0x10001CA0
+    STDMETHOD(QueryFilterInfo)(FILTER_INFO* pInfo);                  // 0x100028F0
     STDMETHOD(JoinFilterGraph)(IFilterGraph* pGraph, LPCWSTR pName); // 0x10002950
-    STDMETHOD(QueryVendorInfo)(LPWSTR* pVendorInfo);         // 0x10002A60
+    STDMETHOD(QueryVendorInfo)(LPWSTR* pVendorInfo);                 // 0x10002A60
 
     // --- IAMovieSetup overrides (sub-vtable at object +0x10) ---
-    STDMETHOD(Register)();                                   // 0x10003A10
-    STDMETHOD(Unregister)();                                 // 0x10003A80
+    STDMETHOD(Register)();   // 0x10003A10
+    STDMETHOD(Unregister)(); // 0x10003A80
 
     // --- NonDelegating QI override (primary +0x00) ---
-    HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid, void** ppv) override; // 0x10002790
+    HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid,
+                                                          void** ppv) override; // 0x10002790
 
 protected:
-    CBaseFilter(const char* pName, LPUNKNOWN pUnkOuter)
-        : CUnknown(pName, pUnkOuter) {}
+    CBaseFilter(const char* pName, LPUNKNOWN pUnkOuter) : CUnknown(pName, pUnkOuter) {}
+
 public:
     // Data members — byte layout pinned to the original 0x100049B0 ctor:
     //   +0x14 state, +0x18 clock, +0x20 tStart(8), +0x28 CLSID INLINE (16
@@ -409,19 +397,19 @@ public:
     //  EnterCriticalSection on a NULL pLock. public so the offsetof
     //  static_asserts below compile; the pin also locks m_CritSec across
     //  classes like the original.)
-    FILTER_STATE     m_State;        // +0x14 / x64 +0x28
-    IReferenceClock* m_pClock;       // +0x18 / x64 +0x30
-    REFERENCE_TIME   m_tStart;       // +0x20 (8 bytes; compiler pads +0x1C) / x64 +0x38
-    CLSID            m_clsid;        // +0x28 (16 bytes, by value) / x64 +0x40
-    void*            m_pLockSlot;    // +0x38 (ctor stores &m_CritSec here) / x64 +0x50
-    WCHAR*           m_pName;        // +0x3C / x64 +0x58
-    IFilterGraph*    m_pGraph;       // +0x40 / x64 +0x60
-    IUnknown*        m_pEventSink;   // +0x44 / x64 +0x68
-    LONG             m_PinVersion;   // +0x48 (ctor inits 1) / x64 +0x70
-    int              m_pad4C;        // +0x4C (unidentified) / x64 pad at +0x74
-    int              m_cPins;        // +0x50 / x64 +0x78
-    class CSourceStream** m_ppPins;  // +0x54 / x64 +0x80
-    CRITICAL_SECTION m_CritSec;      // +0x58 (24 bytes) / x64 +0x88 (40 bytes)
+    FILTER_STATE m_State;           // +0x14 / x64 +0x28
+    IReferenceClock* m_pClock;      // +0x18 / x64 +0x30
+    REFERENCE_TIME m_tStart;        // +0x20 (8 bytes; compiler pads +0x1C) / x64 +0x38
+    CLSID m_clsid;                  // +0x28 (16 bytes, by value) / x64 +0x40
+    CRITICAL_SECTION* m_pLockSlot;  // +0x38 (ctor stores &m_CritSec here) / x64 +0x50
+    WCHAR* m_pName;                 // +0x3C / x64 +0x58
+    IFilterGraph* m_pGraph;         // +0x40 / x64 +0x60
+    IUnknown* m_pEventSink;         // +0x44 / x64 +0x68
+    LONG m_PinVersion;              // +0x48 (ctor inits 1) / x64 +0x70
+    int m_pad4C;                    // +0x4C (unidentified) / x64 pad at +0x74
+    int m_cPins;                    // +0x50 / x64 +0x78
+    class CSourceStream** m_ppPins; // +0x54 / x64 +0x80
+    CRITICAL_SECTION m_CritSec;     // +0x58 (24 bytes) / x64 +0x88 (40 bytes)
 };
 
 // -----------------------------------------------------------------------------
@@ -430,16 +418,17 @@ public:
 //   separate RTTI COLs 0x100092B4/0x100092C8/0x100092DC).  sizeof(CSource) ==
 //   0x70 (CPushSourceDIBSq is 0x78 with IPushSource's vptr at +0x70).
 // -----------------------------------------------------------------------------
-class CSource : public CBaseFilter
-{
+class CSource : public CBaseFilter {
 public:
-    CSource(const char* pName, LPUNKNOWN pUnkOuter, const CLSID* pClsID); // 0x10001E90 -> CBaseFilter 0x100049B0(name, punk, critsec, clsid)
-    virtual ~CSource();                                      // +0x0C 0x10002750
+    CSource(
+        const char* pName, LPUNKNOWN pUnkOuter,
+        const CLSID* pClsID); // 0x10001E90 -> CBaseFilter 0x100049B0(name, punk, critsec, clsid)
+    virtual ~CSource();       // +0x0C 0x10002750
     // primary vtable overrides:
-    int  GetPinCount() override;                             // +0x18 0x10002090
-    CBasePin* GetPin(int n) override;                        // +0x1C 0x100020B0
+    int GetPinCount() override;       // +0x18 0x10002090
+    CBasePin* GetPin(int n) override; // +0x1C 0x100020B0
     // pin-array management used by CSourceStream (Phase B, source_base.cpp)
-    void AddPin(CSourceStream* pPin);                        // part of 0x10001A70/ctor chain
+    void AddPin(CSourceStream* pPin); // part of 0x10001A70/ctor chain
     void RemovePin(CSourceStream* pPin);
 };
 
@@ -462,7 +451,8 @@ static_assert(offsetof(CSource, m_cPins) == 0x78, "m_cPins");
 static_assert(offsetof(CSource, m_ppPins) == 0x80, "m_ppPins");
 static_assert(offsetof(CSource, m_CritSec) == 0x88, "m_CritSec");
 #elif defined(_M_IX86)
-static_assert(sizeof(CSource) == 0x70, "CSource layout must match operator new(0x70) at 0x10001B70");
+static_assert(sizeof(CSource) == 0x70,
+              "CSource layout must match operator new(0x70) at 0x10001B70");
 // CBaseFilter member offsets pinned to the original 0x100049B0 ctor (the
 // class-incomplete rule keeps these out of the class body).
 static_assert(offsetof(CSource, m_State) == 0x14, "m_State");
@@ -494,21 +484,26 @@ static_assert(offsetof(CSource, m_CritSec) == 0x58, "m_CritSec");
 //     +0x18 0x10001840 — corpus name: BeginStreaming
 //     +0x1C 0x10001880 — writes *pRate = 1.02 (double) when not streaming
 // -----------------------------------------------------------------------------
-interface IPushSource : public IUnknown
-{
+interface IPushSource : public IUnknown {
     // (+0x00..+0x08 QI/AddRef/Release are per-class forwards:
     //  CPushSourceDIBSq provides 0x10001930/0x10001910/0x10001940.)
-    virtual HRESULT STDMETHODCALLTYPE SetBitmapInfo(const void* pBitmapInfo, int n, float fps) = 0;  // 0x10001730 (retn 0x10) — was PushSource_v0C_SetBitmapInfo
-    virtual HRESULT STDMETHODCALLTYPE GetStreamingState(void* pState) = 0;                           // 0x100017D0 — was PushSource_v10_GetStreamingState
+    virtual HRESULT STDMETHODCALLTYPE SetBitmapInfo(
+        const void* pBitmapInfo, int n,
+        float fps) = 0; // 0x10001730 (retn 0x10) — was PushSource_v0C_SetBitmapInfo
+    virtual HRESULT STDMETHODCALLTYPE GetStreamingState(
+        void* pState) = 0; // 0x100017D0 — was PushSource_v10_GetStreamingState
     // StartStreaming's parameter is the EXE's frame-bits pointer: DWORD on
     // the x86 ABI, a full 8-byte store in the x64 rebuild (DWORD_PTR covers
     // both).  Stored verbatim at the pin's frame-bits slot.
-    virtual HRESULT STDMETHODCALLTYPE StartStreaming(DWORD_PTR dwBits) = 0;                          // 0x10001800 — was PushSource_v14_StartStreaming
-    virtual HRESULT STDMETHODCALLTYPE BeginStreaming(void) = 0;                                      // 0x10001840 — was PushSource_v18_BeginStreaming
-    virtual HRESULT STDMETHODCALLTYPE GetRate(float* pRate) = 0;                                     // 0x10001880 (fstp dword, 1.02f) — was PushSource_v1C_GetRate
+    virtual HRESULT STDMETHODCALLTYPE StartStreaming(
+        DWORD_PTR dwBits) = 0; // 0x10001800 — was PushSource_v14_StartStreaming
+    virtual HRESULT STDMETHODCALLTYPE BeginStreaming(
+        void) = 0; // 0x10001840 — was PushSource_v18_BeginStreaming
+    virtual HRESULT STDMETHODCALLTYPE GetRate(
+        float* pRate) = 0; // 0x10001880 (fstp dword, 1.02f) — was PushSource_v1C_GetRate
 };
 
-class CPushPinDIBSq;   // forward: parked-pin member below
+class CPushPinDIBSq; // forward: parked-pin member below
 
 // -----------------------------------------------------------------------------
 // CPushSourceDIBSq : CSource, IPushSource              (Phase B)
@@ -517,18 +512,17 @@ class CPushPinDIBSq;   // forward: parked-pin member below
 //   0x180001A60).  The class factory serves CLSID 2F1713B8-... via
 //   g_Templates[0].m_lpfnNew -> MMDxShow_NewPushSourceDIBSq.
 // -----------------------------------------------------------------------------
-class CPushSourceDIBSq : public CSource, public IPushSource
-{
+class CPushSourceDIBSq : public CSource, public IPushSource {
 public:
-    CPushSourceDIBSq(LPUNKNOWN pUnkOuter, HRESULT* phr);     // TODO(phase B) 0x10001A70
-    virtual ~CPushSourceDIBSq();                             // +0x0C 0x10001B50
+    CPushSourceDIBSq(LPUNKNOWN pUnkOuter, HRESULT* phr); // TODO(phase B) 0x10001A70
+    virtual ~CPushSourceDIBSq();                         // +0x0C 0x10001B50
     // NonDelegating QI override (primary +0x00, 0x100018B0):
     // IID_IPushSource -> ReturnSelf(this+0x70); else CBaseFilter's.
     HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid, void** ppv) override;
     // IPushSource delegating IUnknown (0x10001930/0x10001910/0x10001940)
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv);
-    ULONG   STDMETHODCALLTYPE AddRef();
-    ULONG   STDMETHODCALLTYPE Release();
+    ULONG STDMETHODCALLTYPE AddRef();
+    ULONG STDMETHODCALLTYPE Release();
     // IPushSource (declared above) — Phase B defines:
     STDMETHODIMP SetBitmapInfo(const void* pBitmapInfo, int n, float fps) override;
     STDMETHODIMP GetStreamingState(void* pState) override;
@@ -536,7 +530,7 @@ public:
     STDMETHODIMP BeginStreaming(void) override;
     STDMETHODIMP GetRate(float* pRate) override;
     // member: the parked pin (ctor 0x10001A70)
-    CPushPinDIBSq* m_pPin;                                   // +0x74 / x64 +0xB8
+    CPushPinDIBSq* m_pPin; // +0x74 / x64 +0xB8
 };
 #if defined(_M_X64)
 static_assert(sizeof(CPushSourceDIBSq) == 0xC0, "x64 filter layout must match operator new(0xC0)");
@@ -572,29 +566,34 @@ static_assert(sizeof(CPushSourceDIBSq) == 0x78, "filter layout must match operat
 //   x64 (ctor 0x180006080): +0x08/+0x10 events, +0x18/+0x1C params,
 //   +0x20 hThread, +0x28/+0x50 critsecs (40B each) => 0x78.
 // -----------------------------------------------------------------------------
-class CAMThread
-{
+class CAMThread {
+    friend struct MMDxShowStateAccess;
+
 public:
-    virtual DWORD ThreadProc();                              // +0x00 0x10002570
-    virtual ~CAMThread();                                    // +0x04 per-class
-    virtual HRESULT FillBuffer(IMediaSample* pSample) = 0;   // +0x08
-    virtual DWORD  OnThreadInit();                           // +0x0C 0x100011D0 (was CamThread_v0C; name inferred from the ThreadProc call site — no strmbase counterpart survives)
-    virtual DWORD  OnThreadExit();                           // +0x10 0x100011D0 (was CamThread_v10; name inferred from the ThreadProc call site)
-    virtual DWORD  OnLoopEnter();                            // +0x14 0x100011D0 (was CamThread_v14; name inferred from the DoBufferProcessingLoop call site)
-    virtual DWORD  DoBufferProcessingLoop();                 // +0x18 0x10002630 (was CamThread_v18; strmbase CSourceStream name)
+    virtual DWORD ThreadProc();                            // +0x00 0x10002570
+    virtual ~CAMThread();                                  // +0x04 per-class
+    virtual HRESULT FillBuffer(IMediaSample* pSample) = 0; // +0x08
+    virtual DWORD
+    OnThreadInit(); // +0x0C 0x100011D0 (was CamThread_v0C; name inferred from the ThreadProc call site — no strmbase counterpart survives)
+    virtual DWORD
+    OnThreadExit(); // +0x10 0x100011D0 (was CamThread_v10; name inferred from the ThreadProc call site)
+    virtual DWORD
+    OnLoopEnter(); // +0x14 0x100011D0 (was CamThread_v14; name inferred from the DoBufferProcessingLoop call site)
+    virtual DWORD
+    DoBufferProcessingLoop(); // +0x18 0x10002630 (was CamThread_v18; strmbase CSourceStream name)
     // (+0x1C GetMediaType(CMediaType*) is introduced by CSourceStream because
     //  CBasePin::GetMediaType dispatches it through the CAMThread-root vtable.)
     // thread API (Phase B, source_base.cpp): GetRequest 0x10005E80 /
     // CheckRequest / Reply 0x10005ED0 / CallWorker / CreateThread / Close
 protected:
     CAMThread();
-    HANDLE m_hEventSend;      // +0x04 (auto-reset; waited by GetRequest) / x64 +0x08
-    HANDLE m_hEventReply;     // +0x08 / x64 +0x10
-    DWORD  m_uParam;          // +0x0C (read by GetRequest) / x64 +0x18
-    DWORD  m_uReply;          // +0x10 / x64 +0x1C
-    HANDLE m_hThread;         // +0x14 / x64 +0x20
-    CRITICAL_SECTION m_CritSecSend;   // +0x18 (24 bytes) / x64 +0x28 (40 bytes)
-    CRITICAL_SECTION m_CritSecReply;  // +0x30 (24 bytes) / x64 +0x50 (40 bytes)
+    HANDLE m_hEventSend;             // +0x04 (auto-reset; waited by GetRequest) / x64 +0x08
+    HANDLE m_hEventReply;            // +0x08 / x64 +0x10
+    DWORD m_uParam;                  // +0x0C (read by GetRequest) / x64 +0x18
+    DWORD m_uReply;                  // +0x10 / x64 +0x1C
+    HANDLE m_hThread;                // +0x14 / x64 +0x20
+    CRITICAL_SECTION m_CritSecSend;  // +0x18 (24 bytes) / x64 +0x28 (40 bytes)
+    CRITICAL_SECTION m_CritSecReply; // +0x30 (24 bytes) / x64 +0x50 (40 bytes)
 };
 #if defined(_M_X64)
 static_assert(sizeof(CAMThread) == 0x78, "x64 CAMThread layout must match the VC10 rebuild");
@@ -656,76 +655,87 @@ static_assert(sizeof(CAMThread) == 0x48, "CAMThread layout must match the binary
 //   IQualityControl vtable @0x1000817C: QI/AddRef/Release
 //     (0x10001920/0x10001900/0x10002740), SetSink 0x100011E0, Notify 0x10003050.
 // -----------------------------------------------------------------------------
-class CBasePin : public CUnknown, public IPin, public IQualityControl
-{
+class CBasePin : public CUnknown, public IPin, public IQualityControl {
+    friend struct MMDxShowStateAccess;
+
 public:
     // --- primary (INonDelegatingUnknown) vtable, continued ---
-    virtual LONG    GetMediaTypeVersion();                                  // +0x10 0x10003030
+    virtual LONG GetMediaTypeVersion(); // +0x10 0x10003030
     // Active — was mislabeled CheckConnect (vtable +0x14).  CBaseFilter::Pause
     // dispatches this slot with NO stack argument (ret 0): allocator commit +
     // worker-thread start.  strmbase: CBasePin::Active(void).
-    virtual HRESULT Active();                                               // +0x14 0x10002370
+    virtual HRESULT Active(); // +0x14 0x10002370
     // Inactive — was mislabeled BreakConnect (vtable +0x18).  Dispatched by
     // CBaseFilter::Stop (ret 0): allocator decommit + worker park.
-    virtual HRESULT Inactive();                                             // +0x18 0x100024B0
+    virtual HRESULT Inactive(); // +0x18 0x100024B0
     // Run — was mislabeled CompleteConnect (vtable +0x1C).  CBaseFilter::Run
     // forwards tStart here; the 5-byte default body 0x10003040 ignores it
     // (`xor eax,eax; ret 8` — one 64-bit argument, matching REFERENCE_TIME).
-    virtual HRESULT Run(REFERENCE_TIME tStart);                             // +0x1C 0x10003040
-    virtual HRESULT CheckMediaType(const AM_MEDIA_TYPE* pmt) = 0;           // +0x20 (derived: 0x100021E0/0x10001430)
-    virtual HRESULT SetMediaType(const AM_MEDIA_TYPE* pmt);                 // +0x24 0x10002E90 (was Pin_v24)
+    virtual HRESULT Run(REFERENCE_TIME tStart); // +0x1C 0x10003040
+    virtual HRESULT
+    CheckMediaType(const AM_MEDIA_TYPE* pmt) = 0; // +0x20 (derived: 0x100021E0/0x10001430)
+    virtual HRESULT SetMediaType(const AM_MEDIA_TYPE* pmt); // +0x24 0x10002E90 (was Pin_v24)
     // CheckConnect — was Pin_v28 (vtable +0x28, 0x100030F0): validate the peer
     // (QueryPinInfo + same-filter check via the +0x1C slot — an original bug
     // kept bit-faithful) and QI it for IMemInputPin into +0x9C.
-    virtual HRESULT CheckConnect(IPin* pPeer);                              // +0x28 0x100030F0
-    virtual HRESULT BreakConnect();                                         // +0x2C 0x10003130 (was Pin_v2C)
-    virtual HRESULT CompleteConnect(IPin* pReceivePin);                     // +0x30 0x100030D0 (was Pin_v30; delegates to the pin's +0x38 slot)
-    virtual HRESULT GetMediaType(int iPosition, AM_MEDIA_TYPE* pmt);        // +0x34 0x100022B0
-    virtual HRESULT DecideAllocator(IMemInputPin* pPin, IMemAllocator** ppAlloc); // +0x38 0x100031A0 (was Pin_v38)
-    virtual HRESULT DecideBufferSize(IMemAllocator* pAlloc, ALLOCATOR_PROPERTIES* pProps); // +0x3C 0x10001310 (was Pin_v3C; pure in CBaseOutputPin, overridden by CPushPinDIBSq)
+    virtual HRESULT CheckConnect(IPin* pPeer); // +0x28 0x100030F0
+    virtual HRESULT BreakConnect();            // +0x2C 0x10003130 (was Pin_v2C)
+    virtual HRESULT CompleteConnect(
+        IPin* pReceivePin); // +0x30 0x100030D0 (was Pin_v30; delegates to the pin's +0x38 slot)
+    virtual HRESULT GetMediaType(int iPosition, AM_MEDIA_TYPE* pmt); // +0x34 0x100022B0
+    virtual HRESULT DecideAllocator(IMemInputPin* pPin,
+                                    IMemAllocator** ppAlloc); // +0x38 0x100031A0 (was Pin_v38)
+    virtual HRESULT DecideBufferSize(
+        IMemAllocator* pAlloc,
+        ALLOCATOR_PROPERTIES*
+            pProps); // +0x3C 0x10001310 (was Pin_v3C; pure in CBaseOutputPin, overridden by CPushPinDIBSq)
     virtual HRESULT GetDeliveryBuffer(IMediaSample** ppSample, REFERENCE_TIME* pStartTime,
-                                      REFERENCE_TIME* pEndTime, DWORD dwFlags); // +0x40 0x100032A0 (was Pin_v40)
-    virtual HRESULT Deliver(IMediaSample* pSample);                         // +0x44 0x100032E0 (was Pin_v44)
-    virtual HRESULT InitAllocator(IMemAllocator** ppAlloc);                 // +0x48 0x10003190 (was Pin_v48; CoCreateInstance pull of CLSID_MemoryAllocator)
-    virtual HRESULT DeliverEndOfStream();                                   // +0x4C 0x10003310 (was Pin_v4C)
-    virtual HRESULT DeliverBeginFlush();                                    // +0x50 0x10003380 (was Pin_v50)
-    virtual HRESULT DeliverEndFlush();                                      // +0x54 0x100033A0 (was Pin_v54)
+                                      REFERENCE_TIME* pEndTime,
+                                      DWORD dwFlags); // +0x40 0x100032A0 (was Pin_v40)
+    virtual HRESULT Deliver(IMediaSample* pSample);   // +0x44 0x100032E0 (was Pin_v44)
+    virtual HRESULT InitAllocator(
+        IMemAllocator**
+            ppAlloc); // +0x48 0x10003190 (was Pin_v48; CoCreateInstance pull of CLSID_MemoryAllocator)
+    virtual HRESULT DeliverEndOfStream(); // +0x4C 0x10003310 (was Pin_v4C)
+    virtual HRESULT DeliverBeginFlush();  // +0x50 0x10003380 (was Pin_v50)
+    virtual HRESULT DeliverEndFlush();    // +0x54 0x100033A0 (was Pin_v54)
     virtual HRESULT DeliverNewSegment(REFERENCE_TIME tStart, REFERENCE_TIME tStop,
-                                      double dRate);                        // +0x58 0x100033C0 (was Pin_v58)
+                                      double dRate); // +0x58 0x100033C0 (was Pin_v58)
 
     // --- IPin overrides (sub-vtable at object +0x0C, canonical order) ---
     // Delegating IUnknown for the IPin/IQualityControl branches
     // (binary: per-branch small forwards 0x10001180/0x10001710/0x100011A0).
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv);
-    ULONG   STDMETHODCALLTYPE AddRef();
-    ULONG   STDMETHODCALLTYPE Release();
-    STDMETHOD(Connect)(IPin* pReceivePin, const AM_MEDIA_TYPE* pmt);        // 0x100047B0
+    ULONG STDMETHODCALLTYPE AddRef();
+    ULONG STDMETHODCALLTYPE Release();
+    STDMETHOD(Connect)(IPin* pReceivePin, const AM_MEDIA_TYPE* pmt);          // 0x100047B0
     STDMETHOD(ReceiveConnection)(IPin* pConnector, const AM_MEDIA_TYPE* pmt); // 0x10004160
-    STDMETHOD(Disconnect)();                                                // 0x100042D0
-    STDMETHOD(ConnectedTo)(IPin** ppPin);                                   // 0x10002F20
-    STDMETHOD(ConnectionMediaType)(AM_MEDIA_TYPE* pmt);                     // 0x10004360
-    STDMETHOD(QueryPinInfo)(PIN_INFO* pInfo);                               // 0x10002F60
-    STDMETHOD(QueryDirection)(PIN_DIRECTION* pPinDir);                      // 0x10002FE0
-    STDMETHOD(QueryId)(LPWSTR* Id);                                         // 0x10001D40
-    STDMETHOD(QueryAccept)(const AM_MEDIA_TYPE* pmt);                       // 0x10003000
-    STDMETHOD(EnumMediaTypes)(IEnumMediaTypes** ppEnum);                    // 0x100048D0
-    STDMETHOD(QueryInternalConnections)(IPin** apPin, ULONG* nPin);         // 0x100011C0 (stub)
-    STDMETHOD(EndOfStream)();                                               // 0x10003370 (stub E_NOTIMPL)
-    STDMETHOD(BeginFlush)();                                                // 0x10003370
-    STDMETHOD(EndFlush)();                                                  // 0x10003370
+    STDMETHOD(Disconnect)();                                                  // 0x100042D0
+    STDMETHOD(ConnectedTo)(IPin** ppPin);                                     // 0x10002F20
+    STDMETHOD(ConnectionMediaType)(AM_MEDIA_TYPE* pmt);                       // 0x10004360
+    STDMETHOD(QueryPinInfo)(PIN_INFO* pInfo);                                 // 0x10002F60
+    STDMETHOD(QueryDirection)(PIN_DIRECTION* pPinDir);                        // 0x10002FE0
+    STDMETHOD(QueryId)(LPWSTR* Id);                                           // 0x10001D40
+    STDMETHOD(QueryAccept)(const AM_MEDIA_TYPE* pmt);                         // 0x10003000
+    STDMETHOD(EnumMediaTypes)(IEnumMediaTypes** ppEnum);                      // 0x100048D0
+    STDMETHOD(QueryInternalConnections)(IPin** apPin, ULONG* nPin);           // 0x100011C0 (stub)
+    STDMETHOD(EndOfStream)(); // 0x10003370 (stub E_NOTIMPL)
+    STDMETHOD(BeginFlush)();  // 0x10003370
+    STDMETHOD(EndFlush)();    // 0x10003370
     STDMETHOD(NewSegment)(REFERENCE_TIME tStart, REFERENCE_TIME tEnd,
-                          double dRate);                                    // 0x10003090
+                          double dRate); // 0x10003090
 
     // --- IQualityControl overrides (sub-vtable at object +0x10) ---
     // (its IUnknown slots are compiler adjustor thunks to the trio above,
     //  exactly like the binary's 0x10001920/0x10001900/0x10002740)
-    STDMETHOD(SetSink)(IQualityControl* piqc);                              // 0x100011E0 (stub)
-    STDMETHOD(Notify)(IBaseFilter* pSelf, Quality q);                       // 0x10003050
+    STDMETHOD(SetSink)(IQualityControl* piqc);        // 0x100011E0 (stub)
+    STDMETHOD(Notify)(IBaseFilter* pSelf, Quality q); // 0x10003050
 
     // --- NonDelegating overrides (primary vtable) ---
-    HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid, void** ppv) override; // 0x10002DC0
-    ULONG   STDMETHODCALLTYPE NonDelegatingAddRef() override;    // 0x10002E50: owner filter AddRef
-    ULONG   STDMETHODCALLTYPE NonDelegatingRelease() override;   // 0x10002E70: owner filter Release
+    HRESULT STDMETHODCALLTYPE NonDelegatingQueryInterface(REFIID riid,
+                                                          void** ppv) override; // 0x10002DC0
+    ULONG STDMETHODCALLTYPE NonDelegatingAddRef() override;  // 0x10002E50: owner filter AddRef
+    ULONG STDMETHODCALLTYPE NonDelegatingRelease() override; // 0x10002E70: owner filter Release
 
 protected:
     CBasePin(const char* pName, CBaseFilter* pFilter, HRESULT* phr);
@@ -737,33 +747,34 @@ protected:
     //   version, +0x68 m_mt (88-byte AM_MEDIA_TYPE), +0xC0/+0xC8/+0xD0 the
     //   NewSegment cache, +0xD8 allocator, +0xE0 input pin, +0xE8 filter
     //   back-pointer => subobject size 0xF0.
-    WCHAR*            m_pName;         // +0x14 strmbase m_pName: the wide pin name (was m_pinPad14)
-    IPin*             m_Connected;     // +0x18
-    PIN_DIRECTION     m_dir;           // +0x1C (this slot was mislabeled "m_pName" before; PINDIR_OUTPUT here)
-    void*             m_pinPad20[2];   // +0x20..0x27 (m_pLock at +0x20 and the +0x24..0x26 byte flags — see the P_pLock/P_flag24..26 accessors in source_base.cpp)
-    CBaseFilter*      m_pFilterOwner;  // +0x28 owner filter: NonDelegating AddRef/Release and QueryPinInfo go through it (slot was mislabeled "m_pQSinkOwner" before)
-    void*             m_pQSink;        // +0x2C IQualityControl::Notify stores its pSender here (old-baseclasses shape; never read back — was m_pinPad2C)
-    LONG              m_TypeVersion;   // +0x30
-#if defined(_M_X64)
-    // x64: the same region carries the widened AM_MEDIA_TYPE (0x58 bytes at
-    // +0x68) plus the 8-byte-spaced NewSegment cache; 14 pointers wide.
-    void*             m_pinPad34[14];  // +0x68..0xD8 (media type / lock state)
-#else
-    void*             m_pinPad34[25];  // +0x34..0x98 (media type / lock state)
-#endif
-    IMemAllocator*    m_pAllocator;    // +0x98 / x64 +0xD8
-    IMemInputPin*     m_pInputPin;     // +0x9C / x64 +0xE0
-    CBaseFilter*      m_pFilter;       // +0xA0 / x64 +0xE8
+    WCHAR* m_pName;      // +0x14 strmbase m_pName: the wide pin name (was m_pinPad14)
+    IPin* m_Connected;   // +0x18
+    PIN_DIRECTION m_dir; // +0x1C (this slot was mislabeled "m_pName" before; PINDIR_OUTPUT here)
+    CRITICAL_SECTION* m_pLock;
+    unsigned char m_bRun;
+    unsigned char m_bConnectWhileActive;
+    unsigned char m_bEnumPeerTypesFirst;
+    CBaseFilter*
+        m_pFilterOwner; // +0x28 owner filter: NonDelegating AddRef/Release and QueryPinInfo go through it (slot was mislabeled "m_pQSinkOwner" before)
+    void*
+        m_pQSink; // +0x2C IQualityControl::Notify stores its pSender here (old-baseclasses shape; never read back — was m_pinPad2C)
+    LONG m_TypeVersion; // +0x30
+    AM_MEDIA_TYPE m_mediaType;
+    REFERENCE_TIME m_tStart;
+    REFERENCE_TIME m_tStop;
+    double m_dRate;
+    IMemAllocator* m_pAllocator; // +0x98 / x64 +0xD8
+    IMemInputPin* m_pInputPin;   // +0x9C / x64 +0xE0
+    CBaseFilter* m_pFilter;      // +0xA0 / x64 +0xE8
 #if !defined(_M_X64)
-    void*             m_pinPadA4;      // +0xA4 (closes CBasePin at 0xA8; the
-                                       //  x64 subobject already ends at 0xF0)
+    void* m_pinPadA4; // +0xA4 (closes CBasePin at 0xA8; the
+                      //  x64 subobject already ends at 0xF0)
 #endif
 };
 
 // CBaseOutputPin : CBasePin — adds no vtable slots (its RTTI TD exists at
 // 0x1000B050 but its vtables equal CBasePin's).
-class CBaseOutputPin : public CBasePin
-{
+class CBaseOutputPin : public CBasePin {
 protected:
     CBaseOutputPin(const char* pName, CBaseFilter* pFilter, HRESULT* phr)
         : CBasePin(pName, pFilter, phr) {}
@@ -774,15 +785,14 @@ protected:
 //   CAMThread at +0x00 (0x48 bytes), CBaseOutputPin at +0x48.
 //   x64: CAMThread 0x78 bytes, CBaseOutputPin at +0x78 => 0x168 total.
 // -----------------------------------------------------------------------------
-class CSourceStream : public CAMThread, public CBaseOutputPin
-{
+class CSourceStream : public CAMThread, public CBaseOutputPin {
 public:
     CSourceStream(const char* pName, HRESULT* phr, CSource* pParent, LPCWSTR pName2);
     // root vtable (deleting dtor lands at +0x04 automatically: 0x100021C0)
-    virtual DWORD  ThreadProc() override;                      // +0x00 shared 0x10002570
-    virtual ~CSourceStream();                                  // root +0x04; core 0x10001DC0
+    virtual DWORD ThreadProc() override; // +0x00 shared 0x10002570
+    virtual ~CSourceStream();            // root +0x04; core 0x10001DC0
     virtual HRESULT CheckMediaType(const AM_MEDIA_TYPE* pmt) override; // primary +0x20, 0x100021E0
-    virtual HRESULT GetMediaType1(AM_MEDIA_TYPE* pmt);         // root +0x1C 0x10003370 stub
+    virtual HRESULT GetMediaType1(AM_MEDIA_TYPE* pmt);                 // root +0x1C 0x10003370 stub
     // (FillBuffer stays pure here: root +0x08 = _purecall 0x1000668A in the
     //  binary's CSourceStream vtable; only CPushPinDIBSq overrides it.)
 };
@@ -794,59 +804,53 @@ public:
 //   CheckMediaType 0x10001430, IPin sub-vtable overrides as listed for
 //   0x10008194.  (ThreadProc at root +0x00 stays the shared 0x10002570.)
 // -----------------------------------------------------------------------------
-class CPushPinDIBSq : public CSourceStream
-{
+class CPushPinDIBSq : public CSourceStream {
 public:
-    CPushPinDIBSq(HRESULT* phr, CSource* pParent);              // 0x10001960 (binary param order)
-    virtual ~CPushPinDIBSq();                                  // primary +0x0C 0x10001950 / root +0x04 0x10001A50
-    virtual HRESULT FillBuffer(IMediaSample* pSample) override; // 0x100014E0
-    virtual HRESULT GetMediaType1(AM_MEDIA_TYPE* pmt) override; // 0x100011F0
+    CPushPinDIBSq(HRESULT* phr, CSource* pParent); // 0x10001960 (binary param order)
+    virtual ~CPushPinDIBSq(); // primary +0x0C 0x10001950 / root +0x04 0x10001A50
+    virtual HRESULT FillBuffer(IMediaSample* pSample) override;        // 0x100014E0
+    virtual HRESULT GetMediaType1(AM_MEDIA_TYPE* pmt) override;        // 0x100011F0
     virtual HRESULT CheckMediaType(const AM_MEDIA_TYPE* pmt) override; // 0x10001430
     // DecideBufferSize — was Pin_v3C (primary vtable +0x3C, 0x10001310);
     // CSourceStream leaves the slot pure, exactly like strmbase's
     // CBaseOutputPin::DecideBufferSize PURE.
-    virtual HRESULT DecideBufferSize(IMemAllocator* pAlloc, ALLOCATOR_PROPERTIES* pProps) override; // primary +0x3C 0x10001310
+    virtual HRESULT
+    DecideBufferSize(IMemAllocator* pAlloc,
+                     ALLOCATOR_PROPERTIES* pProps) override; // primary +0x3C 0x10001310
 
     // ---- data members (absolute pin-object offsets; 0x48 CAMThread head,
     //      0xA8 CBasePin subobject ends at 0xF0) ----
     //      x64 (VC10 rebuild, operator new(0x660) at 0x1800019D2): the same
     //      members at +0x168 pad, +0x178 frame count, +0x180/+0x1A8 critsecs
-    //      (40B each), +0x1D0 display block, +0x630 push cfg, +0x640 extra,
+    //      (40B each), +0x1D0 display block, +0x638 push cfg, +0x640 extra,
     //      +0x648 avg-per-frame, +0x650..0x653 flags, +0x658 frame bits.
 #if defined(_M_X64)
-    void*            m_padF0[2];       // x64 +0x168..+0x178 (ctor zeroes two qwords)
+    void* m_padF0[2]; // x64 +0x168..+0x178 (ctor zeroes two qwords)
 #else
-    void*            m_padF0[4];       // +0xF0..+0x100 (ctor zeroes)
+    void* m_padF0[4]; // +0xF0..+0x100 (ctor zeroes)
 #endif
-    int              m_frameCount;     // +0x100 (SetTime sample counter) / x64 +0x178
-    CRITICAL_SECTION m_csRender;       // +0x104 (24B; FillBuffer hold) / x64 +0x180 (40B)
+    int m_frameCount;            // +0x100 (SetTime sample counter) / x64 +0x178
+    CRITICAL_SECTION m_csRender; // +0x104 (24B; FillBuffer hold) / x64 +0x180 (40B)
 #if !defined(_M_X64)
-    void*            m_pad11C;         // +0x11C (pad to 0x120; the x64 critsec
-                                       //  is 40B and meets m_csDisplay directly)
+    void* m_pad11C; // +0x11C (pad to 0x120; the x64 critsec
+                    //  is 40B and meets m_csDisplay directly)
 #endif
-    CRITICAL_SECTION m_csDisplay;      // +0x120 (24B) / x64 +0x1A8 (40B)
-#if defined(_M_X64)
-    // x64 quirk: the VC10 rebuild shrank this block by 4 bytes (m_pPushCfg
-    // sits at +0x630, 0x460 bytes from the +0x1D0 base) yet its display probe
-    // still clears 0x464 bytes — a faithful 4-byte overrun into m_pPushCfg's
-    // low half, which the ctor zeroes right after (see push_pin.cpp).
-    unsigned char    m_displayBlock[0x460]; // +0x1D0 (VIH/display state)
-#else
-    unsigned char    m_displayBlock[0x464]; // +0x138 (VIH/display state)
-    void*            m_pad59C;         // +0x59C (pad to 0x5A0)
+    CRITICAL_SECTION m_csDisplay; // +0x120 (24B) / x64 +0x1A8 (40B)
+    // Both original display probes clear 0x464 bytes. Native alignment places
+    // the x64 push-config pointer at +0x638 (ctor 0x180001913, setter
+    // 0x180001695, dtor 0x180001070); x86 retains +0x5A0.
+    unsigned char m_displayBlock[0x464];
+#if !defined(_M_X64)
+    void* m_pad59C;
 #endif
-    void*            m_pPushCfg;       // +0x5A0 (heap 0x2C block, EXE-pushed BIH; SetBitmapInfo 0x10001730) / x64 +0x630
-#if defined(_M_X64)
-    void*            m_pinPad638;      // x64 +0x638..+0x640 (unidentified gap
-                                       //  ahead of the push-extras)
-#endif
-    int              m_nPushExtra;     // +0x5A4 (SetBitmapInfo's n, pin-direct) / x64 +0x640
-    LONGLONG         m_rtAvgPerFrame;  // +0x5A8 (10000000/(i64)(u64)fps, pin-direct) / x64 +0x648
-    unsigned char    m_bBitmapSet;     // +0x5B0 / x64 +0x650
-    unsigned char    m_bFrameAck;      // +0x5B1 / x64 +0x651
-    unsigned char    m_bFrameReady;    // +0x5B2 / x64 +0x652
-    unsigned char    m_bStreamEnded;   // +0x5B3 / x64 +0x653
-    void*            m_pFrameBits;     // +0x5B4  => sizeof == 0x5B8 / x64 +0x658 => 0x660
+    void* m_pPushCfg;             // Heap block: 0x2C allocated, 0x28-byte bitmap header copied.
+    int m_nPushExtra;             // +0x5A4 (SetBitmapInfo's n, pin-direct) / x64 +0x640
+    LONGLONG m_rtAvgPerFrame;     // +0x5A8 (10000000/(i64)(u64)fps, pin-direct) / x64 +0x648
+    unsigned char m_bBitmapSet;   // +0x5B0 / x64 +0x650
+    unsigned char m_bFrameAck;    // +0x5B1 / x64 +0x651
+    unsigned char m_bFrameReady;  // +0x5B2 / x64 +0x652
+    unsigned char m_bStreamEnded; // +0x5B3 / x64 +0x653
+    void* m_pFrameBits;           // +0x5B4  => sizeof == 0x5B8 / x64 +0x658 => 0x660
 };
 #if defined(_M_X64)
 static_assert(sizeof(CPushPinDIBSq) == 0x660, "x64 pin layout must match operator new(0x660)");
@@ -854,14 +858,16 @@ static_assert(offsetof(CPushPinDIBSq, m_frameCount) == 0x178, "x64 m_frameCount"
 static_assert(offsetof(CPushPinDIBSq, m_csRender) == 0x180, "x64 m_csRender");
 static_assert(offsetof(CPushPinDIBSq, m_csDisplay) == 0x1A8, "x64 m_csDisplay");
 static_assert(offsetof(CPushPinDIBSq, m_displayBlock) == 0x1D0, "x64 m_displayBlock");
-static_assert(offsetof(CPushPinDIBSq, m_pPushCfg) == 0x630, "x64 m_pPushCfg");
+static_assert(offsetof(CPushPinDIBSq, m_pPushCfg) == 0x638, "x64 m_pPushCfg");
 static_assert(offsetof(CPushPinDIBSq, m_nPushExtra) == 0x640, "x64 m_nPushExtra");
 static_assert(offsetof(CPushPinDIBSq, m_rtAvgPerFrame) == 0x648, "x64 m_rtAvgPerFrame");
 static_assert(offsetof(CPushPinDIBSq, m_bStreamEnded) == 0x653, "x64 m_bStreamEnded");
 static_assert(offsetof(CPushPinDIBSq, m_pFrameBits) == 0x658, "x64 m_pFrameBits");
-static_assert(offsetof(CPushPinDIBSq, m_padF0) == 0x168, "x64 CBasePin subobject must end at 0x168");
+static_assert(offsetof(CPushPinDIBSq, m_padF0) == 0x168,
+              "x64 CBasePin subobject must end at 0x168");
 #elif defined(_M_IX86)
-static_assert(sizeof(CPushPinDIBSq) == 0x5B8, "pin layout must match operator new size in the binary");
+static_assert(sizeof(CPushPinDIBSq) == 0x5B8,
+              "pin layout must match operator new size in the binary");
 static_assert(offsetof(CPushPinDIBSq, m_padF0) == 0xF0, "CBasePin subobject must end at 0xF0");
 static_assert(offsetof(CPushPinDIBSq, m_frameCount) == 0x100, "m_frameCount");
 static_assert(offsetof(CPushPinDIBSq, m_csRender) == 0x104, "m_csRender");
@@ -888,8 +894,7 @@ static_assert(offsetof(CPushPinDIBSq, m_pFrameBits) == 0x5B4, "m_pFrameBits");
 //   above, +0x20 list (0x28 bytes: two pointers, three LONGs, pad, pointer).
 //   ctor 0x10004420(this, CBaseFilter*, CEnumPins* cloneSrc)
 // =============================================================================
-class CEnumPins : public IEnumPins
-{
+class CEnumPins : public IEnumPins {
 public:
     CEnumPins(CBaseFilter* pFilter, CEnumPins* pEnum);
     virtual ~CEnumPins();
@@ -904,37 +909,42 @@ public:
 
 private:
     // linked-list of pins already handed out (binary 0x10005F30..0x100060C0)
-    struct PinNode { PinNode* pPrev; PinNode* pNext; CBasePin* pPin; };
-    struct PinList
-    {
-        PinNode* pHead;    // +0x00
-        PinNode* pTail;    // +0x04
-        LONG     nCount;   // +0x08
-        LONG     nCapacity;// +0x0C (10)
-        LONG     nFree;    // +0x10 (free-node count)
-        PinNode* pFree;    // +0x14 (free-node stack, linked via pNext)
+    struct PinNode {
+        PinNode* pPrev;
+        PinNode* pNext;
+        CBasePin* pPin;
+    };
+    struct PinList {
+        PinNode* pHead; // +0x00
+        PinNode* pTail; // +0x04
+        LONG nCount;    // +0x08
+        LONG nCapacity; // +0x0C (10)
+        LONG nFree;     // +0x10 (free-node count)
+        PinNode* pFree; // +0x14 (free-node stack, linked via pNext)
     };
 
     // list helpers (definitions in enumerators.cpp, binary addresses there)
-    static void     ListInit(PinList* pList);                       // 0x10005F30
+    static void ListInit(PinList* pList);                           // 0x10005F30
     static PinNode* ListPushBack(PinList* pList, CBasePin* pPin);   // 0x10006010
-    static void     ListFreeActive(PinList* pList);                 // 0x10005F50
-    static void     ListDestroy(PinList* pList);                    // 0x100060C0
-    static void     ListCopy(PinList* pList, const PinList* pSrc);  // 0x10006070
+    static void ListFreeActive(PinList* pList);                     // 0x10005F50
+    static void ListDestroy(PinList* pList);                        // 0x100060C0
+    static void ListCopy(PinList* pList, const PinList* pSrc);      // 0x10006070
     static PinNode* ListFind(const PinList* pList, CBasePin* pPin); // 0x10005FD0
-    void            RefreshPinState();                              // 0x10002C30
+    void RefreshPinState();                                         // 0x10002C30
 
-    LONG         m_Position;    // +0x04
-    LONG         m_PinCount;    // +0x08  (cached GetPinCount())
-    CBaseFilter* m_pFilter;     // +0x0C
-    LONG         m_PinVersion;  // +0x10  (cached GetPinVersion())
-    LONG         m_cRef;        // +0x14
-    PinList      m_Pins;        // +0x18 / x64 +0x20
+    LONG m_Position;        // +0x04
+    LONG m_PinCount;        // +0x08  (cached GetPinCount())
+    CBaseFilter* m_pFilter; // +0x0C
+    LONG m_PinVersion;      // +0x10  (cached GetPinVersion())
+    LONG m_cRef;            // +0x14
+    PinList m_Pins;         // +0x18 / x64 +0x20
 };
 #if defined(_M_X64)
-static_assert(sizeof(CEnumPins) == 0x48, "x64 CEnumPins layout must match the 0x180004B70 operator new(0x48)");
+static_assert(sizeof(CEnumPins) == 0x48,
+              "x64 CEnumPins layout must match the 0x180004B70 operator new(0x48)");
 #elif defined(_M_IX86)
-static_assert(sizeof(CEnumPins) == 0x30, "CEnumPins layout must match 0x100044F0's operator new(0x30)");
+static_assert(sizeof(CEnumPins) == 0x30,
+              "CEnumPins layout must match 0x100044F0's operator new(0x30)");
 #endif
 
 // =============================================================================
@@ -951,8 +961,7 @@ static_assert(sizeof(CEnumPins) == 0x30, "CEnumPins layout must match 0x100044F0
 //   NOTE: QI accepts the ActiveMovie-1.0 IID_IEnumMediaTypes
 //         {89C31040-846B-11CE-97D3-00AA0055595A} (see GUID above).
 // =============================================================================
-class CEnumMediaTypes : public IEnumMediaTypes
-{
+class CEnumMediaTypes : public IEnumMediaTypes {
 public:
     CEnumMediaTypes(CBasePin* pPin, CEnumMediaTypes* pEnum);
     virtual ~CEnumMediaTypes();
@@ -966,15 +975,17 @@ public:
     STDMETHOD(Clone)(IEnumMediaTypes** ppEnum);
 
 private:
-    LONG      m_Position;   // +0x04 / x64 +0x08
-    CBasePin* m_pPin;       // +0x08 / x64 +0x10
-    LONG      m_Version;    // +0x0C  (cached GetMediaTypeVersion()) / x64 +0x18
-    LONG      m_cRef;       // +0x10 / x64 +0x1C
+    LONG m_Position;  // +0x04 / x64 +0x08
+    CBasePin* m_pPin; // +0x08 / x64 +0x10
+    LONG m_Version;   // +0x0C  (cached GetMediaTypeVersion()) / x64 +0x18
+    LONG m_cRef;      // +0x10 / x64 +0x1C
 };
 #if defined(_M_X64)
-static_assert(sizeof(CEnumMediaTypes) == 0x20, "x64 CEnumMediaTypes layout must match the 0x180004A70 operator new(0x20)");
+static_assert(sizeof(CEnumMediaTypes) == 0x20,
+              "x64 CEnumMediaTypes layout must match the 0x180004A70 operator new(0x20)");
 #elif defined(_M_IX86)
-static_assert(sizeof(CEnumMediaTypes) == 0x14, "CEnumMediaTypes layout must match 0x10004600's operator new(0x14)");
+static_assert(sizeof(CEnumMediaTypes) == 0x14,
+              "CEnumMediaTypes layout must match 0x10004600's operator new(0x14)");
 #endif
 
 // =============================================================================
@@ -985,8 +996,7 @@ static_assert(sizeof(CEnumMediaTypes) == 0x14, "CEnumMediaTypes layout must matc
 //   DllGetClassObject AddRefs once on the way out).  x64 (DllGetClassObject
 //   0x180005EB0): 0x18 bytes, +0x08 m_pTemplate, +0x10 m_cRef.
 // =============================================================================
-class CClassFactory : public IClassFactory
-{
+class CClassFactory : public IClassFactory {
 public:
     CClassFactory(const CFactoryTemplate* pTemplate);
     STDMETHOD(QueryInterface)(REFIID riid, void** ppv);
@@ -994,14 +1004,17 @@ public:
     STDMETHOD_(ULONG, Release)();
     STDMETHOD(CreateInstance)(LPUNKNOWN pUnkOuter, REFIID riid, void** ppv);
     STDMETHOD(LockServer)(BOOL fLock);
+
 private:
-    const CFactoryTemplate* m_pTemplate;  // +0x04 / x64 +0x08
-    LONG                    m_cRef;       // +0x08 / x64 +0x10
+    const CFactoryTemplate* m_pTemplate; // +0x04 / x64 +0x08
+    LONG m_cRef;                         // +0x08 / x64 +0x10
 };
 #if defined(_M_X64)
-static_assert(sizeof(CClassFactory) == 0x18, "x64 class factory must match the operator new(0x18) in DllGetClassObject");
+static_assert(sizeof(CClassFactory) == 0x18,
+              "x64 class factory must match the operator new(0x18) in DllGetClassObject");
 #elif defined(_M_IX86)
-static_assert(sizeof(CClassFactory) == 0x0C, "class factory must match the operator new(0x0C) in DllGetClassObject");
+static_assert(sizeof(CClassFactory) == 0x0C,
+              "class factory must match the operator new(0x0C) in DllGetClassObject");
 #endif
 
 // =============================================================================
@@ -1012,7 +1025,7 @@ HRESULT WINAPI DllCanUnloadNow(void);
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv);
 HRESULT WINAPI DllRegisterServer(void);
 HRESULT WINAPI DllUnregisterServer(void);
-BOOL    WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved);
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved);
 }
 
 #endif // _MMDXSHOW_H_

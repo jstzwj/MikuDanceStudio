@@ -147,9 +147,50 @@ void TestSubsetPlanning() {
     CHECK(PlanMeshSubset(mesh, 2, plan) == S_OK && plan.ranges.empty());
 }
 
+namespace {
+const char* RuntimeResultName(HRESULT result) {
+    switch (result) {
+    case D3DERR_NOTAVAILABLE: return "D3DERR_NOTAVAILABLE";
+    case D3DERR_INVALIDCALL: return "D3DERR_INVALIDCALL";
+    case D3DERR_DEVICELOST: return "D3DERR_DEVICELOST";
+    case D3DERR_DEVICENOTRESET: return "D3DERR_DEVICENOTRESET";
+    case D3DERR_OUTOFVIDEOMEMORY: return "D3DERR_OUTOFVIDEOMEMORY";
+    case E_OUTOFMEMORY: return "E_OUTOFMEMORY";
+    default: return "unrecognized HRESULT";
+    }
+}
+
+void CheckRuntimeResult(HRESULT result, const char* operation, HMODULE runtime,
+                        IDirect3D9* d3d, IDirect3DDevice9* device) {
+    if (SUCCEEDED(result)) return;
+    std::fprintf(stderr, "%s failed: 0x%08lX (%s)\n", operation,
+                 static_cast<unsigned long>(result), RuntimeResultName(result));
+    char path[MAX_PATH]{};
+    GetModuleFileNameA(runtime, path, MAX_PATH);
+    DWORD session = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &session);
+    std::fprintf(stderr, "runtime=%s, process=%zu-bit, session=%lu, remote=%d\n",
+                 path, sizeof(void*) * 8, session, GetSystemMetrics(SM_REMOTESESSION));
+    D3DADAPTER_IDENTIFIER9 adapter{};
+    if (SUCCEEDED(d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &adapter)))
+        std::fprintf(stderr, "adapter=%s, driver=%s\n", adapter.Description, adapter.Driver);
+    for (D3DDEVTYPE type : {D3DDEVTYPE_HAL, D3DDEVTYPE_NULLREF}) {
+        D3DCAPS9 caps{};
+        const HRESULT capabilityResult = d3d->GetDeviceCaps(D3DADAPTER_DEFAULT, type, &caps);
+        std::fprintf(stderr, "native GetDeviceCaps(type=%u)=0x%08lX\n",
+                     static_cast<unsigned>(type), static_cast<unsigned long>(capabilityResult));
+    }
+    if (device != nullptr)
+        std::fprintf(stderr, "TestCooperativeLevel=0x%08lX\n",
+                     static_cast<unsigned long>(device->TestCooperativeLevel()));
+    std::exit(1);
+}
+} // namespace
+
 void TestRuntimeMeshAbi() {
     // Verify the typed mirror against the installed Microsoft runtime, not
-    // against another hand-built fake interface. NULLREF needs no visible UI.
+    // against another hand-built fake interface. NULLREF needs no visible UI,
+    // but still requires a working native D3D9 device and resource allocation.
 #ifdef _WIN64
     HMODULE runtime = LoadLibraryW(L"d3dx9_43.dll");
 #else
@@ -170,8 +211,11 @@ void TestRuntimeMeshAbi() {
     pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     pp.hDeviceWindow = window;
     IDirect3DDevice9* device = nullptr;
-    CHECK(SUCCEEDED(d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF,
-        window, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &device)));
+    const HRESULT deviceResult = d3d->CreateDevice(
+        D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, window,
+        D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &device);
+    CheckRuntimeResult(deviceResult, "IDirect3D9::CreateDevice(NULLREF)",
+                       runtime, d3d, device);
     using CreateEffect = HRESULT(WINAPI*)(IDirect3DDevice9*, const void*, UINT,
         const D3DXMACRO*, ID3DXInclude*, DWORD, ID3DXEffectPool*, ID3DXEffect**, ID3DXBuffer**);
     auto createEffect = reinterpret_cast<CreateEffect>(GetProcAddress(runtime, "D3DXCreateEffect"));
@@ -204,8 +248,11 @@ void TestRuntimeMeshAbi() {
     effect->Release();
     if (errors != nullptr) errors->Release();
     ID3DXMesh* mesh = nullptr;
-    CHECK(SUCCEEDED(createMesh(129, 387, 0x220, D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1,
-        device, &mesh)));
+    const HRESULT meshResult = createMesh(
+        129, 387, 0x220, D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1, device, &mesh);
+    CheckRuntimeResult(meshResult,
+        "D3DXCreateMeshFVF(faces=129, vertices=387, options=0x220, FVF=0x112)",
+        runtime, d3d, device);
     CHECK(mesh->GetNumFaces() == 129 && mesh->GetNumVertices() == 387);
     CHECK(mesh->GetFVF() == 274 && mesh->GetNumBytesPerVertex() == 32);
     DWORD* attributes = nullptr;

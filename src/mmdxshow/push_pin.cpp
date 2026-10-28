@@ -66,8 +66,8 @@
 //   +0x5B4  const void* m_pFrameBits    (EXE push frame DIB bits)
 //
 //   x64 rebuild: pad +0x168, frame count +0x178, csRender +0x180 (40B),
-//   csDisplay +0x1A8, display block +0x1D0 (0x460 bytes — see the probe
-//   note below for the 0x464 memset quirk), push cfg +0x630, extra +0x640,
+//   csDisplay +0x1A8, display block +0x1D0 (0x464 bytes),
+//   push cfg +0x638, extra +0x640,
 //   avg-per-frame +0x648, flags +0x650..+0x653, frame bits +0x658.
 //
 //   The IPushSource methods that write the push-cfg triple (0x10001730 /
@@ -77,7 +77,7 @@
 //
 // PUSH CONFIGURATION (header members, offsets verified against the binary;
 // x64 offsets after the slash):
-//   m_pPushCfg    +0x5A0/+0x630  void* — operator new(0x2C) block from
+//   m_pPushCfg    +0x5A0/+0x638  void* — operator new(0x2C) block from
 //                          0x10001730, 0x28 bytes of EXE-pushed
 //                          BITMAPINFOHEADER copied into it (4 trailing
 //                          bytes never written)
@@ -87,8 +87,8 @@
 
 #include "mmdxshow.hpp"
 
-#include <amvideo.h>  // VIDEOINFOHEADER
-#include <string.h>   // memcpy / memset
+#include <amvideo.h> // VIDEOINFOHEADER
+#include <string.h>  // memcpy / memset
 
 // =============================================================================
 // .rdata GUID constants used by the pin (values read straight from the
@@ -99,18 +99,18 @@ namespace {
 
 // 0x10008720 — bytes "vids" first: MEDIATYPE_Video
 // {73646976-0000-0010-8000-00AA00389B71}
-const GUID kMediaVideo =
-    { 0x73646976, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
+const GUID kMediaVideo = {
+    0x73646976, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 
 // 0x10008650 — FORMAT_VideoInfo {05589F80-C356-11CE-BF01-00AA0055595A}
-const GUID kFormatVideoInfo =
-    { 0x05589f80, 0xc356, 0x11ce, { 0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a } };
+const GUID kFormatVideoInfo = {
+    0x05589f80, 0xc356, 0x11ce, {0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a}};
 
 // 0x100086A0 — the DLL's private 32-bit subtype; the EXE-side contract doc
 // calls it "MEDIASUBTYPE_ARGB32-like".
 // {773C9AC0-3274-11D0-B724-00AA006C1A01}
-const GUID kSubtypeARGB32 =
-    { 0x773c9ac0, 0x3274, 0x11d0, { 0xb7, 0x24, 0x00, 0xaa, 0x00, 0x6c, 0x1a, 0x01 } };
+const GUID kSubtypeARGB32 = {
+    0x773c9ac0, 0x3274, 0x11d0, {0xb7, 0x24, 0x00, 0xaa, 0x00, 0x6c, 0x1a, 0x01}};
 
 } // anonymous namespace
 
@@ -125,8 +125,7 @@ namespace {
 
 // pin+0x5A0 — the header's m_pPushCfg member, typed as the BITMAPINFOHEADER
 // block pointer that 0x10001730 stores there
-inline BITMAPINFOHEADER*& PushBIH(CPushPinDIBSq* pPin)
-{
+inline BITMAPINFOHEADER*& PushBIH(CPushPinDIBSq* pPin) {
     return reinterpret_cast<BITMAPINFOHEADER*&>(pPin->m_pPushCfg);
 }
 
@@ -145,34 +144,29 @@ inline BITMAPINFOHEADER*& PushBIH(CPushPinDIBSq* pPin)
 namespace {
 
 // VA 0x10004AB0 — copy a 16-byte GUID into pmt->majortype (SetType)
-void MtSetType_10004AB0(AM_MEDIA_TYPE* pmt, const GUID* pGuid)
-{
+void MtSetType_10004AB0(AM_MEDIA_TYPE* pmt, const GUID* pGuid) {
     memcpy(&pmt->majortype, pGuid, sizeof(GUID));
 }
 
 // VA 0x10004B00 — copy a 16-byte GUID into pmt->formattype (SetFormatType)
-void MtSetFormatType_10004B00(AM_MEDIA_TYPE* pmt, const GUID* pGuid)
-{
+void MtSetFormatType_10004B00(AM_MEDIA_TYPE* pmt, const GUID* pGuid) {
     memcpy(&pmt->formattype, pGuid, sizeof(GUID));
 }
 
 // VA 0x10004AD0 — copy a 16-byte GUID into pmt->subtype (SetSubtype)
-void MtSetSubtype_10004AD0(AM_MEDIA_TYPE* pmt, const GUID* pGuid)
-{
+void MtSetSubtype_10004AD0(AM_MEDIA_TYPE* pmt, const GUID* pGuid) {
     memcpy(&pmt->subtype, pGuid, sizeof(GUID));
 }
 
 // VA 0x10004B20 — CMediaType::AllocFormatBuffer(cb).  Returns the (possibly
 // reallocated) pbFormat, or NULL when the allocation fails and cb is larger
 // than the existing buffer.  CoTaskMem-based, exactly as the original.
-BYTE* MtAllocFormatBuffer_10004B20(AM_MEDIA_TYPE* pmt, ULONG cb)
-{
+BYTE* MtAllocFormatBuffer_10004B20(AM_MEDIA_TYPE* pmt, ULONG cb) {
     if (pmt->cbFormat == cb)
         return pmt->pbFormat;
 
     BYTE* pNew = (BYTE*)CoTaskMemAlloc(cb);
-    if (pNew)
-    {
+    if (pNew) {
         if (pmt->cbFormat)
             CoTaskMemFree(pmt->pbFormat);
         pmt->pbFormat = pNew;
@@ -181,13 +175,12 @@ BYTE* MtAllocFormatBuffer_10004B20(AM_MEDIA_TYPE* pmt, ULONG cb)
     }
     if (cb > pmt->cbFormat)
         return NULL;
-    return pmt->pbFormat;   // keep the larger existing buffer
+    return pmt->pbFormat; // keep the larger existing buffer
 }
 
 // VA 0x10004F10 — CMediaType::SetFormat(pFormat, cb): returns 1 on success,
 // 0 when the format buffer could not be provided.
-int MtSetFormat_10004F10(AM_MEDIA_TYPE* pmt, const void* pFormat, size_t cb)
-{
+int MtSetFormat_10004F10(AM_MEDIA_TYPE* pmt, const void* pFormat, size_t cb) {
     BYTE* pDst = MtAllocFormatBuffer_10004B20(pmt, (ULONG)cb);
     if (pDst == NULL)
         return 0;
@@ -197,17 +190,14 @@ int MtSetFormat_10004F10(AM_MEDIA_TYPE* pmt, const void* pFormat, size_t cb)
 
 // VA 0x10004AF0 — CMediaType::SetVariableSize: only clears
 // bFixedSizeSamples (the original does NOT touch lSampleSize here).
-void MtSetVariableSize_10004AF0(AM_MEDIA_TYPE* pmt)
-{
+void MtSetVariableSize_10004AF0(AM_MEDIA_TYPE* pmt) {
     pmt->bFixedSizeSamples = 0;
 }
 
 // VA 0x10004EF0 — CMediaType::SetSampleSize(lSize); when lSize == 0 the
 // original falls through to SetVariableSize (0x10004AF0).
-int MtSetSampleSize_10004EF0(AM_MEDIA_TYPE* pmt, LONG lSize)
-{
-    if (lSize == 0)
-    {
+int MtSetSampleSize_10004EF0(AM_MEDIA_TYPE* pmt, LONG lSize) {
+    if (lSize == 0) {
         MtSetVariableSize_10004AF0(pmt);
         return 0;
     }
@@ -221,13 +211,17 @@ int MtSetSampleSize_10004EF0(AM_MEDIA_TYPE* pmt, LONG lSize)
 // tests nonzero).  Field order: majortype, subtype, formattype, cbFormat,
 // pbFormat bytes.  GUID equality via the DLL's own 16-byte comparator
 // (0x10001000 == MMDxShow_IsEqualGUID16, nonzero means equal).
-BOOL MtIsEqual_10004DD0(const AM_MEDIA_TYPE* pmt1, const AM_MEDIA_TYPE* pmt2)
-{
-    if (!MMDxShow_IsEqualGUID16(&pmt1->majortype,  &pmt2->majortype))  return FALSE;
-    if (!MMDxShow_IsEqualGUID16(&pmt1->subtype,    &pmt2->subtype))    return FALSE;
-    if (!MMDxShow_IsEqualGUID16(&pmt1->formattype, &pmt2->formattype)) return FALSE;
-    if (pmt1->cbFormat != pmt2->cbFormat)                              return FALSE;
-    if (pmt1->cbFormat == 0)                                           return TRUE;
+BOOL MtIsEqual_10004DD0(const AM_MEDIA_TYPE* pmt1, const AM_MEDIA_TYPE* pmt2) {
+    if (!MMDxShow_IsEqualGUID16(&pmt1->majortype, &pmt2->majortype))
+        return FALSE;
+    if (!MMDxShow_IsEqualGUID16(&pmt1->subtype, &pmt2->subtype))
+        return FALSE;
+    if (!MMDxShow_IsEqualGUID16(&pmt1->formattype, &pmt2->formattype))
+        return FALSE;
+    if (pmt1->cbFormat != pmt2->cbFormat)
+        return FALSE;
+    if (pmt1->cbFormat == 0)
+        return TRUE;
     return memcmp(pmt1->pbFormat, pmt2->pbFormat, pmt1->cbFormat) == 0 ? TRUE : FALSE;
 }
 
@@ -246,15 +240,14 @@ namespace {
 //   t  = biBitCount * biWidth  (unsigned, imul)
 //   t += 0x1F; t >>= 3; t &= 0x1FFFFFFC; t *= biHeight
 //   if (biHeight < 0) t = -t
-LONG GetBitmapSize_10006130(const BITMAPINFOHEADER* pbih)
-{
+LONG GetBitmapSize_10006130(const BITMAPINFOHEADER* pbih) {
     DWORD t = (DWORD)(pbih->biBitCount) * (DWORD)(pbih->biWidth); // imul
     t += 0x1F;
     t >>= 3;
     t &= 0x1FFFFFFC;
-    DWORD d = t * (DWORD)pbih->biHeight;                          // imul
+    DWORD d = t * (DWORD)pbih->biHeight; // imul
     if (pbih->biHeight < 0)
-        d = (DWORD)-(LONG)d;                                      // neg eax
+        d = (DWORD) - (LONG)d; // neg eax
     return (LONG)d;
 }
 
@@ -262,21 +255,19 @@ LONG GetBitmapSize_10006130(const BITMAPINFOHEADER* pbih)
 // Offsets verified against disassembly (+0x3E = biBitCount, +0x44 =
 // biSizeImage, +0x50 = biClrUsed, +0x54 = biClrImportant relative to the
 // VIDEOINFOHEADER base).
-int FixupDisplayVIH_100050E0(VIDEOINFOHEADER* pVIH)
-{
-    ::SetRectEmpty(&pVIH->rcSource);        // +0x00
-    ::SetRectEmpty(&pVIH->rcTarget);        // +0x10
+int FixupDisplayVIH_100050E0(VIDEOINFOHEADER* pVIH) {
+    ::SetRectEmpty(&pVIH->rcSource); // +0x00
+    ::SetRectEmpty(&pVIH->rcTarget); // +0x10
 
-    const WORD wBpp = pVIH->bmiHeader.biBitCount;         // +0x3E
-    if (wBpp <= 8 && pVIH->bmiHeader.biClrUsed == 0)      // +0x50
+    const WORD wBpp = pVIH->bmiHeader.biBitCount;    // +0x3E
+    if (wBpp <= 8 && pVIH->bmiHeader.biClrUsed == 0) // +0x50
         pVIH->bmiHeader.biClrUsed = 1u << wBpp;
     if ((DWORD)pVIH->bmiHeader.biClrImportant > pVIH->bmiHeader.biClrUsed)
-        pVIH->bmiHeader.biClrImportant = 1u << wBpp;      // NOTE: sets 1<<bpp,
-                                                          // not biClrUsed —
-                                                          // faithful quirk.
-    if (pVIH->bmiHeader.biSizeImage == 0)                 // +0x44
-        pVIH->bmiHeader.biSizeImage =
-            (DWORD)GetBitmapSize_10006130(&pVIH->bmiHeader);
+        pVIH->bmiHeader.biClrImportant = 1u << wBpp; // NOTE: sets 1<<bpp,
+                                                     // not biClrUsed —
+                                                     // faithful quirk.
+    if (pVIH->bmiHeader.biSizeImage == 0)            // +0x44
+        pVIH->bmiHeader.biSizeImage = (DWORD)GetBitmapSize_10006130(&pVIH->bmiHeader);
     return 0;
 }
 
@@ -289,25 +280,13 @@ int FixupDisplayVIH_100050E0(VIDEOINFOHEADER* pVIH)
 // Struct at pin+0x120 in the binary:
 //   +0x120 CRITICAL_SECTION (m_csDisplay)
 //   +0x138 VIDEOINFOHEADER + color table, 0x464 bytes (m_displayBlock)
-// x64 rebuild (probe inlined at 0x180005360): critsec at +0x1A8, block at
-//   +0x1D0 — and the block is 4 bytes SHORTER (0x460, so the push-cfg
-//   pointer can sit at +0x630) while the memset STILL clears 0x464 bytes,
-//   clobbering m_pPushCfg's low half.  Harmless in the original (the ctor
-//   zeroes the slot right after the probe) and reproduced faithfully below.
-HRESULT ProbeDisplayFormat_10005140(CPushPinDIBSq* pPin, LPCSTR pszDevice)
-{
-    VIDEOINFOHEADER* pVIH =
-        reinterpret_cast<VIDEOINFOHEADER*>(pPin->m_displayBlock);
-
+// x64 probe 0x180005360 clears the same 0x464 bytes at +0x1D0;
+// native alignment places the following push-config pointer at +0x638.
+HRESULT ProbeDisplayFormat_10005140(CPushPinDIBSq* pPin, LPCSTR pszDevice) {
+    VIDEOINFOHEADER* pVIH = reinterpret_cast<VIDEOINFOHEADER*>(pPin->m_displayBlock);
     ::EnterCriticalSection(&pPin->m_csDisplay);
-#if defined(_M_X64)
-    // the VC10 rebuild's literal 0x464 overruns its 0x460-byte block by the
-    // 4 bytes the next member grew — keep the byte count, not sizeof()
-    memset(pPin->m_displayBlock, 0, 0x464);
-#else
     memset(pPin->m_displayBlock, 0, sizeof(pPin->m_displayBlock));
-#endif
-    pVIH->bmiHeader.biSize = 40;                    // [pCS+72] = 40
+    pVIH->bmiHeader.biSize = 40; // [pCS+72] = 40
 
     HDC hdc;
     if (pszDevice && ::lstrcmpiA(pszDevice, "DISPLAY") != 0)
@@ -315,11 +294,9 @@ HRESULT ProbeDisplayFormat_10005140(CPushPinDIBSq* pPin, LPCSTR pszDevice)
     else
         hdc = ::CreateDCA("DISPLAY", NULL, NULL, NULL);
 
-    if (hdc)
-    {
+    if (hdc) {
         HBITMAP hbm = ::CreateCompatibleBitmap(hdc, 1, 1);
-        if (hbm)
-        {
+        if (hbm) {
             // two identical format queries (bits = NULL), as the original
             ::GetDIBits(hdc, hbm, 0, 1, NULL, (BITMAPINFO*)&pVIH->bmiHeader, 0);
             ::GetDIBits(hdc, hbm, 0, 1, NULL, (BITMAPINFO*)&pVIH->bmiHeader, 0);
@@ -339,8 +316,7 @@ HRESULT ProbeDisplayFormat_10005140(CPushPinDIBSq* pPin, LPCSTR pszDevice)
 // (m_csDisplay itself is initialized here to mirror the binary order:
 //  InitializeCriticalSection(+0x104) first, then sub_10005220(+0x120) —
 //  the x64 rebuild folds both into 0x180005500, critsecs +0x180/+0x1A8.)
-void InitDisplayState_10005220(CPushPinDIBSq* pPin)
-{
+void InitDisplayState_10005220(CPushPinDIBSq* pPin) {
     ::InitializeCriticalSection(&pPin->m_csDisplay);
     ProbeDisplayFormat_10005140(pPin, NULL);
 }
@@ -362,29 +338,28 @@ void InitDisplayState_10005220(CPushPinDIBSq* pPin)
 //   pin+0x5A0 / +0x5A4 / +0x5A8(qword) = 0
 //   pin+0x5B0..+0x5B3 = 0
 // (x64 rebuild, ctor 0x180001870: pin+0x168..0x178 zeroes, critsecs at
-//  +0x180/+0x1A8, then the +0x630/+0x640/+0x648 triple and +0x650 dword.)
+//  +0x180/+0x1A8, then the +0x638/+0x640/+0x648 triple and +0x650 dword.)
 //
 // The name pushed as the 4th CSourceStream ctor argument is L"Out"
 // (.rdata 0x1000831C, x64 .rdata 0x180008748).  The binary's first
 // CSourceStream stack argument is a NULL ANSI name (CBaseObject name —
 // see 0x10002110 -> 0x10004970 -> 0x100046B0 -> 0x10005000).
 CPushPinDIBSq::CPushPinDIBSq(HRESULT* phr, CSource* pParent)
-    : CSourceStream(NULL, phr, pParent, L"Out")
-{
+    : CSourceStream(NULL, phr, pParent, L"Out") {
     // the post-CBasePin pad: four dwords (pin+0xF0..+0x100) on x86, two
     // qwords (pin+0x168..+0x178) on x64 — the array width follows the arch
     for (size_t i = 0; i < sizeof(m_padF0) / sizeof(m_padF0[0]); ++i)
         m_padF0[i] = NULL;
-    m_frameCount = 0;                      // pin+0x100 / x64 +0x178
-    ::InitializeCriticalSection(&m_csRender);   // pin+0x104 / x64 +0x180
-    InitDisplayState_10005220(this);            // pin+0x120 block / x64 +0x1A8
-    PushBIH(this)   = NULL;                // pin+0x5A0 / x64 +0x630
-    m_nPushExtra = 0;                          // pin+0x5A4 / x64 +0x640
+    m_frameCount = 0;                         // pin+0x100 / x64 +0x178
+    ::InitializeCriticalSection(&m_csRender); // pin+0x104 / x64 +0x180
+    InitDisplayState_10005220(this);          // pin+0x120 block / x64 +0x1A8
+    PushBIH(this) = NULL;                     // pin+0x5A0 / x64 +0x638
+    m_nPushExtra = 0;                         // pin+0x5A4 / x64 +0x640
     m_rtAvgPerFrame = 0;                      // pin+0x5A8 (qword) / x64 +0x648
-    m_bBitmapSet   = 0;                    // pin+0x5B0 / x64 +0x650
-    m_bFrameAck    = 0;                    // pin+0x5B1 / x64 +0x651
-    m_bFrameReady  = 0;                    // pin+0x5B2 / x64 +0x652
-    m_bStreamEnded = 0;                    // pin+0x5B3 / x64 +0x653
+    m_bBitmapSet = 0;                         // pin+0x5B0 / x64 +0x650
+    m_bFrameAck = 0;                          // pin+0x5B1 / x64 +0x651
+    m_bFrameReady = 0;                        // pin+0x5B2 / x64 +0x652
+    m_bStreamEnded = 0;                       // pin+0x5B3 / x64 +0x653
     // m_pFrameBits (pin+0x5B4 / x64 +0x658) is NOT zeroed by the binary ctor
     // either.
 }
@@ -400,12 +375,10 @@ CPushPinDIBSq::CPushPinDIBSq(HRESULT* phr, CSource* pParent)
 //   DeleteCriticalSection(pin+0x120)
 //   DeleteCriticalSection(pin+0x104)
 //   sub_10001DC0()                    // ~CSourceStream chain (implicit)
-CPushPinDIBSq::~CPushPinDIBSq()
-{
-    m_bStreamEnded = 1;                    // pin+0x5B3 / x64 +0x653 (one WORD
-    m_bFrameReady  = 1;                    // pin+0x5B2 / x64 +0x652  store)
-    if (PushBIH(this))
-    {
+CPushPinDIBSq::~CPushPinDIBSq() {
+    m_bStreamEnded = 1; // pin+0x5B3 / x64 +0x653 (one WORD
+    m_bFrameReady = 1;  // pin+0x5B2 / x64 +0x652  store)
+    if (PushBIH(this)) {
         ::operator delete((void*)PushBIH(this)); // scalar delete (??3)
         PushBIH(this) = NULL;
     }
@@ -497,58 +470,54 @@ CPushPinDIBSq::~CPushPinDIBSq()
 // GetSize / SetTime / SetSyncPoint — there is no GetTime/SetMediaTime/
 // Discontinuity use in the binary (the contract guess in the Phase-A notes
 // is slightly off; SetSyncPoint(TRUE) is the "continuity" marker).
-HRESULT CPushPinDIBSq::FillBuffer(IMediaSample* pSample)
-{
+HRESULT CPushPinDIBSq::FillBuffer(IMediaSample* pSample) {
     if (pSample == NULL)
-        return E_POINTER;                          // 0x80004003
+        return E_POINTER; // 0x80004003
 
-    if (m_bStreamEnded)                            // pin+0x5B3
-        return 1;                                  // S_FALSE
+    if (m_bStreamEnded) // pin+0x5B3
+        return 1;       // S_FALSE
 
-    if (!m_bBitmapSet)                             // pin+0x5B0
-        return E_FAIL;                             // 0x80004005
+    if (!m_bBitmapSet) // pin+0x5B0
+        return E_FAIL; // 0x80004005
 
-    ::EnterCriticalSection(&m_csRender);           // pin+0x104
+    ::EnterCriticalSection(&m_csRender); // pin+0x104
 
     BYTE* pDst = NULL;
-    pSample->GetPointer(&pDst);                    // vt+0x0C, result ignored
-    LONG cbSample = pSample->GetSize();            // vt+0x10
+    pSample->GetPointer(&pDst);         // vt+0x0C, result ignored
+    LONG cbSample = pSample->GetSize(); // vt+0x10
 
     // pin+0xC0 (m_mt.pbFormat) is captured before the wait in the binary;
     // only its +0x44 dword (biSizeImage) is used, after the wait.
-    MMDXTrace("FillBuffer enter ended=%d ready=%d\n",
-              (int)m_bStreamEnded, (int)m_bFrameReady);
+    MMDXTrace("FillBuffer enter ended=%d ready=%d\n", (int)m_bStreamEnded, (int)m_bFrameReady);
     while (!m_bFrameReady && !m_bStreamEnded)
         ::Sleep(1);
-    MMDXTrace("FillBuffer wait done ended=%d ready=%d\n",
-              (int)m_bStreamEnded, (int)m_bFrameReady);
+    MMDXTrace("FillBuffer wait done ended=%d ready=%d\n", (int)m_bStreamEnded, (int)m_bFrameReady);
 
-    if (m_bStreamEnded)                            // pin+0x5B3
+    if (m_bStreamEnded) // pin+0x5B3
     {
         ::LeaveCriticalSection(&m_csRender);
-        return 1;                                  // S_FALSE
+        return 1; // S_FALSE
     }
 
-    m_bFrameReady = 0;                             // pin+0x5B2
+    m_bFrameReady = 0; // pin+0x5B2
 
     LONG cbCopy = (LONG)PushBIH(this)->biSizeImage; // *(VIH+0x44)
     if ((ULONG)cbCopy >= (ULONG)cbSample)           // cmp/jb (unsigned)
         cbCopy = cbSample;
 
-    memcpy(pDst, m_pFrameBits, (size_t)cbCopy);     // src = pin+0x5B4
+    memcpy(pDst, m_pFrameBits, (size_t)cbCopy); // src = pin+0x5B4
 
-    m_bFrameAck = (m_bStreamEnded == 0);            // pin+0x5B1
+    m_bFrameAck = (m_bStreamEnded == 0); // pin+0x5B1
 
     // rtStart = frameNumber * AvgTimePerFrame (64-bit, count sign-extended)
-    REFERENCE_TIME rtStart =
-        (REFERENCE_TIME)(LONG)m_frameCount * (REFERENCE_TIME)m_rtAvgPerFrame;
+    REFERENCE_TIME rtStart = (REFERENCE_TIME)(LONG)m_frameCount * (REFERENCE_TIME)m_rtAvgPerFrame;
     REFERENCE_TIME rtEnd = rtStart + (REFERENCE_TIME)m_rtAvgPerFrame;
 
-    pSample->SetTime(&rtStart, &rtEnd);            // vt+0x18
+    pSample->SetTime(&rtStart, &rtEnd); // vt+0x18
 
-    m_frameCount += 1;                             // pin+0x100
+    m_frameCount += 1; // pin+0x100
 
-    pSample->SetSyncPoint(TRUE);                   // vt+0x20
+    pSample->SetSyncPoint(TRUE); // vt+0x20
     MMDXTrace("FillBuffer delivered frame %d\n", m_frameCount);
 
     ::LeaveCriticalSection(&m_csRender);
@@ -579,8 +548,7 @@ HRESULT CPushPinDIBSq::FillBuffer(IMediaSample* pSample)
 //       biBitCount; when it is 0 the type becomes variable-size
 //       (bFixedSizeSamples = 0 only, lSampleSize untouched) (0x10004EF0)
 //   return S_OK   (SetFormat's failure is ignored, exactly as the original)
-HRESULT CPushPinDIBSq::GetMediaType1(AM_MEDIA_TYPE* pmt)
-{
+HRESULT CPushPinDIBSq::GetMediaType1(AM_MEDIA_TYPE* pmt) {
     if (pmt == NULL)
         return E_POINTER;
 
@@ -588,8 +556,7 @@ HRESULT CPushPinDIBSq::GetMediaType1(AM_MEDIA_TYPE* pmt)
     // reference the same CSource); the lock is its +0x58 critical section.
     ::EnterCriticalSection(&m_pFilter->m_CritSec);
 
-    if (m_bStreamEnded || !m_bBitmapSet)
-    {
+    if (m_bStreamEnded || !m_bBitmapSet) {
         ::LeaveCriticalSection(&m_pFilter->m_CritSec);
         return E_FAIL;
     }
@@ -603,13 +570,13 @@ HRESULT CPushPinDIBSq::GetMediaType1(AM_MEDIA_TYPE* pmt)
     // field-for-field; a stock VIDEOINFOHEADER is 0x50 bytes and the
     // SampleGrabber rejects the connection over the format mismatch.
     struct {
-        RECT           rcSource;              // +0x00
-        RECT           rcDest;                // +0x10
-        DWORD          pad20[2];              // +0x20 (zeroed)
-        LONGLONG       AvgTimePerFrame;       // +0x28
-        BITMAPINFOHEADER bmiHeader;           // +0x30
+        RECT rcSource;              // +0x00
+        RECT rcDest;                // +0x10
+        DWORD pad20[2];             // +0x20 (zeroed)
+        LONGLONG AvgTimePerFrame;   // +0x28
+        BITMAPINFOHEADER bmiHeader; // +0x30
     } vih;
-    memset(&vih, 0, sizeof(vih));             // 0x58 bytes
+    memset(&vih, 0, sizeof(vih)); // 0x58 bytes
     vih.AvgTimePerFrame = (LONGLONG)m_rtAvgPerFrame;
     memcpy(&vih.bmiHeader, PushBIH(this), sizeof(BITMAPINFOHEADER));
 
@@ -635,15 +602,14 @@ HRESULT CPushPinDIBSq::GetMediaType1(AM_MEDIA_TYPE* pmt)
 //   bSame = (mt == *pmt)          (0x10004DD0)
 //   FreeMediaType(&mt)            (0x10004DB0)
 //   return bSame ? S_OK : E_FAIL
-HRESULT CPushPinDIBSq::CheckMediaType(const AM_MEDIA_TYPE* pmt)
-{
+HRESULT CPushPinDIBSq::CheckMediaType(const AM_MEDIA_TYPE* pmt) {
     if (pmt == NULL)
         return E_POINTER;
 
     AM_MEDIA_TYPE mt;
     MMDxShow_InitMediaType(&mt);
 
-    GetMediaType1(&mt);                            // virtual, result ignored
+    GetMediaType1(&mt); // virtual, result ignored
 
     BOOL bSame = MtIsEqual_10004DD0(&mt, pmt);
 
@@ -672,37 +638,31 @@ HRESULT CPushPinDIBSq::CheckMediaType(const AM_MEDIA_TYPE* pmt)
 //   hr < 0                            -> return hr
 //   actual.cbBuffer < pProps->cbBuffer -> E_FAIL
 //   return S_OK
-HRESULT CPushPinDIBSq::DecideBufferSize(IMemAllocator* pAlloc,
-                                        ALLOCATOR_PROPERTIES* pProps)
-{
-    ::EnterCriticalSection(&m_pFilter->m_CritSec);   // filter CS (+0x58)
+HRESULT CPushPinDIBSq::DecideBufferSize(IMemAllocator* pAlloc, ALLOCATOR_PROPERTIES* pProps) {
+    ::EnterCriticalSection(&m_pFilter->m_CritSec); // filter CS (+0x58)
 
-    if (pAlloc == NULL || pProps == NULL)
-    {
+    if (pAlloc == NULL || pProps == NULL) {
         ::LeaveCriticalSection(&m_pFilter->m_CritSec);
         return E_POINTER;
     }
-    if (m_bStreamEnded || !m_bBitmapSet)
-    {
+    if (m_bStreamEnded || !m_bBitmapSet) {
         ::LeaveCriticalSection(&m_pFilter->m_CritSec);
         return E_FAIL;
     }
 
     pProps->cBuffers = 1;
 
-    LONG cbFrame = (LONG)PushBIH(this)->biSizeImage;  // *(VIH+0x44)
+    LONG cbFrame = (LONG)PushBIH(this)->biSizeImage; // *(VIH+0x44)
     if ((ULONG)cbFrame > (ULONG)pProps->cbBuffer)
         pProps->cbBuffer = cbFrame;
 
     ALLOCATOR_PROPERTIES actual;
     HRESULT hr = pAlloc->SetProperties(pProps, &actual);
-    if (hr < 0)
-    {
+    if (hr < 0) {
         ::LeaveCriticalSection(&m_pFilter->m_CritSec);
         return hr;
     }
-    if (actual.cbBuffer < pProps->cbBuffer)
-    {
+    if (actual.cbBuffer < pProps->cbBuffer) {
         ::LeaveCriticalSection(&m_pFilter->m_CritSec);
         return E_FAIL;
     }
