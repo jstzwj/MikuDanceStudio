@@ -1119,3 +1119,100 @@ physics_trajectory_test.exe --original <original-x64-MMD.exe> --stages 1 --d3dx-
 本轮两架构完整 C++17 Release 构建通过；全量 CTest 为 x64 **90/90**、x86 **87/87**，
 零失败、零跳过。日志与 JUnit 为 `out/physics-ci-analysis/ctest-x{64,86}.log` 和
 `local-x{64,86}.xml`，包含新增 AMD 路径及现有 GPU 回归。
+
+## 2026-10-28：Issue #6，带效果 PMM 的 EMM 默认分配恢复
+
+样本 `test.pmm` 的配套 `test.emm` 省略了 `[Effect]` 中的
+`Acs1 = ...PostDropHair.fx`，仅保留 `Acs1.show`；两个命名分区通过
+`Owner = Acs1` 指向该效果的 `DropHairRT`、`DropHairMaskRT`。
+v10.10 的 EMM 导入清除了全部对象效果，再只应用文件中存在的路径行，
+因此同名自动加载的主效果丢失，命名分区也失去了可关联的离屏资源。
+
+对用户指定的原版 v9.32 x64 目录使用 IDA MCP，核验 MMD、MMHack 和
+MMEffect。MMD、MMEffect 的 SHA-256 与本文开头的基准相同。
+下表 DLL 地址为 RVA，image base 为 `0x180000000`：
+
+| 入口／分支 | 原版行为 |
+|---|---|
+| MMHack `0x41E0`、`LoadedPMMFile` `0x1790` | 记录打开的 PMM 路径，向 MME 提供一次性通知 |
+| MME `0x570D0` | 查找 PMM 同目录、同名的 `.emm`，通过 `0x42F60` 导入 |
+| MME `0x2E8D0` → `0x2DF80` | 替换 manager `+0x30` 的分配记录，并使 `+0x50` 的已处理记录失效 |
+| MME `0x2CA80`，`0x2CD22..0x2CD53` | 分别检查路径和显示记录的存在标志；缺失路径通过 `0x2ACE0` 求默认值 |
+| MME `0x2ACE0`，`0x2B47A..0x2B6A7` | 普通根分配查找同名／嵌入名称的 `.fx`，再使用默认效果；显式 `none` 抑制该回退 |
+| MME `0x30590`，`0x30A53..0x30A5A` | `renderClass`（对象 `+0x364`）非零时，保存跳过路径和材质行，保留显示记录 |
+| MME `0xBC90`，`0xC043..0xC19B` | 编译期间切换至效果文件目录，随后恢复工作目录 |
+
+分配表清除、存在标志检查以及保存时的 `+0x364` 分支均补查了汇编。
+省略效果路径是原版支持的文件语义；将效果资源统一改为 DLL 目录解析不符合原版。
+
+`MmeEmmLoad` 现在先匹配对象并收集主分区的显式路径，然后为每个对象求解
+“显式效果／显式 none／缺失时自动发现”。根效果建立后，再应用材质、显示和
+Owner 分区。每次导入仍替换旧分配，未出现在新文件中的离屏覆盖不会残留。
+
+`scene_mme_gpu_test` 新增生成式回归：双离屏场景效果、同目录子效果、Owner
+材质覆盖、原版保存文件重载、省略主路径、重复导入、移除 Owner 覆盖、显式
+none、普通对象同名效果以及 EMM 全局默认的设置和清除。修复前，原版全部通过，
+端口在 `scene carrier EMM roundtrip` 失败；修复后，两架构分别对照对应原版
+MMEffect DLL，各 **202 项 GPU 产物零差异**，包括颜色、阴影、绘制和实际着色器
+输入／目标回读。两架构间的差异单独报告，不以跨架构相等作为通过条件。
+
+```powershell
+python scripts/compare_mme_render.py --original <MMEffect-x64.dll> `
+  --x86 build-x86/build/Release/scene_mme_gpu_test.exe `
+  --original-x86 <MMEffect-x86.dll> --output out/issue6-both
+```
+
+本轮报告位于 `out/issue6-both/20261028-155100-135091/comparison.json`。
+两架构 Release 程序构建通过，分配、保存、技术验证、资源图相关 CTest 通过；
+x64 的原版 MMD + MMHack + MMEffect 全链路 `native_scene_render` 也通过。
+
+将下载样本原样复制到其要求的 `C:\test_pmm` 后，修复版 GUI 已恢复主效果和
+两个离屏标签，截图位于 `out/issue6-sample/`。本机 ANSI 代码页为 1252，样本 EMM
+的日文路径为 CP932；原版 MME 通过 ANSI 接口访问时也会报找不到这两个效果文件。
+
+按用户要求，仅在 `C:\test_pmm` 测试副本中将 `影マスク.fx` 改名为
+`ShadowMask.fx`、`前髪影.fx` 改名为 `BangsShadow.fx`，并按原始字节替换
+`test.emm` 中的两个文件名。核对下载目录的全部 100 个源文件：副本除上述改名及
+EMM 中对应的两处替换外，文件内容均相同；PMM 和效果源码未修改。
+原始／改名后 EMM、适配清单、图片及比较报告保存在 `out/issue6-ascii-sample/`。
+
+使用该副本在原版 v9.32 x64 和修复版 x64 GUI 中分别打开同一 PMM，不播放或跳帧，
+按保存的当前相机导出第 0 帧 640×360 BMP。英文路径不再触发缺失文件提示，但原版
+对 `InvisibleMask.fx`、`BangsShadow.fx`、`VisibleMask.fx`、`ShadowMask.fx`
+报告 `some techniques cannot run on this hardware`；端口 GUI 未观察到相同弹窗。
+独立 D3D9 设备探针在 NVIDIA TITAN Xp 上对四个文件均编译、验证成功，包括硬件和
+软件顶点处理；该探针不复现原版 GUI 的设备状态，不能据此认定原版报错原因已经查明。
+
+实际导出图的 RGB 比较为 **6,230 / 230,400 个像素不同（2.704%）**，最大单通道
+差值 106，平均单通道绝对差值 0.050972（0–255 范围）。有 1,758 个像素差值至少为 2，
+6 个像素至少为 64。`comparison.json` 记录输入／程序哈希和比较条件，
+`comparison-default.png` 并列展示两张导出图及放大 8 倍的绝对差异。
+这组结果未达到逐像素一致，且原版子效果验证失败使其不能作为完整效果成功运行的
+对照。上述 202 项零差异结论仅适用于生成式回归，不能据此宣称整个样本或全部 MME
+功能均已验证一致。
+
+随后按用户要求，在不操作桌面的条件下补做真实样本的后台分配核验：使用隐藏的
+`Fixture` 窗口、生产 `LoadSceneFile`、首帧 `BeginScene` 的 PMM 通知与 EMM 自动加载，
+再保存已恢复的 EMM。探针仅在自身进程中将消息框／文件选择边界重定向到日志，
+不安装输入钩子、不激活窗口；四组运行的窗口可见标志和错误提示计数均为零。
+原版组执行未修改的原版 MMEffect 代码，MMD／MMHack 查询由同一个端口宿主提供；
+这项检查验证真实 PMM 的分配恢复，不是原版完整 GUI 或图像比较。
+
+| 后台样本运行 | 恢复的 Owner 分区 | 分区内效果路径数 |
+|---|---:|---:|
+| 原版 x64 MMEffect | 2 | 4 |
+| v10.10 的 `emm_manager.cpp` | 0 | 0 |
+| 当前修复 | 2 | 4 |
+| v10.10，控制副本仅显式补写主效果路径 | 2 | 4 |
+
+旧实现从 `v10.10` 原样提取，在独立探针中链接，未回改工作区源码。控制副本的 PMM
+与原样本逐字节相同，EMM 仅增加 `Acs1 = ...PostDropHair.fx`。当前修复、原版以及
+控制组重新保存的 EMM，均与英文名测试副本的输入 EMM **591 字节完全一致**，SHA-256
+为 `88a9444e0c4c9ddbc8208dd522a5dfbb5181a8a35abcf22c9d6f694b4624d605`。
+因此已通过真实样本和单变量控制确认：v10.10 遗漏了缺失根路径时的自动发现，
+随后无法恢复 Owner 离屏分配；不需要以“硬件不支持”弹窗来解释此问题。
+原始下载 EMM 同样缺少 `Acs1` 路径，改英文文件名未改变这一触发条件。
+`Default = none` 只清除全局默认效果，不应抑制附件自身同名 `.fx` 的自动发现。
+
+探针源码、四组日志、恢复后的 EMM、输入／二进制哈希和结论位于
+`out/issue6-headless/`。这组分配表一致的结果，不改变上文整帧像素比较未通过的记录。

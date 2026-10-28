@@ -1371,6 +1371,28 @@ bool MmeEmmLoad(const char* path)
     // their declaring offscreen resources. An Owner line alone assigns no path.
     std::vector<std::string> assignedPaths;
     const std::vector<EmmEffectSection>& sections = emm.effectSections();
+    std::map<ModelData*, std::string> basePaths;
+    for (const EmmEffectSection& section : sections) {
+        if (!section.isDefault()) continue;
+        for (const EmmEffectEntry& entry : section.entries) {
+            const auto it = byKey.find(entry.key);
+            if (it != byKey.end() && it->second != nullptr && !entry.effectPath.empty())
+                basePaths[it->second] = entry.effectPath;
+        }
+    }
+    for (ModelData* model : ctx->models) {
+        if (model == nullptr) continue;
+        const auto it = basePaths.find(model);
+        // Native 2DF80 invalidates assignment records; 2CA80 then fills an
+        // absent path via 2ACE0 (same-name .fx, embedded name, EMM default).
+        // This is essential for scene carriers: 30590 deliberately omits
+        // their paths when saving. Explicit "none" suppresses discovery.
+        // Resolve roots before subsets/Owner rows so their resources exist.
+        const std::string effectPath = it == basePaths.end()
+            ? MmeFindEffectFileForModel(model)
+            : it->second == kNone ? std::string() : it->second;
+        ApplyEffectToModel(model, effectPath);
+    }
     for (size_t s = 0; s < sections.size(); ++s) {
         const EmmEffectSection& section = sections[s];
         // Named rows belong to an offscreen resource, never to the base
@@ -1388,7 +1410,6 @@ bool MmeEmmLoad(const char* path)
                 const std::string effectPath = entry.effectPath == kNone
                                                    ? std::string()
                                                    : entry.effectPath;
-                ApplyEffectToModel(model, effectPath);
                 if (!effectPath.empty()) {
                     assignedPaths.push_back(effectPath);
                 }
