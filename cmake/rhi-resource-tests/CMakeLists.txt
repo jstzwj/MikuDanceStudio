@@ -23,6 +23,9 @@ target_sources(mds_rhi_resources PRIVATE "${MDS_SOURCE}/src/render/scene_passes.
 target_compile_features(mds_rhi_resources PUBLIC cxx_std_17)
 target_include_directories(mds_rhi_resources PUBLIC "${MDS_SOURCE}/include"
     PRIVATE "${MDS_SOURCE}/third_party/stb")
+add_executable(self_shadow_compare_test "${MDS_SOURCE}/tests/self_shadow_compare_test.cpp")
+target_link_libraries(self_shadow_compare_test PRIVATE mds_rhi_resources)
+add_test(NAME self_shadow_compare COMMAND self_shadow_compare_test)
 foreach(test IN ITEMS null render_pass frame_passes image assets material_textures texture_preparation history model_replay scene_renderer model_geometry model_inputs scene_passes scene_frame)
     add_executable(rhi_${test}_test "${MDS_SOURCE}/tests/rhi_${test}_test.cpp")
     target_link_libraries(rhi_${test}_test PRIVATE mds_rhi_resources)

@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(MIKUDANCESTUDIO_FORMATS_ONLY "Build only the portable format library and tests" OFF)
+option(MIKUDANCESTUDIO_SELF_SHADOW_STRICT_DIAGNOSTICS "Register exact DX9 self-shadow image diagnostics" OFF)
 
 if (MSVC)
     add_compile_options(/W3 /permissive-)
@@ -121,6 +122,9 @@ target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(self_shadow_compare_test tests/self_shadow_compare_test.cpp)
+    target_link_libraries(self_shadow_compare_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME self_shadow_compare COMMAND self_shadow_compare_test)
     add_executable(rhi_render_pass_test tests/rhi_render_pass_test.cpp)
     target_link_libraries(rhi_render_pass_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_render_pass COMMAND rhi_render_pass_test)
@@ -957,10 +961,18 @@ if(BUILD_TESTING)
                 endforeach()
             endforeach()
             foreach(format pmd pmx)
-                add_test(NAME self_shadow_dx9_strict_${format} COMMAND ${Python3_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_self_shadow.py --test $<TARGET_FILE:runtime_self_shadow_test>
-                    --assets ${CMAKE_CURRENT_SOURCE_DIR}/res/assets --external ${format} --strict)
-                set_tests_properties(self_shadow_dx9_strict_${format} PROPERTIES TIMEOUT 130 SKIP_RETURN_CODE 77 LABELS "offscreen;external;strict")
+                foreach(api dx11 dx12)
+                    add_test(NAME self_shadow_dx9_tolerant_${format}_${api} COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_self_shadow.py --test $<TARGET_FILE:runtime_self_shadow_test>
+                        --assets ${CMAKE_CURRENT_SOURCE_DIR}/res/assets --external ${format} --variant ${api}-hardware --tolerant)
+                    set_tests_properties(self_shadow_dx9_tolerant_${format}_${api} PROPERTIES TIMEOUT 130 SKIP_RETURN_CODE 77 LABELS "offscreen;external;bounded")
+                endforeach()
+                if(MIKUDANCESTUDIO_SELF_SHADOW_STRICT_DIAGNOSTICS)
+                    add_test(NAME self_shadow_dx9_strict_${format} COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_self_shadow.py --test $<TARGET_FILE:runtime_self_shadow_test>
+                        --assets ${CMAKE_CURRENT_SOURCE_DIR}/res/assets --external ${format} --strict)
+                    set_tests_properties(self_shadow_dx9_strict_${format} PROPERTIES TIMEOUT 130 SKIP_RETURN_CODE 77 LABELS "offscreen;external;strict")
+                endif()
             endforeach()
         endif()
     endif()

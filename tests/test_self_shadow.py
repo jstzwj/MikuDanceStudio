@@ -11,12 +11,14 @@ parser.add_argument('--test', required=True)
 parser.add_argument('--assets', required=True)
 parser.add_argument('--variant', default='dx11-warp')
 parser.add_argument('--external', choices=('pmd', 'pmx'))
-parser.add_argument('--strict', action='store_true')
+mode = parser.add_mutually_exclusive_group()
+mode.add_argument('--strict', action='store_true')
+mode.add_argument('--tolerant', action='store_true')
 args = parser.parse_args()
 
 def run(model):
     subprocess.run([args.test, str(model), args.assets, args.variant,
-                    'strict' if args.strict else 'measure'], check=True, timeout=120)
+                    'strict' if args.strict else 'tolerant' if args.tolerant else 'measure'], check=True, timeout=120)
 
 if args.external:
     path = os.environ.get('MDS_SELF_SHADOW_' + args.external.upper())

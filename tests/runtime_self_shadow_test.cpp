@@ -5,6 +5,7 @@
 #include "mikudancestudio/rhi_d3d12.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "self_shadow_dx9_reference.hpp"
+#include "self_shadow_compare.hpp"
 #include <dbghelp.h>
 #include <algorithm>
 #include <cmath>
@@ -20,33 +21,7 @@ using namespace mikudancestudio::render;
                                      " " + reason);                                                \
     } while (0)
 namespace {
-struct Difference {
-    std::size_t elements = 0;
-    double maximum = 0;
-};
-Difference Compare(const AttachmentReadback& a, const AttachmentReadback& b) {
-    if (a.bytes.size() != b.bytes.size())
-        throw std::runtime_error("readback size mismatch");
-    Difference d;
-    if (a.description.format == TextureFormat::R32Float) {
-        for (std::size_t i = 0; i < a.bytes.size(); i += 4) {
-            float x, y;
-            std::memcpy(&x, a.bytes.data() + i, 4);
-            std::memcpy(&y, b.bytes.data() + i, 4);
-            if (!std::isfinite(x) || !std::isfinite(y))
-                throw std::runtime_error("nonfinite shadow output");
-            if (std::memcmp(&x, &y, 4))
-                ++d.elements;
-            d.maximum = std::max(d.maximum, double(std::fabs(x - y)));
-        }
-    } else
-        for (std::size_t i = 0; i < a.bytes.size(); ++i) {
-            const auto delta = std::abs(int(a.bytes[i]) - int(b.bytes[i]));
-            d.elements += delta != 0;
-            d.maximum = std::max(d.maximum, double(delta));
-        }
-    return d;
-}
+using shadow_acceptance::Compare;
 void Save(const std::filesystem::path& path, const AttachmentReadback& image) {
     std::ofstream out(path, std::ios::binary);
     out << "P6\n" << image.description.width << " " << image.description.height << "\n255\n";
@@ -101,14 +76,19 @@ int main(int argc, char** argv) try {
     const auto model = std::filesystem::absolute(std::filesystem::u8path(argv[1]));
     const auto assetsPath = std::filesystem::absolute(std::filesystem::u8path(argv[2]));
     const std::string variant = argv[3];
-    const bool strict = std::string(argv[4]) == "strict";
+    const std::string comparison = argv[4];
+    if ((comparison != "strict" && comparison != "tolerant" && comparison != "measure") ||
+        (variant != "dx11-warp" && variant != "dx11-hardware" && variant != "dx12-warp" &&
+         variant != "dx12-hardware"))
+        return 2;
     const auto evidence = argc > 5 ? std::filesystem::u8path(argv[5]) : std::filesystem::path{};
     if (!evidence.empty())
         std::filesystem::create_directories(evidence);
     std::ofstream report;
     if (!evidence.empty()) {
         report.open(evidence / "comparison.csv");
-        report << "mode,width,color_channels,max_byte,shadow_texels,max_float\n";
+        report
+            << "mode,width,color_channels,max_byte,shadow_texels,max_float,color_outside_tolerance,shadow_outside_tolerance,color_coverage_differences,shadow_coverage_differences\n";
     }
     FileAssetSource assets(assetsPath);
     ToonTextureResolver textures(model.parent_path(), assets);
@@ -133,7 +113,7 @@ int main(int argc, char** argv) try {
     CHECK(dx12 ? bool(twelve) : bool(eleven));
     SceneRenderer renderer(dx12 ? *twelve.device : *eleven.device);
     shadow_reference::Reference reference(assetsPath / "skin_effect_sm3.fx");
-    bool exact = true;
+    bool exact = true, accepted = true;
     for (int mode : {1, 2})
         for (unsigned width : {128u, 160u, 128u}) {
             HistoryDesc target;
@@ -173,19 +153,25 @@ int main(int argc, char** argv) try {
             std::cout << "mode=" << mode << " size=" << width << " color_channels=" << c.elements
                       << " max_byte=" << c.maximum << " shadow_texels=" << d.elements
                       << " max_float=" << d.maximum << " coverage=" << Coverage(color) << "/"
-                      << Coverage(depth) << "\n";
-            exact &= !c.elements && !d.elements;
+                      << Coverage(depth) << " color_outside_tolerance=" << c.outsideTolerance
+                      << " shadow_outside_tolerance=" << d.outsideTolerance
+                      << " coverage_differences=" << c.coverageDifferences << "/"
+                      << d.coverageDifferences << "\n";
+            exact &= c.Exact() && d.Exact();
+            accepted &= c.Accepted() && d.Accepted();
             if (report)
                 report << mode << "," << width << "," << c.elements << "," << c.maximum << ","
-                       << d.elements << "," << d.maximum << "\n";
+                       << d.elements << "," << d.maximum << "," << c.outsideTolerance << ","
+                       << d.outsideTolerance << "," << c.coverageDifferences << ","
+                       << d.coverageDifferences << "\n";
             if (!evidence.empty()) {
                 const auto stem = std::to_string(mode) + "-" + std::to_string(width);
                 Save(evidence / (stem + "-rhi.ppm"), color);
                 Save(evidence / (stem + "-dx9.ppm"), nativeColor);
                 Save(evidence / (stem + "-shadow-rhi.ppm"), depth);
                 Save(evidence / (stem + "-shadow-dx9.ppm"), nativeDepth);
-                const std::pair<const char*,const AttachmentReadback*> shadows[] = {
-                    {"-shadow-rhi.r32",&depth},{"-shadow-dx9.r32",&nativeDepth}};
+                const std::pair<const char*, const AttachmentReadback*> shadows[] = {
+                    {"-shadow-rhi.r32", &depth}, {"-shadow-dx9.r32", &nativeDepth}};
                 for (const auto& pair : shadows) {
                     std::ofstream raw(evidence / (stem + pair.first), std::ios::binary);
                     raw.write(reinterpret_cast<const char*>(pair.second->bytes.data()),
@@ -201,12 +187,18 @@ int main(int argc, char** argv) try {
     CHECK(renderer.Unload(1) && renderer.Detach());
     if (dx12)
         CHECK(QueryD3D12Stats(*twelve.device).debugErrors == 0);
-    if (strict && !exact) {
+    if (comparison == "strict" && !exact) {
         std::cerr << "FAIL strict DX9 comparison: no tolerance was applied\n";
         return 1;
     }
-    std::cout << (exact ? "PASS exact DX9 images"
-                        : "MEASURED DX9 differences; parity gate remains open")
+    if (comparison == "tolerant" && !accepted) {
+        std::cerr
+            << "FAIL bounded DX9 comparison: RGB<=1 byte, alpha/coverage exact, shadow depth<=1e-6\n";
+        return 1;
+    }
+    std::cout << (exact      ? "PASS exact DX9 images"
+                  : accepted ? "PASS bounded DX9 images; strict differences retained"
+                             : "MEASURED DX9 differences exceed bounded acceptance")
               << "\n";
     return 0;
 } catch (const std::exception& e) {
