@@ -11,7 +11,7 @@ test; an API's theoretical capabilities do not imply adapter support.
 | Single RGBA8 + D24S8 model frame | Validation | Native | Implemented | Implemented | No backend |
 | Explicit sequential passes and sampled attachment dependencies | `rhi_render_pass` / `rhi_frame_passes` | Native implicit state | Generated-scene gate | Generated-scene gate | No backend |
 | R32 float shadow color + independent D24S8 attachment | Clear/read validation | Built-in effect | Generated-scene gate | Generated-scene gate | No backend |
-| Built-in self-shadow generation and composition | No rasterization | Native | Generated scene; real producer in progress | Generated scene; real producer in progress | No backend |
+| Built-in self-shadow generation and composition | No rasterization | Native | CPU PMD/PMX producer; strict DX9 gate open | CPU PMD/PMX producer; strict DX9 gate open | No backend |
 | Multiple simultaneous color attachments (MRT) | Rejected | Native API only | Not exposed | Not exposed | No backend |
 | Mips / layers / MSAA on explicit render textures | Rejected | Separate legacy paths | Rejected | Rejected | No backend |
 | Native MME `.fx` execution | Unsupported | Implemented | Unsupported | Unsupported | No backend |
@@ -68,7 +68,8 @@ The built-in shadow shader is a separate program from fixed-function model
 emulation. Its contract follows the stock effect's depth plot and shadow
 comparison (1500 / 8000, perspective Y factor, 0.3 threshold), material/toon and
 specular inputs. This is not a native MME effect interpreter. Real material
-coverage and DX9 equivalence still require the third review unit. Explicit-pass
+coverage and the remaining strict DX9 differences are recorded in
+[self-shadow validation](RHI_SELF_SHADOW_VALIDATION.md). Explicit-pass
 HUD/fixed pipelines, D24S8 readback on DX12, UV1 and material morph shading are
 not accepted by this milestone's native program.
 
@@ -78,3 +79,11 @@ devices must be reported separately. The inherited `rhi_d3d9_null_texture_warp`
 one-channel precision failure remains independent: do not alter its tolerance or
 baseline to accept this work. Image comparisons continue to require exact bytes
 where the corresponding gate promises exact output.
+
+`RuntimeCpuSceneProducer::BuildFrame` produces the explicit shadow/main frame.
+It shares the native DX9 CPU shadow projection, preserves PMX caster/receiver
+flags and outline colors, and reuses geometry versions between passes. An empty
+caster pass clears and stores a white map. Unsupported self-shadow accessories,
+UV1 and material morph shading fail explicitly. The legacy preview controller
+still consumes its single-target stream; presenting the new frame through that
+controller is a separate integration step, not an implicit fallback to DX9.

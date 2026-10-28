@@ -54,6 +54,8 @@ int main() {
     bad.targets[0].description.layers = 2;
     CHECK(!ValidateRenderFrame(bad));
     CHECK(ValidateModelReplay(FlattenRenderFrame(f)));
+    bad=f;bad.passes[0].color.reset();bad.passes[0].depthStencil.reset();
+    CHECK(!ValidateModelReplay(FlattenRenderFrame(bad)));
     std::puts(
         "frame graph: ordered dependencies, attachments, discard and unsupported ranges passed");
 }

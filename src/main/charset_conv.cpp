@@ -5,11 +5,30 @@
 #include <cstring>
 #include <cwchar>
 #include <memory>
+#include <array>
 
 #include "mikudancestudio/charset_conv.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 
 namespace mikudancestudio {
+namespace {
+const std::array<_locale_t, 4>& CpuLocales() {
+    // Same candidates as renderer initialization, with CPU-only ownership.
+    // Creating locale objects does not change the process/global locale.
+    struct Locales {
+        std::array<_locale_t, 4> values{_create_locale(LC_ALL, ""), _create_locale(LC_ALL, ".OCP"),
+                                        _create_locale(LC_ALL, ".ACP"),
+                                        _create_locale(LC_ALL, "JPN")};
+        ~Locales() {
+            for (auto value : values)
+                if (value)
+                    _free_locale(value);
+        }
+    };
+    static const Locales locales;
+    return locales.values;
+}
+}
 
 void ConvertAnsiToWide(const D3DRenderer* renderer, const char* source, wchar_t* destination,
                        int destinationWords) {
@@ -47,7 +66,9 @@ void WideToSjis(const D3DRenderer* renderer, char* destination, const wchar_t* s
         strncpy_s(destination, destinationBytes, buffer.get(), _TRUNCATE);
         return;
     }
-    for (auto locale : renderer->localeTable) {
+    const auto cpu = renderer ? nullptr : CpuLocales().data();
+    for (unsigned i = 0; i < 4; ++i) {
+        const auto locale = renderer ? renderer->localeTable[i] : cpu[i];
         // STRUNCATE is nonzero: like any other failure it advances the chain.
         if (_wcstombs_s_l(nullptr, destination, destinationBytes, source, _TRUNCATE, locale) == 0)
             break;

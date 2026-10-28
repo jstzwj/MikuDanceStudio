@@ -15,6 +15,8 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
     s.source = f.source;
     s.resources = f.resources;
     if (pass) {
+        if (!pass->color && !pass->depthStencil)
+            return {};
         const auto* t = Target(f, pass->color ? pass->color->target : pass->depthStencil->target);
         if (!t)
             return {};
@@ -26,6 +28,12 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
             s.target.height = std::max(s.target.height, t.description.height);
         }
     s.events.push_back({1, ModelReplayOp::Clear});
+    // A pass with no casters still clears/stores a valid shadow map. Global
+    // material resources belong to the other passes, not this clear-only stream.
+    if (pass && pass->draws.empty()) {
+        s.resources.clear();
+        return s;
+    }
     for (const auto& r : f.resources) {
         ModelReplayEvent e;
         e.sequence = s.events.size() + 1;
@@ -36,6 +44,8 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
     for (const auto& p : f.passes) {
         if (pass && &p != pass)
             continue;
+        if (!p.color && !p.depthStencil)
+            return {};
         const auto* target = Target(f, p.color ? p.color->target : p.depthStencil->target);
         if (!target)
             return {};
@@ -116,6 +126,8 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         draws += result.draws;
         state.End();
     }
+    if (!draws && !f.resources.empty())
+        return fail("unused_frame_resources");
     return {true, 0, draws, "valid_frame"};
 }
 }

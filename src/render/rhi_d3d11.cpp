@@ -51,9 +51,9 @@ public:
     std::array<Handle, 3> modelTextures{};
     ModelPipeline modelPipeline;
     Handle shadowTexture;
-    ComPtr<ID3D11VertexShader> shadowVs;
+    ComPtr<ID3D11VertexShader> shadowVs, shadowOutlineVs;
     ComPtr<ID3D11PixelShader> shadowPs;
-    ComPtr<ID3D11InputLayout> shadowLayout;
+    ComPtr<ID3D11InputLayout> shadowLayout, shadowOutlineLayout;
     ComPtr<ID3D11Buffer> shadowConstants;
     ComPtr<ID3D11SamplerState> shadowSampler;
     bool SetBuiltinShadow(const ModelPipeline& p, const ModelViewport& viewport) {
@@ -63,14 +63,18 @@ public:
         if (p.shadow.mode == BuiltinShadowMode::None)
             return true;
         if (!passes.Active() || !ValidBuiltinShadowState(p.shadow) ||
-            p.vertexLayout != VertexLayout::PositionNormalUv ||
+            p.vertexLayout != BuiltinShadowVertexLayout(p.shadow.mode) ||
             p.topology != PrimitiveTopology::TriangleList)
             return false;
         if (!shadowVs) {
-            ComPtr<ID3DBlob> vertex, pixel, errors;
+            ComPtr<ID3DBlob> vertex, outline, pixel, errors;
             lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
                                    nullptr, nullptr, "shadow_vs", "vs_5_0",
                                    D3DCOMPILE_IEEE_STRICTNESS, 0, &vertex, &errors);
+            if (SUCCEEDED(lastError))
+                lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource),
+                                       nullptr, nullptr, nullptr, "shadow_outline_vs", "vs_5_0",
+                                       D3DCOMPILE_IEEE_STRICTNESS, 0, &outline, &errors);
             if (SUCCEEDED(lastError))
                 lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource),
                                        nullptr, nullptr, nullptr, "shadow_ps", "ps_5_0",
@@ -92,6 +96,14 @@ public:
             if (SUCCEEDED(lastError))
                 lastError = native->CreateInputLayout(elements, 3, vertex->GetBufferPointer(),
                                                       vertex->GetBufferSize(), &layout);
+            if (SUCCEEDED(lastError))
+                lastError =
+                    native->CreateVertexShader(outline->GetBufferPointer(),
+                                               outline->GetBufferSize(), nullptr, &shadowOutlineVs);
+            if (SUCCEEDED(lastError))
+                lastError =
+                    native->CreateInputLayout(elements, 1, outline->GetBufferPointer(),
+                                              outline->GetBufferSize(), &shadowOutlineLayout);
             D3D11_BUFFER_DESC b{};
             b.ByteWidth = sizeof(BuiltinShadowConstants);
             b.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
@@ -116,8 +128,9 @@ public:
         context->PSSetConstantBuffers(2, 1, &cb);
         auto* sampler = shadowSampler.Get();
         context->PSSetSamplers(3, 1, &sampler);
-        context->IASetInputLayout(shadowLayout.Get());
-        context->VSSetShader(shadowVs.Get(), nullptr, 0);
+        const bool outline = p.shadow.mode == BuiltinShadowMode::Outline;
+        context->IASetInputLayout(outline ? shadowOutlineLayout.Get() : shadowLayout.Get());
+        context->VSSetShader(outline ? shadowOutlineVs.Get() : shadowVs.Get(), nullptr, 0);
         context->PSSetShader(shadowPs.Get(), nullptr, 0);
         return true;
     }
@@ -355,7 +368,7 @@ public:
         return {true, true, true, false, false};
     }
     ModelCapabilities ModelFeatures() const override {
-        return {true, true, true, true, true, true, true, true, true, true, true, UINT_MAX};
+        return {true, true, true, true, true, true, true, true, true, true, bool(chain), UINT_MAX};
     }
     bool Live() const { return !retired && !pending && native->GetDeviceRemovedReason() == S_OK; }
     Resource* Find(Handle h) {

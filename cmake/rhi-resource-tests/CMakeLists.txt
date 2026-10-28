@@ -18,6 +18,7 @@ add_library(mds_rhi_resources
     "${MDS_SOURCE}/src/render/rhi_scene_preview.cpp"
     "${MDS_SOURCE}/src/render/model_geometry.cpp"
     "${MDS_SOURCE}/src/render/model_inputs.cpp")
+target_sources(mds_rhi_resources PRIVATE "${MDS_SOURCE}/src/render/self_shadow.cpp")
 target_sources(mds_rhi_resources PRIVATE "${MDS_SOURCE}/src/render/scene_passes.cpp" "${MDS_SOURCE}/src/render/scene_frame.cpp" "${MDS_SOURCE}/src/render/rhi_texture_mips.cpp")
 target_compile_features(mds_rhi_resources PUBLIC cxx_std_17)
 target_include_directories(mds_rhi_resources PUBLIC "${MDS_SOURCE}/include"

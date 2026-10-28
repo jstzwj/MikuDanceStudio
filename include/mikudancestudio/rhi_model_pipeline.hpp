@@ -82,17 +82,18 @@ enum class ModelBlendOp {
 enum class BuiltinShadowMode {
     None,
     Depth,
-    Material
+    Material,
+    Outline
 };
 struct BuiltinShadowState {
     BuiltinShadowMode mode = BuiltinShadowMode::None;
     // Matrices include the object's world transform. No backend rebuilds them.
     std::array<float, 16> lightViewProjection{}, worldViewProjection{}, rotation{};
     std::array<float, 4> color{}, toonColor{1, 1, 1, 1}, specular{}, lightDirection{}, eye{};
-    bool perspective = false, transparent = false;
+    bool perspective = false, transparent = false, receive = true;
 };
 inline bool ValidBuiltinShadowState(const BuiltinShadowState& s) {
-    if (unsigned(s.mode) > unsigned(BuiltinShadowMode::Material))
+    if (unsigned(s.mode) > unsigned(BuiltinShadowMode::Outline))
         return false;
     if (s.mode == BuiltinShadowMode::None)
         return true;
@@ -105,6 +106,10 @@ inline bool ValidBuiltinShadowState(const BuiltinShadowState& s) {
             if (!std::isfinite(v))
                 return false;
     return s.specular[3] >= 0;
+}
+inline VertexLayout BuiltinShadowVertexLayout(BuiltinShadowMode mode) {
+    return mode == BuiltinShadowMode::Outline ? VertexLayout::PositionColor
+                                              : VertexLayout::PositionNormalUv;
 }
 struct ModelPipeline {
     // PositionColor: float3 + RGBA8 (16 bytes), no normal or UV attributes.

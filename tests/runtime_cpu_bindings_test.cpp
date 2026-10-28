@@ -62,6 +62,31 @@ int main(int argc,char** argv){
     if(argc==3 && std::string(argv[1])=="--native-x")return NativeX(std::filesystem::u8path(argv[2]));
     if(argc!=3)return 2;std::string reason;const auto root=std::filesystem::absolute(argv[1]);FileAssetSource assets(argv[2]);
     ToonTextureResolver textures(root,assets);HistoryDesc target;target.width=128;target.height=96;
+    // Independent PMX file flags: cast=4, receive=8, outline=16. An absent
+    // caster still produces a defined, cleared shadow attachment.
+    struct ShadowCase {const char* name;bool cast,receive,outline;};
+    for(const auto& item:std::vector<ShadowCase>{{"flags-1f.pmx",true,true,true},
+            {"flags-17.pmx",true,false,true},{"flags-1b.pmx",false,true,true},
+            {"flags-0c.pmx",true,true,false},{"alpha98.pmd",false,true,true}}) {
+        RuntimeCpuScene scene;CHECK(scene.LoadModel(root/item.name,reason));
+        CHECK(scene.Model(0)->PrepareMaterials(textures,reason));SceneResourceResolver resolver(root/item.name);
+        RuntimeCpuSceneProducer producer;CHECK(producer.Load(scene,resolver,true,assets,reason));
+        SelfShadowSettings settings;settings.mode=1;settings.mapSize=64;RenderFrame frame;
+        CHECK(producer.BuildFrame(scene,Frame(),target,settings,frame,reason));
+        CHECK(frame.passes.size()==2 && frame.targets.size()==4 && ValidateRenderFrame(frame));
+        CHECK((!frame.passes[0].draws.empty())==item.cast);
+        bool material=false,outline=false;
+        for(const auto& draw:frame.passes[1].draws) {
+            if(draw.pipeline.shadow.mode==BuiltinShadowMode::Material) {
+                material=true;CHECK(draw.pipeline.shadow.receive==item.receive && draw.shadowTarget==3);
+            } else outline=true;
+        }
+        CHECK(material && outline==item.outline);
+        settings.mode=0;CHECK(producer.BuildFrame(scene,Frame(),target,settings,frame,reason));
+        CHECK(frame.passes.size()==1 && frame.targets.size()==2);
+        settings.mode=3;const auto before=frame.resources.size();
+        CHECK(!producer.BuildFrame(scene,Frame(),target,settings,frame,reason) && frame.resources.size()==before);
+    }
     // .x import has no native mesh/device ownership; a failed reload is atomic.
     RuntimeCpuAccessory accessory;CHECK(accessory.Load(root/"bound.x",1,reason));
     const auto* geometry=accessory.Geometry();CHECK(geometry && geometry->vertexCount==4 && geometry->indices.bytes.size()==24);
@@ -72,6 +97,9 @@ int main(int argc,char** argv){
         RuntimeCpuScene scene;CHECK(scene.Load(session,resolver.Resolved(),reason));
         for(auto slot:scene.Order())CHECK(scene.Model(slot)->PrepareMaterials(textures,reason));
         RuntimeCpuSceneProducer producer;CHECK(producer.Load(scene,resolver,true,assets,reason));
+        SelfShadowSettings shadow;shadow.mode=1;RenderFrame unsupported;
+        CHECK(!producer.BuildFrame(scene,Frame(),target,shadow,unsupported,reason) &&
+              reason=="cpu_self_shadow_accessories_not_migrated" && unsupported.passes.empty());
         ModelReplayStream stream;CHECK(producer.Build(scene,Frame(),target,stream,reason));
         const bool ground=std::string(name)=="passes-v2.pmm";
         auto expected=std::vector<std::string>{"accessory_material","accessory_material","model_material","model_outline","accessory_material","accessory_material"};

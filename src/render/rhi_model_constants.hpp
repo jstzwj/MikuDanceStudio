@@ -6,17 +6,17 @@ namespace mikudancestudio::rhi::detail {
 inline BuiltinShadowConstants BuildBuiltinShadowConstants(const ModelPipeline& p,
                                                           const ModelViewport& viewport) {
     const auto& s = p.shadow;
-    BuiltinShadowConstants c{
-        s.lightViewProjection,
-        s.worldViewProjection,
-        s.rotation,
-        s.color,
-        s.toonColor,
-        s.specular,
-        s.lightDirection,
-        s.eye,
-        {unsigned(s.mode), unsigned(s.perspective), unsigned(s.transparent), 0},
-        {float(viewport.width), float(viewport.height), 0, 0}};
+    BuiltinShadowConstants c{s.lightViewProjection,
+                             s.worldViewProjection,
+                             s.rotation,
+                             s.color,
+                             s.toonColor,
+                             s.specular,
+                             s.lightDirection,
+                             s.eye,
+                             {unsigned(s.mode), unsigned(s.perspective), unsigned(s.transparent),
+                              s.receive ? 65536u : 0},
+                             {float(viewport.width), float(viewport.height), 0, 0}};
     for (unsigned i = 0; i < 3; ++i) {
         const auto& t = p.shader.layout.stages[i];
         const unsigned role = t.role == MaterialTextureRole::Base     ? 1

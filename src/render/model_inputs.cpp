@@ -412,6 +412,23 @@ std::vector<ModelInputDifference> CompareModelInputs(const rhi::ModelPipeline& a
     P(stencilDepthFail);
     P(stencilPass);
 #undef P
+    scalar("shadow.mode", a.shadow.mode, b.shadow.mode);
+    if (a.shadow.mode != rhi::BuiltinShadowMode::None ||
+        b.shadow.mode != rhi::BuiltinShadowMode::None) {
+        const auto& x = a.shadow;
+        const auto& y = b.shadow;
+        values("shadow.lightViewProjection", x.lightViewProjection, y.lightViewProjection);
+        values("shadow.worldViewProjection", x.worldViewProjection, y.worldViewProjection);
+        values("shadow.rotation", x.rotation, y.rotation);
+        values("shadow.color", x.color, y.color);
+        values("shadow.toonColor", x.toonColor, y.toonColor);
+        values("shadow.specular", x.specular, y.specular);
+        values("shadow.lightDirection", x.lightDirection, y.lightDirection);
+        values("shadow.eye", x.eye, y.eye);
+        scalar("shadow.perspective", x.perspective, y.perspective);
+        scalar("shadow.transparent", x.transparent, y.transparent);
+        scalar("shadow.receive", x.receive, y.receive);
+    }
     scalar("viewport.present", bool(a.viewport), bool(b.viewport));
     if (a.viewport && b.viewport) {
         const auto& x = *a.viewport;

@@ -36,6 +36,9 @@ struct ModelReplayDraw {
     // Mutable frame target, valid only in RenderFrame and declared by its pass.
     // Kept separate from immutable material upload keys.
     std::uint64_t shadowTarget = 0;
+    // CPU producer metadata used to construct the depth pass from the same
+    // immutable vertex/index versions as the material pass.
+    std::optional<BatchCull> shadowCaster;
 };
 enum class ModelReplayOp {
     Clear,

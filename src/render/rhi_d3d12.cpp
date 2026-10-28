@@ -109,7 +109,7 @@ public:
     ComPtr<ID3D12DescriptorHeap> rtvs, dsvs, cpuViews;
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3DBlob> vertex, colorVertex, pixel;
-    ComPtr<ID3DBlob> screenVertex, screenPixel, shadowVertex, shadowPixel;
+    ComPtr<ID3DBlob> screenVertex, screenPixel, shadowVertex, shadowOutlineVertex, shadowPixel;
     Handle shadowTexture;
     std::map<std::string, ComPtr<ID3D12PipelineState>> pipelines;
     std::array<Frame, FrameCount> frames;
@@ -190,7 +190,7 @@ public:
         return {true, true, true, false, true};
     }
     ModelCapabilities ModelFeatures() const override {
-        return {true, true, true, true, true, true, true, false, true, true, true, MaxDraws};
+        return {true, true, true, true, true, true, true, false, true, true, bool(chain), MaxDraws};
     }
     D3D12_CPU_DESCRIPTOR_HANDLE CpuView(unsigned n) const {
         auto h = cpuViews->GetCPUDescriptorHandleForHeapStart();
@@ -900,6 +900,10 @@ public:
                                    D3DCOMPILE_IEEE_STRICTNESS, 0, &shadowVertex, &errors);
         if (SUCCEEDED(lastError))
             lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
+                                   nullptr, nullptr, "shadow_outline_vs", "vs_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &shadowOutlineVertex, &errors);
+        if (SUCCEEDED(lastError))
+            lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
                                    nullptr, nullptr, "shadow_ps", "ps_5_0",
                                    D3DCOMPILE_IEEE_STRICTNESS, 0, &shadowPixel, &errors);
         if (FAILED(lastError)) {
@@ -1218,7 +1222,7 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     std::array<std::array<float, 4>, 3> samples{};
     if (!Live() || !inFrame || !ValidBuiltinShadowState(p.shadow) ||
         (p.shadow.mode != BuiltinShadowMode::None &&
-         (!passes.Active() || p.vertexLayout != VertexLayout::PositionNormalUv ||
+         (!passes.Active() || p.vertexLayout != BuiltinShadowVertexLayout(p.shadow.mode) ||
           p.topology != PrimitiveTopology::TriangleList)) ||
         !ValidModelViewport(view, RenderWidth(), RenderHeight()) ||
         !ModelVertexStride(p.vertexLayout) || !ModelPrimitiveArity(p.topology) ||
@@ -1268,7 +1272,8 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     }
     auto* vs = p.vertexLayout == VertexLayout::PositionColor ? colorVertex.Get() : vertex.Get();
     if (p.shadow.mode != BuiltinShadowMode::None)
-        vs = shadowVertex.Get();
+        vs = p.shadow.mode == BuiltinShadowMode::Outline ? shadowOutlineVertex.Get()
+                                                         : shadowVertex.Get();
     if (!UsePipeline(p, p.vertexLayout, vs,
                      p.shadow.mode == BuiltinShadowMode::None ? pixel.Get() : shadowPixel.Get()))
         return false;

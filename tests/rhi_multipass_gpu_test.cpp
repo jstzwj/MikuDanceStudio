@@ -102,6 +102,7 @@ int main(int argc, char** argv) {
     }
     CHECK(dx12 ? !twelve.swapchain : !eleven.swapchain);
     auto& d = dx12 ? *twelve.device : *eleven.device;
+    CHECK(d.ModelFeatures().offscreen && !d.ModelFeatures().presentation);
     auto floor = Quad(.95f, .8f), blocker = Quad(.15f, .2f);
     auto floorV =
         d.CreateBuffer({BufferUsage::Vertex, floor.size() * sizeof(Vertex)}, floor.data());

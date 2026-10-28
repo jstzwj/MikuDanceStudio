@@ -1,4 +1,5 @@
 #include "legacy_model_cpu_math.hpp"
+#include "mikudancestudio/render_self_shadow.hpp"
 #include "mikudancestudio/rhi_history_replay.hpp"
 // ===========================================================================
 // VA 0x00425D20 / 0x00426CD0 / 0x004277E0 - model and shadow render passes
@@ -1552,6 +1553,17 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) { // 0x426CD0
     if (surface == nullptr || depth == nullptr)
         return;
 
+    render::ModelMatrix world, lightTransform;
+    std::memcpy(world.data(), frameMatrix, 64);
+    const auto& direction = app->SceneLight().Direction;
+    if (!render::BuildSelfShadowTransform(
+            world, {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()},
+            {direction.x, direction.y, direction.z}, app->ShadowDistance(), app->ShadowMode(),
+            lightTransform, LegacyCpuRenderMath()))
+        return;
+    Matrix shadowMatrix;
+    std::memcpy(&shadowMatrix, lightTransform.data(), 64);
+
     D3DVIEWPORT9 oldViewport;
     Matrix view;
     Matrix projection;
@@ -1572,85 +1584,8 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) { // 0x426CD0
     D3DVIEWPORT9 shadowViewport{0, 0, width, height, 0.0f, 1.0f};
     device->SetViewport(&shadowViewport);
 
-    float target[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
-    const D3DVECTOR& lightDirection = app->SceneLight().Direction;
-    float eye[3] = {target[0] - lightDirection.x * 50.0f, target[1] - lightDirection.y * 50.0f,
-                    target[2] - lightDirection.z * 50.0f};
-    const float up[3] = {0.0f, 0.0f, 1.0f};
-    Matrix lightView;
-    api.lookAtLH(&lightView, eye, target, up);
-
-    float direction[3] = {lightDirection.x, lightDirection.y, lightDirection.z};
-    api.vec3Normalize(direction, direction);
-    const float slope = -direction[2];
-    const float edge = 1.0f - std::fabs(slope);
-    const float base = app->ShadowDistance();
-    const bool modeOne = app->ShadowMode() == 1;
-    float scale;
-    int part;
-    if (modeOne) {
-        part = 0;
-        if (slope < -0.9f || slope > 0.9f)
-            scale = base;
-        else if (slope < -0.8f)
-            scale = ((slope - 0.1f) * 10.0f + 10.0f) * base + base;
-        else if (slope > 0.8f)
-            scale = (10.0f - (slope + 0.1f) * 10.0f) * base + base;
-        else
-            scale = base + base;
-    } else {
-        part = 1;
-        if (slope < -0.9f || slope > 0.9f)
-            scale = base;
-        else if (slope < -0.8f)
-            scale = (slope * 20.0f + 19.0f) * base;
-        else if (slope > 0.8f)
-            scale = (19.0f - slope * 20.0f) * base;
-        else
-            scale = base * 3.0f;
-    }
-    fx::SetBool(effect, "parthf", part);
-
-    Matrix shadowProjection{};
-    shadowProjection.m[0][0] = scale;
-    shadowProjection.m[1][1] = scale;
-    shadowProjection.m[2][2] = base * 0.1500000059604645f;
-    shadowProjection.m[3][3] = 1.0f;
-    Matrix shadowMatrix;
-    Matrix temp;
-    Multiply(&temp, reinterpret_cast<const Matrix*>(frameMatrix), &lightView);
-    Multiply(&shadowMatrix, &temp, &shadowProjection);
-    Matrix transform;
-    api.scaling(&transform, 1.0f, 1.0f, 2.0f);
-    Multiply(&shadowMatrix, &shadowMatrix, &transform);
-    api.translation(&transform, 0.0f, 0.0f, -1.0f);
-    Multiply(&shadowMatrix, &shadowMatrix, &transform);
-
-    Matrix orientation;
-    Identity(&orientation);
-    float positive;
-    float negative;
-    if (slope < -0.9f || slope > 0.9f) {
-        positive = edge;
-        negative = -edge;
-    } else if (slope < -0.8f) {
-        positive = modeOne ? 4.0f * slope + 3.7f : 9.0f * slope + 8.2f;
-        negative = -9.0f * slope - 8.2f;
-    } else if (slope > 0.8f) {
-        positive = modeOne ? 3.7f - 4.0f * slope : 8.2f - 9.0f * slope;
-        negative = 9.0f * slope - 8.2f;
-    } else {
-        positive = modeOne ? 0.5f : 1.0f;
-        negative = -1.0f;
-    }
-    orientation.m[1][3] = positive;
-    orientation.m[3][1] = negative;
-    Multiply(&shadowMatrix, &shadowMatrix, &orientation);
-    api.translation(&transform, 0.0f, 0.0f, 1.0f);
-    Multiply(&shadowMatrix, &shadowMatrix, &transform);
-    api.scaling(&transform, 1.0f, 1.0f, 0.5f);
-    Multiply(&shadowMatrix, &shadowMatrix, &transform);
-    std::memcpy(&app->LightViewProjection(), &shadowMatrix, sizeof(shadowMatrix));
+    fx::SetBool(effect,"parthf",app->ShadowMode()!=1);
+    std::memcpy(&app->LightViewProjection(),&shadowMatrix,64);
 
     UINT passes = 0;
     app->ActiveRenderPass() = AccessoryRenderPass::ModelEffect;

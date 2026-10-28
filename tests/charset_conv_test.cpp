@@ -42,6 +42,8 @@ int main() {
     }
     WideToSjis(renderer.get(), result, L"\U0001f600", sizeof(result));
     check(result[0] == '\0', "all locale candidates fail");
+    WideToSjis(nullptr, result, L"\u521d\u97f3", sizeof(result));
+    check(std::strcmp(result, "\x8f\x89\x89\xb9") == 0, "CPU-only CP932 mirror");
     char shortResult[2]{};
     WideToSjis(renderer.get(), shortResult, L"\u0141\u0141", sizeof(shortResult));
     check(shortResult[0] == '\0', "STRUNCATE advances to the next locale");
@@ -51,6 +53,14 @@ int main() {
     ConvertAnsiToWide(nullptr, "model.pmx", wide, 32);
     check(std::wcscmp(wide, L"model.pmx") == 0, "startup ASCII without renderer");
     for (auto locale : renderer->localeTable) _free_locale(locale);
+    const char* nativeLocales[]={"",".OCP",".ACP","JPN"};
+    for(int i=0;i<4;++i) renderer->localeTable[i]=_create_locale(LC_ALL,nativeLocales[i]);
+    for(const wchar_t* text:{L"\U0001f600",L"\u9f98",L"\u0141"}) {
+        char headless[32]{};WideToSjis(renderer.get(),result,text,sizeof(result));
+        WideToSjis(nullptr,headless,text,sizeof(headless));
+        check(std::strcmp(headless,result)==0,"CPU-only fallback retains the native locale order");
+    }
+    for(auto locale:renderer->localeTable) _free_locale(locale);
     for (int successIndex = 0; successIndex < 4; ++successIndex) {
         for (int i = 0; i < 4; ++i)
             renderer->localeTable[i] = _create_locale(

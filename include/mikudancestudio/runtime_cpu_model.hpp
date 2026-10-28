@@ -25,12 +25,14 @@ public:
                 std::string& reason);
     bool PrepareMaterials(const rhi::ToonTextureResolver&, std::string& reason);
     bool Build(const render::ModelFrameInputs&, const rhi::HistoryDesc&, rhi::ClearColor,
-               const std::function<void(render::SceneDrawReplacement)>&, std::string& reason);
+               const std::function<void(render::SceneDrawReplacement)>&, std::string& reason,
+               const rhi::BuiltinShadowState* shadow = nullptr);
     const render::ModelGeometrySnapshot* Geometry() const;
     bool BuildEdges(const render::ModelFrameInputs&, render::SceneDrawFamily,
                     const render::ScenePassSettings&, const rhi::AtlasAsset* helper,
                     const rhi::HistoryDesc&, rhi::ClearColor,
-                    const std::function<void(render::SceneDrawReplacement)>&, std::string& reason);
+                    const std::function<void(render::SceneDrawReplacement)>&, std::string& reason,
+                    const rhi::BuiltinShadowState* builtin = nullptr);
 
 private:
     friend class RuntimeCpuScene;

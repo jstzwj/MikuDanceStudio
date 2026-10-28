@@ -7,6 +7,7 @@
 #include "mikudancestudio/physics_scene.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model_reader.hpp"
+#include "mikudancestudio/render_self_shadow.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -21,6 +22,7 @@ struct RuntimeCpuModel::Impl {
     PhysicsScene* physics = nullptr;
     mdl::ModelRecord storage{};
     std::vector<render::ModelMaterialInputs> materials;
+    std::vector<std::array<float, 4>> toonColors;
     std::vector<std::array<std::shared_ptr<const rhi::MaterialTextureAsset>, 3>> textures;
     render::ModelSubmissionBuilder submission;
     bool loaded = false, prepared = false;
@@ -176,6 +178,7 @@ bool RuntimeCpuModel::PrepareMaterials(const rhi::ToonTextureResolver& resolver,
     }
     const auto& model = impl->storage;
     std::vector<render::ModelMaterialInputs> materials;
+    std::vector<std::array<float, 4>> toonColors;
     std::vector<std::array<std::shared_ptr<const rhi::MaterialTextureAsset>, 3>> textures;
     std::map<std::string, std::shared_ptr<const rhi::MaterialTextureAsset>> catalog;
     for (unsigned i = 0; i < model.materialCount; ++i) {
@@ -232,6 +235,21 @@ bool RuntimeCpuModel::PrepareMaterials(const rhi::ToonTextureResolver& resolver,
             reason = "cpu_toon_decode";
             return false;
         }
+        std::array<float, 4> toonColor{1, 1, 1, 1};
+        if (src.toonReference != 255) {
+            if (toon.kind == rhi::ToonKind::Shared &&
+                assets[0].origin == rhi::TextureOrigin::Builtin) {
+                for (unsigned c = 0; c < 3; ++c)
+                    toonColor[c] = render::DefaultToonShadowColors[3 * (toon.sharedSlot - 1) + c];
+            } else if (toon.kind != rhi::ToonKind::Default &&
+                       assets[0].origin != rhi::TextureOrigin::Missing && !assets[0].fallback) {
+                const auto& image = assets[0].content.image;
+                const auto offset = std::size_t(image.height - 1) * image.width * 4;
+                for (unsigned c = 0; c < 3; ++c)
+                    toonColor[c] = image.pixels[offset + c] * (1.f / 256);
+            }
+        }
+        toonColors.push_back(toonColor);
         for (unsigned stage = 1; stage < 3; ++stage) {
             auto& path = stage == 1 ? material.base : material.sphere;
             if (path.empty())
@@ -271,6 +289,7 @@ bool RuntimeCpuModel::PrepareMaterials(const rhi::ToonTextureResolver& resolver,
         textures.push_back(std::move(references));
     }
     impl->materials = std::move(materials);
+    impl->toonColors = std::move(toonColors);
     impl->textures = std::move(textures);
     impl->prepared = true;
     reason.clear();
@@ -279,7 +298,7 @@ bool RuntimeCpuModel::PrepareMaterials(const rhi::ToonTextureResolver& resolver,
 bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::HistoryDesc& target,
                             rhi::ClearColor clear,
                             const std::function<void(render::SceneDrawReplacement)>& append,
-                            std::string& reason) {
+                            std::string& reason, const rhi::BuiltinShadowState* shadow) {
     const auto* geometry = Geometry();
     if (impl && impl->loaded && impl->prepared && append &&
         (!impl->storage.vertexCount || !impl->storage.indexCount)) {
@@ -308,6 +327,21 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
                                           LegacyCpuRenderMath())) {
                 reason = "cpu_model_shading";
                 return false;
+            }
+            if (shadow && model.toonFlag && shadow->mode == rhi::BuiltinShadowMode::Material) {
+                auto& p = packet.pipeline;
+                p.shadow = *shadow;
+                const auto& material = impl->materials[i];
+                const auto& light = p.shader.lights[0];
+                for (unsigned c = 0; c < 3; ++c) {
+                    p.shadow.color[c] =
+                        material.ambient[c] * light.ambient[c] + material.emissive[c];
+                    p.shadow.specular[c] = material.specular[c] * light.specular[c];
+                }
+                p.shadow.color[3] = material.diffuse[3];
+                p.shadow.specular[3] = material.shininess == 0 ? .1f : material.shininess;
+                p.shadow.toonColor = impl->toonColors[i];
+                p.shadow.receive = model.physicsMode != 2 || (model.materials[i].flags & 8) != 0;
             }
             packet.textureResources[0] = impl->textures[i][0];
             for (unsigned stage = 1; stage < 3; ++stage) {
@@ -367,6 +401,12 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
                 if (packet.textureResources[stage])
                     draw.textureIdentities[stage] = packet.textureResources[stage]->identity;
             auto submission = event;
+            const auto& record = model.materials[packet.material];
+            if (shadow && model.toonFlag && shadow->mode == rhi::BuiltinShadowMode::Material &&
+                record.diffuse[3] != .9800000190734863f &&
+                (model.physicsMode != 2 || (record.edgeColor[3] > 0 && (record.flags & 4) != 0)))
+                submission.draw.shadowCaster =
+                    record.doubleSided ? rhi::BatchCull::None : rhi::BatchCull::CounterClockwise;
             submission.sequence = draw.cpu.events.size() + 1;
             draw.cpu.events.push_back(std::move(submission));
             append(std::move(draw));
@@ -390,7 +430,7 @@ bool RuntimeCpuModel::BuildEdges(const render::ModelFrameInputs& frame,
                                  const rhi::AtlasAsset* helper, const rhi::HistoryDesc& target,
                                  rhi::ClearColor clear,
                                  const std::function<void(render::SceneDrawReplacement)>& append,
-                                 std::string& reason) {
+                                 std::string& reason, const rhi::BuiltinShadowState* builtin) {
     if (!impl || !impl->loaded || !append) {
         reason = "cpu_model_not_loaded";
         return false;
@@ -409,7 +449,7 @@ bool RuntimeCpuModel::BuildEdges(const render::ModelFrameInputs& frame,
         reason.clear();
         return true;
     }
-    if (model.physicsMode == 2) {
+    if (model.physicsMode == 2 && !builtin) {
         reason = "cpu_pmx_edges_not_validated";
         return false;
     }
@@ -422,7 +462,10 @@ bool RuntimeCpuModel::BuildEdges(const render::ModelFrameInputs& frame,
     for (unsigned n = 0; n < model.materialCount; ++n) {
         const auto& material = model.materials[n];
         const auto count = unsigned(material.faceVertexCount);
-        if (count && (shadow || material.doubleSided)) {
+        const bool pmx = model.physicsMode == 2;
+        const bool eligible = shadow ? !pmx || ((material.flags & 2) && material.edgeColor[3] > 0)
+                                     : material.doubleSided != 0;
+        if (count && eligible) {
             render::SceneDrawReplacement draw;
             draw.family = family;
             draw.material = n;
@@ -438,6 +481,11 @@ bool RuntimeCpuModel::BuildEdges(const render::ModelFrameInputs& frame,
             }
             command.firstIndex = first;
             command.indexCount = count;
+            if (pmx && !shadow) {
+                command.pipeline.shadow = *builtin;
+                command.pipeline.shadow.mode = rhi::BuiltinShadowMode::Outline;
+                std::copy_n(material.edgeColor, 4, command.pipeline.shadow.color.begin());
+            }
             if (shadow) {
                 rhi::ModelReplayResource texture;
                 texture.kind = rhi::ReplayResourceKind::Texture;

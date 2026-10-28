@@ -16,6 +16,8 @@ struct ModelInputMath {
     void (*rotateX)(ModelMatrix&, float) = nullptr;
     void (*lookAt)(ModelMatrix&, const std::array<float, 3>&) = nullptr;
     void (*perspective)(ModelMatrix&, float, float, float, float) = nullptr;
+    void (*lookAtTarget)(ModelMatrix&, const std::array<float, 3>&, const std::array<float, 3>&,
+                         const std::array<float, 3>&) = nullptr;
 };
 enum class FovConversion {
     FloatMultiply,

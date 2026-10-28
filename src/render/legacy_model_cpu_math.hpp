@@ -54,6 +54,12 @@ inline render::ModelInputMath LegacyCpuRenderMath() {
         d3dx::Get().perspectiveFovLH(&m, fov, aspect, nearPlane, farPlane);
         std::memcpy(out.data(), &m, 64);
     };
+    math.lookAtTarget = [](render::ModelMatrix& out, const std::array<float, 3>& eye,
+                           const std::array<float, 3>& at, const std::array<float, 3>& up) {
+        Matrix m;
+        d3dx::Get().lookAtLH(&m, eye.data(), at.data(), up.data());
+        std::memcpy(out.data(), &m, 64);
+    };
     return math;
 }
 

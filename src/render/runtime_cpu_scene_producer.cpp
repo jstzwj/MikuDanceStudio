@@ -21,7 +21,7 @@ bool RuntimeCpuSceneProducer::Load(const RuntimeCpuScene& scene,
             }
     if (passes && scene.Session()) {
         const auto& doc = scene.Session()->Document();
-        if (doc.selfShadowMode || doc.avi.enabled || doc.picture.enabled) {
+        if (doc.avi.enabled || doc.picture.enabled) {
             reason = "cpu_scene_multitarget_or_background_not_supported";
             return false;
         }
@@ -54,6 +54,12 @@ bool RuntimeCpuSceneProducer::Load(const RuntimeCpuScene& scene,
 bool RuntimeCpuSceneProducer::Build(RuntimeCpuScene& scene, ModelFrameInputs frame,
                                     const rhi::HistoryDesc& target, rhi::ModelReplayStream& output,
                                     std::string& reason) {
+    return BuildScene(scene, frame, target, output, reason, nullptr);
+}
+bool RuntimeCpuSceneProducer::BuildScene(RuntimeCpuScene& scene, ModelFrameInputs frame,
+                                         const rhi::HistoryDesc& target,
+                                         rhi::ModelReplayStream& output, std::string& reason,
+                                         const rhi::BuiltinShadowState* shadow) {
     if (!scene.FrameInputs(frame, reason))
         return false;
     const auto* session = scene.Session();
@@ -101,12 +107,12 @@ bool RuntimeCpuSceneProducer::Build(RuntimeCpuScene& scene, ModelFrameInputs fra
                         drawOrder.end());
     }
     ScenePassSettings settings;
+    if (scenePasses_ && !scene.PrepareEdges(frame, reason))
+        return fail(reason);
     if (scenePasses_ && doc) {
-        if (doc->selfShadowMode || session->Pose().selfShadowMode || doc->avi.enabled ||
-            doc->picture.enabled)
+        if ((!shadow && (doc->selfShadowMode || session->Pose().selfShadowMode)) ||
+            doc->avi.enabled || doc->picture.enabled)
             return fail("cpu_scene_multitarget_or_background_not_supported");
-        if (!scene.PrepareEdges(frame, reason))
-            return fail(reason);
         settings.shadowBlend = doc->physics.projectedShadowBlend != 0;
         const auto gray = doc->physics.projectedShadowAmbient;
         settings.shadowMaterial.diffuse[3] = .699999988079071f;
@@ -168,20 +174,47 @@ bool RuntimeCpuSceneProducer::Build(RuntimeCpuScene& scene, ModelFrameInputs fra
             if (item.visible && item.shadowEnabled)
                 return fail("cpu_accessory_projected_shadow_not_supported");
         for (auto slot : drawOrder)
-            if (scene.Visible(slot) && !scene.Model(slot)->BuildEdges(
-                                           frame, SceneDrawFamily::ProjectedModelShadow, settings,
-                                           &helper_, target, desc.clear, modelAppend(slot), reason))
+            if (scene.Visible(slot) &&
+                !scene.Model(slot)->BuildEdges(frame, SceneDrawFamily::ProjectedModelShadow,
+                                               settings, &helper_, target, desc.clear,
+                                               modelAppend(slot), reason, shadow))
                 return fail(reason);
+    }
+    if (shadow && shadow->mode == rhi::BuiltinShadowMode::Material) {
+        // Native casters are visited in slot order, independently of display
+        // order and physics dependency order. The assembler shares their CPU
+        // geometry versions with the material pass, including caster-only slots.
+        auto casters = scene.Order();
+        std::sort(casters.begin(), casters.end());
+        for (auto slot : casters)
+            if (scene.Visible(slot)) {
+                const auto cast = [&](SceneDrawReplacement draw) {
+                    auto& command = draw.cpu.events.back().draw;
+                    if (!command.shadowCaster)
+                        return;
+                    command.pipeline.shadow.mode = rhi::BuiltinShadowMode::Depth;
+                    command.pipeline.raster.cull = *command.shadowCaster;
+                    command.pipeline.raster.alphaBlend = false;
+                    command.pipeline.stencil = false;
+                    command.pipeline.shader.alphaTest = false;
+                    command.pipeline.shader.layout = {};
+                    command.textures = {};
+                    draw.model = slot;
+                    append(std::move(draw));
+                };
+                if (!scene.Model(slot)->Build(frame, target, desc.clear, cast, reason, shadow))
+                    return fail(reason);
+            }
     }
     for (auto slot : drawOrder)
         if (scene.Visible(slot) &&
-            !scene.Model(slot)->Build(frame, target, desc.clear, modelAppend(slot), reason))
+            !scene.Model(slot)->Build(frame, target, desc.clear, modelAppend(slot), reason, shadow))
             return fail(reason);
     if (scenePasses_)
         for (auto slot : drawOrder)
             if (scene.Visible(slot) && !scene.Model(slot)->BuildEdges(
                                            frame, SceneDrawFamily::ModelOutline, settings, nullptr,
-                                           target, desc.clear, modelAppend(slot), reason))
+                                           target, desc.clear, modelAppend(slot), reason, shadow))
                 return fail(reason);
     if (!accessories(true))
         return false;
@@ -190,6 +223,120 @@ bool RuntimeCpuSceneProducer::Build(RuntimeCpuScene& scene, ModelFrameInputs fra
         reason = result.reason;
         return false;
     }
+    reason.clear();
+    return true;
+}
+bool RuntimeCpuSceneProducer::BuildFrame(RuntimeCpuScene& scene, ModelFrameInputs frame,
+                                         const rhi::HistoryDesc& target,
+                                         const SelfShadowSettings& settings,
+                                         rhi::RenderFrame& output, std::string& reason) {
+    const auto fail = [&](const char* why) {
+        reason = why;
+        return false;
+    };
+    if (!rhi::ValidHistoryDesc(target) || target.samples != 1 || !target.color || !target.depth ||
+        !target.stencil || target.width > 4096 || target.height > 4096 || settings.mode < -1 ||
+        settings.mode > 2 || settings.mapSize < 16 || settings.mapSize > 4096 ||
+        !std::isfinite(settings.distance))
+        return fail("invalid_self_shadow_frame_settings");
+    if (!scene.FrameInputs(frame, reason))
+        return false;
+    const auto* session = scene.Session();
+    const int mode =
+        settings.mode < 0 ? (session ? session->Pose().selfShadowMode : 0) : settings.mode;
+    const float distance = settings.distance > 0 ? settings.distance
+                           : session             ? session->Pose().selfShadowDistance
+                                                 : .01125f;
+    if (mode && session)
+        for (const auto& a : session->Pose().accessories)
+            if (scenePasses_ && a.visible)
+                return fail("cpu_self_shadow_accessories_not_migrated");
+    rhi::BuiltinShadowState shadow;
+    shadow.mode = mode ? rhi::BuiltinShadowMode::Material : rhi::BuiltinShadowMode::None;
+    shadow.perspective = mode == 2;
+    ModelMaterialInputs neutral;
+    rhi::ModelPipeline camera;
+    if (!BuildModelInputs(frame, neutral, {}, camera, LegacyCpuRenderMath()))
+        return fail("cpu_shadow_camera");
+    using M = d3dx::D3DXMATRIXF;
+    auto& math = d3dx::Get();
+    M world, view, projection, wvp, temporary, inverse;
+    std::memcpy(&world, frame.world.data(), 64);
+    std::memcpy(&view, camera.shader.view.data(), 64);
+    std::memcpy(&projection, camera.shader.projection.data(), 64);
+    math.multiply(&temporary, &world, &view);
+    math.multiply(&wvp, &temporary, &projection);
+    std::memcpy(shadow.worldViewProjection.data(), &wvp, 64);
+    shadow.rotation = frame.lightRotation;
+    auto eye = frame.view.editorNavigation
+                   ? frame.view.editorEye
+                   : std::array<float, 3>{0, 0, frame.scene.camera.distance};
+    if (!frame.view.editorNavigation && frame.scene.camera.parentModel >= 0)
+        eye = frame.scene.camera.position;
+    if (!math.inverse(&inverse, nullptr, &world))
+        return fail("cpu_shadow_singular_world");
+    math.vec3Transform(shadow.eye.data(), eye.data(), &inverse);
+    shadow.eye[3] = 1;
+    for (unsigned c = 0; c < 3; ++c)
+        shadow.lightDirection[c] = frame.scene.lightState[3 + c];
+    math.vec3Normalize(shadow.lightDirection.data(), shadow.lightDirection.data());
+    shadow.lightDirection[3] = 1;
+    if (mode &&
+        !BuildSelfShadowTransform(frame.world, eye, camera.shader.lights[0].direction, distance,
+                                  mode, shadow.lightViewProjection, LegacyCpuRenderMath()))
+        return fail("cpu_self_shadow_transform");
+    rhi::ModelReplayStream sceneStream;
+    if (!BuildScene(scene, frame, target, sceneStream, reason, &shadow))
+        return false;
+    rhi::RenderFrame result;
+    result.source = sceneStream.source;
+    result.resources = std::move(sceneStream.resources);
+    const auto access = rhi::TextureAccess::ColorAttachment | rhi::TextureAccess::Sampled |
+                        rhi::TextureAccess::CopySource;
+    result.targets = {{1, {target.width, target.height, rhi::TextureFormat::Rgba8, access}},
+                      {2,
+                       {target.width, target.height, rhi::TextureFormat::Depth24Stencil8,
+                        std::uint32_t(rhi::TextureAccess::DepthStencilAttachment)}}};
+    rhi::FramePass main;
+    main.name = "main_scene";
+    main.color = rhi::FrameAttachment{1};
+    main.color->clear = sceneStream.clear;
+    main.depthStencil = rhi::FrameAttachment{2};
+    rhi::FramePass generate;
+    generate.name = "self_shadow";
+    if (mode) {
+        result.targets.push_back(
+            {3, {settings.mapSize, settings.mapSize, rhi::TextureFormat::R32Float, access}});
+        result.targets.push_back(
+            {4,
+             {settings.mapSize, settings.mapSize, rhi::TextureFormat::Depth24Stencil8,
+              std::uint32_t(rhi::TextureAccess::DepthStencilAttachment)}});
+        generate.color = rhi::FrameAttachment{3};
+        generate.color->clear = {1, 1, 1, 1};
+        generate.depthStencil = rhi::FrameAttachment{4};
+        main.sampled = {3};
+    }
+    for (auto& e : sceneStream.events)
+        if (e.op == rhi::ModelReplayOp::Draw) {
+            if (e.draw.pipeline.shadow.mode == rhi::BuiltinShadowMode::Depth) {
+                e.draw.pipeline.viewport =
+                    rhi::ModelViewport{0, 0, settings.mapSize, settings.mapSize, 0, 1};
+                generate.draws.push_back(std::move(e.draw));
+            } else {
+                if (e.draw.pipeline.shadow.mode == rhi::BuiltinShadowMode::Material)
+                    e.draw.shadowTarget = 3;
+                main.draws.push_back(std::move(e.draw));
+            }
+        }
+    if (mode)
+        result.passes.push_back(std::move(generate));
+    result.passes.push_back(std::move(main));
+    const auto valid = rhi::ValidateRenderFrame(result);
+    if (!valid) {
+        reason = valid.reason;
+        return false;
+    }
+    output = std::move(result);
     reason.clear();
     return true;
 }

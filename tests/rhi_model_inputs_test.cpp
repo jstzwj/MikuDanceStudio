@@ -36,6 +36,12 @@ int main() {
     CHECK(pipeline.raster.depthCompare==rhi::DepthComparison::LessEqual && pipeline.stencilReference==1);
     CHECK(pipeline.shader.layout.stages[0].coordinates==rhi::MaterialCoordinates::CameraNormal);
     CHECK(render::CompareModelInputs(pipeline,pipeline).empty());
+    auto shadowPipeline=pipeline;shadowPipeline.shadow.mode=rhi::BuiltinShadowMode::Material;
+    auto disabledReceiver=shadowPipeline;disabledReceiver.shadow.receive=false;
+    const auto shadowDifference=render::CompareModelInputs(shadowPipeline,disabledReceiver);
+    CHECK(shadowDifference.size()==1 && shadowDifference[0].field=="shadow.receive");
+    CHECK((rhi::detail::BuildBuiltinShadowConstants(shadowPipeline,*pipeline.viewport).options[3]&65536)!=0);
+    CHECK((rhi::detail::BuildBuiltinShadowConstants(disabledReceiver,*pipeline.viewport).options[3]&65536)==0);
     auto changed=pipeline;changed.shader.lights[0].direction[1]+=.125f;changed.viewport->x=8;changed.raster.depthWrite=false;
     const auto differences=render::CompareModelInputs(changed,pipeline);CHECK(differences.size()==3);
     bool light=false,view=false,depth=false;for(const auto& d:differences){light|=d.field=="light0.direction" && d.component==1 && d.generated-d.reference==.125;

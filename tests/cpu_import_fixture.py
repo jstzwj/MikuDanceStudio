@@ -21,7 +21,7 @@ class Bytes(bytearray):
 POSITIONS = ((-10, -8, 0), (0, 10, 0), (10, -8, 0))
 
 
-def pmd(texture='checker.bmp'):
+def pmd(texture='checker.bmp', alpha=1):
     b = Bytes(b'Pmd'); b.f(1); b.fixed('CPU triangle', 20); b.zero(256)
     b.u32(3)
     for index, p in enumerate(POSITIONS):
@@ -29,7 +29,7 @@ def pmd(texture='checker.bmp'):
         b.u16(0); b.u16(0); b.u8(100); b.u8(0)
     b.u32(3)
     for index in (0, 1, 2): b.u16(index)
-    b.u32(1); b.f(.8, .6, .4, 1, 4, .1, .1, .1, .3, .3, .3)
+    b.u32(1); b.f(.8, .6, .4, alpha, 4, .1, .1, .1, .3, .3, .3)
     b.u8(255); b.u8(1); b.u32(3); b.fixed(texture, 20)
     b.u16(1); b.fixed('B', 20); b.u16(65535); b.u16(0)
     b.u8(0); b.u16(0); b.f(0, 0, 0); b.u16(0)  # no IK
@@ -42,7 +42,7 @@ def pmd(texture='checker.bmp'):
     return b
 
 
-def pmx():
+def pmx(material_flags=0x11):
     b = Bytes(b'PMX '); b.f(2); b.u8(8)
     b.extend(bytes((0, 0, 2, 1, 1, 1, 1, 1)))
     for name in ('CPU triangle', '', '', ''): b.text(name)
@@ -55,7 +55,7 @@ def pmx():
     b.u32(1); b.text('checker.bmp')
     b.u32(1); b.text('M'); b.text('')
     b.f(.8, .6, .4, 1, .1, .1, .1, 4, .3, .3, .3)
-    b.u8(0x11); b.f(0, 0, 0, 1, 1)  # double sided, edge
+    b.u8(material_flags); b.f(0, 0, 0, 1, 1)  # explicit PMX material flags
     b.extend(bytes((0, 255, 0, 1, 0)))  # base, no sphere, shared Toon 1
     b.text(''); b.u32(3)
     b.u32(1); b.text('B'); b.text(''); b.f(0, 0, 0)
@@ -236,6 +236,9 @@ def write(directory):
     (root / 'triangle.pmd').write_bytes(pmd())
     (root / 'sphere.pmd').write_bytes(pmd('s.sph'))
     (root / 'triangle.pmx').write_bytes(pmx())
+    (root / 'alpha98.pmd').write_bytes(pmd(alpha=.98))
+    for flags in (0x1f, 0x17, 0x1b, 0x0c):
+        (root / ('flags-%02x.pmx' % flags)).write_bytes(pmx(flags))
     # 2x2, uncompressed BGRA. Alpha is opaque so rasterization is unambiguous.
     pixels = bytes((80, 150, 240, 255, 140, 200, 100, 255)) * 2
     bmp = b'BM' + struct.pack('<IHHI', 54 + len(pixels), 0, 0, 54)
