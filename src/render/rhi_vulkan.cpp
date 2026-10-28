@@ -1,12 +1,13 @@
-#define VK_NO_PROTOTYPES
-#include <vulkan/vulkan.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#define VK_USE_PLATFORM_WIN32_KHR
 #else
 #include <dlfcn.h>
 #endif
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
 #include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_render_pass.hpp"
 #include "rhi_model_constants.hpp"
@@ -70,6 +71,8 @@ constexpr VkDeviceSize UniformBytes = 2 * 1024 * 1024;
     X(DestroyImageView) \
     X(CmdCopyBufferToImage) \
     X(CmdCopyImageToBuffer) \
+    X(CmdCopyImage) \
+    X(CmdBlitImage) \
     X(CmdBeginRendering) \
     X(CmdEndRendering) \
     X(CreateDescriptorSetLayout) \
@@ -119,6 +122,7 @@ struct Resource {
     VkAccessFlags2 access = VK_ACCESS_2_NONE;
 };
 struct Frame {
+    VkSemaphore acquired = VK_NULL_HANDLE;
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     VkDescriptorPool descriptors = VK_NULL_HANDLE;
@@ -200,6 +204,34 @@ public:
     VkShaderModule modelVs = VK_NULL_HANDLE, colorVs = VK_NULL_HANDLE, modelPs = VK_NULL_HANDLE;
     VkShaderModule shadowVs = VK_NULL_HANDLE, outlineVs = VK_NULL_HANDLE, shadowPs = VK_NULL_HANDLE;
     std::string reason;
+#ifdef _WIN32
+    PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR = nullptr;
+#endif
+    PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR = nullptr;
+    PFN_vkGetPhysicalDeviceSurfaceSupportKHR vkGetPhysicalDeviceSurfaceSupportKHR = nullptr;
+    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceCapabilitiesKHR =
+        nullptr;
+    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR vkGetPhysicalDeviceSurfaceFormatsKHR = nullptr;
+    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceSurfacePresentModesKHR =
+        nullptr;
+    PFN_vkCreateSwapchainKHR vkCreateSwapchainKHR = nullptr;
+    PFN_vkDestroySwapchainKHR vkDestroySwapchainKHR = nullptr;
+    PFN_vkGetSwapchainImagesKHR vkGetSwapchainImagesKHR = nullptr;
+    PFN_vkAcquireNextImageKHR vkAcquireNextImageKHR = nullptr;
+    PFN_vkQueuePresentKHR vkQueuePresentKHR = nullptr;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VkSwapchainKHR chain = VK_NULL_HANDLE;
+    SwapchainDesc presentation;
+    std::vector<Resource> swapImages;
+    std::vector<VkSemaphore> readyToPresent;
+    unsigned activeImage = 0;
+    bool presentationOutput = false, presentable = false, acquiredImage = false, retired = false;
+    SurfaceHealth surfaceHealth = SurfaceHealth::Unknown;
+    bool swapchainReadback = false;
+    bool ValidSurface(const SwapchainDesc&) const;
+    RebuildResult RebuildSurface(const SwapchainDesc&);
+    void ReleaseSurface();
+    SurfaceHealth Health() const;
 
     bool Check(VkResult result) {
         stats.lastError = result;
@@ -207,7 +239,7 @@ public:
             lost = true;
         return result == VK_SUCCESS;
     }
-    bool Live() const { return native && !lost && !pending; }
+    bool Live() const { return native && !lost && !pending && !retired; }
     Backend BackendType() const override { return Backend::Vulkan; }
     Capabilities Features() const override { return {true, false, true, true}; }
     DeviceStatus Status() const override {
@@ -220,17 +252,18 @@ public:
         return {true, true, true, false, false};
     }
     ModelCapabilities ModelFeatures() const override {
-        return {true, true, true, true, true, true, true, false, true, true, false, MaxDraws};
+        return {true, true, true, true, true, true, true, false, true, true, bool(chain), MaxDraws};
     }
     bool SetFixedPipeline(FixedPipelineState) override {
         modelReady = false;
         return false;
     }
-    bool Present() override { return false; }
+    bool Present() override;
     ~VulkanDevice() override {
         if (native) {
             if (vkDeviceWaitIdle)
                 vkDeviceWaitIdle(native);
+            ReleaseSurface();
             for (auto& r : resources)
                 Release(r);
             for (auto& r : failedUploads)
@@ -241,6 +274,8 @@ public:
             Release(legacyDepth);
             Release(white);
             for (auto& f : frames) {
+                if (f.acquired)
+                    vkDestroySemaphore(native, f.acquired, nullptr);
                 Release(f.uniforms);
                 if (f.descriptors)
                     vkDestroyDescriptorPool(native, f.descriptors, nullptr);
@@ -264,6 +299,8 @@ public:
                 vkDestroySemaphore(native, timeline, nullptr);
             vkDestroyDevice(native, nullptr);
         }
+        if (surface && vkDestroySurfaceKHR)
+            vkDestroySurfaceKHR(instance, surface, nullptr);
         if (messenger && vkDestroyDebugUtilsMessengerEXT)
             vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
         if (instance && vkDestroyInstance)
@@ -434,7 +471,8 @@ public:
         return Check(vkWaitSemaphores(native, &wait, std::uint64_t(timeout) * 1000000));
     }
     bool Idle() { return !issued || WaitCompletion({identity, issued}, 5000); }
-    bool Submit(VkCommandBuffer command) {
+    bool Submit(VkCommandBuffer command, VkSemaphore waitBinary = VK_NULL_HANDLE,
+                VkSemaphore signalBinary = VK_NULL_HANDLE) {
         if (!Check(vkEndCommandBuffer(command))) {
             pending = true;
             return false;
@@ -450,7 +488,18 @@ public:
         submit.commandBufferInfoCount = 1;
         submit.pCommandBufferInfos = &c;
         submit.signalSemaphoreInfoCount = 1;
-        submit.pSignalSemaphoreInfos = &signal;
+        VkSemaphoreSubmitInfo signals[2] = {signal, {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO}};
+        signals[1].semaphore = signalBinary;
+        signals[1].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        submit.signalSemaphoreInfoCount = signalBinary ? 2 : 1;
+        submit.pSignalSemaphoreInfos = signals;
+        VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
+        wait.semaphore = waitBinary;
+        wait.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        if (waitBinary) {
+            submit.waitSemaphoreInfoCount = 1;
+            submit.pWaitSemaphoreInfos = &wait;
+        }
         if (!Check(vkQueueSubmit2(queue, 1, &submit, VK_NULL_HANDLE))) {
             pending = true;
             return false;
@@ -672,13 +721,15 @@ public:
         if (!Live() || inFrame || !ValidHistoryDesc(d) || d.samples != 1 || !d.color || !d.depth ||
             !d.stencil || d.width > 4096 || d.height > 4096)
             return false;
+        presentationOutput = false;
         if (d.width == width && d.height == height && legacyColor.image)
             return true;
         Resource color, depth;
         color.texture = {d.width, d.height, TextureFormat::Rgba8};
         depth.texture = {d.width, d.height, TextureFormat::Depth24Stencil8};
         if (!AllocateImage(d.width, d.height, VK_FORMAT_R8G8B8A8_UNORM, 1,
-                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                               VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                            color))
             return false;
         if (!AllocateImage(d.width, d.height, VK_FORMAT_D24_UNORM_S8_UINT, 1,
@@ -697,6 +748,13 @@ public:
         ++epoch;
         legacyInitialized = false;
         passes.InvalidateContents();
+        return true;
+    }
+    bool EnsurePresentationTarget(const HistoryDesc& d) override {
+        if (!chain || retired || d.width != presentation.width || d.height != presentation.height ||
+            !EnsureModelTarget(d))
+            return false;
+        presentationOutput = true;
         return true;
     }
     unsigned RenderWidth() const {
@@ -769,7 +827,7 @@ public:
         rendering = true;
     }
     bool BeginFrame(ClearColor clear) override {
-        if (!Live() || inFrame || !legacyColor.image || !std::isfinite(clear.red) ||
+        if (!Live() || inFrame || presentable || !legacyColor.image || !std::isfinite(clear.red) ||
             !std::isfinite(clear.green) || !std::isfinite(clear.blue) ||
             !std::isfinite(clear.alpha))
             return false;
@@ -783,6 +841,22 @@ public:
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         if (!Check(vkBeginCommandBuffer(f.commands, &begin)))
             return false;
+        if (presentationOutput) {
+            if (!chain || retired || Health() == SurfaceHealth::Suspended ||
+                surfaceHealth == SurfaceHealth::Resettable)
+                return false;
+            const auto result = vkAcquireNextImageKHR(native, chain, 5000000000ull, f.acquired,
+                                                      VK_NULL_HANDLE, &activeImage);
+            if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+                Check(result);
+                if (result == VK_ERROR_OUT_OF_DATE_KHR)
+                    surfaceHealth = SurfaceHealth::Resettable;
+                return false;
+            }
+            acquiredImage = true;
+            surfaceHealth =
+                result == VK_SUBOPTIMAL_KHR ? SurfaceHealth::Resettable : SurfaceHealth::Ready;
+        }
         frameIndex = (frameIndex + 1) % FrameCount;
         f.offset = 0;
         f.draws = 0;
@@ -826,6 +900,29 @@ public:
         shadow = {};
         return passes.End();
     }
+    bool CopyToFrameOutput(Handle h) override {
+        auto* r = Find(h);
+        const auto* t = passes.Description(h);
+        if (!Live() || !inFrame || rendering || !r || !t || t->format != TextureFormat::Rgba8 ||
+            t->width != width || t->height != height || !passes.CanRead(h))
+            return false;
+        const auto cmd = frames[frameIndex].commands;
+        const auto layout = r->layout;
+        const auto stage = r->stage;
+        const auto access = r->access;
+        Barrier(cmd, *r, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
+                VK_ACCESS_2_TRANSFER_READ_BIT);
+        Barrier(cmd, legacyColor, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkImageCopy region{};
+        region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.extent = {width, height, 1};
+        vkCmdCopyImage(cmd, r->image, r->layout, legacyColor.image, legacyColor.layout, 1, &region);
+        Barrier(cmd, *r, layout, stage, access);
+        modelReady = false;
+        legacyInitialized = true;
+        return true;
+    }
     bool EndFrame() override {
         if (!Live() || !inFrame || passes.Active())
             return false;
@@ -834,8 +931,27 @@ public:
         rendering = false;
         inFrame = false;
         modelReady = false;
-        if (!Submit(frames[frameIndex].commands))
+        auto& frame = frames[frameIndex];
+        if (presentationOutput) {
+            if (!acquiredImage)
+                return false;
+            auto& target = swapImages[activeImage];
+            Barrier(frame.commands, legacyColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            Barrier(frame.commands, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            VkImageBlit copy{};
+            copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.srcOffsets[1] = copy.dstOffsets[1] = {int(width), int(height), 1};
+            vkCmdBlitImage(frame.commands, legacyColor.image, legacyColor.layout, target.image,
+                           target.layout, 1, &copy, VK_FILTER_NEAREST);
+            Barrier(frame.commands, target, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                    VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+        }
+        if (!Submit(frame.commands, presentationOutput ? frame.acquired : VK_NULL_HANDLE,
+                    presentationOutput ? readyToPresent[activeImage] : VK_NULL_HANDLE))
             return false;
+        presentable = presentationOutput;
         frames[frameIndex].completion = issued;
         ++stats.submissions;
         return true;
@@ -945,7 +1061,233 @@ public:
     bool BindDraw();
     bool MakePipeline(const ModelPipeline&, VkPipeline&);
     VkSampler Sampler(const SamplerDesc&);
-    bool Initialize(unsigned, unsigned, VulkanDriver, VulkanOptions);
+    bool Initialize(unsigned, unsigned, VulkanDriver, VulkanOptions,
+                    const SwapchainDesc* = nullptr);
+};
+
+bool VulkanDevice::ValidSurface(const SwapchainDesc& d) const {
+#ifdef _WIN32
+    return ValidSwapchainDesc(d) && d.window.system == WindowSystem::Win32 &&
+           IsWindow(reinterpret_cast<HWND>(d.window.handle)) && d.windowed && d.width <= 4096 &&
+           d.height <= 4096 && d.color == SurfaceColor::Rgba8 &&
+           d.depth == SurfaceDepth::Depth24Stencil8 && d.samples == 1 && !d.quality &&
+           d.swap == SurfaceSwap::Discard &&
+           (!presentation.window.handle || d.window.handle == presentation.window.handle);
+#else
+    return false;
+#endif
+}
+SurfaceHealth VulkanDevice::Health() const {
+    if (lost || retired)
+        return SurfaceHealth::Removed;
+#ifdef _WIN32
+    if (!IsWindow(reinterpret_cast<HWND>(presentation.window.handle)))
+        return SurfaceHealth::Removed;
+    if (IsIconic(reinterpret_cast<HWND>(presentation.window.handle)))
+        return SurfaceHealth::Suspended;
+#endif
+    return surfaceHealth;
+}
+void VulkanDevice::ReleaseSurface() {
+    for (auto semaphore : readyToPresent)
+        if (semaphore)
+            vkDestroySemaphore(native, semaphore, nullptr);
+    readyToPresent.clear();
+    swapImages.clear();
+    if (chain)
+        vkDestroySwapchainKHR(native, chain, nullptr);
+    chain = VK_NULL_HANDLE;
+    presentable = acquiredImage = false;
+}
+RebuildResult VulkanDevice::RebuildSurface(const SwapchainDesc& d) {
+    if (!ValidSurface(d))
+        return RebuildResult::Unsupported;
+    if (lost || retired)
+        return RebuildResult::ReplacementRequired;
+    if (!Live() || inFrame || presentable || acquiredImage)
+        return RebuildResult::Busy;
+    VkSurfaceCapabilitiesKHR caps{};
+    if (!Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical, surface, &caps)))
+        return RebuildResult::Failed;
+    if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+        return RebuildResult::Unsupported;
+    if (!caps.currentExtent.width || !caps.currentExtent.height)
+        return RebuildResult::RetryLater;
+    if (caps.currentExtent.width != UINT32_MAX &&
+        (caps.currentExtent.width != d.width || caps.currentExtent.height != d.height))
+        return RebuildResult::RetryLater;
+    if (d.width < caps.minImageExtent.width || d.width > caps.maxImageExtent.width ||
+        d.height < caps.minImageExtent.height || d.height > caps.maxImageExtent.height)
+        return RebuildResult::Unsupported;
+    unsigned count = 0;
+    if (!Check(vkGetPhysicalDeviceSurfaceFormatsKHR(physical, surface, &count, nullptr)))
+        return RebuildResult::Failed;
+    std::vector<VkSurfaceFormatKHR> formats(count);
+    if (!Check(vkGetPhysicalDeviceSurfaceFormatsKHR(physical, surface, &count, formats.data())))
+        return RebuildResult::Failed;
+    VkSurfaceFormatKHR selected{};
+    selected.format = VK_FORMAT_UNDEFINED;
+    for (auto desired : {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM})
+        for (auto f : formats)
+            if (f.format == desired && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
+                selected.format == VK_FORMAT_UNDEFINED)
+                selected = f;
+    if (selected.format == VK_FORMAT_UNDEFINED)
+        return RebuildResult::Unsupported;
+    VkFormatProperties sourceSupport{}, destSupport{};
+    vkGetPhysicalDeviceFormatProperties(physical, VK_FORMAT_R8G8B8A8_UNORM, &sourceSupport);
+    vkGetPhysicalDeviceFormatProperties(physical, selected.format, &destSupport);
+    if (!(sourceSupport.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+        !(destSupport.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
+        return RebuildResult::Unsupported;
+    count = 0;
+    if (!Check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface, &count, nullptr)))
+        return RebuildResult::Failed;
+    std::vector<VkPresentModeKHR> modes(count);
+    if (!Check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface, &count, modes.data())))
+        return RebuildResult::Failed;
+    const auto mode =
+        d.present == PresentMode::VSync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+    if (std::find(modes.begin(), modes.end(), mode) == modes.end())
+        return RebuildResult::Unsupported;
+    if (!Check(vkDeviceWaitIdle(native)))
+        return lost ? RebuildResult::ReplacementRequired : RebuildResult::Failed;
+    HistoryDesc output;
+    output.width = d.width;
+    output.height = d.height;
+    if (!EnsureModelTarget(output))
+        return RebuildResult::Failed;
+    VkSwapchainCreateInfoKHR create{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+    create.surface = surface;
+    create.minImageCount = caps.minImageCount + 1;
+    if (caps.maxImageCount)
+        create.minImageCount = std::min(create.minImageCount, caps.maxImageCount);
+    create.imageFormat = selected.format;
+    create.imageColorSpace = selected.colorSpace;
+    create.imageExtent = {d.width, d.height};
+    create.imageArrayLayers = 1;
+    create.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    const bool canRead = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    if (canRead)
+        create.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    create.preTransform = caps.currentTransform;
+    create.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (!(caps.supportedCompositeAlpha & create.compositeAlpha)) {
+        const auto flags = unsigned(caps.supportedCompositeAlpha);
+        create.compositeAlpha = static_cast<VkCompositeAlphaFlagBitsKHR>(flags & (~flags + 1));
+    }
+    create.presentMode = mode;
+    create.clipped = VK_TRUE;
+    create.oldSwapchain = chain;
+    VkSwapchainKHR next = VK_NULL_HANDLE;
+    if (!Check(vkCreateSwapchainKHR(native, &create, nullptr, &next)))
+        return RebuildResult::Failed;
+    // Once creation succeeds, oldSwapchain is retired even if later setup fails.
+    ReleaseSurface();
+    chain = next;
+    surfaceHealth = SurfaceHealth::Resettable;
+    ++epoch;
+    passes.InvalidateContents();
+    legacyInitialized = false;
+    count = 0;
+    if (!Check(vkGetSwapchainImagesKHR(native, chain, &count, nullptr)))
+        return RebuildResult::Failed;
+    std::vector<VkImage> images(count);
+    if (!Check(vkGetSwapchainImagesKHR(native, chain, &count, images.data())))
+        return RebuildResult::Failed;
+    swapImages.resize(count);
+    readyToPresent.resize(count, VK_NULL_HANDLE);
+    VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    for (unsigned i = 0; i < count; ++i) {
+        swapImages[i].image = images[i];
+        swapImages[i].format = selected.format;
+        swapImages[i].texture = {d.width, d.height, TextureFormat::Rgba8};
+        if (!Check(vkCreateSemaphore(native, &semaphore, nullptr, &readyToPresent[i])))
+            return RebuildResult::Failed;
+    }
+    presentation = d;
+    presentationOutput = true;
+    surfaceHealth = SurfaceHealth::Ready;
+    swapchainReadback = canRead;
+    return RebuildResult::Success;
+}
+bool VulkanDevice::Present() {
+    if (!Live() || inFrame || !chain || !presentable || !acquiredImage ||
+        Health() == SurfaceHealth::Suspended)
+        return false;
+    VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    info.swapchainCount = 1;
+    info.pSwapchains = &chain;
+    info.pImageIndices = &activeImage;
+    info.waitSemaphoreCount = 1;
+    info.pWaitSemaphores = &readyToPresent[activeImage];
+    const auto result = vkQueuePresentKHR(queue, &info);
+    presentable = acquiredImage = false;
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+        surfaceHealth = SurfaceHealth::Resettable;
+    else if (result == VK_SUCCESS) {
+        if (surfaceHealth != SurfaceHealth::Resettable)
+            surfaceHealth = SurfaceHealth::Ready;
+    } else {
+        Check(result);
+        surfaceHealth = lost ? SurfaceHealth::Removed : SurfaceHealth::Unknown;
+    }
+    return result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR;
+}
+class VulkanSwapchain final : public Swapchain {
+    VulkanDevice& device;
+
+public:
+    explicit VulkanSwapchain(VulkanDevice& native) : device(native) {}
+    ~VulkanSwapchain() override { Retire(); }
+    SwapchainDesc Description() const override { return device.presentation; }
+    SwapchainSupport Query(const SwapchainDesc& d) const override {
+        SwapchainSupport s;
+        if (device.retired || device.lost || !device.ValidSurface(d))
+            return s;
+        VkSurfaceCapabilitiesKHR caps{};
+        if (device.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.physical, device.surface,
+                                                             &caps) != VK_SUCCESS ||
+            !(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+            d.width < caps.minImageExtent.width || d.width > caps.maxImageExtent.width ||
+            d.height < caps.minImageExtent.height || d.height > caps.maxImageExtent.height)
+            return s;
+        unsigned count = 0;
+        if (device.vkGetPhysicalDeviceSurfacePresentModesKHR(device.physical, device.surface,
+                                                             &count, nullptr) != VK_SUCCESS)
+            return s;
+        std::vector<VkPresentModeKHR> modes(count);
+        if (device.vkGetPhysicalDeviceSurfacePresentModesKHR(device.physical, device.surface,
+                                                             &count, modes.data()) != VK_SUCCESS)
+            return s;
+        const auto mode = d.present == PresentMode::VSync ? VK_PRESENT_MODE_FIFO_KHR
+                                                          : VK_PRESENT_MODE_IMMEDIATE_KHR;
+        if (std::find(modes.begin(), modes.end(), mode) == modes.end())
+            return s;
+        s.supported = s.resize = s.reset = s.controllerOwnsReset = true;
+        s.qualityLevels = 1;
+        return s;
+    }
+    SurfaceHealth Health() const override { return device.Health(); }
+    std::int64_t LastNativeError() const override { return device.stats.lastError; }
+    RebuildResult Rebuild(const SwapchainDesc& d, RebuildReason reason) override {
+        return reason == RebuildReason::DeviceReplacement ? RebuildResult::ReplacementRequired
+                                                          : device.RebuildSurface(d);
+    }
+    bool Retire() override {
+        if (device.retired)
+            return true;
+        if (device.inFrame)
+            return false;
+        if (!device.lost && !device.Check(device.vkDeviceWaitIdle(device.native)))
+            return false;
+        device.ReleaseSurface();
+        device.retired = device.pending = true;
+        ++device.epoch;
+        device.passes.InvalidateContents();
+        return true;
+    }
 };
 
 VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -958,9 +1300,10 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT
     }
     return VK_FALSE;
 }
-bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, VulkanOptions options) {
+bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, VulkanOptions options,
+                              const SwapchainDesc* window) {
     reason = "invalid_options";
-    if (!w || !h || w > 4096 || h > 4096 ||
+    if (!w || !h || w > 4096 || h > 4096 || (window && !ValidSurface(*window)) ||
         (driver != VulkanDriver::Hardware && driver != VulkanDriver::Software))
         return false;
     if (options.model.compatibility != ModelCompatibility::Default ||
@@ -1042,13 +1385,27 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     app.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     create.pApplicationInfo = &app;
+    std::vector<const char*> enabledExtensions;
+#ifdef _WIN32
+    if (window) {
+        enabledExtensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+        enabledExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+    }
+#else
+    if (window) {
+        reason = "window_system_not_supported";
+        return false;
+    }
+#endif
     if (options.validation) {
         create.enabledLayerCount = 1;
         create.ppEnabledLayerNames = &layer;
-        create.enabledExtensionCount = 2;
-        create.ppEnabledExtensionNames = extensions;
+        enabledExtensions.insert(enabledExtensions.end(), std::begin(extensions),
+                                 std::end(extensions));
         create.pNext = &validation;
     }
+    create.enabledExtensionCount = unsigned(enabledExtensions.size());
+    create.ppEnabledExtensionNames = enabledExtensions.data();
     reason = "instance_creation_failed";
     if (!Check(vkCreateInstance(&create, nullptr, &instance)))
         return false;
@@ -1059,6 +1416,23 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         return false;                                                                              \
     }
     INSTANCE_FUNCTIONS(LOAD_INSTANCE)
+    if (window) {
+        LOAD_INSTANCE(DestroySurfaceKHR);
+        LOAD_INSTANCE(GetPhysicalDeviceSurfaceSupportKHR);
+        LOAD_INSTANCE(GetPhysicalDeviceSurfaceCapabilitiesKHR);
+        LOAD_INSTANCE(GetPhysicalDeviceSurfaceFormatsKHR);
+        LOAD_INSTANCE(GetPhysicalDeviceSurfacePresentModesKHR);
+#ifdef _WIN32
+        LOAD_INSTANCE(CreateWin32SurfaceKHR);
+        VkWin32SurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+        si.hwnd = reinterpret_cast<HWND>(window->window.handle);
+        si.hinstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(si.hwnd, GWLP_HINSTANCE));
+        if (!Check(vkCreateWin32SurfaceKHR(instance, &si, nullptr, &surface))) {
+            reason = "surface_creation_failed";
+            return false;
+        }
+#endif
+    }
 #undef LOAD_INSTANCE
     if (options.validation) {
         vkCreateDebugUtilsMessengerEXT = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
@@ -1104,6 +1478,13 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, queues.data());
         for (unsigned i = 0; i < families; ++i)
             if (queues[i].queueCount && (queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                if (surface) {
+                    VkBool32 supported = VK_FALSE;
+                    if (!Check(vkGetPhysicalDeviceSurfaceSupportKHR(candidate, i, surface,
+                                                                    &supported)) ||
+                        !supported)
+                        continue;
+                }
                 unsigned score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? 3
                                  : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2
                                                                                           : 1;
@@ -1138,6 +1519,11 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     device.queueCreateInfoCount = 1;
     device.pQueueCreateInfos = &q;
     device.pEnabledFeatures = &features;
+    const char* swapExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    if (window) {
+        device.enabledExtensionCount = 1;
+        device.ppEnabledExtensionNames = &swapExtension;
+    }
     reason = "device_creation_failed";
     if (!Check(vkCreateDevice(physical, &device, nullptr, &native)))
         return false;
@@ -1148,6 +1534,13 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         return false;                                                                              \
     }
     DEVICE_FUNCTIONS(LOAD_DEVICE)
+    if (window) {
+        LOAD_DEVICE(CreateSwapchainKHR);
+        LOAD_DEVICE(DestroySwapchainKHR);
+        LOAD_DEVICE(GetSwapchainImagesKHR);
+        LOAD_DEVICE(AcquireNextImageKHR);
+        LOAD_DEVICE(QueuePresentKHR);
+    }
 #undef LOAD_DEVICE
     vkGetDeviceQueue(native, family, 0, &queue);
     reason = "device_resources_failed";
@@ -1194,6 +1587,11 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         if (!commands(frame.pool, frame.commands) ||
             !AllocateBuffer(UniformBytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, frame.uniforms))
             return false;
+        if (window) {
+            VkSemaphoreCreateInfo binary{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            if (!Check(vkCreateSemaphore(native, &binary, nullptr, &frame.acquired)))
+                return false;
+        }
         VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * MaxDraws},
                                         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4 * MaxDraws},
                                         {VK_DESCRIPTOR_TYPE_SAMPLER, 4 * MaxDraws}};
@@ -1224,6 +1622,10 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     target.height = h;
     if (!EnsureModelTarget(target))
         return false;
+    if (window && RebuildSurface(*window) != RebuildResult::Success) {
+        reason = "swapchain_creation_failed";
+        return false;
+    }
     reason.clear();
     return true;
 }
@@ -1627,4 +2029,37 @@ VulkanStats QueryVulkanStats(Device& device) {
     stats.validationErrors = native->validationErrors.load();
     return stats;
 }
+bool ReadVulkanPresentation(Device& device, RgbaImage& out) {
+    auto* d = dynamic_cast<VulkanDevice*>(&device);
+    if (!d || !d->Live() || d->inFrame || !d->presentable || !d->acquiredImage ||
+        !d->swapchainReadback)
+        return false;
+    auto& r = d->swapImages[d->activeImage];
+    RgbaImage next;
+    next.width = d->presentation.width;
+    next.height = d->presentation.height;
+    if (!d->Read(r, next.pixels))
+        return false;
+    if (r.format == VK_FORMAT_B8G8R8A8_UNORM)
+        for (std::size_t i = 0; i < next.pixels.size(); i += 4)
+            std::swap(next.pixels[i], next.pixels[i + 2]);
+    out = std::move(next);
+    return true;
+}
+#ifdef _WIN32
+VulkanBundle CreateVulkanDevice(const SwapchainDesc& desc, VulkanDriver driver,
+                                VulkanOptions options) {
+    VulkanBundle result;
+    auto device = std::make_unique<VulkanDevice>();
+    if (!device->Initialize(desc.width, desc.height, driver, options, &desc)) {
+        result.creationReason = device->reason;
+        result.creationError = device->stats.lastError;
+        return result;
+    }
+    result.adapterName = device->properties.deviceName;
+    result.swapchain = std::make_unique<VulkanSwapchain>(*device);
+    result.device = std::move(device);
+    return result;
+}
+#endif
 } // namespace mikudancestudio::rhi

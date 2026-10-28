@@ -57,9 +57,9 @@ device. Existing renderer conversion behavior is preserved.
 This milestone does not implement native MME execution, simultaneous MRT,
 explicit-pass HUD, UV1/material morph shading, or accessory self-shadow
 composition. Those inputs are rejected where they would require an unsupported
-producer. The existing preview host still uses the single-target producer;
-`BuildFrame` is exercised directly through `SceneRenderer` and does not change
-the editor's rendering backend.
+producer. The independent preview host can select `BuildFrame` with `--self-shadow 1|2|track`,
+using the common final-color output and DX11/DX12/Vulkan presentation. This does
+not change the editor's rendering backend.
 
 ## Offscreen tests
 
@@ -158,8 +158,8 @@ Configure `MDS_SELF_SHADOW_PMD` and `MDS_SELF_SHADOW_PMX`, then run
 `ctest -R '^self_shadow_dx9_tolerant_'` for hardware acceptance. The optional
 strict CTest diagnostics compare DX11 WARP against hardware DX9 as before.
 
-Next, route the explicit final frame target through presentation, then add
-dynamic screen textures and post-processing. WARP material precision and exact
+The explicit final frame target now routes through presentation on all three
+new backends. Dynamic screen textures and post-processing can use that boundary. WARP material precision and exact
 SM3/SM5 differences can be investigated independently of bounded acceptance.
 The [Vulkan offscreen adapter](RHI_VULKAN_OFFSCREEN.md) now reuses the same
 shadow/main tests, PMD/PMX CPU producer, pass validation and numerical limits.
@@ -167,5 +167,10 @@ Generated models and the real PMD pass bounded acceptance. On TITAN Xp the real
 PMX shadow map is exact, but its main image has texture-sampling differences
 up to 15 RGB bytes and one differing coverage pixel. The external PMX bounded
 gate remains a failure; no expected-failure flag or wider tolerance is applied.
-This is independent of the existing WARP issue and does not establish Vulkan
-presentation or full model parity.
+This native-profile issue is independent of the existing WARP issue. The new
+explicit portable trilinear profile applies matching samplers to both backend
+and oracle and makes the Vulkan PMX comparison exact on this workstation, while
+changing the native filtered image. Native gates remain separate and retain
+their limits. See [material sampling and final output](RHI_MATERIAL_SAMPLING.md)
+for the public 720-case reproducer, portable PMD/PMX gates, final-color contract
+and hidden Vulkan presentation tests.

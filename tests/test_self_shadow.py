@@ -11,14 +11,17 @@ parser.add_argument('--test', required=True)
 parser.add_argument('--assets', required=True)
 parser.add_argument('--variant', default='dx11-warp')
 parser.add_argument('--external', choices=('pmd', 'pmx'))
+parser.add_argument('--sampling', choices=('native', 'portable'), default='native')
 mode = parser.add_mutually_exclusive_group()
 mode.add_argument('--strict', action='store_true')
 mode.add_argument('--tolerant', action='store_true')
 args = parser.parse_args()
 
 def run(model):
-    completed = subprocess.run([args.test, str(model), args.assets, args.variant,
-                    'strict' if args.strict else 'tolerant' if args.tolerant else 'measure'], timeout=120)
+    comparison = 'strict' if args.strict else 'tolerant' if args.tolerant else 'measure'
+    completed = subprocess.run([
+        args.test, str(model), args.assets, args.variant, comparison, '', args.sampling,
+    ], timeout=120)
     if completed.returncode == 77:
         raise SystemExit(77)
     completed.check_returncode()

@@ -471,6 +471,9 @@ public:
     // attachments only if their dimensions/formats match the scene contract.
     virtual bool EnsurePresentationTarget(const HistoryDesc&) { return false; }
     virtual bool ReadModelTarget(RgbaImage&) { return false; }
+    // GPU copy after explicit passes, before EndFrame. Exact RGBA8 extent;
+    // source must be initialized, stored, and declared CopySource.
+    virtual bool CopyToFrameOutput(Handle) { return false; }
     // Explicit single-queue passes. Unsupported backends fail before recording.
     // Begin/EndRenderPass are nested inside Begin/EndFrame, never each other.
     virtual Handle CreateRenderTexture(const RenderTextureDesc&) { return {}; }

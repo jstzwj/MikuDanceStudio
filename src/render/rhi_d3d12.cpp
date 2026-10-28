@@ -800,6 +800,24 @@ public:
         textures = {};
         return true;
     }
+    bool CopyToFrameOutput(Handle h) override {
+        auto* r = Find(h);
+        const auto* t = passes.Description(h);
+        if (!Live() || !inFrame || !r || !t || t->format != TextureFormat::Rgba8 ||
+            t->width != targetWidth || t->height != targetHeight || !passes.CanRead(h))
+            return false;
+        auto* output = offscreen ? offscreen.Get() : backbuffers[activeBackbuffer].Get();
+        if (!output)
+            return false;
+        auto* cmd = frames[frameIndex].commands.Get();
+        Barrier(cmd, r->native.Get(), r->state, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        Barrier(cmd, output, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+        cmd->CopyResource(output, r->native.Get());
+        Barrier(cmd, r->native.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, r->state);
+        Barrier(cmd, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        modelReady = false;
+        return true;
+    }
     bool EndFrame() override {
         if (!inFrame || passes.Active())
             return false;

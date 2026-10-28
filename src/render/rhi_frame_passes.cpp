@@ -126,6 +126,12 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         draws += result.draws;
         state.End();
     }
+    if (f.finalColor) {
+        const auto* t = Target(f, f.finalColor);
+        if (!t || t->description.format != TextureFormat::Rgba8 ||
+            !state.CanRead(handles.at(t->id)))
+            return fail("invalid_final_color");
+    }
     if (!draws && !f.resources.empty())
         return fail("unused_frame_resources");
     return {true, 0, draws, "valid_frame"};

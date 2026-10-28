@@ -289,6 +289,7 @@ bool RuntimeCpuSceneProducer::BuildFrame(RuntimeCpuScene& scene, ModelFrameInput
     if (!BuildScene(scene, frame, target, sceneStream, reason, &shadow))
         return false;
     rhi::RenderFrame result;
+    result.finalColor = 1;
     result.source = sceneStream.source;
     result.resources = std::move(sceneStream.resources);
     const auto access = rhi::TextureAccess::ColorAttachment | rhi::TextureAccess::Sampled |

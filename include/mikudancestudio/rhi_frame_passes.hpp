@@ -27,6 +27,9 @@ struct RenderFrame {
     std::vector<FrameTarget> targets;
     std::vector<ModelReplayResource> resources;
     std::vector<FramePass> passes;
+    // Optional final RGBA8 render product. Copied to the selected output after
+    // all passes; no CPU readback or implicit scaling. Zero preserves legacy use.
+    std::uint64_t finalColor = 0;
 };
 ModelReplayResult ValidateRenderFrame(const RenderFrame&);
 // Internal transport for the existing resident resource preparation path.

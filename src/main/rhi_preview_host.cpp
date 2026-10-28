@@ -119,7 +119,7 @@ struct HostWindow {
         }
         return DefWindowProcW(h, m, w, l);
     }
-    bool Open(const wchar_t* title) {
+    bool Open(const wchar_t* title, bool hidden) {
         WNDCLASSW c{};
         c.lpfnWndProc = Procedure;
         c.hInstance = GetModuleHandleW(nullptr);
@@ -127,8 +127,9 @@ struct HostWindow {
         c.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         if (!RegisterClassW(&c) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
             return false;
-        handle = CreateWindowW(c.lpszClassName, title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                               CW_USEDEFAULT, 800, 600, nullptr, nullptr, c.hInstance, this);
+        handle = CreateWindowExW(hidden ? WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW : 0, c.lpszClassName,
+                                 title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
+                                 nullptr, nullptr, c.hInstance, this);
         return handle != nullptr;
     }
     ~HostWindow() {
@@ -141,15 +142,17 @@ struct HostWindow {
 int RunIndependentRhiPreview(int argc, wchar_t** argv) {
     if (argc < 3) {
         std::cerr
-            << "usage: mds_rhi_preview dx11|dx12 scene.pmm|model.pmd|model.pmx [--warp] [--frames N] [--root directory] [--reselect slot model] [--model-slot slot] [--model-materials-only|--scene-passes] [--reselect-accessory slot file.x] [--lifecycle] [--save-as output.pmm]\n";
+            << "usage: mds_rhi_preview dx11|dx12|vulkan scene.pmm|model.pmd|model.pmx [--sampling portable|native] [--self-shadow 1|2|track] [--warp] [--frames N] [--root directory] [--reselect slot model] [--model-slot slot] [--model-materials-only|--scene-passes] [--reselect-accessory slot file.x] [--lifecycle] [--save-as output.pmm]\n";
         return 2;
     }
     try {
         BackendOptions options;
         const std::wstring api = argv[1];
-        if (api != L"dx11" && api != L"dx12")
+        if (api != L"dx11" && api != L"dx12" && api != L"vulkan")
             return 2;
-        options.backend = api == L"dx11" ? Backend::D3D11 : Backend::D3D12;
+        options.backend = api == L"dx11"   ? Backend::D3D11
+                          : api == L"dx12" ? Backend::D3D12
+                                           : Backend::Vulkan;
         const auto input = std::filesystem::absolute(argv[2]);
         SceneResourceResolver resolver(input);
         resolver.SetPathDecoder([](const std::string& raw) -> std::optional<std::filesystem::path> {
@@ -165,6 +168,8 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
         unsigned frames = 0;
         int selected = -1;
         bool lifecycle = false, materialsOnly = false, scenePasses = false;
+        bool selfShadow = false;
+        SelfShadowSettings shadowSettings;
         std::filesystem::path saveAs;
         const auto number = [](const wchar_t* text) {
             std::size_t n = 0;
@@ -190,7 +195,21 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
                 if (i + 1 >= argc)
                     return 2;
                 const wchar_t* value = argv[++i];
-                if (arg == L"--frames") {
+                if (arg == L"--sampling") {
+                    const std::wstring sampling = value;
+                    if (sampling != L"native" && sampling != L"portable")
+                        return 2;
+                    options.materialSampling = sampling == L"native"
+                                                   ? MaterialSamplingPolicy::Native
+                                                   : MaterialSamplingPolicy::PortableTrilinear;
+                } else if (arg == L"--self-shadow") {
+                    selfShadow = true;
+                    if (std::wstring(value) != L"track") {
+                        shadowSettings.mode = int(number(value));
+                        if (shadowSettings.mode != 1 && shadowSettings.mode != 2)
+                            return 2;
+                    }
+                } else if (arg == L"--frames") {
                     frames = number(value);
                     if (!frames)
                         return 2;
@@ -221,6 +240,8 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
         std::string reason;
         if (scenePasses && (materialsOnly || selected >= 0))
             throw std::runtime_error("scene_passes_requires_all_models_and_accessories");
+        if (selfShadow && lifecycle)
+            throw std::runtime_error("--lifecycle is unavailable with --self-shadow");
         const bool pmm = input.extension() == L".pmm" || input.extension() == L".PMM";
         if (pmm) {
             std::ifstream file(input, std::ios::binary);
@@ -266,12 +287,17 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
         if (!window.Open(scenePasses ? L"MikuDanceStudio independent RHI - scene passes"
                          : selected >= 0
                              ? L"MikuDanceStudio independent RHI - selected model materials"
-                             : L"MikuDanceStudio independent RHI - model materials"))
+                             : L"MikuDanceStudio independent RHI - model materials",
+                         frames != 0))
             return 3;
         SwapchainDesc desc;
         desc.window = {WindowSystem::Win32, reinterpret_cast<std::uintptr_t>(window.handle)};
-        desc.width = 640;
-        desc.height = 480;
+        RECT initialClient{};
+        if (!GetClientRect(window.handle, &initialClient) || initialClient.right <= 0 ||
+            initialClient.bottom <= 0)
+            throw std::runtime_error("invalid_surface_extent");
+        desc.width = unsigned(initialClient.right);
+        desc.height = unsigned(initialClient.bottom);
         desc.present = PresentMode::Immediate;
         ScenePreviewController preview;
         if (!preview.Open(desc, options))
@@ -282,7 +308,10 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
                   << (scenePasses     ? "fixed_scene_passes"
                       : selected >= 0 ? "selected_model_materials"
                                       : "model_materials")
-                  << " adapter=" << preview.Adapter() << "\n";
+                  << " adapter=" << preview.Adapter() << " sampling="
+                  << (options.materialSampling == MaterialSamplingPolicy::Native ? "native"
+                                                                                 : "portable")
+                  << " self_shadow=" << selfShadow << "\n";
         bool playing = false;
         float cursorSeconds = cpuScene.Simulation().cursorSeconds;
         unsigned submitted = 0;
@@ -291,6 +320,8 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
         bool expectStableTextures = false;
         auto previous = std::chrono::steady_clock::now();
         while (!window.closed && (!frames || submitted < frames)) {
+            if (frames && !lifecycle && IsWindowVisible(window.handle))
+                throw std::runtime_error("window_visible_in_bounded_preview");
             MSG message;
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
                 TranslateMessage(&message);
@@ -385,15 +416,25 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
             target.width = sourceWidth;
             target.height = sourceHeight;
             ModelReplayStream stream;
-            if (!producer.Build(cpuScene, frame, target, stream, reason))
-                throw std::runtime_error(reason);
             RECT client{};
             GetClientRect(window.handle, &client);
+            RenderFrame multipass;
+            if (selfShadow && !IsIconic(window.handle) && client.right > 0 && client.bottom > 0) {
+                target.width = unsigned(client.right);
+                target.height = unsigned(client.bottom);
+                frame.view.aspect = float(target.width) / target.height;
+                frame.view.viewport = {0, 0, target.width, target.height, 0, 1};
+                if (!producer.BuildFrame(cpuScene, frame, target, shadowSettings, multipass,
+                                         reason))
+                    throw std::runtime_error(reason);
+            } else if (!selfShadow && !producer.Build(cpuScene, frame, target, stream, reason))
+                throw std::runtime_error(reason);
             if (!preview.Resize(IsIconic(window.handle) ? 0 : unsigned(client.right),
                                 IsIconic(window.handle) ? 0 : unsigned(client.bottom)))
                 throw std::runtime_error(preview.Reason());
             RgbaImage image;
-            if (!preview.Draw(stream, frames ? &image : nullptr))
+            if (!(selfShadow ? preview.Draw(multipass, frames ? &image : nullptr)
+                             : preview.Draw(stream, frames ? &image : nullptr)))
                 throw std::runtime_error(preview.Reason());
             if (frames) {
                 for (std::size_t p = 0; p < image.pixels.size(); p += 4)

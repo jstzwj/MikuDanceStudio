@@ -775,6 +775,21 @@ public:
     }
     bool SetModelPipeline(const ModelPipeline& p) override;
 
+    bool CopyToFrameOutput(Handle h) override {
+        auto* r = Find(h);
+        const auto* t = passes.Description(h);
+        if (!Live() || !inFrame || !r || !t || t->format != TextureFormat::Rgba8 ||
+            t->width != desc.width || t->height != desc.height || !passes.CanRead(h) || !target)
+            return false;
+        ComPtr<ID3D11Resource> output;
+        target->GetResource(&output);
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        ID3D11ShaderResourceView* empty[4]{};
+        context->PSSetShaderResources(0, 4, empty);
+        context->CopyResource(output.Get(), r->texture.Get());
+        modelReady = false;
+        return native->GetDeviceRemovedReason() == S_OK;
+    }
     bool EndFrame() override {
         if (!inFrame || passes.Active())
             return false;

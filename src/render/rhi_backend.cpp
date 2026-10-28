@@ -23,6 +23,10 @@ bool BackendAvailable(Backend backend) {
 }
 BackendDevice CreateBackendDevice(const SwapchainDesc& desc, const BackendOptions& options) {
     BackendDevice result;
+    if (options.driver != BackendDriver::Hardware && options.driver != BackendDriver::Software) {
+        result.reason = "invalid_driver";
+        return result;
+    }
     switch (options.backend) {
 #ifdef MIKUDANCESTUDIO_RHI_D3D11
     case Backend::D3D11: {
@@ -54,8 +58,24 @@ BackendDevice CreateBackendDevice(const SwapchainDesc& desc, const BackendOption
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_VULKAN
     case Backend::Vulkan:
+#ifdef _WIN32
+    {
+        auto native =
+            CreateVulkanDevice(desc,
+                               options.driver == BackendDriver::Software ? VulkanDriver::Software
+                                                                         : VulkanDriver::Hardware,
+                               {options.model, options.debugLayer});
+        result.device = std::move(native.device);
+        result.swapchain = std::move(native.swapchain);
+        result.reason = std::move(native.creationReason);
+        result.adapter = std::move(native.adapterName);
+        result.nativeError = native.creationError;
+        break;
+    }
+#else
         result.reason = "presentation_not_supported";
         break;
+#endif
 #endif
     default:
         result.reason = "backend_not_built";
@@ -119,6 +139,10 @@ OffscreenBackendDevice CreateOffscreenBackendDevice(std::uint32_t width, std::ui
 }
 bool ReadBackendPresentation(Backend backend, Device& device, RgbaImage& image) {
     switch (backend) {
+#ifdef MIKUDANCESTUDIO_RHI_VULKAN
+    case Backend::Vulkan:
+        return ReadVulkanPresentation(device, image);
+#endif
 #ifdef MIKUDANCESTUDIO_RHI_D3D11
     case Backend::D3D11:
         return ReadD3D11Swapchain(device, image);

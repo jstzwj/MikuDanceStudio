@@ -4,15 +4,17 @@
 #include "mikudancestudio/rhi_frame_passes.hpp"
 #include <d3dx9.h>
 #include <wrl/client.h>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <stdexcept>
 namespace shadow_reference {
 using namespace mikudancestudio::rhi;
 using Microsoft::WRL::ComPtr;
-inline void Check(HRESULT hr) {
+inline void Check(HRESULT hr, const char* operation = "DX9 operation") {
     if (FAILED(hr))
-        throw std::runtime_error("DX9 HRESULT=" + std::to_string(unsigned(hr)));
+        throw std::runtime_error(std::string(operation) +
+                                 ": DX9 HRESULT=" + std::to_string(unsigned(hr)));
 }
 class Reference {
     struct Target {
@@ -134,13 +136,17 @@ class Reference {
         Check(effect->SetBool("transp", s.transparent));
         IDirect3DTexture9 *base = nullptr, *sphere = nullptr;
         bool additive = false;
+        const SamplerDesc *baseSampler = nullptr, *sphereSampler = nullptr;
         for (unsigned stage = 0; stage < 3; ++stage) {
             const auto& t = p.shader.layout.stages[stage];
-            if (t.role == MaterialTextureRole::Base)
+            if (t.role == MaterialTextureRole::Base) {
                 base = resources.at(draw.textures[stage]).texture.Get();
+                baseSampler = &p.shader.samplers[stage];
+            }
             if (t.role == MaterialTextureRole::Sphere) {
                 sphere = resources.at(draw.textures[stage]).texture.Get();
                 additive = t.color == MaterialCombine::Add;
+                sphereSampler = &p.shader.samplers[stage];
             }
         }
         const char* technique = s.mode == BuiltinShadowMode::Depth     ? "ZValuePlotTec"
@@ -176,13 +182,26 @@ class Reference {
             Check(device->SetTexture(1, base ? base : sphere));
             Check(device->SetTexture(2, base ? sphere : nullptr));
             for (unsigned stage = 1; stage <= 2; ++stage) {
-                // These are the native model material sampler states.
-                Check(device->SetSamplerState(stage, D3DSAMP_MINFILTER, D3DTEXF_ANISOTROPIC));
-                Check(device->SetSamplerState(stage, D3DSAMP_MAGFILTER, D3DTEXF_ANISOTROPIC));
-                Check(device->SetSamplerState(stage, D3DSAMP_MIPFILTER, D3DTEXF_ANISOTROPIC));
-                Check(device->SetSamplerState(stage, D3DSAMP_MAXANISOTROPY, 16));
-                Check(device->SetSamplerState(stage, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP));
-                Check(device->SetSamplerState(stage, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP));
+                const auto* selected =
+                    stage == 1 ? (base ? baseSampler : sphereSampler) : sphereSampler;
+                if (!selected)
+                    continue;
+                const auto& a = *selected;
+                const auto filter = [](SamplerFilter f) {
+                    return f == SamplerFilter::Point    ? D3DTEXF_POINT
+                           : f == SamplerFilter::Linear ? D3DTEXF_LINEAR
+                                                        : D3DTEXF_ANISOTROPIC;
+                };
+                Check(device->SetSamplerState(stage, D3DSAMP_MINFILTER, filter(a.min)));
+                Check(device->SetSamplerState(stage, D3DSAMP_MAGFILTER, filter(a.mag)));
+                Check(device->SetSamplerState(stage, D3DSAMP_MIPFILTER, filter(a.mip)));
+                Check(device->SetSamplerState(stage, D3DSAMP_MAXANISOTROPY, a.maxAnisotropy));
+                Check(device->SetSamplerState(stage, D3DSAMP_ADDRESSU,
+                                              a.u == SamplerAddress::Wrap ? D3DTADDRESS_WRAP
+                                                                          : D3DTADDRESS_CLAMP));
+                Check(device->SetSamplerState(stage, D3DSAMP_ADDRESSV,
+                                              a.v == SamplerAddress::Wrap ? D3DTADDRESS_WRAP
+                                                                          : D3DTADDRESS_CLAMP));
             }
             UINT passes = 0;
             Check(effect->Begin(&passes, 0));
@@ -213,15 +232,26 @@ public:
         p.BackBufferWidth = p.BackBufferHeight = 1;
         p.BackBufferFormat = D3DFMT_A8R8G8B8;
         p.hDeviceWindow = window.handle;
-        Check(api->CreateDevice(0, D3DDEVTYPE_HAL, window.handle,
-                                D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE, &p,
-                                &device));
+        const auto created = api->CreateDevice(
+            0, D3DDEVTYPE_HAL, window.handle,
+            D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE, &p, &device);
+        if (FAILED(created))
+            std::fprintf(
+                stderr,
+                "DX9 init size=%zu window=%p valid=%d parent=%p width=%u height=%u format=%u count=%u ms=%u quality=%lu swap=%u target=%p windowed=%d depth=%d depthformat=%u flags=%lu refresh=%u interval=%u\n",
+                sizeof(p), window.handle, IsWindow(window.handle), GetParent(window.handle),
+                p.BackBufferWidth, p.BackBufferHeight, unsigned(p.BackBufferFormat),
+                p.BackBufferCount, unsigned(p.MultiSampleType), p.MultiSampleQuality,
+                unsigned(p.SwapEffect), p.hDeviceWindow, p.Windowed, p.EnableAutoDepthStencil,
+                unsigned(p.AutoDepthStencilFormat), p.Flags, p.FullScreen_RefreshRateInHz,
+                p.PresentationInterval);
+        Check(created, "CreateDevice");
         ComPtr<ID3DXBuffer> errors;
         const auto hr = D3DXCreateEffectFromFileW(device.Get(), effectPath.c_str(), nullptr,
                                                   nullptr, 0, nullptr, &effect, &errors);
         if (FAILED(hr) && errors)
             throw std::runtime_error(static_cast<const char*>(errors->GetBufferPointer()));
-        Check(hr);
+        Check(hr, "D3DXCreateEffectFromFileW");
         ModelTextureData image;
         image.levels = {{1, 1, {255, 255, 255, 255}}};
         Texture(image, white);

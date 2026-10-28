@@ -8,10 +8,12 @@ test; an API's theoretical capabilities do not imply adapter support.
 | --- | --- | --- | --- | --- | --- |
 | CPU PMD/PMX scene, IK, Bullet and PMM evaluation | CPU validation | Native | Independent CPU producer | Independent CPU producer | Independent CPU producer |
 | Resident immutable geometry/material versions | Validation | Native | Implemented | Implemented | Implemented |
-| Single RGBA8 + D24S8 model frame | Validation | Native | Implemented | Implemented | Offscreen |
+| Single RGBA8 + D24S8 model frame | Validation | Native | Implemented | Implemented | Implemented |
+| Explicit final color GPU copy and Win32 presentation | Validation | Native | Hidden acceptance | Hidden acceptance | Hidden acceptance + synchronization validation |
+| Explicit portable trilinear material profile | Pipeline contract | Oracle only; editor unchanged | Public sampling gate | Public sampling gate | Public sampling gate |
 | Explicit sequential passes and sampled attachment dependencies | `rhi_render_pass` / `rhi_frame_passes` | Native implicit state | Generated-scene gate | Generated-scene gate | Generated-scene gate + synchronization validation |
 | R32 float shadow color + independent D24S8 attachment | Clear/read validation | Built-in effect | Generated-scene gate | Generated-scene gate | Generated-scene gate |
-| Built-in self-shadow generation and composition | No rasterization | Native | CPU PMD/PMX producer; bounded hardware comparison | CPU PMD/PMX producer; bounded hardware comparison | Generated PMD/PMX and real PMD pass; real PMX sampling difference remains |
+| Built-in self-shadow generation and composition | No rasterization | Native | CPU PMD/PMX producer; bounded hardware comparison | CPU PMD/PMX producer; bounded hardware comparison | Portable PMD/PMX comparison; native anisotropic PMX difference remains |
 | Multiple simultaneous color attachments (MRT) | Rejected | Native API only | Not exposed | Not exposed | Rejected |
 | Mips / layers / MSAA on explicit render textures | Rejected | Separate legacy paths | Rejected | Rejected | Rejected |
 | Native MME `.fx` execution | Unsupported | Implemented | Unsupported | Unsupported | Unsupported |
@@ -73,7 +75,8 @@ coverage, bounded numerical acceptance and strict DX9 differences are recorded i
 HUD/fixed pipelines, D24S8 readback on DX12, UV1 and material morph shading are
 not accepted by this milestone's native program.
 
-Tests for this work must be offscreen: no visible window, focus changes, desktop
+Tests use offscreen devices or always-hidden nonactivating windows: no visible
+window, focus changes, desktop
 input, minimize/restore calls, or editor automation. GPU failures and unavailable
 devices must be reported separately. The inherited `rhi_d3d9_null_texture_warp`
 one-channel precision failure remains independent: do not alter its tolerance or
@@ -86,15 +89,18 @@ coverage. Exact DX9 comparisons remain available as opt-in diagnostics.
 It shares the native DX9 CPU shadow projection, preserves PMX caster/receiver
 flags and outline colors, and reuses geometry versions between passes. An empty
 caster pass clears and stores a white map. Unsupported self-shadow accessories,
-UV1 and material morph shading fail explicitly. The legacy preview controller
-still consumes its single-target stream; presenting the new frame through that
-controller is a separate integration step, not an implicit fallback to DX9.
+UV1 and material morph shading fail explicitly. The preview controller accepts
+both single-target streams and explicit frames.
+`RenderFrame::finalColor` selects the shared RGBA8 output; native GPU copies
+connect it to readback or presentation without a CPU image round trip.
 
 The optional [Vulkan offscreen adapter](RHI_VULKAN_OFFSCREEN.md) implements
 Vulkan 1.3 devices, uploaded resources, explicit attachments, SPIR-V graphics
 pipelines, Synchronization2 barriers, timeline completion and staging readback.
 `BackendAvailable(Backend::Vulkan)` reports build availability;
 `CreateOffscreenBackendDevice` selects DX11, DX12 or Vulkan without a window.
-Vulkan presentation is still unsupported: `CreateBackendDevice` returns
-`presentation_not_supported` when Vulkan is built. No preview/WSI or native MME
-support is implied by offscreen availability.
+On Win32, `CreateBackendDevice` also creates the Vulkan surface and swapchain.
+The independent preview host accepts Vulkan and explicit self-shadow frames.
+See [material sampling and output](RHI_MATERIAL_SAMPLING.md) for the explicit
+portable/native profiles, public reproducer, hidden WSI tests and remaining
+native anisotropic difference. Native MME remains unsupported.

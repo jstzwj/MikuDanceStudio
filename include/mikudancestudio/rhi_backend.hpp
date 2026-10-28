@@ -2,6 +2,7 @@
 #include "rhi_swapchain.hpp"
 #include "rhi_model_pipeline.hpp"
 #include "rhi_image.hpp"
+#include "rhi_material_sampling.hpp"
 #include <string>
 
 namespace mikudancestudio::rhi {
@@ -14,6 +15,9 @@ struct BackendOptions {
     BackendDriver driver = BackendDriver::Hardware;
     ModelOptions model;
     bool debugLayer = false;
+    // ScenePreviewController applies this to its private pipeline copy.
+    // Direct/offscreen consumers explicitly call ApplyMaterialSampling.
+    MaterialSamplingPolicy materialSampling = MaterialSamplingPolicy::PortableTrilinear;
 };
 // Factory owns native API selection. Destruction order is intentional: all
 // SceneRenderer owners must detach before the swapchain and device are freed.

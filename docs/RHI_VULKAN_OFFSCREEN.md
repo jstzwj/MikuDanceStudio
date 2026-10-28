@@ -1,9 +1,10 @@
 # Vulkan offscreen RHI
 
 The optional Vulkan adapter consumes the existing `Device`, `RenderPassDesc`,
-`RenderFrame` and resident `SceneRenderer` contracts. It creates no HWND,
-surface, swapchain or presentation queue. The CPU scene producer remains shared
-with DX11/DX12, including PMD/PMX geometry, material versions and self-shadow
+`RenderFrame` and resident `SceneRenderer` contracts. Its offscreen factory
+creates no HWND, surface or swapchain. An independent Win32 factory now supports
+presentation. The CPU scene producer remains shared with DX11/DX12, including
+PMD/PMX geometry, material versions and self-shadow
 matrices. Vulkan does not call DX9 to produce its input or render its output.
 Only the separate comparison oracle uses hardware DX9 and a message-only HWND.
 
@@ -27,8 +28,8 @@ requests require a CPU Vulkan implementation and never fall back to hardware.
 `CreateOffscreenBackendDevice` selects DX11, DX12 or Vulkan through
 `BackendOptions`. `BackendAvailable` indicates compiled adapter availability,
 not successful runtime probing. Unsupported creation returns a reason and
-native error. When Vulkan is built, the presentation factory explicitly returns
-`presentation_not_supported`. `Dx9Measured` arithmetic and its diagnostics are
+native error. On Win32, `CreateBackendDevice` selects the presentation factory;
+other window systems still return `presentation_not_supported`. `Dx9Measured` arithmetic and its diagnostics are
 unsupported and rejected.
 
 ## Implemented behavior
@@ -57,7 +58,9 @@ unsupported and rejected.
 Upload and readback currently wait for completion. GPU frames are queued with
 timeline completion, but asynchronous streaming/copy queues are future work.
 D24S8 sampling/readback, MRT, explicit attachment mips/layers/MSAA, fixed HUD
-pipelines, UV1, material morph shading, compute, MME and WSI remain unsupported.
+pipelines, UV1, material morph shading, compute and MME remain unsupported. Win32 WSI uses the common final RGBA8 output;
+see [sampling and final output](RHI_MATERIAL_SAMPLING.md) for its contracts and
+always-hidden acceptance tests.
 
 ## Offscreen acceptance (2026-10-29)
 
@@ -93,9 +96,12 @@ the external assets without adding them to the repository.
 
 These PMX counts repeat at widths 128/160/128 and height 96. Removing material
 textures in an isolation experiment made the main image exact; removing
-specular did not improve it. Linear filtering and explicit fine derivatives
-did not solve the discrepancy. Those experiments are not enabled in production;
-the shared shaders and the original samplers are preserved. The remaining
+specular did not improve it. The earlier linear-filter experiment changed only the new backend and thus
+compared different sampler contracts. The explicit portable profile now applies
+matching trilinear samplers to the new backend and the DX9 oracle; it produces
+exact PMX comparisons on this workstation. The DX9 editor and native profile
+retain their original filtering. Derivative and nearest-mip heuristics are not
+enabled; the shared shaders are preserved. The remaining
 material-sampling parity issue is not attributed to a particular driver
 algorithm without further evidence. The PMX gate stays enabled and failing
 when its asset is supplied; it is not marked as an expected failure.
@@ -111,5 +117,7 @@ ctest --test-dir build-x64/build -C Release -R '^self_shadow_dx9_tolerant_(pmd|p
 A Vulkan-only build is also supported with `MIKUDANCESTUDIO_FORMATS_ONLY=ON`,
 all three `MIKUDANCESTUDIO_RHI_D3D*` options OFF and Vulkan ON. Its resource and
 generated multipass tests require neither Conan/Bullet nor a Direct3D adapter.
-Presentation, dynamic screen textures and post-processing can build on the
-same explicit final target after the material-sampling gate is resolved.
+Win32 presentation now consumes the explicit final target. Dynamic screen
+textures, post-processing and native anisotropic parity remain future work.
+The new portable material gates and native diagnostics are documented in
+[RHI_MATERIAL_SAMPLING.md](RHI_MATERIAL_SAMPLING.md).

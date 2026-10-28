@@ -79,6 +79,11 @@ int main(int argc, char** argv) try {
     const auto assetsPath = std::filesystem::absolute(std::filesystem::u8path(argv[2]));
     const std::string variant = argv[3];
     const std::string comparison = argv[4];
+    const std::string sampling = argc > 6 ? argv[6] : "native";
+    if (sampling != "native" && sampling != "portable")
+        return 2;
+    const auto samplingPolicy = sampling == "native" ? MaterialSamplingPolicy::Native
+                                                     : MaterialSamplingPolicy::PortableTrilinear;
     if ((comparison != "strict" && comparison != "tolerant" && comparison != "measure") ||
         (variant != "dx11-warp" && variant != "dx11-hardware" && variant != "dx12-warp" &&
          variant != "dx12-hardware" && variant != "vulkan-hardware" &&
@@ -121,6 +126,7 @@ int main(int argc, char** argv) try {
     }
     CHECK(native);
     std::cerr << "adapter: " << native.adapter << "\n";
+    std::cerr << "sampling: " << sampling << "\n";
     SceneRenderer renderer(*native.device);
     shadow_reference::Reference reference(assetsPath / "skin_effect_sm3.fx");
     bool exact = true, accepted = true;
@@ -139,6 +145,8 @@ int main(int argc, char** argv) try {
             CHECK(producer.BuildFrame(scene, inputs, target, settings, frame, reason));
             CHECK(frame.passes.size() == 2 && !frame.passes[0].draws.empty() &&
                   !frame.passes[1].draws.empty());
+            CHECK(ApplyMaterialSampling(frame, samplingPolicy));
+            frame.finalColor = 1;
             CHECK(ValidateRenderFrame(frame));
             // Main and caster packets must share immutable geometry IDs/versions.
             for (const auto& cast : frame.passes[0].draws)
@@ -153,6 +161,9 @@ int main(int argc, char** argv) try {
             CHECK(renderer.Submit(prepared, token));
             AttachmentReadback color, depth;
             CHECK(renderer.ReadTarget(1, 1, color) && renderer.ReadTarget(1, 3, depth));
+            RgbaImage finalImage;
+            CHECK(native.device->ReadModelTarget(finalImage) && finalImage.width == width &&
+                  finalImage.height == 96 && finalImage.pixels == color.bytes);
             CHECK(Coverage(color) > 50 && Coverage(depth) > 5);
             CHECK(renderer.Submit(prepared, token));
             AttachmentReadback repeated;

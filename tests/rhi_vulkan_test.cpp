@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     BackendOptions options;
     options.backend = Backend::Vulkan;
     options.debugLayer = validation;
-    CHECK(CreateBackendDevice({}, options).reason == "presentation_not_supported");
+    CHECK(!CreateBackendDevice({}, options));
     CHECK(!CreateOffscreenBackendDevice(0, 32, options));
     auto unsupported = options;
     unsupported.model.compatibility = ModelCompatibility::Dx9Measured;

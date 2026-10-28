@@ -29,7 +29,24 @@ int main() {
     main.sampled = {1};
     f.passes = {shadow, main};
     CHECK(ValidateRenderFrame(f));
+    f.finalColor = 2;
+    CHECK(ValidateRenderFrame(f));
     auto bad = f;
+    bad.finalColor = 77;
+    CHECK(ValidateRenderFrame(bad).reason == "invalid_final_color");
+    bad = f;
+    bad.finalColor = 1;
+    CHECK(ValidateRenderFrame(bad).reason == "invalid_final_color");
+    bad = f;
+    bad.finalColor = 4;
+    CHECK(ValidateRenderFrame(bad).reason == "invalid_final_color");
+    bad = f;
+    bad.passes[1].color->store = AttachmentStore::Discard;
+    CHECK(ValidateRenderFrame(bad).reason == "invalid_final_color");
+    bad = f;
+    bad.targets[1].description.access = unsigned(TextureAccess::ColorAttachment);
+    CHECK(ValidateRenderFrame(bad).reason == "invalid_final_color");
+    bad = f;
     std::swap(bad.passes[0], bad.passes[1]);
     CHECK(ValidateRenderFrame(bad).reason == "sample_before_write");
     bad = f;
@@ -54,7 +71,9 @@ int main() {
     bad.targets[0].description.layers = 2;
     CHECK(!ValidateRenderFrame(bad));
     CHECK(ValidateModelReplay(FlattenRenderFrame(f)));
-    bad=f;bad.passes[0].color.reset();bad.passes[0].depthStencil.reset();
+    bad = f;
+    bad.passes[0].color.reset();
+    bad.passes[0].depthStencil.reset();
     CHECK(!ValidateModelReplay(FlattenRenderFrame(bad)));
     std::puts(
         "frame graph: ordered dependencies, attachments, discard and unsupported ranges passed");

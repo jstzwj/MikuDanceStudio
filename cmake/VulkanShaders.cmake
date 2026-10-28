@@ -38,3 +38,6 @@ target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_vulkan.cpp "${MDS_SPIR
 target_include_directories(mikudancestudio_rhi PRIVATE "${MDS_VULKAN_INCLUDE}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(mikudancestudio_rhi PUBLIC MIKUDANCESTUDIO_RHI_VULKAN=1)
 target_link_libraries(mikudancestudio_rhi PRIVATE ${CMAKE_DL_LIBS})
+if(WIN32)
+    target_link_libraries(mikudancestudio_rhi PRIVATE user32)
+endif()

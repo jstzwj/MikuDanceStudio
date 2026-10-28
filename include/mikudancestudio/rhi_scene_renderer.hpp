@@ -38,7 +38,8 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
     ModelReplayResult Prepare(std::uint64_t scene, const ModelReplayStream&, PreparedModelFrame&,
                               FrameOutput = FrameOutput::Offscreen);
-    ModelReplayResult Prepare(std::uint64_t scene, const RenderFrame&, PreparedModelFrame&);
+    ModelReplayResult Prepare(std::uint64_t scene, const RenderFrame&, PreparedModelFrame&,
+                              FrameOutput = FrameOutput::Offscreen);
     bool ReadTarget(std::uint64_t scene, std::uint64_t target, AttachmentReadback&);
     // No target reconstruction, uploads, validation scans, or readback here.
     // A new Prepare for the same scene invalidates the prior prepared frame.

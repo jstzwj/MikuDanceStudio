@@ -44,6 +44,7 @@ struct PreparedModelFrame::Data {
     ClearColor clear;
     std::vector<Draw> draws;
     std::vector<PreparedPass> passes;
+    Handle finalColor;
 };
 PreparedModelFrame::PreparedModelFrame() = default;
 PreparedModelFrame::~PreparedModelFrame() = default;
@@ -130,13 +131,15 @@ ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const ModelReplayStre
     return PrepareImpl(id, stream, out, output, nullptr);
 }
 ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const RenderFrame& frame,
-                                         PreparedModelFrame& out) {
+                                         PreparedModelFrame& out, FrameOutput output) {
     const auto valid = ValidateRenderFrame(frame);
     if (!valid)
         return valid;
     if (impl->device && !impl->device->Features().textureRenderTargets)
         return {false, 0, 0, "explicit_passes_unsupported"};
-    return PrepareImpl(id, FlattenRenderFrame(frame), out, FrameOutput::Offscreen, &frame);
+    if (output == FrameOutput::Presentation && !frame.finalColor)
+        return {false, 0, 0, "missing_final_color"};
+    return PrepareImpl(id, FlattenRenderFrame(frame), out, output, &frame);
 }
 ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplayStream& stream,
                                              PreparedModelFrame& out, FrameOutput output,
@@ -215,8 +218,15 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
         }
     }
     const auto before = d.Status();
-    if (!(output == FrameOutput::Offscreen ? d.EnsureModelTarget(stream.target)
-                                           : d.EnsurePresentationTarget(stream.target)))
+    auto outputTarget = stream.target;
+    if (frame && frame->finalColor)
+        for (const auto& t : frame->targets)
+            if (t.id == frame->finalColor) {
+                outputTarget.width = t.description.width;
+                outputTarget.height = t.description.height;
+            }
+    if (!(output == FrameOutput::Offscreen ? d.EnsureModelTarget(outputTarget)
+                                           : d.EnsurePresentationTarget(outputTarget)))
         return {false, 0, 0, "target_prepare_failed"};
     if (d.Status().epoch != before.epoch)
         ++impl->stats.targetRebuilds;
@@ -292,6 +302,8 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
     const auto status = d.Status();
     data->submission = {status.identity, status.epoch};
     data->clear = stream.clear;
+    if (frame && frame->finalColor)
+        data->finalColor = scene.targets.at(frame->finalColor).handle;
     for (const auto& e : stream.events)
         if (e.op == ModelReplayOp::Draw) {
             const auto& draw = e.draw;
@@ -412,6 +424,10 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
             if (!result)
                 break;
         }
+    if (result && f->finalColor && !d.CopyToFrameOutput(f->finalColor)) {
+        result.success = false;
+        result.reason = "final_color_copy_failed";
+    }
     if (!d.EndFrame()) {
         result.success = false;
         result.reason = "end_frame_failed";

@@ -22,6 +22,9 @@ public:
     bool Resize(std::uint32_t width, std::uint32_t height);
     bool ReplaceDevice();
     bool Draw(const ModelReplayStream&, RgbaImage* acceptanceImage = nullptr);
+    // Caller builds the final target at the current surface extent. Shadow
+    // target dimensions and camera inputs are preserved, with no CPU readback.
+    bool Draw(const RenderFrame&, RgbaImage* acceptanceImage = nullptr);
     bool Unload();
     bool Close();
     void Block(const char* reason);
@@ -35,6 +38,9 @@ public:
 
 private:
     bool Fail(const char*);
+    bool ReadyToDraw();
+    bool SuspendUnavailableSurface();
+    bool FinishDraw(RgbaImage*);
     BackendDevice backend;
     std::unique_ptr<SceneRenderer> renderer;
     PreparedModelFrame prepared;
