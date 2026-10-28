@@ -1032,3 +1032,31 @@ v10.08 的[首次发布构建](https://github.com/jstzwj/MikuDanceStudio/actions
 随后[第二次 CI](https://github.com/jstzwj/MikuDanceStudio/actions/runs/40565312044)的 x86 85/85 通过，确认堆损坏修复；x64 86/87 通过，物理轨迹的固定前缀哈希不匹配，发布仍被阻断。相同源码及 C++17 依赖在本地 x64 通过；首次 CI 的 x64 也曾匹配 `AEC1372BE331E093`。临时禁用本机 CRT 的 FMA3 路径仍匹配，不能据此定位远端差异，也未保留该开关。
 
 物理测试现先输出实际哈希，再断言原基准；不匹配时逐字段输出前 20 帧位模式、CPU 标识和浮点控制状态。也可显式设置 `MDS_PHYSICS_TRACE=1` 导出本地匹配快照，已记录为 `physics-baseline-trace.log`。没有更改基准、比较条件或生产数值；这项日志补全用于定位远端首次分歧，不能表述为 x64 失败原因已经修复。
+
+## 2026-10-28：背景图片加载（Issue #5）
+
+复核 [Issue #5](https://github.com/jstzwj/MikuDanceStudio/issues/5)：已发布的 v10.08 中，`LoadBackgroundPicture` 仍将四个 UINT（16 字节）的 `ImgInfo` 传给 D3DX，完整 `D3DXIMAGE_INFO` 实际为 28 字节。用报告的 `mujika.png`（1600×900 RGBA，SHA-256 `5361163239fd46d264842be5a59c32d5d5006b470cb32f4be81252b44fc2069b`）运行两架构发布配置，加载本次未直接崩溃，但独立边界探针在第 16 字节后观测到三个保护字被改为 `00000015 00000003 00000003`，分别为格式、资源类型和 PNG 文件类型。此为确定的 12 字节越界写；是否立即崩溃依赖栈布局，不能将一次加载成功当作问题消失，也不能认为 BMP 允许只提供结构前缀。
+
+通过 IDA MCP 分别核对同版本原版：
+
+| 入口 | x64 RVA（image base `0x7FF7CB420000`） | x86 VA |
+|---|---|---|
+| 背景图片加载 | `0x68970` | `0x4337A0` |
+| 图片顶点更新 | `0x68CB0` | `0x417130` |
+| 固定功能绘制 | `0x9FB20` | `0x425D20` |
+
+原版为图像信息留出完整空间，使用源图尺寸计算位置；先请求 1024×1024 纹理，失败后重试 512×512、单 mip。这些参数及失败分支保持原样。背景六个顶点的 RHW 均为 1，绘制为两个 TRIANGLELIST 三角形。v10.08 之前已经补齐首顶点 RHW 的写入，本轮没有进一步调整背景几何或采样规则。
+
+修复在共享 D3DX 声明中恢复完整枚举及结构，断言大小和末三个字段偏移，并为文件／内存、二维／立方体／体积纹理接口补齐 `D3DXIMAGE_INFO*` 和 `PALETTEENTRY*` 参数。宿主兼容接口同步使用具体类型；背景、普通纹理、Toon 和材质纹理重载统一使用同一结构，删除局部前缀及任意填充版本，避免接口继续接受不完整对象。
+
+新增 `background_picture`，默认独立生成 BMP／JPG／带透明度 PNG／DDS，实际调用生产加载和绘制，检查完整结构后的保护字、源图尺寸、路径、启用／菜单状态、全部顶点 RHW、连续替换和 GPU 回读；不存在／损坏图片须分别经过原有错误分支，之后还能重新加载。可选 `background_picture_native` 实际执行原版加载、顶点更新和固定功能绘制，测试适配器只恢复原版读取的旧工作区／顶点槽位，不替代这些算法。NULLREF 不计作图像验证通过。
+
+两架构分别用对应原版测试上述四种输入和报告样图，共十对 512×512 BGRA 回读图逐像素相等，差异像素均为 0；本地观察未复现报告截图的三角形拉伸。图片和原版 EXE 不进入仓库；证据位于 `out/issue5/`：`probe-x{64,86}.log`、`full-x{64,86}.log`、`full-x{64,86}/*-{port,original}.png` 和 `image-comparison.json`。此记录针对本地修复，不能表述为 v10.08 已包含图像信息越界修复，也未覆盖完整 GUI 操作或所有图像编码变体。
+
+两架构完整 C++17 Release 构建通过，诊断关闭、Bullet 使用当前发布配方。全量 CTest：x64 **89/89**（58.74 秒）、x86 **87/87**（61.93 秒），零失败、零跳过，均包含新增默认／原版背景测试、纹理及效果 GPU 回归。JUnit 与完整输出分别保存为 `out/issue5/ctest-x{64,86}.{xml,log}`；格式和 `git diff --check` 通过。
+
+复现本地样图对照（x86 用 `scripts/run_native_render.py` 启动同名 x86 测试，以预留原版固定基址）：
+
+```powershell
+background_picture_test.exe --original <original-MMD.exe> --image <mujika.png> --output <output-directory>
+```

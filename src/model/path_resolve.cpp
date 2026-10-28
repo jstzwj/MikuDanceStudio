@@ -53,12 +53,7 @@
 namespace mikudancestudio {
 namespace {
 
-// minimal D3DX constants/struct for the dynamic loader (no SDK headers)
 constexpr UINT kD3dxDefault = 0xFFFFFFFFu;
-struct ImgInfo { // first fields of D3DXIMAGE_INFO
-    UINT Width, Height, Depth, MipLevels;
-    UINT rest[16];
-};
 
 bool WsOpenOk(const wchar_t* path) {
     int fh = -1;
@@ -215,7 +210,7 @@ int LoadTextureShared(D3DRenderer* renderer, wchar_t* path) { // 0x407490
     unsigned char* tagBytes = reinterpret_cast<unsigned char*>(&r->resourcePool[used].tag);
     auto* entryTex = reinterpret_cast<IDirect3DTexture9**>(&r->resourcePool[used].comObject);
     auto* entryName = reinterpret_cast<wchar_t**>(&r->resourcePool[used].heapBuffer);
-    ImgInfo info = {};
+    D3DXIMAGE_INFO info{};
     HRESULT hr;
     auto* d3dx = &d3dx::Get();
     hr =

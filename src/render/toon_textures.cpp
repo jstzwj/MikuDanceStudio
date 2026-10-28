@@ -36,18 +36,6 @@
 namespace mikudancestudio {
 namespace {
 
-// Binary-compatible D3DXIMAGE_INFO layout.  The project resolves D3DX at
-// runtime, so it cannot include the legacy D3DX SDK header directly.
-struct D3dxImageInfo {
-    UINT Width;
-    UINT Height;
-    UINT Depth;
-    UINT MipLevels;
-    D3DFORMAT Format;
-    D3DRESOURCETYPE ResourceType;
-    UINT ImageFileFormat;
-};
-
 auto& g_d3dx = d3dx::Get();
 
 IDirect3DDevice9* DeviceOf(MMDApp* app) {
@@ -111,7 +99,7 @@ bool InitToonTextures(MMDApp* app) {
         wchar_t widePath[256] = {};
         MultiByteToWideChar(CP_ACP, 0, path, -1, widePath, 256);
         IDirect3DTexture9** slot = &s.ToonTexture(i);
-        D3dxImageInfo info{};
+        D3DXIMAGE_INFO info{};
         if (FAILED(g_d3dx.fromFileExA(device, path, static_cast<UINT>(-1), static_cast<UINT>(-1), 1,
                                       0, D3DFMT_A8R8G8B8 /*21*/, D3DPOOL_MANAGED /*1*/,
                                       static_cast<DWORD>(-1), static_cast<DWORD>(-1), 0, &info,

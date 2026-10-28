@@ -520,11 +520,6 @@ void ReloadTextureCache(D3DRenderer* renderer) {
     IDirect3DDevice9* device = renderer->device;
     auto* d3dx = &d3dx::Get();
 
-    struct ImgInfo { // first fields of D3DXIMAGE_INFO
-        UINT Width, Height, Depth, MipLevels;
-        UINT rest[16];
-    };
-
     for (int i = 0; i < 10000; ++i) {
         ResourcePoolEntry& entry = renderer->resourcePool[i];
         if (entry.heapBuffer == nullptr)
@@ -536,7 +531,7 @@ void ReloadTextureCache(D3DRenderer* renderer) {
             texture = nullptr;
         }
         unsigned char* rgb = reinterpret_cast<unsigned char*>(&entry.tag);
-        ImgInfo info = {};
+        D3DXIMAGE_INFO info{};
         HRESULT hr = d3dx->fromFileExW(device, name, kD3dxDefault, kD3dxDefault, 1, 1024,
                                        D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, kD3dxDefault, kD3dxDefault,
                                        0, &info, nullptr, &texture);

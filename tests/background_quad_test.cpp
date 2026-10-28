@@ -9,7 +9,7 @@ int main() {
     std::array<TexturedScreenVertex, 6> vertices;
     std::memset(vertices.data(), 0xCD, sizeof vertices);
     WriteBackgroundQuad(vertices.data(), -2.25, 3.5, 10.75, 20.125);
-    // Expected bytes decoded from the original six 28-byte vertex stores, including RHW0.
+    // Expected bytes decoded from the original six 28-byte vertex stores, including RHW = 1.
     constexpr std::uint32_t expected[42] = {
         0x412C0000, 0x40600000, 0, 0x3F800000, 0xFFFFFFFF, 0x3F800000, 0,
         0x412C0000, 0x41A10000, 0, 0x3F800000, 0xFFFFFFFF, 0x3F800000, 0x3F800000,

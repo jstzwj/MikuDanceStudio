@@ -6,11 +6,43 @@
 #define MIKUDANCESTUDIO_MME_D3DX9_MIRROR_H_
 
 #include <d3d9.h>
+#include <cstddef>
 
 // ---------------------------------------------------------------------------
 // Basic types
 // ---------------------------------------------------------------------------
 typedef const char* D3DXHANDLE;
+
+enum D3DXIMAGE_FILEFORMAT {
+    D3DXIFF_BMP = 0,
+    D3DXIFF_JPG = 1,
+    D3DXIFF_TGA = 2,
+    D3DXIFF_PNG = 3,
+    D3DXIFF_DDS = 4,
+    D3DXIFF_PPM = 5,
+    D3DXIFF_DIB = 6,
+    D3DXIFF_HDR = 7,
+    D3DXIFF_PFM = 8,
+    D3DXIFF_FORCE_DWORD = 0x7FFFFFFF
+};
+
+struct D3DXIMAGE_INFO {
+    UINT Width;
+    UINT Height;
+    UINT Depth;
+    UINT MipLevels;
+    D3DFORMAT Format;
+    D3DRESOURCETYPE ResourceType;
+    D3DXIMAGE_FILEFORMAT ImageFileFormat;
+};
+
+// D3DX writes all seven fields, even when a caller only needs the dimensions.
+// The SDK layout is identical on x86 and x64; a four-UINT prefix is too small.
+static_assert(sizeof(D3DXIMAGE_FILEFORMAT) == 4);
+static_assert(sizeof(D3DXIMAGE_INFO) == 28);
+static_assert(offsetof(D3DXIMAGE_INFO, Format) == 16);
+static_assert(offsetof(D3DXIMAGE_INFO, ResourceType) == 20);
+static_assert(offsetof(D3DXIMAGE_INFO, ImageFileFormat) == 24);
 
 struct D3DXVECTOR2 {
     float x, y;
@@ -370,7 +402,7 @@ HRESULT WINAPI D3DXCreateTextureFromFileExW(
     IDirect3DDevice9* device, const wchar_t* srcFile, unsigned int width,
     unsigned int height, unsigned int mipLevels, unsigned long usage,
     D3DFORMAT format, D3DPOOL pool, unsigned long filter, unsigned long mipFilter,
-    unsigned long colorKey, void* srcInfo, void* palette,
+    unsigned long colorKey, D3DXIMAGE_INFO* srcInfo, PALETTEENTRY* palette,
     IDirect3DTexture9** texture);
 // SAS "ResourceName" file texture (originally a static import through MMHack's D3DXCreateTextureFromFileExA,
 // IAT 0x1800A4708). Same parameter surface as ExW; Width/Height/MipLevels
@@ -380,7 +412,7 @@ HRESULT WINAPI D3DXCreateTextureFromFileExA(
     IDirect3DDevice9* device, const char* srcFile, unsigned int width,
     unsigned int height, unsigned int mipLevels, unsigned long usage,
     D3DFORMAT format, D3DPOOL pool, unsigned long filter, unsigned long mipFilter,
-    unsigned long colorKey, void* srcInfo, void* palette,
+    unsigned long colorKey, D3DXIMAGE_INFO* srcInfo, PALETTEENTRY* palette,
     IDirect3DTexture9** texture);
 // [MMEffect.dll static imports 0x1800A4710 / 0x1800A4718] Case 44 file texture dispatch by
 // textureType: cube(9) and volume(8) variants. Parameters match ExA
@@ -390,13 +422,13 @@ HRESULT WINAPI D3DXCreateCubeTextureFromFileExA(
     IDirect3DDevice9* device, const char* srcFile, unsigned int size,
     unsigned int mipLevels, unsigned long usage, D3DFORMAT format, D3DPOOL pool,
     unsigned long filter, unsigned long mipFilter, unsigned long colorKey,
-    void* srcInfo, void* palette, IDirect3DCubeTexture9** cubeTexture);
+    D3DXIMAGE_INFO* srcInfo, PALETTEENTRY* palette, IDirect3DCubeTexture9** cubeTexture);
 HRESULT WINAPI D3DXCreateVolumeTextureFromFileExA(
     IDirect3DDevice9* device, const char* srcFile, unsigned int width,
     unsigned int height, unsigned int depth, unsigned int mipLevels,
     unsigned long usage, D3DFORMAT format, D3DPOOL pool, unsigned long filter,
-    unsigned long mipFilter, unsigned long colorKey, void* srcInfo,
-    void* palette, IDirect3DVolumeTexture9** volumeTexture);
+    unsigned long mipFilter, unsigned long colorKey, D3DXIMAGE_INFO* srcInfo,
+    PALETTEENTRY* palette, IDirect3DVolumeTexture9** volumeTexture);
 // [MMEffect.dll static import 0x1800A46F0] Volume texture creation for the 0x2C Function generation
 // branch (sub_1800143D0 after 0x1800158B7: Width/Height/Depth = record +0x58/
 // +0x5C/+0x60 normalized from -1 to 64, Miplevels = unchanged +0x6C, usage=0,
@@ -488,7 +520,7 @@ HRESULT WINAPI D3DXDisassembleEffect(ID3DXEffect* effect, BOOL enableColorCode,
 
 HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(IDirect3DDevice9*, LPCVOID, UINT,
     UINT, UINT, UINT, DWORD, D3DFORMAT, D3DPOOL, DWORD, DWORD, D3DCOLOR,
-    void*, void*, IDirect3DTexture9**);
+    D3DXIMAGE_INFO*, PALETTEENTRY*, IDirect3DTexture9**);
 HRESULT WINAPI D3DXCreateEffectFromResourceA(IDirect3DDevice9*, HMODULE, LPCSTR,
     const D3DXMACRO*, ID3DXInclude*, DWORD, ID3DXEffectPool*, ID3DXEffect**, ID3DXBuffer**);
 D3DXMATRIX* WINAPI D3DXMatrixPerspectiveFovLH(D3DXMATRIX*, float, float, float, float);

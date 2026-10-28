@@ -70,11 +70,6 @@ static const char kMsgBmpFailJp[] =
 static const char kMsgBmpCaptionJp[] = "BMP\x83\x74\x83\x40\x83\x43\x83\x8B"
                                        "\x93\xC7\x8D\x9E";
 
-// minimal D3DXIMAGE_INFO head (no SDK d3dx header, cf. path_resolve.cpp)
-struct ImgInfo { // first fields of D3DXIMAGE_INFO
-    UINT Width, Height, Depth, MipLevels;
-};
-
 // .rdata float constant used by x64 aspect-ratio calculations (SSE single-precision multiply/divide,
 // referenced by sub_7FF7CB487A20 at 0x7ff7cb487ed3/0x7ff7cb487f03).
 constexpr float kOverlaySpan = 1.2f; // float @0x7FF7CB552B3C (3F 99 99 9A)
@@ -345,7 +340,7 @@ void LoadBackgroundPicture(MMDApp* app) {
     IDirect3DDevice9* device = s.Renderer()->device; // 0x43389C
     auto& api = d3dx::Get();
     IDirect3DTexture9** slot = &s.PictureBackgroundTexture();
-    ImgInfo info = {};
+    D3DXIMAGE_INFO info{};
     constexpr UINT kD3dxDefault = 0xFFFFFFFFu;
     HRESULT hr = E_FAIL;
     hr = api.fromFileExW(device, stored, 0x400, 0x400, 0, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED,
