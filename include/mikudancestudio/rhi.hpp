@@ -92,7 +92,8 @@ enum class StencilOperation {
 };
 enum class TextureFormat {
     Rgba8,
-    Depth24Stencil8
+    Depth24Stencil8,
+    R32Float
 };
 
 enum class HistoryRepresentation {
@@ -419,6 +420,9 @@ enum class CompletionState {
 struct ModelPipeline;
 struct ModelTextureData;
 struct RgbaImage;
+struct RenderTextureDesc;
+struct RenderPassDesc;
+struct AttachmentReadback;
 class Device {
 public:
     virtual ~Device() = default;
@@ -467,6 +471,12 @@ public:
     // attachments only if their dimensions/formats match the scene contract.
     virtual bool EnsurePresentationTarget(const HistoryDesc&) { return false; }
     virtual bool ReadModelTarget(RgbaImage&) { return false; }
+    // Explicit single-queue passes. Unsupported backends fail before recording.
+    // Begin/EndRenderPass are nested inside Begin/EndFrame, never each other.
+    virtual Handle CreateRenderTexture(const RenderTextureDesc&) { return {}; }
+    virtual bool BeginRenderPass(const RenderPassDesc&) { return false; }
+    virtual bool EndRenderPass() { return false; }
+    virtual bool ReadRenderTexture(Handle, AttachmentReadback&) { return false; }
     virtual CompletionToken SignalCompletion() { return {}; }
     virtual CompletionState PollCompletion(CompletionToken) { return CompletionState::Invalid; }
     virtual bool WaitCompletion(CompletionToken, std::uint32_t) { return false; }

@@ -1,5 +1,9 @@
 # RHI interface contract (long-term design and current narrow adapter)
 
+The implemented attachment/pass subset and acceptance matrix are maintained in
+[RHI feature support](RHI_FEATURE_SUPPORT.md). That executable subset takes
+precedence over the long-term design below.
+
 This contract is the target for incremental extraction; `rhi.hpp` still exposes
 the earlier, smaller `Device` API. Do not route the MMD application through this
 design until an isolated DX9 batch agrees with the legacy path and later scene

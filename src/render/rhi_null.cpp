@@ -1,4 +1,5 @@
 #include "mikudancestudio/rhi.hpp"
+#include "mikudancestudio/rhi_render_pass.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -24,6 +25,57 @@ public:
     }
     ResourceLifecycleCapabilities ResourceLifecycleFeatures() const override {
         return {true, true, true, true, false};
+    }
+    Handle CreateRenderTexture(const RenderTextureDesc& d) override {
+        if (inFrame_ || resetPending_ || !ValidRenderTextureDesc(d))
+            return {};
+        Resource r;
+        r.alive = r.texture = true;
+        r.bytes.resize(std::size_t(d.width) * d.height * 4);
+        const auto h = Insert(std::move(r));
+        return passes_.Register(h, d) ? h : Handle{};
+    }
+    bool BeginRenderPass(const RenderPassDesc& p) override {
+        if (!inFrame_ || resetPending_ || !passes_.Begin(p))
+            return false;
+        linePipelineReady_ = false;
+        boundTexture_ = {};
+        for (const auto* a :
+             {p.color ? &*p.color : nullptr, p.depthStencil ? &*p.depthStencil : nullptr}) {
+            if (!a || a->load != AttachmentLoad::Clear)
+                continue;
+            const auto& d = *passes_.Description(a->texture);
+            std::uint32_t value = 0;
+            if (d.format == TextureFormat::R32Float)
+                std::memcpy(&value, &a->clear.red, 4);
+            else if (d.format == TextureFormat::Depth24Stencil8)
+                value = std::uint32_t(std::round(double(a->clearDepth) * 16777215.0)) |
+                        (std::uint32_t(a->clearStencil) << 24);
+            else {
+                unsigned shift = 0;
+                for (float c : {a->clear.red, a->clear.green, a->clear.blue, a->clear.alpha}) {
+                    value |= std::uint32_t(std::round(c * 255)) << shift;
+                    shift += 8;
+                }
+            }
+            auto& bytes = Find(a->texture)->bytes;
+            for (std::size_t n = 0; n < bytes.size(); n += 4)
+                std::memcpy(bytes.data() + n, &value, 4);
+        }
+        return true;
+    }
+    bool EndRenderPass() override {
+        if (!inFrame_ || !passes_.End())
+            return false;
+        linePipelineReady_ = false;
+        boundTexture_ = {};
+        return true;
+    }
+    bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
+        if (inFrame_ || resetPending_ || !passes_.CanRead(h))
+            return false;
+        out = {*passes_.Description(h), Find(h)->bytes};
+        return true;
     }
     Handle CreateBuffer(BufferDesc description, const void* initialData) override {
         if (resetPending_ || !description.size ||
@@ -59,7 +111,8 @@ public:
     }
     bool UploadTexture(Handle handle, TexturePixels pixels) override {
         auto* resource = Find(handle);
-        if (!resource || !resource->texture || inFrame_ || resetPending_ || !pixels.data)
+        if (!resource || !resource->texture || passes_.Description(handle) || inFrame_ ||
+            resetPending_ || !pixels.data)
             return false;
         const std::size_t rowBytes =
             static_cast<std::size_t>(resource->textureDescription.width) * 4u;
@@ -98,6 +151,8 @@ public:
         auto* resource = Find(handle);
         if (!resource || inFrame_)
             return false;
+        if (passes_.Description(handle))
+            passes_.Erase(handle);
         resource->alive = false;
         ++resource->generation;
         if (!resource->generation)
@@ -179,7 +234,7 @@ public:
                draw.indexCount % 3 == 0;
     }
     bool EndFrame() override {
-        if (!inFrame_)
+        if (!inFrame_ || passes_.Active())
             return false;
         inFrame_ = false;
         linePipelineReady_ = false;
@@ -205,6 +260,7 @@ public:
             }
         ready_ = false;
         resetPending_ = true;
+        passes_.InvalidateContents();
         return true;
     }
     bool RestoreAfterReset() override {
@@ -244,6 +300,7 @@ private:
         });
     }
     std::vector<Resource> resources_;
+    RenderPassState passes_;
     Handle boundTexture_{};
     FixedPipelineState currentPipeline_{};
     const std::uint64_t identity_ = detail::NextDeviceIdentity();

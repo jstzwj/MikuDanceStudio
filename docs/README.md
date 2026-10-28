@@ -9,6 +9,7 @@
 | [架构](ARCHITECTURE.md) | 子系统、模块边界与有意保留的兼容偏差 |
 | [可移植内核](M1_PORTABLE_CORE.md) | 格式文档、场景会话和 Windows 适配边界 |
 | [RHI 架构](RHI_ARCHITECTURE.md) | 资源生命周期、CPU 场景输入及 DX9／DX11／DX12 预览 |
+| [RHI 功能支持](RHI_FEATURE_SUPPORT.md) | 多通道附件与资源依赖契约、后端支持及离屏验收 |
 | [移植与验证状态](PORTING_STATUS.md) | 最近验证结果和仍未覆盖的行为 |
 | [x64 重建基准](X64_RECONSTRUCTION.md) | 参考二进制身份、证据规则与布局维护方式 |
 | [源码格式](FORMATTING.md) | clang-format、VS Code formatter 和批量格式检查命令 |

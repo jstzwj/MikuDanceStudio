@@ -62,6 +62,7 @@ target_sources(mikudancestudio_formats PRIVATE src/io/pmm_format.cpp)
 target_include_directories(mikudancestudio_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_library(mikudancestudio_rhi STATIC
     src/render/rhi_null.cpp
+    src/render/rhi_render_pass.cpp
     src/render/rhi_image.cpp
     src/render/rhi_assets.cpp
     src/render/rhi_material_textures.cpp)
@@ -116,6 +117,9 @@ target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(rhi_render_pass_test tests/rhi_render_pass_test.cpp)
+    target_link_libraries(rhi_render_pass_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_render_pass COMMAND rhi_render_pass_test)
     add_executable(rhi_scene_frame_test tests/rhi_scene_frame_test.cpp)
     target_link_libraries(rhi_scene_frame_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_scene_frame COMMAND rhi_scene_frame_test)
