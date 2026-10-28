@@ -63,6 +63,7 @@ target_include_directories(mikudancestudio_formats PUBLIC ${CMAKE_CURRENT_SOURCE
 add_library(mikudancestudio_rhi STATIC
     src/render/rhi_null.cpp
     src/render/rhi_render_pass.cpp
+    src/render/rhi_frame_passes.cpp
     src/render/rhi_image.cpp
     src/render/rhi_assets.cpp
     src/render/rhi_material_textures.cpp)
@@ -96,10 +97,12 @@ if(WIN32 AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12))
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/model_material_pixel.hlsl" MDS_MODEL_PS)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/model_dx9_compatibility.hlsl" MDS_MODEL_DX9_COMPATIBILITY)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fixed_screen.hlsl" MDS_FIXED_SCREEN)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/builtin_shadow.hlsl" MDS_BUILTIN_SHADOW)
     configure_file(cmake/rhi_model_shaders.hpp.in generated/rhi_model_shaders.hpp @ONLY)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         src/render/shaders/model_material_vertex.hlsl src/render/shaders/model_material_pixel.hlsl
-        src/render/shaders/model_dx9_compatibility.hlsl src/render/shaders/fixed_screen.hlsl)
+        src/render/shaders/model_dx9_compatibility.hlsl src/render/shaders/fixed_screen.hlsl
+        src/render/shaders/builtin_shadow.hlsl)
     target_include_directories(mikudancestudio_rhi PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
 if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D11)
@@ -120,6 +123,9 @@ if(BUILD_TESTING)
     add_executable(rhi_render_pass_test tests/rhi_render_pass_test.cpp)
     target_link_libraries(rhi_render_pass_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_render_pass COMMAND rhi_render_pass_test)
+    add_executable(rhi_frame_passes_test tests/rhi_frame_passes_test.cpp)
+    target_link_libraries(rhi_frame_passes_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_frame_passes COMMAND rhi_frame_passes_test)
     add_executable(rhi_scene_frame_test tests/rhi_scene_frame_test.cpp)
     target_link_libraries(rhi_scene_frame_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_scene_frame COMMAND rhi_scene_frame_test)
@@ -136,6 +142,16 @@ if(BUILD_TESTING)
     target_link_libraries(rhi_model_inputs_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_model_inputs COMMAND rhi_model_inputs_test)
     if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D11 AND MIKUDANCESTUDIO_RHI_D3D12)
+        add_executable(rhi_multipass_gpu_test tests/rhi_multipass_gpu_test.cpp)
+        target_link_libraries(rhi_multipass_gpu_test PRIVATE mikudancestudio_rhi)
+        foreach(api IN ITEMS dx11 dx12)
+            foreach(driver IN ITEMS warp hardware)
+                add_test(NAME rhi_multipass_${api}_${driver} COMMAND rhi_multipass_gpu_test ${api}-${driver})
+                set_tests_properties(rhi_multipass_${api}_${driver} PROPERTIES TIMEOUT 90 LABELS "offscreen")
+            endforeach()
+        endforeach()
+        add_test(NAME rhi_multipass_dx12_debug_warp COMMAND rhi_multipass_gpu_test dx12-warp-debug)
+        set_tests_properties(rhi_multipass_dx12_debug_warp PROPERTIES TIMEOUT 90 LABELS "offscreen")
         add_executable(scene_preview_gui_test tests/scene_preview_gui_test.cpp)
         target_link_libraries(scene_preview_gui_test PRIVATE user32)
         add_executable(rhi_scene_preview_test tests/rhi_scene_preview_test.cpp)

@@ -7,6 +7,7 @@
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 #include "mikudancestudio/rhi_d3d12.hpp"
+#include "mikudancestudio/rhi_render_pass.hpp"
 #include "rhi_model_constants.hpp"
 #include "rhi_model_shaders.hpp"
 #include <algorithm>
@@ -21,7 +22,7 @@ using Microsoft::WRL::ComPtr;
 namespace mikudancestudio::rhi {
 namespace {
 constexpr unsigned FrameCount = 3, BackbufferCount = 2, MaxDraws = 512,
-                   DescriptorCount = MaxDraws * 3, MaxResources = 8192;
+                   DescriptorCount = MaxDraws * 4, MaxResources = 8192;
 constexpr UINT64 ConstantBytes = 2 * 1024 * 1024;
 D3D12_HEAP_PROPERTIES Heap(D3D12_HEAP_TYPE type) {
     D3D12_HEAP_PROPERTIES p{};
@@ -108,12 +109,44 @@ public:
     ComPtr<ID3D12DescriptorHeap> rtvs, dsvs, cpuViews;
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3DBlob> vertex, colorVertex, pixel;
-    ComPtr<ID3DBlob> screenVertex, screenPixel;
+    ComPtr<ID3DBlob> screenVertex, screenPixel, shadowVertex, shadowPixel;
+    Handle shadowTexture;
     std::map<std::string, ComPtr<ID3D12PipelineState>> pipelines;
     std::array<Frame, FrameCount> frames;
     std::array<ComPtr<ID3D12Resource>, BackbufferCount> backbuffers;
     ComPtr<ID3D12Resource> offscreen, depth;
     std::vector<Resource> resources;
+    RenderPassState passes;
+    unsigned RenderWidth() const {
+        const auto& p = passes.Current();
+        const auto* d = passes.Description(p.color          ? p.color->texture
+                                           : p.depthStencil ? p.depthStencil->texture
+                                                            : Handle{});
+        return d ? d->width : targetWidth;
+    }
+    unsigned RenderHeight() const {
+        const auto& p = passes.Current();
+        const auto* d = passes.Description(p.color          ? p.color->texture
+                                           : p.depthStencil ? p.depthStencil->texture
+                                                            : Handle{});
+        return d ? d->height : targetHeight;
+    }
+    DXGI_FORMAT ActiveDepthFormat() const {
+        if (passes.Active())
+            return passes.Current().depthStencil ? DXGI_FORMAT_D24_UNORM_S8_UINT
+                                                 : DXGI_FORMAT_UNKNOWN;
+        return depth ? depth->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    }
+    DXGI_FORMAT ActiveColorFormat() const {
+        if (!passes.Active())
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
+        if (!passes.Current().color)
+            return DXGI_FORMAT_UNKNOWN;
+        return passes.Description(passes.Current().color->texture)->format ==
+                       TextureFormat::R32Float
+                   ? DXGI_FORMAT_R32_FLOAT
+                   : DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
     std::vector<unsigned> freeSlots;
     std::vector<UploadJob> pendingUploads;
     std::vector<Retirement> retiring;
@@ -121,7 +154,7 @@ public:
     ModelSupport support;
     ModelPipeline pipeline;
     std::array<Handle, 3> textures{};
-    std::array<D3D12_SAMPLER_DESC, 3> samplerDescriptions{};
+    std::array<D3D12_SAMPLER_DESC, 4> samplerDescriptions{};
     HANDLE completionEvent = nullptr;
     HRESULT lastError = S_OK;
     UINT64 identity = detail::NextDeviceIdentity(), epoch = 1, issued = 0;
@@ -169,7 +202,105 @@ public:
         h.ptr += SIZE_T(n) * rtvStride;
         return h;
     }
-    D3D12_CPU_DESCRIPTOR_HANDLE Dsv() const { return dsvs->GetCPUDescriptorHandleForHeapStart(); }
+    D3D12_CPU_DESCRIPTOR_HANDLE Dsv(unsigned n = 0) const {
+        auto h = dsvs->GetCPUDescriptorHandleForHeapStart();
+        h.ptr +=
+            SIZE_T(n) * native->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+        return h;
+    }
+    Handle CreateRenderTexture(const RenderTextureDesc& d) override {
+        if (!Live() || inFrame || !ValidRenderTextureDesc(d))
+            return {};
+        const bool isDepth = d.format == TextureFormat::Depth24Stencil8;
+        const auto format = isDepth                               ? DXGI_FORMAT_D24_UNORM_S8_UINT
+                            : d.format == TextureFormat::R32Float ? DXGI_FORMAT_R32_FLOAT
+                                                                  : DXGI_FORMAT_R8G8B8A8_UNORM;
+        auto desc = Texture(d.width, d.height, format);
+        desc.Flags = isDepth ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
+                             : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = format;
+        if (isDepth)
+            clear.DepthStencil.Depth = 1;
+        Resource r;
+        r.texture = true;
+        r.uploaded = true;
+        r.image = {d.width, d.height, d.format};
+        r.state = isDepth ? D3D12_RESOURCE_STATE_DEPTH_WRITE : D3D12_RESOURCE_STATE_RENDER_TARGET;
+        if (!Allocate(desc, D3D12_HEAP_TYPE_DEFAULT, r.state, r.native, &clear))
+            return {};
+        const auto h = Insert(std::move(r));
+        if (!h)
+            return {};
+        if (isDepth)
+            native->CreateDepthStencilView(Find(h)->native.Get(), nullptr, Dsv(h.index + 1));
+        else
+            native->CreateRenderTargetView(Find(h)->native.Get(), nullptr,
+                                           Rtv(BackbufferCount + 1 + h.index));
+        if (d.access & std::uint32_t(TextureAccess::Sampled))
+            MakeView(h, 1);
+        return passes.Register(h, d) ? h : Handle{};
+    }
+    bool BeginRenderPass(const RenderPassDesc& p) override {
+        if (!Live() || !inFrame || !passes.Begin(p))
+            return false;
+        auto* list = frames[frameIndex].commands.Get();
+        for (auto h : p.sampled) {
+            auto& r = *Find(h);
+            Barrier(list, r.native.Get(), r.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            r.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        }
+        D3D12_CPU_DESCRIPTOR_HANDLE rt{}, ds{};
+        if (p.color) {
+            auto h = p.color->texture;
+            auto& r = *Find(h);
+            Barrier(list, r.native.Get(), r.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            r.state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            rt = Rtv(BackbufferCount + 1 + h.index);
+        }
+        if (p.depthStencil)
+            ds = Dsv(p.depthStencil->texture.index + 1);
+        list->OMSetRenderTargets(p.color ? 1 : 0, p.color ? &rt : nullptr, FALSE,
+                                 p.depthStencil ? &ds : nullptr);
+        if (p.color && p.color->load == AttachmentLoad::Clear) {
+            const auto& c = p.color->clear;
+            const float clear[] = {c.red, c.green, c.blue, c.alpha};
+            list->ClearRenderTargetView(rt, clear, 0, nullptr);
+        }
+        if (p.depthStencil && p.depthStencil->load == AttachmentLoad::Clear)
+            list->ClearDepthStencilView(
+                ds,
+                static_cast<D3D12_CLEAR_FLAGS>(D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL),
+                p.depthStencil->clearDepth, p.depthStencil->clearStencil, 0, nullptr);
+        const D3D12_RECT scissor{0, 0, LONG(RenderWidth()), LONG(RenderHeight())};
+        list->RSSetScissorRects(1, &scissor);
+        modelReady = screenReady = false;
+        textures = {};
+        return true;
+    }
+    bool EndRenderPass() override {
+        if (!inFrame || !passes.End())
+            return false;
+        frames[frameIndex].commands->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+        modelReady = screenReady = false;
+        textures = {};
+        return true;
+    }
+    bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
+        if (!Live() || inFrame || !passes.CanRead(h))
+            return false;
+        // Read() copies four bytes per texel, without color conversion. Native
+        // D24S8 is planar in DX12 and deliberately not exposed by this path.
+        const auto d = *passes.Description(h);
+        if (d.format == TextureFormat::Depth24Stencil8)
+            return false;
+        RgbaImage bytes;
+        auto& r = *Find(h);
+        if (!Read(r.native.Get(), r.state, bytes))
+            return false;
+        out = {d, std::move(bytes.pixels)};
+        return true;
+    }
     Resource* Find(Handle h) {
         return h && h.device == identity && h.index < resources.size() &&
                        resources[h.index].alive && resources[h.index].generation == h.generation
@@ -325,7 +456,9 @@ public:
     void MakeView(Handle h, unsigned levels) {
         auto* r = Find(h);
         D3D12_SHADER_RESOURCE_VIEW_DESC v{};
-        v.Format = r->srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+        v.Format = r->image.format == TextureFormat::R32Float ? DXGI_FORMAT_R32_FLOAT
+                   : r->srgb                                  ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+                                                              : DXGI_FORMAT_R8G8B8A8_UNORM;
         v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         v.Texture2D.MipLevels = levels;
@@ -418,13 +551,15 @@ public:
     }
     bool Destroy(Handle h) override {
         auto* r = Find(h);
-        if (!r)
+        if (inFrame || !r)
             return false;
         pendingUploads.erase(std::remove_if(pendingUploads.begin(), pendingUploads.end(),
                                             [&](const UploadJob& job) {
                                                 return job.destination.Get() == r->native.Get();
                                             }),
                              pendingUploads.end());
+        if (passes.Description(h))
+            passes.Erase(h);
         Defer(r->native, issued + (inFrame ? 1 : 0));
         r->native.Reset();
         r->indices.clear();
@@ -512,7 +647,7 @@ public:
         for (auto& b : backbuffers)
             b.Reset();
         modelReady = presentable = false;
-        for (unsigned i = 0; i < BackbufferCount; ++i) {
+        for (unsigned i = 0; chain && i < BackbufferCount; ++i) {
             lastError = chain->GetBuffer(i, IID_PPV_ARGS(&backbuffers[i]));
             if (FAILED(lastError))
                 return false;
@@ -548,6 +683,7 @@ public:
         if (inFrame || retired || pending)
             return false;
         pending = true;
+        passes.InvalidateContents();
         presentable = modelReady = false;
         textures = {};
         // Present can enqueue work after the frame fence. Establish a new
@@ -563,7 +699,8 @@ public:
         return true;
     }
     bool RestoreAfterReset() override {
-        if (!pending || retired || !backbuffers[0] || native->GetDeviceRemovedReason() != S_OK)
+        if (!pending || retired || (!backbuffers[0] && !offscreen) ||
+            native->GetDeviceRemovedReason() != S_OK)
             return false;
         pending = false;
         if (++epoch == 0)
@@ -593,7 +730,7 @@ public:
                RestoreAfterReset();
     }
     bool BeginFrame(ClearColor color) override {
-        if (!Live() || inFrame || !backbuffers[0] ||
+        if (!Live() || inFrame || (!backbuffers[0] && !offscreen) ||
             (!offscreen && IsIconic(reinterpret_cast<HWND>(desc.window.handle))))
             return false;
         for (float c : {color.red, color.green, color.blue, color.alpha})
@@ -634,7 +771,7 @@ public:
             f.uploads.push_back(std::move(job.destination));
         }
         pendingUploads.clear();
-        activeBackbuffer = chain->GetCurrentBackBufferIndex();
+        activeBackbuffer = chain ? chain->GetCurrentBackBufferIndex() : 0;
         if (!offscreen)
             Barrier(list, backbuffers[activeBackbuffer].Get(), D3D12_RESOURCE_STATE_PRESENT,
                     D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -664,7 +801,7 @@ public:
         return true;
     }
     bool EndFrame() override {
-        if (!inFrame)
+        if (!inFrame || passes.Active())
             return false;
         auto& f = frames[frameIndex];
         if (!offscreen)
@@ -704,7 +841,8 @@ public:
     bool BindTexture(std::uint32_t slot, Handle h) override {
         auto* r = Find(h);
         if (!inFrame || !modelReady || slot >= 3 || (screenReady && slot) || !r || !r->texture ||
-            !r->uploaded || r->srgb != pipeline.shader.srgbSample[slot])
+            (passes.Description(h) ? !passes.CanSample(h) : !r->uploaded) ||
+            r->srgb != pipeline.shader.srgbSample[slot])
             return false;
         textures[slot] = h;
         return true;
@@ -756,12 +894,24 @@ public:
         if (SUCCEEDED(lastError))
             lastError = D3DCompile(fixedScreenSource, std::strlen(fixedScreenSource), nullptr,
                                    nullptr, nullptr, "ps", "ps_4_0", 0, 0, &screenPixel, &errors);
-        if (FAILED(lastError))
+        if (SUCCEEDED(lastError))
+            lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
+                                   nullptr, nullptr, "shadow_vs", "vs_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &shadowVertex, &errors);
+        if (SUCCEEDED(lastError))
+            lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
+                                   nullptr, nullptr, "shadow_ps", "ps_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &shadowPixel, &errors);
+        if (FAILED(lastError)) {
+            if (errors)
+                std::fprintf(stderr, "shadow shader: %s\n",
+                             static_cast<const char*>(errors->GetBufferPointer()));
             return false;
+        }
         D3D12_DESCRIPTOR_RANGE ranges[2]{};
-        ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
-        ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 3, 0, 0, 0};
-        D3D12_ROOT_PARAMETER parameters[5]{};
+        ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0};
+        ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 4, 0, 0, 0};
+        D3D12_ROOT_PARAMETER parameters[6]{};
         for (unsigned i = 0; i < 3; ++i) {
             parameters[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
             parameters[i].Descriptor.ShaderRegister = i == 2 ? 1 : 0;
@@ -773,8 +923,11 @@ public:
             parameters[i + 3].DescriptorTable = {1, &ranges[i]};
             parameters[i + 3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         }
+        parameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[5].Descriptor.ShaderRegister = 2;
+        parameters[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         D3D12_ROOT_SIGNATURE_DESC signature{};
-        signature.NumParameters = 5;
+        signature.NumParameters = 6;
         signature.pParameters = parameters;
         signature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> blob;
@@ -785,19 +938,30 @@ public:
                                                     blob->GetBufferSize(), IID_PPV_ARGS(&root));
         return SUCCEEDED(lastError);
     }
+    bool BindShadowTexture(Handle h) override {
+        const auto* d = passes.Description(h);
+        if (!Live() || !inFrame || !modelReady ||
+            pipeline.shadow.mode != BuiltinShadowMode::Material || !passes.CanSample(h) || !d ||
+            d->format != TextureFormat::R32Float || !Find(h))
+            return false;
+        shadowTexture = h;
+        return true;
+    }
     bool SetModelPipeline(const ModelPipeline& p) override;
     bool UsePipeline(const ModelPipeline&, VertexLayout, ID3DBlob*, ID3DBlob*);
     bool BindDrawDescriptors() {
         auto& f = frames[frameIndex];
         if (f.drawCount >= MaxDraws)
             return false;
-        const unsigned offset = f.drawCount * 3;
+        const unsigned offset = f.drawCount * 4;
         auto views = f.views->GetCPUDescriptorHandleForHeapStart(),
              samplers = f.samplers->GetCPUDescriptorHandleForHeapStart();
         views.ptr += SIZE_T(offset) * viewStride;
         samplers.ptr += SIZE_T(offset) * samplerStride;
-        for (unsigned i = 0; i < 3; ++i) {
-            if (pipeline.shader.layout.stages[i].role == MaterialTextureRole::None) {
+        for (unsigned i = 0; i < 4; ++i) {
+            const bool shadow = i == 3;
+            if (shadow ? pipeline.shadow.mode != BuiltinShadowMode::Material
+                       : pipeline.shader.layout.stages[i].role == MaterialTextureRole::None) {
                 D3D12_SHADER_RESOURCE_VIEW_DESC d{};
                 d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
                 d.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -805,10 +969,12 @@ public:
                 d.Texture2D.MipLevels = 1;
                 native->CreateShaderResourceView(nullptr, &d, views);
             } else {
-                auto* r = Find(textures[i]);
-                if (!r || !r->uploaded || !r->texture || r->srgb != pipeline.shader.srgbSample[i])
+                const auto h = shadow ? shadowTexture : textures[i];
+                auto* r = Find(h);
+                if (!r || !r->uploaded || !r->texture ||
+                    (shadow ? !passes.CanSample(h) : r->srgb != pipeline.shader.srgbSample[i]))
                     return false;
-                native->CopyDescriptorsSimple(1, views, CpuView(textures[i].index),
+                native->CopyDescriptorsSimple(1, views, CpuView(h.index),
                                               D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             }
             native->CreateSampler(&samplerDescriptions[i], samplers);
@@ -992,9 +1158,9 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     d.PrimitiveTopologyType = p.topology == PrimitiveTopology::LineList
                                   ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
                                   : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    d.NumRenderTargets = 1;
-    d.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-    d.DSVFormat = depth ? depth->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    d.NumRenderTargets = ActiveColorFormat() == DXGI_FORMAT_UNKNOWN ? 0 : 1;
+    d.RTVFormats[0] = ActiveColorFormat();
+    d.DSVFormat = ActiveDepthFormat();
     d.SampleDesc.Count = 1;
     const D3D12_INPUT_ELEMENT_DESC elements[] = {{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
                                                   D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -1021,7 +1187,10 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     append(d.DepthStencilState);
     append(d.PrimitiveTopologyType);
     append(d.DSVFormat);
+    append(d.RTVFormats[0]);
+    append(d.NumRenderTargets);
     append(layout);
+    append(p.shadow.mode);
     auto state = pipelines.find(key);
     if (state == pipelines.end()) {
         d.InputLayout =
@@ -1042,11 +1211,16 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
 bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     modelReady = screenReady = false;
     textures = {};
+    shadowTexture = {};
     const auto& s = p.shader;
-    const auto view = p.viewport.value_or(ModelViewport{0, 0, targetWidth, targetHeight, 0, 1});
+    const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
     std::array<float, 4> evaluated;
     std::array<std::array<float, 4>, 3> samples{};
-    if (!Live() || !inFrame || !ValidModelViewport(view, targetWidth, targetHeight) ||
+    if (!Live() || !inFrame || !ValidBuiltinShadowState(p.shadow) ||
+        (p.shadow.mode != BuiltinShadowMode::None &&
+         (!passes.Active() || p.vertexLayout != VertexLayout::PositionNormalUv ||
+          p.topology != PrimitiveTopology::TriangleList)) ||
+        !ValidModelViewport(view, RenderWidth(), RenderHeight()) ||
         !ModelVertexStride(p.vertexLayout) || !ModelPrimitiveArity(p.topology) ||
         !ValidateMaterialShaderInputs(s) ||
         !EvaluateMaterialTextureCascade(s.layout, {1, 1, 1, 1}, samples, evaluated) ||
@@ -1058,8 +1232,8 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
         unsigned(p.stencilFail) < 1 || unsigned(p.stencilFail) > 8 ||
         unsigned(p.stencilDepthFail) < 1 || unsigned(p.stencilDepthFail) > 8 ||
         unsigned(p.stencilPass) < 1 || unsigned(p.stencilPass) > 8 ||
-        ((p.raster.depthTest || p.stencil) && !depth) ||
-        (p.stencil && depth->GetDesc().Format != DXGI_FORMAT_D24_UNORM_S8_UINT))
+        ((p.raster.depthTest || p.stencil) && ActiveDepthFormat() == DXGI_FORMAT_UNKNOWN) ||
+        (p.stencil && ActiveDepthFormat() != DXGI_FORMAT_D24_UNORM_S8_UINT))
         return false;
     if (p.raster.alphaBlend &&
         (!AlphaFactor(p.separateAlpha ? p.sourceAlpha : p.raster.sourceBlend) ||
@@ -1093,7 +1267,10 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
         samplerDescriptions[i] = d;
     }
     auto* vs = p.vertexLayout == VertexLayout::PositionColor ? colorVertex.Get() : vertex.Get();
-    if (!UsePipeline(p, p.vertexLayout, vs, pixel.Get()))
+    if (p.shadow.mode != BuiltinShadowMode::None)
+        vs = shadowVertex.Get();
+    if (!UsePipeline(p, p.vertexLayout, vs,
+                     p.shadow.mode == BuiltinShadowMode::None ? pixel.Get() : shadowPixel.Get()))
         return false;
     detail::ModelConstants constants;
     const bool measured = support.selected == ModelCompatibility::Dx9Measured;
@@ -1108,13 +1285,27 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     list->SetGraphicsRootConstantBufferView(0, vc);
     list->SetGraphicsRootConstantBufferView(1, pc);
     list->SetGraphicsRootConstantBufferView(2, combined);
+    if (p.shadow.mode != BuiltinShadowMode::None) {
+        const auto shadow = detail::BuildBuiltinShadowConstants(p, view);
+        const auto cb = Constants(&shadow, sizeof(shadow));
+        if (!cb)
+            return false;
+        list->SetGraphicsRootConstantBufferView(5, cb);
+    }
+    D3D12_SAMPLER_DESC shadowSampler{};
+    shadowSampler.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+    shadowSampler.AddressU = shadowSampler.AddressV = shadowSampler.AddressW =
+        D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    shadowSampler.MaxAnisotropy = 1;
+    shadowSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    samplerDescriptions[3] = shadowSampler;
     list->IASetPrimitiveTopology(p.topology == PrimitiveTopology::LineList
                                      ? D3D_PRIMITIVE_TOPOLOGY_LINELIST
                                      : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     list->OMSetStencilRef(p.stencilReference);
     D3D12_VIEWPORT viewport{float(view.x),      float(view.y), float(view.width),
                             float(view.height), view.minDepth, view.maxDepth};
-    if (measured) {
+    if (measured || p.shadow.mode != BuiltinShadowMode::None) {
         viewport.TopLeftX += .5f;
         viewport.TopLeftY += .5f;
     }
@@ -1124,6 +1315,8 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     return true;
 }
 bool D3D12Device::SetFixedPipeline(FixedPipelineState f) {
+    if (passes.Active())
+        return false;
     modelReady = screenReady = false;
     textures = {};
     if (!Live() || !inFrame || f.topology != PrimitiveTopology::TriangleList ||
@@ -1296,10 +1489,12 @@ void WINAPI DebugMessage(D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity
         std::fprintf(stderr, "DX12 validation %u: %s\n", unsigned(id), message);
 }
 }
-D3D12Bundle CreateD3D12Device(const SwapchainDesc& desc, D3D12Driver driver, D3D12Options options) {
+static D3D12Bundle CreateD3D12DeviceInternal(const SwapchainDesc& desc, D3D12Driver driver,
+                                             D3D12Options options, bool headless) {
     D3D12Bundle out;
     out.creationError = E_INVALIDARG;
-    if (!ValidCreation(desc) || (driver != D3D12Driver::Hardware && driver != D3D12Driver::Warp)) {
+    if ((!headless && !ValidCreation(desc)) || !desc.width || !desc.height || desc.width > 4096 ||
+        desc.height > 4096 || (driver != D3D12Driver::Hardware && driver != D3D12Driver::Warp)) {
         out.creationReason = "unsupported_parameters";
         return out;
     }
@@ -1445,12 +1640,12 @@ D3D12Bundle CreateD3D12Device(const SwapchainDesc& desc, D3D12Driver driver, D3D
     if (FAILED(device->lastError))
         return fail("cpu_descriptors_failed");
     heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    heap.NumDescriptors = BackbufferCount + 1;
+    heap.NumDescriptors = BackbufferCount + 1 + MaxResources;
     device->lastError = device->native->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&device->rtvs));
     if (FAILED(device->lastError))
         return fail("rtv_descriptors_failed");
     heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-    heap.NumDescriptors = 1;
+    heap.NumDescriptors = 1 + MaxResources;
     device->lastError = device->native->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&device->dsvs));
     if (FAILED(device->lastError))
         return fail("dsv_descriptors_failed");
@@ -1458,33 +1653,46 @@ D3D12Bundle CreateD3D12Device(const SwapchainDesc& desc, D3D12Driver driver, D3D
     if (!device->MakeShaders())
         return fail("shared_shaders_failed");
     out.stage = D3D12CreationStage::Targets;
-    DXGI_SWAP_CHAIN_DESC1 surface{};
-    surface.Width = desc.width;
-    surface.Height = desc.height;
-    surface.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    surface.SampleDesc.Count = 1;
-    surface.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    surface.BufferCount = BackbufferCount;
-    surface.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    ComPtr<IDXGISwapChain1> chain;
-    device->lastError = factory->CreateSwapChainForHwnd(device->queue.Get(),
-                                                        reinterpret_cast<HWND>(desc.window.handle),
-                                                        &surface, nullptr, nullptr, &chain);
-    if (FAILED(device->lastError))
-        return fail("swapchain_failed");
-    device->lastError = chain.As(&device->chain);
-    if (FAILED(device->lastError))
-        return fail("swapchain_interface_failed");
-    factory->MakeWindowAssociation(reinterpret_cast<HWND>(desc.window.handle),
-                                   DXGI_MWA_NO_ALT_ENTER);
-    if (!device->MakeTargets(false, desc.width, desc.height, desc.depth))
+    if (!headless) {
+        DXGI_SWAP_CHAIN_DESC1 surface{};
+        surface.Width = desc.width;
+        surface.Height = desc.height;
+        surface.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        surface.SampleDesc.Count = 1;
+        surface.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        surface.BufferCount = BackbufferCount;
+        surface.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        ComPtr<IDXGISwapChain1> chain;
+        device->lastError = factory->CreateSwapChainForHwnd(
+            device->queue.Get(), reinterpret_cast<HWND>(desc.window.handle), &surface, nullptr,
+            nullptr, &chain);
+        if (FAILED(device->lastError))
+            return fail("swapchain_failed");
+        device->lastError = chain.As(&device->chain);
+        if (FAILED(device->lastError))
+            return fail("swapchain_interface_failed");
+        factory->MakeWindowAssociation(reinterpret_cast<HWND>(desc.window.handle),
+                                       DXGI_MWA_NO_ALT_ENTER);
+    }
+    if (!device->MakeTargets(headless, desc.width, desc.height, desc.depth))
         return fail("targets_failed");
     out.creationError = S_OK;
     out.stage = D3D12CreationStage::Ready;
     out.creationReason = "ready";
-    out.swapchain = std::make_unique<D3D12Swapchain>(*device);
+    if (!headless)
+        out.swapchain = std::make_unique<D3D12Swapchain>(*device);
     out.device = std::move(device);
     return out;
+}
+D3D12Bundle CreateD3D12Device(const SwapchainDesc& d, D3D12Driver driver, D3D12Options options) {
+    return CreateD3D12DeviceInternal(d, driver, options, false);
+}
+D3D12Bundle CreateD3D12OffscreenDevice(std::uint32_t width, std::uint32_t height,
+                                       D3D12Driver driver, D3D12Options options) {
+    SwapchainDesc d;
+    d.width = width;
+    d.height = height;
+    return CreateD3D12DeviceInternal(d, driver, options, true);
 }
 D3D12Stats QueryD3D12Stats(Device& base) {
     auto* d = dynamic_cast<D3D12Device*>(&base);

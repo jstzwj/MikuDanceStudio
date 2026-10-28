@@ -19,4 +19,11 @@ struct ModelCompatibilityConstants {
     std::array<float, 16> combined{}, worldView{};
 };
 static_assert(sizeof(ModelCompatibilityConstants) == 128, "HLSL compatibility buffer layout");
+struct BuiltinShadowConstants {
+    std::array<float, 16> light, camera, rotation;
+    std::array<float, 4> color, toon, specular, direction, eye;
+    std::array<unsigned, 4> options;
+    std::array<float, 4> dimensions;
+};
+static_assert(sizeof(BuiltinShadowConstants) == 304, "HLSL shadow buffer layout");
 }

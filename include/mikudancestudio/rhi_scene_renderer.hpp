@@ -1,5 +1,6 @@
 #pragma once
 #include "rhi_model_replay.hpp"
+#include "rhi_frame_passes.hpp"
 
 namespace mikudancestudio::rhi {
 enum class FrameOutput {
@@ -37,6 +38,8 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
     ModelReplayResult Prepare(std::uint64_t scene, const ModelReplayStream&, PreparedModelFrame&,
                               FrameOutput = FrameOutput::Offscreen);
+    ModelReplayResult Prepare(std::uint64_t scene, const RenderFrame&, PreparedModelFrame&);
+    bool ReadTarget(std::uint64_t scene, std::uint64_t target, AttachmentReadback&);
     // No target reconstruction, uploads, validation scans, or readback here.
     // A new Prepare for the same scene invalidates the prior prepared frame.
     ModelReplayResult Submit(const PreparedModelFrame&, CompletionToken&);
@@ -50,6 +53,8 @@ public:
     SceneRendererStats Stats() const;
 
 private:
+    ModelReplayResult PrepareImpl(std::uint64_t, const ModelReplayStream&, PreparedModelFrame&,
+                                  FrameOutput, const RenderFrame*);
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

@@ -37,10 +37,13 @@ struct D3D12Bundle {
     std::string adapterName, creationReason;
     std::uint32_t vendorId = 0, deviceId = 0;
     ModelSupport modelSupport;
-    explicit operator bool() const { return device && swapchain; }
+    explicit operator bool() const { return bool(device); }
 };
 #ifdef MIKUDANCESTUDIO_RHI_D3D12
 D3D12Bundle CreateD3D12Device(const SwapchainDesc&, D3D12Driver, D3D12Options = {});
+// No HWND, swapchain, presentation or desktop interaction. swapchain is null.
+D3D12Bundle CreateD3D12OffscreenDevice(std::uint32_t width, std::uint32_t height, D3D12Driver,
+                                       D3D12Options = {});
 D3D12Stats QueryD3D12Stats(Device&);
 bool ReadD3D12Swapchain(Device&, RgbaImage&);
 // Diagnostic for an isolated test process only. D3D12 may share a native device

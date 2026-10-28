@@ -33,6 +33,9 @@ struct ModelReplayDraw {
     // address the published vertex snapshot. Counts are vertices, not primitives.
     bool indexed = true;
     std::uint32_t firstVertex = 0, drawVertexCount = 0;
+    // Mutable frame target, valid only in RenderFrame and declared by its pass.
+    // Kept separate from immutable material upload keys.
+    std::uint64_t shadowTarget = 0;
 };
 enum class ModelReplayOp {
     Clear,

@@ -18,7 +18,7 @@ constexpr ModelCompatibilityResult CheckModelCompatibility(ModelCompatibility mo
                                                            bool shaderDoubles) {
     return mode == ModelCompatibility::Default       ? ModelCompatibilityResult::Supported
            : mode != ModelCompatibility::Dx9Measured ? ModelCompatibilityResult::InvalidMode
-           : shaderDoubles ? ModelCompatibilityResult::Supported
+           : shaderDoubles                           ? ModelCompatibilityResult::Supported
                            : ModelCompatibilityResult::ShaderDoublesRequired;
 }
 struct ModelOptions {
@@ -79,6 +79,33 @@ enum class ModelBlendOp {
     Min,
     Max
 };
+enum class BuiltinShadowMode {
+    None,
+    Depth,
+    Material
+};
+struct BuiltinShadowState {
+    BuiltinShadowMode mode = BuiltinShadowMode::None;
+    // Matrices include the object's world transform. No backend rebuilds them.
+    std::array<float, 16> lightViewProjection{}, worldViewProjection{}, rotation{};
+    std::array<float, 4> color{}, toonColor{1, 1, 1, 1}, specular{}, lightDirection{}, eye{};
+    bool perspective = false, transparent = false;
+};
+inline bool ValidBuiltinShadowState(const BuiltinShadowState& s) {
+    if (unsigned(s.mode) > unsigned(BuiltinShadowMode::Material))
+        return false;
+    if (s.mode == BuiltinShadowMode::None)
+        return true;
+    for (const auto* a : {&s.lightViewProjection, &s.worldViewProjection, &s.rotation})
+        for (float v : *a)
+            if (!std::isfinite(v))
+                return false;
+    for (const auto* a : {&s.color, &s.toonColor, &s.specular, &s.lightDirection, &s.eye})
+        for (float v : *a)
+            if (!std::isfinite(v))
+                return false;
+    return s.specular[3] >= 0;
+}
 struct ModelPipeline {
     // PositionColor: float3 + RGBA8 (16 bytes), no normal or UV attributes.
     // PositionNormalUv: float3 + float3 + float2 (32 bytes).
@@ -97,6 +124,7 @@ struct ModelPipeline {
     ModelStencilOp stencilFail = ModelStencilOp::Keep, stencilDepthFail = ModelStencilOp::Keep,
                    stencilPass = ModelStencilOp::Keep;
     PrimitiveTopology topology = PrimitiveTopology::TriangleList;
+    BuiltinShadowState shadow;
 };
 inline unsigned ModelPrimitiveArity(PrimitiveTopology topology) {
     return topology == PrimitiveTopology::TriangleList ? 3

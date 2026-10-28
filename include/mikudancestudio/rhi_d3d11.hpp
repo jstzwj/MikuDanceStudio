@@ -43,10 +43,13 @@ struct D3D11Bundle {
     std::uint32_t vendorId = 0, deviceId = 0;
     D3D11ModelSupport modelSupport;
     std::string creationReason;
-    explicit operator bool() const { return device && swapchain; }
+    explicit operator bool() const { return bool(device); }
 };
 #ifdef MIKUDANCESTUDIO_RHI_D3D11
 D3D11Bundle CreateD3D11Device(const SwapchainDesc&, D3D11Driver, D3D11ModelOptions = {});
+// No HWND, swapchain, presentation or desktop interaction. swapchain is null.
+D3D11Bundle CreateD3D11OffscreenDevice(std::uint32_t width, std::uint32_t height, D3D11Driver,
+                                       D3D11ModelOptions = {});
 D3D11ModelSupport QueryD3D11ModelSupport(Device&, D3D11ModelCompatibility);
 // This backend clears texture bindings on every fixed/model pipeline change.
 // Bind all active material stages after SetModelPipeline (or slot 0 after HUD).

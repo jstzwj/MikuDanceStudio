@@ -31,6 +31,11 @@ struct Draw {
     std::array<Handle, 3> textures{};
     std::variant<IndexedDraw, NonIndexedDraw> command;
     std::uint64_t sequence;
+    Handle shadow;
+};
+struct PreparedPass {
+    RenderPassDesc description;
+    std::size_t firstDraw = 0, draws = 0;
 };
 }
 struct PreparedModelFrame::Data {
@@ -38,6 +43,7 @@ struct PreparedModelFrame::Data {
     SubmissionIdentity submission;
     ClearColor clear;
     std::vector<Draw> draws;
+    std::vector<PreparedPass> passes;
 };
 PreparedModelFrame::PreparedModelFrame() = default;
 PreparedModelFrame::~PreparedModelFrame() = default;
@@ -54,6 +60,12 @@ struct SceneRenderer::Impl {
         std::map<ReplayResourceKey, Entry> resources;
         std::map<std::uint64_t, std::uint64_t> versions;
         std::map<std::uint64_t, ReplayResourceKind> kinds;
+        struct Target {
+            RenderTextureDesc desc;
+            Handle handle;
+            CompletionToken lastUse;
+        };
+        std::map<std::uint64_t, Target> targets;
     };
     struct Retired {
         Handle handle;
@@ -91,6 +103,10 @@ struct SceneRenderer::Impl {
         if (unknownWork)
             return false;
         for (auto& s : scenes)
+            for (auto& t : s.second.targets)
+                if (t.second.lastUse && !device->WaitCompletion(t.second.lastUse, timeout))
+                    return false;
+        for (auto& s : scenes)
             for (auto& r : s.second.resources)
                 if (r.second.lastUse && !device->WaitCompletion(r.second.lastUse, timeout))
                     return false;
@@ -107,6 +123,24 @@ SceneRenderer::~SceneRenderer() {
 }
 ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const ModelReplayStream& stream,
                                          PreparedModelFrame& out, FrameOutput output) {
+    for (const auto& e : stream.events)
+        if (e.op == ModelReplayOp::Draw &&
+            (e.draw.shadowTarget || e.draw.pipeline.shadow.mode != BuiltinShadowMode::None))
+            return {false, e.sequence, 0, "shadow_requires_explicit_passes"};
+    return PrepareImpl(id, stream, out, output, nullptr);
+}
+ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const RenderFrame& frame,
+                                         PreparedModelFrame& out) {
+    const auto valid = ValidateRenderFrame(frame);
+    if (!valid)
+        return valid;
+    if (impl->device && !impl->device->Features().textureRenderTargets)
+        return {false, 0, 0, "explicit_passes_unsupported"};
+    return PrepareImpl(id, FlattenRenderFrame(frame), out, FrameOutput::Offscreen, &frame);
+}
+ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplayStream& stream,
+                                             PreparedModelFrame& out, FrameOutput output,
+                                             const RenderFrame* frame) {
     if (output != FrameOutput::Offscreen && output != FrameOutput::Presentation)
         return {false, 0, 0, "invalid_frame_output"};
     auto result = ValidateModelReplay(stream);
@@ -186,7 +220,46 @@ ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const ModelReplayStre
         return {false, 0, 0, "target_prepare_failed"};
     if (d.Status().epoch != before.epoch)
         ++impl->stats.targetRebuilds;
+    // Allocate targets only after legacy output preparation, which can reset
+    // the target epoch. New allocations are rolled back on partial failure.
+    std::map<ReplayResourceKey, Handle> targetAllocations;
+    Rollback targetRollback{d, targetAllocations};
+    if (frame)
+        for (const auto& t : frame->targets) {
+            bool missing = true;
+            if (existing != impl->scenes.end()) {
+                const auto old = existing->second.targets.find(t.id);
+                missing = old == existing->second.targets.end() || !old->second.handle ||
+                          !EqualRenderTextureDesc(old->second.desc, t.description);
+            }
+            if (missing) {
+                const auto h = d.CreateRenderTexture(t.description);
+                if (!h)
+                    return {false, 0, 0, "render_target_allocation_failed"};
+                targetAllocations.emplace(ReplayResourceKey{t.id, 1}, h);
+            }
+        }
     auto& scene = impl->scenes[id];
+    std::set<std::uint64_t> wantedTargets;
+    if (frame)
+        for (const auto& t : frame->targets) {
+            wantedTargets.insert(t.id);
+            auto allocation = targetAllocations.find({t.id, 1});
+            if (allocation != targetAllocations.end()) {
+                auto& old = scene.targets[t.id];
+                if (old.handle)
+                    impl->retired.push_back({old.handle, old.lastUse});
+                old = {t.description, allocation->second, {}};
+                targetAllocations.erase(allocation);
+            }
+        }
+    for (auto i = scene.targets.begin(); i != scene.targets.end();)
+        if (!wantedTargets.count(i->first)) {
+            if (i->second.handle)
+                impl->retired.push_back({i->second.handle, i->second.lastUse});
+            i = scene.targets.erase(i);
+        } else
+            ++i;
     std::set<ReplayResourceKey> wanted;
     for (const auto& r : stream.resources) {
         wanted.insert(r.key);
@@ -224,6 +297,8 @@ ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const ModelReplayStre
             const auto& draw = e.draw;
             Draw prepared;
             prepared.pipeline = draw.pipeline;
+            if (draw.shadowTarget)
+                prepared.shadow = scene.targets.at(draw.shadowTarget).handle;
             prepared.sequence = e.sequence;
             for (unsigned slot = 0; slot < 3; ++slot)
                 if (draw.pipeline.shader.layout.stages[slot].role != MaterialTextureRole::None)
@@ -239,6 +314,29 @@ ModelReplayResult SceneRenderer::Prepare(std::uint64_t id, const ModelReplayStre
                 prepared.command = d.Record(cmd);
             }
             data->draws.push_back(std::move(prepared));
+        }
+    if (frame)
+        for (const auto& p : frame->passes) {
+            PreparedPass pass;
+            pass.firstDraw = data->passes.empty()
+                                 ? 0
+                                 : data->passes.back().firstDraw + data->passes.back().draws;
+            pass.draws = p.draws.size();
+            const auto attachment = [&](const std::optional<FrameAttachment>& a,
+                                        std::optional<PassAttachment>& out) {
+                if (a)
+                    out = PassAttachment{scene.targets.at(a->target).handle,
+                                         a->load,
+                                         a->store,
+                                         a->clear,
+                                         a->clearDepth,
+                                         a->clearStencil};
+            };
+            attachment(p.color, pass.description.color);
+            attachment(p.depthStencil, pass.description.depthStencil);
+            for (auto id : p.sampled)
+                pass.description.sampled.push_back(scene.targets.at(id).handle);
+            data->passes.push_back(std::move(pass));
         }
     out.data = std::move(data);
     Collect();
@@ -264,21 +362,23 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
     if (!d.BeginFrame(f->clear))
         return {false, 0, 0, "begin_frame_failed"};
     ModelReplayResult result{true, 0, 0, "submitted"};
-    for (const auto& draw : f->draws) {
+    const auto submitDraw = [&](const Draw& draw) {
         result.sequence = draw.sequence;
         if (!d.SetModelPipeline(draw.pipeline)) {
             result.success = false;
             result.reason = "pipeline_failed";
-            break;
+            return false;
         }
         bool bound = true;
         for (unsigned slot = 0; slot < 3; ++slot)
             if (draw.textures[slot])
                 bound = d.BindTexture(slot, draw.textures[slot]) && bound;
+        if (draw.shadow)
+            bound = d.BindShadowTexture(draw.shadow) && bound;
         if (!bound) {
             result.success = false;
             result.reason = "binding_failed";
-            break;
+            return false;
         }
         const bool drawn = std::holds_alternative<IndexedDraw>(draw.command)
                                ? d.DrawIndexed(std::get<IndexedDraw>(draw.command))
@@ -286,10 +386,32 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
         if (!drawn) {
             result.success = false;
             result.reason = "draw_failed";
-            break;
+            return false;
         }
         ++result.draws;
-    }
+        return true;
+    };
+    if (f->passes.empty()) {
+        for (const auto& draw : f->draws)
+            if (!submitDraw(draw))
+                break;
+    } else
+        for (const auto& pass : f->passes) {
+            if (!d.BeginRenderPass(pass.description)) {
+                result.success = false;
+                result.reason = "begin_render_pass_failed";
+                break;
+            }
+            for (std::size_t n = pass.firstDraw; n < pass.firstDraw + pass.draws; ++n)
+                if (!submitDraw(f->draws[n]))
+                    break;
+            if (!d.EndRenderPass()) {
+                result.success = false;
+                result.reason = "end_render_pass_failed";
+            }
+            if (!result)
+                break;
+        }
     if (!d.EndFrame()) {
         result.success = false;
         result.reason = "end_frame_failed";
@@ -303,6 +425,8 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
     }
     for (auto& r : scene->second.resources)
         r.second.lastUse = completion;
+    for (auto& t : scene->second.targets)
+        t.second.lastUse = completion;
     ++impl->stats.submissions;
     return result;
 }
@@ -347,6 +471,9 @@ bool SceneRenderer::Unload(std::uint64_t id) {
         return false;
     for (auto& r : s->second.resources)
         impl->Retire(r.second);
+    for (auto& t : s->second.targets)
+        if (t.second.handle)
+            impl->retired.push_back({t.second.handle, t.second.lastUse});
     impl->scenes.erase(s);
     return Collect();
 }
@@ -358,6 +485,14 @@ bool SceneRenderer::Detach(std::uint32_t timeout) {
     bool released = true;
     for (auto& s : impl->scenes) {
         ++s.second.generation;
+        for (auto& t : s.second.targets) {
+            if (t.second.handle && !impl->device->Destroy(t.second.handle)) {
+                released = false;
+                continue;
+            }
+            t.second.handle = {};
+            t.second.lastUse = {};
+        }
         for (auto& r : s.second.resources) {
             if (r.second.handle && !impl->device->Destroy(r.second.handle)) {
                 released = false;
@@ -389,6 +524,16 @@ bool SceneRenderer::Rebind(Device& device, std::uint32_t timeout) {
         return false;
     impl->device = &device;
     return true;
+}
+bool SceneRenderer::ReadTarget(std::uint64_t scene, std::uint64_t target, AttachmentReadback& out) {
+    if (!impl->device || impl->unknownWork)
+        return false;
+    const auto s = impl->scenes.find(scene);
+    if (s == impl->scenes.end())
+        return false;
+    const auto t = s->second.targets.find(target);
+    return t != s->second.targets.end() && t->second.handle &&
+           impl->device->ReadRenderTexture(t->second.handle, out);
 }
 SceneRendererStats SceneRenderer::Stats() const {
     auto out = impl->stats;

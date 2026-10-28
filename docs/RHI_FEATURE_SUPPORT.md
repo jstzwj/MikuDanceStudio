@@ -9,9 +9,9 @@ test; an API's theoretical capabilities do not imply adapter support.
 | CPU PMD/PMX scene, IK, Bullet and PMM evaluation | CPU validation | Native | Independent CPU producer | Independent CPU producer | No backend |
 | Resident immutable geometry/material versions | Validation | Native | Implemented | Implemented | No backend |
 | Single RGBA8 + D24S8 model frame | Validation | Native | Implemented | Implemented | No backend |
-| Explicit sequential passes and sampled attachment dependencies | `rhi_render_pass` | Native implicit state | In progress | In progress | No backend |
-| R32 float shadow color + independent D24S8 attachment | Clear/read validation | Built-in effect | In progress | In progress | No backend |
-| Built-in self-shadow generation and composition | No rasterization | Native | In progress | In progress | No backend |
+| Explicit sequential passes and sampled attachment dependencies | `rhi_render_pass` / `rhi_frame_passes` | Native implicit state | Generated-scene gate | Generated-scene gate | No backend |
+| R32 float shadow color + independent D24S8 attachment | Clear/read validation | Built-in effect | Generated-scene gate | Generated-scene gate | No backend |
+| Built-in self-shadow generation and composition | No rasterization | Native | Generated scene; real producer in progress | Generated scene; real producer in progress | No backend |
 | Multiple simultaneous color attachments (MRT) | Rejected | Native API only | Not exposed | Not exposed | No backend |
 | Mips / layers / MSAA on explicit render textures | Rejected | Separate legacy paths | Rejected | Rejected | No backend |
 | Native MME `.fx` execution | Unsupported | Implemented | Unsupported | Unsupported | No backend |
@@ -47,6 +47,30 @@ because an allocation survived a resize.
 1. Portable attachment/dependency/lifetime contract and Null negative tests.
 2. DX11/DX12 generated shadow map, composition, readback, resize/unload/recovery.
 3. Real PMD/PMX CPU scene producer, built-in self-shadow, DX9 comparisons.
+
+`RenderFrame` adds ordered passes to the resident `SceneRenderer`. Immutable
+geometry/material uploads remain shared across passes. Mutable targets have a
+separate scene ID namespace, are retired with GPU completion tokens on resize or
+unload, and are rebuilt from CPU descriptions after device replacement. Whole
+frame validation precedes allocations and submissions. The earlier single-target
+`ModelReplayStream` remains supported and cannot silently execute shadow draws.
+
+`CreateD3D11OffscreenDevice` and `CreateD3D12OffscreenDevice` need no HWND or
+swapchain; their returned bundle has a device and a null swapchain. The generated
+`rhi_multipass_*` tests check actual R32 shadow coverage, lit and shadowed pixels,
+100 resident submissions, target resizing, stale commands/prepared frames,
+unload, replacement and (DX12 WARP only) isolated native device removal/recovery.
+The test colors avoid UNORM half-byte rounding boundaries; no image tolerance is
+introduced. All five x64 generated-scene variants passed on this workstation,
+including hardware, WARP and the DX12 debug layer. Portable resource tests: 15/15.
+
+The built-in shadow shader is a separate program from fixed-function model
+emulation. Its contract follows the stock effect's depth plot and shadow
+comparison (1500 / 8000, perspective Y factor, 0.3 threshold), material/toon and
+specular inputs. This is not a native MME effect interpreter. Real material
+coverage and DX9 equivalence still require the third review unit. Explicit-pass
+HUD/fixed pipelines, D24S8 readback on DX12, UV1 and material morph shading are
+not accepted by this milestone's native program.
 
 Tests for this work must be offscreen: no visible window, focus changes, desktop
 input, minimize/restore calls, or editor automation. GPU failures and unavailable

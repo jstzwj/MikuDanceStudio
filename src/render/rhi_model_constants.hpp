@@ -3,6 +3,30 @@
 #include "mikudancestudio/rhi_model_shader_constants.hpp"
 
 namespace mikudancestudio::rhi::detail {
+inline BuiltinShadowConstants BuildBuiltinShadowConstants(const ModelPipeline& p,
+                                                          const ModelViewport& viewport) {
+    const auto& s = p.shadow;
+    BuiltinShadowConstants c{
+        s.lightViewProjection,
+        s.worldViewProjection,
+        s.rotation,
+        s.color,
+        s.toonColor,
+        s.specular,
+        s.lightDirection,
+        s.eye,
+        {unsigned(s.mode), unsigned(s.perspective), unsigned(s.transparent), 0},
+        {float(viewport.width), float(viewport.height), 0, 0}};
+    for (unsigned i = 0; i < 3; ++i) {
+        const auto& t = p.shader.layout.stages[i];
+        const unsigned role = t.role == MaterialTextureRole::Base     ? 1
+                              : t.role != MaterialTextureRole::Sphere ? 0
+                              : t.color == MaterialCombine::Add       ? 3
+                                                                      : 2;
+        c.options[3] |= role << (i * 4);
+    }
+    return c;
+}
 struct ModelPixelConstants {
     std::array<std::array<unsigned, 4>, 3> stages{};
     std::array<unsigned, 4> alpha{};

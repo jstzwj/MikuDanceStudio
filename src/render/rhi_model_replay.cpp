@@ -99,6 +99,11 @@ ModelReplayResult ValidateModelReplay(const ModelReplayStream& stream) {
             return fail("unsupported_event");
         const auto& d = event.draw;
         const auto& p = d.pipeline;
+        if (!ValidBuiltinShadowState(p.shadow) ||
+            (p.shadow.mode != BuiltinShadowMode::None &&
+             (p.vertexLayout != VertexLayout::PositionNormalUv ||
+              p.topology != PrimitiveTopology::TriangleList)))
+            return fail("invalid_builtin_shadow_pipeline");
         const auto& s = p.shader;
         const auto stride = ModelVertexStride(p.vertexLayout);
         if (!stride)

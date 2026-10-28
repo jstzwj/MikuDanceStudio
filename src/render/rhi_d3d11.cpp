@@ -6,6 +6,7 @@
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 #include "mikudancestudio/rhi_d3d11.hpp"
+#include "mikudancestudio/rhi_render_pass.hpp"
 #include <algorithm>
 #include "mikudancestudio/rhi_model_shader_constants.hpp"
 #include "rhi_model_shaders.hpp"
@@ -30,6 +31,8 @@ struct Resource {
     ComPtr<ID3D11Buffer> buffer;
     ComPtr<ID3D11Texture2D> texture;
     ComPtr<ID3D11ShaderResourceView> view;
+    ComPtr<ID3D11RenderTargetView> renderView;
+    ComPtr<ID3D11DepthStencilView> depthView;
 };
 class D3D11Device final : public Device {
 public:
@@ -47,6 +50,89 @@ public:
     bool modelReady = false, retired = false;
     std::array<Handle, 3> modelTextures{};
     ModelPipeline modelPipeline;
+    Handle shadowTexture;
+    ComPtr<ID3D11VertexShader> shadowVs;
+    ComPtr<ID3D11PixelShader> shadowPs;
+    ComPtr<ID3D11InputLayout> shadowLayout;
+    ComPtr<ID3D11Buffer> shadowConstants;
+    ComPtr<ID3D11SamplerState> shadowSampler;
+    bool SetBuiltinShadow(const ModelPipeline& p, const ModelViewport& viewport) {
+        shadowTexture = {};
+        ID3D11ShaderResourceView* empty = nullptr;
+        context->PSSetShaderResources(3, 1, &empty);
+        if (p.shadow.mode == BuiltinShadowMode::None)
+            return true;
+        if (!passes.Active() || !ValidBuiltinShadowState(p.shadow) ||
+            p.vertexLayout != VertexLayout::PositionNormalUv ||
+            p.topology != PrimitiveTopology::TriangleList)
+            return false;
+        if (!shadowVs) {
+            ComPtr<ID3DBlob> vertex, pixel, errors;
+            lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
+                                   nullptr, nullptr, "shadow_vs", "vs_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &vertex, &errors);
+            if (SUCCEEDED(lastError))
+                lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource),
+                                       nullptr, nullptr, nullptr, "shadow_ps", "ps_5_0",
+                                       D3DCOMPILE_IEEE_STRICTNESS, 0, &pixel, &errors);
+            if (FAILED(lastError))
+                return false;
+            ComPtr<ID3D11VertexShader> vs;
+            ComPtr<ID3D11PixelShader> ps;
+            ComPtr<ID3D11InputLayout> layout;
+            const D3D11_INPUT_ELEMENT_DESC elements[] = {
+                {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+            lastError = native->CreateVertexShader(vertex->GetBufferPointer(),
+                                                   vertex->GetBufferSize(), nullptr, &vs);
+            if (SUCCEEDED(lastError))
+                lastError = native->CreatePixelShader(pixel->GetBufferPointer(),
+                                                      pixel->GetBufferSize(), nullptr, &ps);
+            if (SUCCEEDED(lastError))
+                lastError = native->CreateInputLayout(elements, 3, vertex->GetBufferPointer(),
+                                                      vertex->GetBufferSize(), &layout);
+            D3D11_BUFFER_DESC b{};
+            b.ByteWidth = sizeof(BuiltinShadowConstants);
+            b.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            if (SUCCEEDED(lastError))
+                lastError = native->CreateBuffer(&b, nullptr, &shadowConstants);
+            D3D11_SAMPLER_DESC s{};
+            s.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+            s.AddressU = s.AddressV = s.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+            s.MaxLOD = 0;
+            if (SUCCEEDED(lastError))
+                lastError = native->CreateSamplerState(&s, &shadowSampler);
+            if (FAILED(lastError))
+                return false;
+            shadowVs = vs;
+            shadowPs = ps;
+            shadowLayout = layout;
+        }
+        const auto c = detail::BuildBuiltinShadowConstants(p, viewport);
+        context->UpdateSubresource(shadowConstants.Get(), 0, nullptr, &c, 0, 0);
+        auto* cb = shadowConstants.Get();
+        context->VSSetConstantBuffers(2, 1, &cb);
+        context->PSSetConstantBuffers(2, 1, &cb);
+        auto* sampler = shadowSampler.Get();
+        context->PSSetSamplers(3, 1, &sampler);
+        context->IASetInputLayout(shadowLayout.Get());
+        context->VSSetShader(shadowVs.Get(), nullptr, 0);
+        context->PSSetShader(shadowPs.Get(), nullptr, 0);
+        return true;
+    }
+    bool BindShadowTexture(Handle h) override {
+        auto* r = Find(h);
+        const auto* desc = passes.Description(h);
+        if (!Live() || !inFrame || !modelReady ||
+            modelPipeline.shadow.mode != BuiltinShadowMode::Material || !passes.CanSample(h) ||
+            !desc || desc->format != TextureFormat::R32Float || !r || !r->view)
+            return false;
+        auto* view = r->view.Get();
+        context->PSSetShaderResources(3, 1, &view);
+        shadowTexture = h;
+        return true;
+    }
     ComPtr<ID3D11VertexShader> modelVs;
     ComPtr<ID3D11PixelShader> modelPs;
     ComPtr<ID3D11InputLayout> modelLayout;
@@ -69,6 +155,120 @@ public:
     bool inFrame = false, pending = false, presentable = false, pipelineReady = false;
     std::uint64_t identity = detail::NextDeviceIdentity(), epoch = 1;
     std::vector<Resource> resources;
+    RenderPassState passes;
+    unsigned RenderWidth() const {
+        const auto& p = passes.Current();
+        const auto* d = passes.Description(p.color          ? p.color->texture
+                                           : p.depthStencil ? p.depthStencil->texture
+                                                            : Handle{});
+        return d ? d->width : desc.width;
+    }
+    unsigned RenderHeight() const {
+        const auto& p = passes.Current();
+        const auto* d = passes.Description(p.color          ? p.color->texture
+                                           : p.depthStencil ? p.depthStencil->texture
+                                                            : Handle{});
+        return d ? d->height : desc.height;
+    }
+    ID3D11DepthStencilView* ActiveDepth() {
+        if (!passes.Active())
+            return depthView.Get();
+        const auto& p = passes.Current();
+        return p.depthStencil ? Find(p.depthStencil->texture)->depthView.Get() : nullptr;
+    }
+    Handle CreateRenderTexture(const RenderTextureDesc& d) override {
+        if (!Live() || inFrame || !ValidRenderTextureDesc(d))
+            return {};
+        D3D11_TEXTURE2D_DESC t{};
+        t.Width = d.width;
+        t.Height = d.height;
+        t.ArraySize = t.MipLevels = t.SampleDesc.Count = 1;
+        t.Format = d.format == TextureFormat::Rgba8      ? DXGI_FORMAT_R8G8B8A8_UNORM
+                   : d.format == TextureFormat::R32Float ? DXGI_FORMAT_R32_FLOAT
+                                                         : DXGI_FORMAT_D24_UNORM_S8_UINT;
+        t.BindFlags = d.format == TextureFormat::Depth24Stencil8 ? D3D11_BIND_DEPTH_STENCIL
+                                                                 : D3D11_BIND_RENDER_TARGET;
+        if (d.access & std::uint32_t(TextureAccess::Sampled))
+            t.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+        Resource r;
+        r.alive = r.uploaded = true;
+        lastError = native->CreateTexture2D(&t, nullptr, &r.texture);
+        if (SUCCEEDED(lastError))
+            lastError =
+                d.format == TextureFormat::Depth24Stencil8
+                    ? native->CreateDepthStencilView(r.texture.Get(), nullptr, &r.depthView)
+                    : native->CreateRenderTargetView(r.texture.Get(), nullptr, &r.renderView);
+        if (SUCCEEDED(lastError) && (d.access & std::uint32_t(TextureAccess::Sampled)))
+            lastError = native->CreateShaderResourceView(r.texture.Get(), nullptr, &r.view);
+        if (FAILED(lastError))
+            return {};
+        const auto h = Insert(std::move(r));
+        return passes.Register(h, d) ? h : Handle{};
+    }
+    bool BeginRenderPass(const RenderPassDesc& p) override {
+        if (!Live() || !inFrame || !passes.Begin(p))
+            return false;
+        ID3D11ShaderResourceView* empty[4]{};
+        context->PSSetShaderResources(0, 4, empty);
+        ID3D11RenderTargetView* rt = p.color ? Find(p.color->texture)->renderView.Get() : nullptr;
+        auto* ds = ActiveDepth();
+        context->OMSetRenderTargets(rt ? 1 : 0, rt ? &rt : nullptr, ds);
+        if (p.color && p.color->load == AttachmentLoad::Clear) {
+            const auto& c = p.color->clear;
+            const float clear[] = {c.red, c.green, c.blue, c.alpha};
+            context->ClearRenderTargetView(rt, clear);
+        }
+        if (p.depthStencil && p.depthStencil->load == AttachmentLoad::Clear)
+            context->ClearDepthStencilView(ds, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL,
+                                           p.depthStencil->clearDepth,
+                                           p.depthStencil->clearStencil);
+        const D3D11_VIEWPORT v{0, 0, float(RenderWidth()), float(RenderHeight()), 0, 1};
+        context->RSSetViewports(1, &v);
+        modelReady = pipelineReady = false;
+        modelTextures = {};
+        boundTexture = {};
+        return true;
+    }
+    bool EndRenderPass() override {
+        if (!inFrame || !passes.Active())
+            return false;
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        ID3D11ShaderResourceView* empty[4]{};
+        context->PSSetShaderResources(0, 4, empty);
+        modelReady = pipelineReady = false;
+        modelTextures = {};
+        boundTexture = {};
+        return passes.End();
+    }
+    bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
+        if (!Live() || inFrame || !passes.CanRead(h))
+            return false;
+        auto* r = Find(h);
+        auto d = *passes.Description(h);
+        D3D11_TEXTURE2D_DESC t{};
+        r->texture->GetDesc(&t);
+        t.BindFlags = t.MiscFlags = 0;
+        t.Usage = D3D11_USAGE_STAGING;
+        t.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> cpu;
+        lastError = native->CreateTexture2D(&t, nullptr, &cpu);
+        if (FAILED(lastError))
+            return false;
+        context->CopyResource(cpu.Get(), r->texture.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        lastError = context->Map(cpu.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+        if (FAILED(lastError))
+            return false;
+        AttachmentReadback data{d, std::vector<std::uint8_t>(std::size_t(d.width) * d.height * 4)};
+        for (unsigned y = 0; y < d.height; ++y)
+            std::memcpy(data.bytes.data() + std::size_t(y) * d.width * 4,
+                        static_cast<const std::uint8_t*>(mapped.pData) +
+                            std::size_t(y) * mapped.RowPitch,
+                        std::size_t(d.width) * 4);
+        context->Unmap(cpu.Get(), 0);
+        out = std::move(data);
+        return true;
+    }
     std::map<std::uint64_t, ComPtr<ID3D11Query>> completions;
     std::uint64_t nextCompletion = 0, completed = 0;
     Handle boundTexture{};
@@ -144,7 +344,7 @@ public:
         return false;
     }
     Backend BackendType() const override { return Backend::D3D11; }
-    Capabilities Features() const override { return {true, false, false, true}; }
+    Capabilities Features() const override { return {true, false, true, true}; }
     DeviceStatus Status() const override {
         return {identity, epoch,
                 native->GetDeviceRemovedReason() != S_OK ? DeviceState::Removed
@@ -227,7 +427,7 @@ public:
     }
     bool UploadTexture(Handle h, TexturePixels pixels) override {
         auto* r = Find(h);
-        if (!Live() || inFrame || !r || !r->texture || !pixels.data)
+        if (!Live() || inFrame || !r || !r->texture || passes.Description(h) || !pixels.data)
             return false;
         const auto width = static_cast<std::size_t>(r->textureDescription.width) * 4;
         const auto height = r->textureDescription.height;
@@ -242,7 +442,8 @@ public:
     }
     bool BindTexture(std::uint32_t slot, Handle h) override {
         auto* r = Find(h);
-        if (!Live() || !inFrame || slot >= (modelReady ? 3u : 1u) || !r || !r->view || !r->uploaded)
+        if (!Live() || !inFrame || slot >= (modelReady ? 3u : 1u) || !r || !r->view ||
+            (passes.Description(h) ? !passes.CanSample(h) : !r->uploaded))
             return false;
         auto* view = r->view.Get();
         context->PSSetShaderResources(slot, 1, &view);
@@ -281,6 +482,10 @@ public:
         auto* r = Find(h);
         if (inFrame || !r || (pending && native->GetDeviceRemovedReason() == S_OK))
             return false;
+        if (passes.Description(h))
+            passes.Erase(h);
+        r->renderView.Reset();
+        r->depthView.Reset();
         r->buffer.Reset();
         r->texture.Reset();
         r->view.Reset();
@@ -385,6 +590,8 @@ public:
         return true;
     }
     bool SetFixedPipeline(FixedPipelineState p) override {
+        if (passes.Active())
+            return false;
         pipelineReady = false;
         modelReady = false;
         boundTexture = {};
@@ -469,6 +676,9 @@ public:
         return true;
     }
     bool Draw(NonIndexedDraw command) override {
+        if (modelReady && modelPipeline.shadow.mode == BuiltinShadowMode::Material &&
+            !shadowTexture)
+            return false;
         if (modelReady) {
             auto* v = Find(command.vertices);
             const auto stride = ModelVertexStride(modelPipeline.vertexLayout);
@@ -510,6 +720,9 @@ public:
         return native->GetDeviceRemovedReason() == S_OK;
     }
     bool DrawIndexed(IndexedDraw command) override {
+        if (modelReady && modelPipeline.shadow.mode == BuiltinShadowMode::Material &&
+            !shadowTexture)
+            return false;
         auto* v = Find(command.vertices);
         auto* i = Find(command.indices);
         const auto stride = ModelVertexStride(command.layout);
@@ -550,7 +763,7 @@ public:
     bool SetModelPipeline(const ModelPipeline& p) override;
 
     bool EndFrame() override {
-        if (!inFrame)
+        if (!inFrame || passes.Active())
             return false;
         inFrame = false;
         presentable = true;
@@ -578,6 +791,7 @@ public:
         // Unbind before releasing *all* swapchain views, including references
         // kept by the immediate context. CPU/GPU uploads remain retained.
         context->ClearState();
+        passes.InvalidateContents();
         target.Reset();
         depthView.Reset();
         depth.Reset();
@@ -641,8 +855,9 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     pipelineReady = modelReady = false;
     modelTextures = {};
     boundTexture = {};
-    const auto viewport = p.viewport.value_or(ModelViewport{0, 0, desc.width, desc.height, 0, 1});
-    if (!ValidModelViewport(viewport, desc.width, desc.height))
+    const auto viewport =
+        p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
+    if (!ValidModelViewport(viewport, RenderWidth(), RenderHeight()))
         return false;
     const auto& s = p.shader;
     std::array<float, 4> evaluated;
@@ -661,8 +876,8 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
         static_cast<unsigned>(p.stencilFail) > 8 || static_cast<unsigned>(p.stencilDepthFail) < 1 ||
         static_cast<unsigned>(p.stencilDepthFail) > 8 || static_cast<unsigned>(p.stencilPass) < 1 ||
         static_cast<unsigned>(p.stencilPass) > 8 ||
-        ((p.raster.depthTest || p.stencil) && !depthView) ||
-        (p.stencil && desc.depth != SurfaceDepth::Depth24Stencil8))
+        ((p.raster.depthTest || p.stencil) && !ActiveDepth()) ||
+        (p.stencil && !passes.Active() && desc.depth != SurfaceDepth::Depth24Stencil8))
         return false;
     // PositionNormalUv has no COLOR0/COLOR1; native fixed-function falls
     // back to the material for these source selections, as the reference VS does.
@@ -933,7 +1148,8 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     context->PSSetShaderResources(0, 3, views.data());
     D3D11_VIEWPORT nativeViewport{float(viewport.x),      float(viewport.y), float(viewport.width),
                                   float(viewport.height), viewport.minDepth, viewport.maxDepth};
-    if (modelSupport.selected == D3D11ModelCompatibility::Dx9Measured) {
+    if (modelSupport.selected == D3D11ModelCompatibility::Dx9Measured ||
+        p.shadow.mode != BuiltinShadowMode::None) {
         nativeViewport.TopLeftX += .5f;
         nativeViewport.TopLeftY += .5f;
     }
@@ -946,6 +1162,8 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     }
 #endif
     context->RSSetViewports(1, &nativeViewport);
+    if (!SetBuiltinShadow(p, viewport))
+        return false;
     modelPipeline = p;
     modelReady = true;
     return true;
@@ -1050,8 +1268,8 @@ public:
     }
 };
 }
-D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
-                              D3D11ModelOptions options) {
+static D3D11Bundle CreateD3D11DeviceInternal(const SwapchainDesc& d, D3D11Driver driver,
+                                             D3D11ModelOptions options, bool headless) {
     D3D11Bundle out;
     out.modelSupport.selected = options.compatibility;
     out.modelSupport.diagnosticAlpha12 = options.diagnosticAlpha12;
@@ -1078,10 +1296,11 @@ D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
         out.creationReason = "invalid_model_compatibility";
         return out;
     }
-    if (!ValidSwapchainDesc(d) || d.window.system != WindowSystem::Win32 || !d.windowed ||
-        !IsWindow(reinterpret_cast<HWND>(d.window.handle)) || d.color != SurfaceColor::Rgba8 ||
-        d.samples != 1 || d.quality || d.swap != SurfaceSwap::Discard ||
-        d.depth == SurfaceDepth::Depth24 || d.width > 16384 || d.height > 16384 ||
+    if ((!headless && (!ValidSwapchainDesc(d) || d.window.system != WindowSystem::Win32 ||
+                       !IsWindow(reinterpret_cast<HWND>(d.window.handle)))) ||
+        !d.width || !d.height || !d.windowed || d.color != SurfaceColor::Rgba8 || d.samples != 1 ||
+        d.quality || d.swap != SurfaceSwap::Discard || d.depth == SurfaceDepth::Depth24 ||
+        d.width > 16384 || d.height > 16384 ||
         (driver != D3D11Driver::Hardware && driver != D3D11Driver::Warp)) {
         out.creationError = E_INVALIDARG;
         return out;
@@ -1101,10 +1320,18 @@ D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
     const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL obtained{};
     out.stage = D3D11CreationStage::NativeDevice;
-    device->lastError = D3D11CreateDeviceAndSwapChain(
-        nullptr, driver == D3D11Driver::Warp ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_HARDWARE,
-        nullptr, 0, levels, 1, D3D11_SDK_VERSION, &swap, &device->chain, &device->native, &obtained,
-        &device->context);
+    device->lastError =
+        headless
+            ? D3D11CreateDevice(nullptr,
+                                driver == D3D11Driver::Warp ? D3D_DRIVER_TYPE_WARP
+                                                            : D3D_DRIVER_TYPE_HARDWARE,
+                                nullptr, 0, levels, 1, D3D11_SDK_VERSION, &device->native,
+                                &obtained, &device->context)
+            : D3D11CreateDeviceAndSwapChain(
+                  nullptr,
+                  driver == D3D11Driver::Warp ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_HARDWARE,
+                  nullptr, 0, levels, 1, D3D11_SDK_VERSION, &swap, &device->chain, &device->native,
+                  &obtained, &device->context);
     if (SUCCEEDED(device->lastError)) {
         ComPtr<IDXGIDevice> dxgi;
         ComPtr<IDXGIAdapter> adapter;
@@ -1119,7 +1346,7 @@ D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
                                     nullptr);
                 out.adapterName = name;
             }
-            if (SUCCEEDED(adapter->GetParent(IID_PPV_ARGS(&factory))))
+            if (!headless && SUCCEEDED(adapter->GetParent(IID_PPV_ARGS(&factory))))
                 factory->MakeWindowAssociation(swap.OutputWindow, DXGI_MWA_NO_ALT_ENTER);
         }
         out.stage = D3D11CreationStage::Compatibility;
@@ -1138,14 +1365,18 @@ D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
         out.stage = D3D11CreationStage::Shaders;
         if (device->InitializeShaders()) {
             out.stage = D3D11CreationStage::Targets;
-            device->CreateTargets();
+            if (headless)
+                ResizeD3D11Offscreen(*device, d.width, d.height);
+            else
+                device->CreateTargets();
         }
     }
     out.creationError = device->lastError;
     if (FAILED(device->lastError))
         return out;
-    auto controller = std::make_unique<D3D11Swapchain>(*device);
-    if (!controller->Query(d).supported) {
+    auto controller =
+        headless ? std::unique_ptr<D3D11Swapchain>{} : std::make_unique<D3D11Swapchain>(*device);
+    if (controller && !controller->Query(d).supported) {
         out.creationError = DXGI_ERROR_UNSUPPORTED;
         return out;
     }
@@ -1153,6 +1384,17 @@ D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
     out.device = std::move(device);
     out.swapchain = std::move(controller);
     return out;
+}
+D3D11Bundle CreateD3D11Device(const SwapchainDesc& d, D3D11Driver driver,
+                              D3D11ModelOptions options) {
+    return CreateD3D11DeviceInternal(d, driver, options, false);
+}
+D3D11Bundle CreateD3D11OffscreenDevice(std::uint32_t width, std::uint32_t height,
+                                       D3D11Driver driver, D3D11ModelOptions options) {
+    SwapchainDesc d;
+    d.width = width;
+    d.height = height;
+    return CreateD3D11DeviceInternal(d, driver, options, true);
 }
 Handle CreateD3D11ModelTexture(Device& base, const ModelTextureData& data) {
     auto* d = dynamic_cast<D3D11Device*>(&base);

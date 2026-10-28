@@ -477,6 +477,8 @@ public:
     virtual bool BeginRenderPass(const RenderPassDesc&) { return false; }
     virtual bool EndRenderPass() { return false; }
     virtual bool ReadRenderTexture(Handle, AttachmentReadback&) { return false; }
+    // Built-in shadow input occupies a separate binding from material stages.
+    virtual bool BindShadowTexture(Handle) { return false; }
     virtual CompletionToken SignalCompletion() { return {}; }
     virtual CompletionState PollCompletion(CompletionToken) { return CompletionState::Invalid; }
     virtual bool WaitCompletion(CompletionToken, std::uint32_t) { return false; }
