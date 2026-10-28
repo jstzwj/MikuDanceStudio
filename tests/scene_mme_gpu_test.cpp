@@ -120,6 +120,113 @@ std::vector<DWORD> Offscreen(MmeRecordingDevice& device, UINT size,
     return pixels;
 }
 
+// Native EMM writers omit the path of scene-class carriers. Exercise both
+// that roundtrip and the distinction between an absent path and explicit none.
+template<class Sample>
+void MappingDefaults(Fixture& f, NativeMmeOracle* native, const std::filesystem::path& output,
+                     const std::filesystem::path& simple, const std::filesystem::path& multi,
+                     Sample sample) {
+    auto carrier = std::filesystem::path(ExpGetAcsFilename(0));
+    auto ordinary = std::filesystem::path(ExpGetAcsFilename(1));
+    carrier.replace_extension(".fx");
+    ordinary.replace_extension(".fx");
+    std::filesystem::copy_file(simple, ordinary);
+    std::ofstream(carrier) << R"FX(
+float Script : STANDARDSGLOBAL < string ScriptClass="scene";
+ string ScriptOrder="postprocess"; string ScriptOutput="color"; > = 0.8;
+texture Screen : RENDERCOLORTARGET < string Format="A8R8G8B8"; >;
+texture Depth : RENDERDEPTHSTENCILTARGET < string Format="D24S8"; >;
+texture SceneColor : OFFSCREENRENDERTARGET < string Format="A8R8G8B8";
+ float4 ClearColor={0,0,0,0}; float ClearDepth=1;
+ string DefaultEffect="self=hide;*=offscreen_child.fx;"; >;
+texture MaskColor : OFFSCREENRENDERTARGET < string Format="A8R8G8B8";
+ float4 ClearColor={0,0,0,0}; float ClearDepth=1;
+ string DefaultEffect="self=hide;*=offscreen_child.fx;"; >;
+sampler S = sampler_state { Texture=<Screen>; MinFilter=POINT; MagFilter=POINT; };
+sampler C = sampler_state { Texture=<SceneColor>; MinFilter=POINT; MagFilter=POINT; };
+sampler M = sampler_state { Texture=<MaskColor>; MinFilter=POINT; MagFilter=POINT; };
+float2 Size : VIEWPORTPIXELSIZE;
+struct V { float4 p:POSITION; float2 uv:TEXCOORD0; };
+V VS(float4 p:POSITION, float2 uv:TEXCOORD0) {
+ V o; o.p=p; o.uv=uv+0.5/Size; return o;
+}
+float4 PS(float2 uv:TEXCOORD0):COLOR {
+ return float4(tex2D(S,uv).rgb*0.5+tex2D(C,uv).rgb*0.3+tex2D(M,uv).rgb*0.2,1);
+}
+technique Post < string Script="RenderColorTarget0=Screen;RenderDepthStencilTarget=Depth;"
+ "Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget0=;"
+ "RenderDepthStencilTarget=;Pass=P;"; > {
+ pass P < string Script="Draw=Buffer;"; > {
+  ZEnable=false; AlphaBlendEnable=false; CullMode=None;
+  VertexShader=compile vs_3_0 VS(); PixelShader=compile ps_3_0 PS();
+ }
+}
+)FX";
+    auto load = [&](const std::filesystem::path& path) {
+        if (native) native->LoadMapping(path, f.window);
+        else Check(::mme::MmeEmmLoad(path.string().c_str()), "default EMM load");
+    };
+    auto write = [&](const std::string& main, const std::string& owners = "") {
+        const auto path = f.directory / "defaults.emm";
+        std::ofstream file(path);
+        file << "[Info]\nVersion=3\n[Object]\nPmd0=" << ExpGetPmdFilename(0)
+             << "\nAcs0=" << ExpGetAcsFilename(0) << "\nAcs1=" << ExpGetAcsFilename(1)
+             << "\n[Effect]\n" << main << owners;
+        file.close();
+        Check(file.good(), "write default EMM");
+        load(path);
+    };
+    const auto ownerRows =
+        "[Effect@SceneColor]\nOwner=Acs0\nAcs0.show=false\nPmd0=" + multi.string() +
+        "\nPmd0[0]=" + simple.string() +
+        "\n[Effect@MaskColor]\nOwner=Acs0\nAcs0.show=false\nPmd0=" + multi.string() + "\n";
+    const std::string rows = "Default=none\nPmd0=none\nAcs1=none\nAcs0.show=true\n";
+    write(rows + "Acs0=" + carrier.string() + "\n", ownerRows);
+    const auto assigned = sample("defaults_scene_explicit");
+    const auto saved = output / "defaults_saved.emm";
+    if (native) native->SaveMapping(saved);
+    else Check(::mme::MmeEmmSave(saved.string().c_str()), "save default EMM");
+    ::mme::EmmFile parsed;
+    Check(parsed.Load(saved.string().c_str()), "parse default EMM roundtrip");
+    bool omitted = false;
+    for (const auto& section : parsed.effectSections()) {
+        if (!section.isDefault()) continue;
+        for (const auto& entry : section.entries) {
+            for (const auto& object : parsed.objectRecords())
+                if (!object.isModel && object.objectPath == ExpGetAcsFilename(0) &&
+                    entry.key == "Acs" + std::to_string(object.slot))
+                    omitted = entry.effectPath.empty();
+        }
+    }
+    Check(omitted, "native-style scene carrier path omission");
+    Mapping(f, native, "none", multi.string());
+    sample("defaults_replaced");
+    load(saved);
+    SameImage(assigned, sample("defaults_saved_reload"), "scene carrier EMM roundtrip");
+    write(rows, ownerRows);
+    SameImage(assigned, sample("defaults_omitted"), "omitted scene carrier with Owner rows");
+    write(rows, ownerRows);
+    SameImage(assigned, sample("defaults_repeat"), "replacement EMM retains identical owner graph");
+    write(rows);
+    const auto reset = sample("defaults_owner_reset");
+    Check(reset.color != assigned.color, "omitted Owner rows must reset offscreen overrides");
+    Mapping(f, native, "none", "none");
+    const auto none = sample("defaults_none");
+    Check(none.color != reset.color, "explicit none disables same-name scene effect");
+    write("Default=none\nPmd0=none\nAcs0=none\nAcs1=" + ordinary.string() + "\n");
+    const auto object = sample("defaults_object_explicit");
+    write("Default=none\nPmd0=none\nAcs0=none\n");
+    SameImage(object, sample("defaults_object_omitted"), "ordinary same-name default");
+    Mapping(f, native, simple.string(), "none");
+    const auto fallback = sample("defaults_global_explicit");
+    write("Default=" + simple.string() + "\nAcs0=none\nAcs1=none\n");
+    SameImage(fallback, sample("defaults_global_omitted"), "new EMM default for absent model row");
+    write("Default=none\nAcs0=none\nAcs1=none\n");
+    SameImage(none, sample("defaults_global_cleared"), "removed EMM default does not retain old effect");
+    std::filesystem::remove(carrier);
+    std::filesystem::remove(ordinary);
+}
+
 int Run(const std::filesystem::path& modelFile, const std::filesystem::path& dll,
         const std::filesystem::path& output, const std::filesystem::path& modelEffect,
         const std::filesystem::path& sceneEffect) {
@@ -296,6 +403,10 @@ int Run(const std::filesystem::path& modelFile, const std::filesystem::path& dll
     Offscreen(recording, 256, output / "restored_target.png");
     VerifyReset(f, effect, view, projection, world, output, "relative_reset");
     Offscreen(recording, 256, output / "relative_reset_target.png");
+    // Scene effects leave unrelated constant registers behind. Compare the
+    // shaders' actual inputs and target readbacks, as for external packages.
+    recording.capturePasses = true;
+    MappingDefaults(f, native.get(), output, simple, multi, sample);
     // Let the production host observe deletion before releasing the old ID.
     // Reapply the same EMM explicitly after loading the replacement model.
     app.ModelSlot(0) = nullptr;
