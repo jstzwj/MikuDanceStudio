@@ -31,6 +31,14 @@ the publish job's `contents: write` permission.
 推送标签后自动构建并发布两个架构；标签与 `VERSION` 不一致时立即失败。
 以后发布新版本：修改 `VERSION`、提交，再推送同名 `vxx.xx` 标签即可。
 
+For a regression-only run, enable `validation_only` and set `tag` to the branch or
+commit to test. This uses the same x86/x64 build and test steps, preserves the test
+artifacts, and skips packaging and publishing. Existing version tags remain fixed.
+
+```sh
+gh workflow run release.yml -f tag=main -f validation_only=true
+```
+
 ## Package and runtime / 压缩包与运行环境
 
 Each ZIP contains `MikuDanceStudio.exe`, `Data/MMDxShow.dll`, version/readme and

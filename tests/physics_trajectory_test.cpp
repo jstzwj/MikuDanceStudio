@@ -18,6 +18,7 @@
 #include "BulletCollision/NarrowPhaseCollision/btGjkPairDetector.h"
 #include "BulletCollision/NarrowPhaseCollision/btGjkEpaPenetrationDepthSolver.h"
 #include "BulletCollision/CollisionDispatch/btBoxBoxDetector.h"
+#include "d3dx_dispatch_reference.hpp"
 
 extern bool matrixToEulerXYZ(const btMatrix3x3&, btVector3&);
 
@@ -74,6 +75,61 @@ std::uint64_t TrajectoryDigest(const std::vector<Sample>& trajectory, std::size_
     }
     return hash;
 }
+
+#if defined(_M_X64)
+std::uint64_t D3dxMathSignature() {
+    // Identify actual SDK results, not just CPUID: D3DX dispatch also depends
+    // on registry settings, and RSQRT approximations can vary by processor.
+    Sample sample;
+    std::uint32_t state = 0x73214E9Bu;
+    const auto next = [&]() {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return (static_cast<int>(state & 65535) - 32768) / 1024.0f;
+    };
+    const D3DXQUATERNION rotation{0.125f, -0.25f, 0.5f, 0.75f};
+    D3DXMATRIX basis;
+    D3DXMatrixRotationQuaternion(&basis, &rotation);
+    for (int i = 0; i < 64; ++i) {
+        // Separate statements keep the PRNG order independent of argument evaluation.
+        D3DXVECTOR3 input, normalized, transformed;
+        input.x = next();
+        input.y = next();
+        input.z = next();
+        D3DXVec3Normalize(&normalized, &input);
+        sample.Floats(&normalized.x, 3);
+        D3DXQUATERNION q{input.x, input.y, input.z, 0.75f}, unit, product;
+        D3DXQuaternionNormalize(&unit, &q);
+        D3DXQuaternionMultiply(&product, &unit, &rotation);
+        sample.Floats(&unit.x, 4);
+        sample.Floats(&product.x, 4);
+        D3DXMATRIX matrix, combined;
+        D3DXMatrixRotationQuaternion(&matrix, &unit);
+        D3DXMatrixMultiply(&combined, &matrix, &basis);
+        sample.Floats(&combined.m[0][0], 16);
+        D3DXVec3TransformNormal(&transformed, &input, &combined);
+        sample.Floats(&transformed.x, 3);
+    }
+    return TrajectoryDigest({sample}, 1);
+}
+
+std::uint64_t ExpectedTrajectoryDigest(std::uint64_t signature) {
+    // Each prefix was compared bit for bit with the unmodified x64 MMD,
+    // including seek, IK/pose, rigid-body synchronization and solver stages.
+    // Do not accept either prefix indiscriminately: it must match the SDK math
+    // actually in use. Unknown math results require a new oracle comparison.
+    switch (signature) {
+    case 0x6A69BB54280EF390ull: // Intel SSE3, RSQRT + Newton refinement.
+        return 0xAEC1372BE331E093ull;
+    case 0xBC7F8C8A334A2D10ull: // AMD x64, SQRT + DIV.
+        return 0xDE5FCC46C99E2121ull;
+    default:
+        Check(false, "unverified D3DX math signature; compare with original MMD first");
+        return 0;
+    }
+}
+#endif
 
 void DumpTrajectoryPrefix(const std::vector<Sample>& trajectory, std::size_t count) {
     int cpu[4];
@@ -1035,10 +1091,12 @@ std::vector<Sample> Run(const std::filesystem::path& externalModel,
                     static_cast<unsigned long long>(digest));
         std::fflush(stdout);
 #if defined(_M_X64)
-        if (digest != 0xAEC1372BE331E093ull || std::getenv("MDS_PHYSICS_TRACE"))
+        const auto signature = D3dxMathSignature();
+        std::printf("D3DX math signature: %016llX\n", static_cast<unsigned long long>(signature));
+        const auto expected = ExpectedTrajectoryDigest(signature);
+        if (digest != expected || std::getenv("MDS_PHYSICS_TRACE"))
             DumpTrajectoryPrefix(trajectory, 20);
-        // Frozen after an unmodified VC90 oracle matched all first twenty frames.
-        Check(digest == 0xAEC1372BE331E093ull, "reference-derived PMX trajectory prefix");
+        Check(digest == expected, "reference-derived PMX trajectory prefix");
 #endif
     }
     Check(f.physics->world->getNumConstraints() == static_cast<int>(model.jointCount),
@@ -1191,6 +1249,7 @@ int main(int argc, char** argv) {
     std::filesystem::path model, original, report;
     int frames = 600;
     bool stages = false, kernels = false;
+    std::string dispatch = "native";
     try {
         for (int i = 1; i < argc; i += 2) {
             Check(i + 1 < argc, "missing option value");
@@ -1206,15 +1265,21 @@ int main(int argc, char** argv) {
                 kernels = std::stoi(argv[i + 1]) != 0;
             else if (std::strcmp(argv[i], "--stages") == 0)
                 stages = std::stoi(argv[i + 1]) != 0;
+            else if (std::strcmp(argv[i], "--d3dx-dispatch") == 0)
+                dispatch = argv[i + 1];
             else
                 Check(false, "unknown physics trajectory option");
         }
 #if defined(_M_X64)
+        std::unique_ptr<ScopedD3dxDispatch> selectedDispatch;
+        if (dispatch != "native")
+            selectedDispatch = std::make_unique<ScopedD3dxDispatch>(dispatch);
         if (kernels) {
             CheckKernels(original);
             return 0;
         }
 #else
+        Check(dispatch == "native", "D3DX dispatch oracle is x64 only");
         Check(!kernels, "collision oracle digest is x64 only");
 #endif
         Check(frames > 0, "frame count must be positive");

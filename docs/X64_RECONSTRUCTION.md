@@ -1060,3 +1060,62 @@ v10.08 的[首次发布构建](https://github.com/jstzwj/MikuDanceStudio/actions
 ```powershell
 background_picture_test.exe --original <original-MMD.exe> --image <mujika.png> --output <output-directory>
 ```
+
+## 2026-10-28：远程 x64 物理哈希与 D3DX CPU 分派
+
+v10.09 的 Windows CI（运行 `40609480718`、`40610824452`）在 AMD CPU 上稳定得到
+`DE5FCC46C99E2121`，而测试只接受本机 Intel CPU 上冻结的 `AEC1372BE331E093`。
+逐字段定位表明，第 0 帧完全相同，第 1 帧首先在腿部 IK 的骨骼矩阵出现差异；此时物理关闭，
+尚未进入 Bullet 求解。浮点控制模式相同，不能把这个失败直接归为约束求解或 FMA 问题。
+
+IDA 核验 x64 `d3dx9_43.dll`（SHA-256
+`84b900dbd7fa978d6e0caee26fc54f2f61d92c9c75d10b35f00e3e82cd1d67b4`）：
+
+| 入口 | RVA | 原版运行库行为 |
+|---|---|---|
+| `D3DXCpuOptimizations` | `0x5E198` | 检查注册表开关与 CPU vendor，选择 Intel 或 AMD 数学表 |
+| Intel 初始化 | `0x211864` | 安装 Intel SSE3 函数表 |
+| AMD 初始化 | `0x211688` | 安装 AMD x64 函数表 |
+| Intel `Vec3Normalize` | `0x214E41` | `RSQRTSS` 加 Newton 修正 |
+| AMD `Vec3Normalize` | `0x2100D0` | `SQRTPS`、`DIVPS` |
+
+原版 MMD 与端口均调用运行库的这些导出。两条路径的舍入差异会进入 IK，再传递到物理初始状态；
+原版自身也不保证跨 CPU 路径的轨迹逐位一致。生产代码继续保留原版的运行时分派，不固定为 Intel，
+也不改动骨骼算法、Bullet 或浮点编译选项。
+
+`physics_trajectory_test` 通过 64 组固定输入，对向量／四元数归一化、四元数乘法、矩阵乘法和
+向量变换的实际输出建立数学特征，严格匹配对应的、经原版验证的轨迹基准：
+
+| D3DX 数学特征 | 前 20 帧轨迹哈希 | 本轮核验 |
+|---|---|---|
+| `6A69BB54280EF390` | `AEC1372BE331E093` | Intel SSE3 路径，600 帧逐阶段原版对照通过 |
+| `BC7F8C8A334A2D10` | `DE5FCC46C99E2121` | AMD x64 路径，600 帧逐阶段原版对照通过 |
+
+未知数学特征仍使测试失败；已知特征只能接受自己对应的哈希。没有同时无条件接受两个哈希，
+没有放宽比较容差。特征不是任意 CPU 的数学等价证明；新运行库、注册表禁用优化或新处理器的
+近似指令若产生不同结果，仍需先与原版对照，才能增加基准。
+
+新增测试专用 `ScopedD3dxDispatch`，先核对完整 DLL 的 SHA-256，再调用未修改的原版运行库
+初始化函数；作用域结束时恢复原表。此适配器仅影响测试进程，不进入产品，也不实现替代数学算法。
+默认 `physics_trajectory` 验证本机实际分派；`physics_trajectory_d3dx_amd` 使 Intel 开发机也能
+持续覆盖曾在 CI 失败的 AMD 路径。x86 的测试基准及生产行为保持原样。
+
+本机选择 AMD 路径后，CI 保存的全部 **5,776** 个状态字段逐位复现，零差异。
+旧 Intel 单基准检查在该路径下仍失败，日志为 `amd-oracle-before.log`；修正基准选择后，
+两条路径各自的 600 帧逐阶段对照均通过，包括 seek、IK／姿态、刚体同步、求解及动态回写。
+阶段比较使用零容差，随后还验证全轨迹重新加载的逐位重复性及停止／跳帧／模式／模型／PMM 生命周期。
+证据保存在 `out/physics-ci-analysis/`，原版 EXE 和运行库不提交到仓库。
+
+可选原版对照（使用 x64 测试程序及对应的原版 x64 MMD）：
+
+```powershell
+physics_trajectory_test.exe --original <original-x64-MMD.exe> --stages 1 --d3dx-dispatch intel
+physics_trajectory_test.exe --original <original-x64-MMD.exe> --stages 1 --d3dx-dispatch amd
+```
+
+发布工作流增加 `validation_only`，可对分支或提交执行同一套两架构构建和回归，保留测试产物，
+跳过打包与发布；无需移动已有发布标签。操作见 [发布文档](RELEASES.md)。
+
+本轮两架构完整 C++17 Release 构建通过；全量 CTest 为 x64 **90/90**、x86 **87/87**，
+零失败、零跳过。日志与 JUnit 为 `out/physics-ci-analysis/ctest-x{64,86}.log` 和
+`local-x{64,86}.xml`，包含新增 AMD 路径及现有 GPU 回归。
