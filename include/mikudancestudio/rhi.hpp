@@ -255,6 +255,13 @@ struct Capabilities {
     bool textureRenderTargets = false;
     bool deviceLoss = false;
 };
+struct ShaderCapabilities {
+    bool programs = false, hlsl = false, spirv = false;
+    // First graphics profile: one color attachment, four shared register
+    // slots of each kind, VS/PS constants and PS-only Texture2D sampling.
+    unsigned constantSlots = 0, textureSlots = 0, samplerSlots = 0;
+    unsigned maxConstantBytes = 0;
+};
 // Reports implemented adapter behavior, not all capabilities of its native API.
 // Ready describes the adapter reset protocol; it is not a native GPU health probe.
 enum class DeviceState {
@@ -423,11 +430,17 @@ struct RgbaImage;
 struct RenderTextureDesc;
 struct RenderPassDesc;
 struct AttachmentReadback;
+struct ShaderPipeline;
+struct ShaderResourceBindings;
 class Device {
 public:
     virtual ~Device() = default;
     virtual Backend BackendType() const = 0;
     virtual Capabilities Features() const = 0;
+    virtual ShaderCapabilities ShaderFeatures() const { return {}; }
+    virtual bool SetShaderPipeline(const ShaderPipeline&) { return false; }
+    virtual bool BindShaderResources(const ShaderResourceBindings&) { return false; }
+    virtual const char* ShaderDiagnostic() const { return "shader_programs_not_supported"; }
     virtual DeviceStatus Status() const { return {}; }
     virtual ResourceLifecycleCapabilities ResourceLifecycleFeatures() const { return {}; }
     // Unsupported by default. Capabilities describe implemented operations,
