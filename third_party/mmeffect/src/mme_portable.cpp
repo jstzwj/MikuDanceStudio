@@ -175,6 +175,8 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     out.profile = profile;
     out.post = profile != "material-v1";
     out.source = binding.instance->originalSource;
+    out.legacySource = binding.instance->legacySource;
+    out.modernSource = binding.instance->modernSource;
     if (out.post) {
         if (key.subset != -1 || mme::SasGetScriptClass(binding.sas) != mme::kSasClassScene ||
             mme::SasGetScriptOrder(binding.sas) != mme::kSasOrderPostprocess)

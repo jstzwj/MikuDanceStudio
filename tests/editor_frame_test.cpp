@@ -667,11 +667,14 @@ int main(int argc, char** argv) try {
         const auto controlBaseline = image().pixels;
         std::vector<MmePortableEffect> controlEffects;
         CHECK(MmePortableEffects(controlEffects, portableReason));
-        const auto exportedControl = std::find_if(controlEffects.begin(), controlEffects.end(),
-            [&](const auto& e) { return e.object == reinterpret_cast<std::uintptr_t>(&carrier); });
+        const auto exportedControl =
+            std::find_if(controlEffects.begin(), controlEffects.end(), [&](const auto& e) {
+                return e.object == reinterpret_cast<std::uintptr_t>(&carrier);
+            });
         CHECK(exportedControl != controlEffects.end());
-        const auto exposure = std::find_if(exportedControl->parameters.begin(),
-            exportedControl->parameters.end(), [](const auto& p) { return p.name == "sharedExposure"; });
+        const auto exposure =
+            std::find_if(exportedControl->parameters.begin(), exportedControl->parameters.end(),
+                         [](const auto& p) { return p.name == "sharedExposure"; });
         CHECK(exposure != exportedControl->parameters.end() && exposure->shared &&
               exposure->type == MmePortableParameter::Type::Float && exposure->value.size() == 4);
         carrier.position[0] = 2;
@@ -692,6 +695,37 @@ int main(int argc, char** argv) try {
               shared == .25f);
         carrier.position[0] = carrier.position[1] = 0;
         CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloat("sharedExposure", 1)));
+        frame(runtimeEffects);
+        if (runtimeEffects) {
+            CHECK(image().pixels == controlBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == controlBaseline);
+        }
+        const auto includedControls =
+            (sourceRoot / L"assets/effects/portable/IncludedControlPost.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1,
+                                     includedControls));
+        CHECK(CheckPortableMme(portableReason));
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels == controlBaseline);
+        const auto revisionInclude = path.parent_path() / L"portable-revision.fxsub";
+        const auto revisionEffect = path.parent_path() / L"portable-revision.fx";
+        std::filesystem::copy_file(sourceRoot / L"assets/effects/portable/ControlPost.fx",
+                                   revisionInclude,
+                                   std::filesystem::copy_options::overwrite_existing);
+        {
+            std::ofstream root(revisionEffect);
+            root << "#include \"portable-revision.fxsub\"\n";
+        }
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1,
+                                     revisionEffect.string()));
+        {
+            std::ofstream edited(revisionInclude);
+            edited << "#error changed after effect load\n";
+        }
+        CHECK(CheckPortableMme(portableReason));
         frame(runtimeEffects);
         if (runtimeEffects) {
             CHECK(image().pixels == controlBaseline);
@@ -761,8 +795,8 @@ int main(int argc, char** argv) try {
                 frame(false);
                 continue;
             }
-            const bool shaderSupport = selected != Backend::Vulkan ||
-                                       (sizeof(void*) == 8 && runtimeEffects);
+            const bool shaderSupport =
+                selected != Backend::Vulkan || (sizeof(void*) == 8 && runtimeEffects);
             frame(shaderSupport);
             CHECK(SUCCEEDED(assignedEffect(&carrier)->GetFloat("sharedExposure", &shared)) &&
                   shared == 1);

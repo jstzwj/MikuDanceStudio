@@ -891,6 +891,7 @@ target_include_directories(MMEffect PUBLIC
 target_compile_definitions(MMEffect PUBLIC MIKUDANCESTUDIO_MME_EMBEDDED=1)
 target_link_libraries(MMEffect PUBLIC D3DXRuntime)
 target_link_libraries(MMEffect PRIVATE
+    d3dcompiler # immutable portable source preprocessing at native effect load
     user32       # Windows, menus and messages
     gdi32        # GDI+ backend
     gdiplus      # Animated textures (GIF/APNG decoding)

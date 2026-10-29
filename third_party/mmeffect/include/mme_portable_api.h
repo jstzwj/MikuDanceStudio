@@ -67,6 +67,7 @@ struct MmePortableEffect {
     int subset = -1;
     bool post = false;
     std::shared_ptr<const std::string> source;
+    std::shared_ptr<const std::string> legacySource, modernSource;
     std::vector<MmePortablePass> passes;
     std::array<float, 4> multiply{1, 1, 1, 1}, add{};
     std::string profile;

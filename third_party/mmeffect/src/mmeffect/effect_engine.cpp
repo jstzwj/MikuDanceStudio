@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <fstream>
 #include <filesystem>
+#include <d3dcompiler.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -326,6 +327,7 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     // [big-C 11239-11240] the wide path for D3DXCreateEffectFromFileW
     // (FUN_180006610 = CP 0 ansi->wide, same as MmeAnsiToWide).
     std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
+    const auto sourcePath = MmeWideToAnsi(std::filesystem::absolute(pathWide).c_str());
     {
         std::ifstream source(std::filesystem::path(pathWide), std::ios::binary | std::ios::ate);
         const auto size=source.tellg();
@@ -376,6 +378,38 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     ID3DXBuffer* errors = nullptr;
     HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines, nullptr, loadFlags,
                                            g_effectPool, &entry->effect, &errors);
+    if (SUCCEEDED(hr) && entry->originalSource) {
+        // Includes are resolved once, alongside the actual native load. A
+        // later RHI device replacement must not read a different disk revision.
+        for (bool modern : {false, true}) {
+            D3D_SHADER_MACRO macros[5]{};
+            for (int i = 0; i < defineCount; ++i) {
+                macros[i].Name = defines[i].Name;
+                macros[i].Definition = defines[i].Definition;
+            }
+            if (modern) {
+                macros[defineCount] = {"MDS_RHI", "1"};
+            }
+            ID3DBlob* expanded = nullptr;
+            ID3DBlob* diagnostics = nullptr;
+            const auto preprocess = D3DPreprocess(
+                entry->originalSource->data(), entry->originalSource->size(), sourcePath.c_str(),
+                macros, D3D_COMPILE_STANDARD_FILE_INCLUDE, &expanded, &diagnostics);
+            if (SUCCEEDED(preprocess) && expanded &&
+                expanded->GetBufferSize() <= 16 * 1024 * 1024) {
+                auto text = std::make_shared<const std::string>(
+                    static_cast<const char*>(expanded->GetBufferPointer()),
+                    expanded->GetBufferSize());
+                (modern ? entry->modernSource : entry->legacySource) = std::move(text);
+            }
+            if (expanded) {
+                expanded->Release();
+            }
+            if (diagnostics) {
+                diagnostics->Release();
+            }
+        }
+    }
     // [0x18000c1ab-0x18000c376] on failure exactly ONE segment is appended to
     // the error text: the compiler text when the error buffer carries bytes,
     // otherwise "DirectX Error: <desc> [%08X]\n" (the !errors ||
@@ -511,6 +545,8 @@ std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     auto instance = std::make_shared<LoadedEffect>();
     instance->source = source;
     instance->originalSource = source->originalSource;
+    instance->legacySource = source->legacySource;
+    instance->modernSource = source->modernSource;
     instance->path = source->path;
     instance->fileStamp = source->fileStamp;
     // Original cache-hit loader: CloneEffect, then parse this assignment's SAS.

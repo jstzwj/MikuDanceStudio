@@ -41,12 +41,19 @@ Source* LoadSource(const MmePortableEffect& effect, std::string& reason) {
     for (auto& source : sources)
         if (source.owner.lock() == effect.source)
             return &source;
-    if (!effect.source || effect.source->find("#include") != std::string::npos) {
+    if (!effect.source || (effect.source->find("#include") != std::string::npos &&
+                           (!effect.legacySource || !effect.modernSource))) {
         reason = "MME_includes_not_supported";
         return nullptr;
     }
     Source next;
     next.owner = effect.source;
+    if (effect.legacySource && effect.modernSource) {
+        next.legacy = *effect.legacySource;
+        next.modern = *effect.modernSource;
+        sources.push_back(std::move(next));
+        return &sources.back();
+    }
     for (bool modern : {false, true}) {
         const D3D_SHADER_MACRO defines[] = {{"MDS_RHI", "1"}, {nullptr, nullptr}};
         ComPtr<ID3DBlob> result, errors;

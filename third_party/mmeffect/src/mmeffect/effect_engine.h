@@ -49,6 +49,9 @@ struct LoadedEffect {
     std::shared_ptr<LoadedEffect> source;
     // Immutable bytes of this loaded revision, shared by assignment clones.
     std::shared_ptr<const std::string> originalSource;
+    // Expanded with this revision's _INDEX/MME_MIPMAP defines and includes.
+    // The modern variant additionally defines MDS_RHI; native FX9 is unchanged.
+    std::shared_ptr<const std::string> legacySource, modernSource;
     bool assigned = false;  // first assignment uses the freshly compiled instance
     ID3DXEffect*  effect = nullptr;   // created by D3DXCreateEffectFromFileW
     std::string   path;               // narrow (CP 0) path as requested
