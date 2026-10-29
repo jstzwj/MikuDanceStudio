@@ -46,7 +46,7 @@
 #include <share.h>
 #include <sys/stat.h>
 
-#include "mikudancestudio/scene_preview_ui.hpp"
+#include "mikudancestudio/scene_cpu_frame.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model_batch_bridge.hpp"
 #include "mikudancestudio/model_cpu_preview.hpp"

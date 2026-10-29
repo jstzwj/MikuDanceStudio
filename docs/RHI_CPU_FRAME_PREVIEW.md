@@ -1,5 +1,11 @@
 # CPU 完整帧与常驻预览
 
+> 历史阶段说明：2026-10-29 已移除本文描述的 `Renderer Preview` 菜单、窗口、
+> 环境入口及 `--resident-preview`／`--preview-ui` 参数。以下旧命令不适用于当前二进制，
+> 旧验收证据按原范围保留。当前入口和隐藏窗口测试见
+> [编辑器视口](RHI_EDITOR_VIEWPORT.md)与[共享控制器](RHI_PREVIEW_CONTROLLER.md)，
+> 旧菜单验收详情见[历史记录](RHI_PREVIEW_CONTROLLER_HISTORY.md)。
+
 本阶段将场景生产输入、共享渲染资源管理和原生后端执行分开。沿用 Unity 的职责边界，不复制其实现。Windows 主窗口继续使用 DX9；独立预览的菜单入口可用于正式构建，运行时默认关闭。共用工厂、控制器和菜单用法见 [预览控制层](RHI_PREVIEW_CONTROLLER.md)。
 
 ## 职责与数据流

@@ -570,7 +570,7 @@ bool CpuMaterialSelected(unsigned material) {
     return std::find(selected.begin(), selected.end(), material) != selected.end();
 }
 void BeginCpuModelMaterials(MMDApp* app, mdl::ModelRecord* model) {
-    if (CpuScenePreviewRequested() && !CpuSceneNativeCheckpointPending())
+    if (CpuSceneInputsRequested() && !CpuSceneNativeCheckpointPending())
         return;
     char enabled[2]{};
     if (GetEnvironmentVariableA("MDS_RHI_CPU_MATERIALS", enabled, 2) == 0)
@@ -770,7 +770,6 @@ void BeginCpuFullSceneValidation(MMDApp* app) {
     fullCheckpoint.accepted = id;
     fullCheckpoint.phase = phase;
     fullCheckpoint.pending = true;
-    InvalidateCpuScenePreviewGate();
     fullCheckpoint.playing = app->PlaybackActive() != 0;
     RestartHistoryReplay();
 }
@@ -1032,14 +1031,9 @@ void FinishCpuFullSceneValidation(MMDApp* app) {
             exact ? "repeat_resize_replace_exact" : "repeat_or_lifecycle_failure",
             exact ? 0 : SIZE_MAX, draws);
     }
-    if (exact && CpuScenePreviewRequested())
-        exact = ValidateResidentCpuSceneFrame(app, native.back());
     ack.passed = exact && bool(report);
 }
 
-const rhi::ModelOptions& CpuDiagnosticModelOptions() {
-    return DiagnosticModelOptions();
-}
 void ReleaseCpuModelPreview() {
     ReleaseCpuSceneFrame();
     previews.clear();

@@ -305,12 +305,12 @@ bool AuditLiveCpuModelInputs(MMDApp*, mdl::ModelRecord*, unsigned, unsigned, uns
                              const std::array<rhi::MaterialTextureAsset, 3>&, rhi::ModelPipeline&);
 void SubmitLiveCpuModelInputs(MMDApp* app, mdl::ModelRecord* model, unsigned material,
                               unsigned first, unsigned count, unsigned stride) {
-    if (!Requested("MDS_RHI_CPU_INPUTS") && !CpuScenePreviewRequested())
+    if (!Requested("MDS_RHI_CPU_INPUTS") && !CpuSceneInputsRequested())
         return;
     if (CpuSceneFamilyRequested(render::SceneDrawFamily::ModelMaterial) &&
         CpuSceneHistoryRecording() &&
         (!CpuMaterialSelected(material) || Requested("MDS_RHI_CPU_FULL_SCENE") ||
-         CpuScenePreviewRequested())) {
+         CpuSceneInputsRequested())) {
         const auto found = app->CpuModelFrames().find(model);
         rhi::ModelPipeline cpuPipeline;
         std::array<rhi::MaterialTextureAsset, 3> cpuAssets;
@@ -347,7 +347,7 @@ void SubmitLiveCpuModelInputs(MMDApp* app, mdl::ModelRecord* model, unsigned mat
 #ifdef MIKUDANCESTUDIO_DIAG
     // Ordinary resident frames produce CPU data only. Native field/image
     // audits and isolated subset probes run at explicit diagnostic checkpoints.
-    if (CpuScenePreviewRequested() && !CpuSceneNativeCheckpointPending())
+    if (CpuSceneInputsRequested() && !CpuSceneNativeCheckpointPending())
         return;
 
     if (!CpuMaterialSelected(material))

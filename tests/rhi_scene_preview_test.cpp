@@ -24,8 +24,8 @@ int main(int argc,char** argv){
     ScenePreviewController preview;const std::string mode=argc>1?argv[1]:"dx11-warp";
     BackendOptions options;options.backend=mode.find("dx12")!=std::string::npos?Backend::D3D12:Backend::D3D11;
     options.driver=mode.find("hardware")!=std::string::npos?BackendDriver::Hardware:BackendDriver::Software;
-    struct Window{HWND value=CreateWindowExW(0,L"STATIC",L"Preview controller test",WS_OVERLAPPEDWINDOW,0,0,128,128,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);~Window(){DestroyWindow(value);}}window;
-    CHECK(window.value);SwapchainDesc desc;desc.window={WindowSystem::Win32,reinterpret_cast<std::uintptr_t>(window.value)};desc.width=desc.height=64;desc.present=PresentMode::Immediate;
+    struct Window{HWND value=CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,L"STATIC",L"Hidden controller test",WS_OVERLAPPEDWINDOW,0,0,128,128,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);~Window(){DestroyWindow(value);}}window;
+    CHECK(window.value && !IsWindowVisible(window.value));SwapchainDesc desc;desc.window={WindowSystem::Win32,reinterpret_cast<std::uintptr_t>(window.value)};desc.width=desc.height=64;desc.present=PresentMode::Immediate;
     for(unsigned cycle=0;cycle<3;++cycle){
         CHECK(preview.Open(desc,options) && preview.Unload() && preview.Unload() && preview.Close());
         CHECK(preview.Open(desc,options));auto stream=Fixture();RgbaImage image;
@@ -34,8 +34,8 @@ int main(int argc,char** argv){
         for(unsigned n=0;n<12;++n){CHECK(preview.Resize(64+(n%3)*8,64+(n%2)*8) && preview.Draw(stream));}
         CHECK(preview.GetRenderer()->Stats().uploads==uploads);
         CHECK(preview.Resize(0,0) && preview.State()==PreviewState::Suspended && preview.Draw(stream));
-        ShowWindow(window.value,SW_MINIMIZE);CHECK(preview.Resize(64,64) && preview.State()==PreviewState::Suspended && preview.Draw(stream));
-        ShowWindow(window.value,SW_RESTORE);CHECK(preview.Resize(64,64) && preview.Draw(stream,&image));ShowWindow(window.value,SW_HIDE);
+        CHECK(preview.Resize(64,64) && preview.State()==PreviewState::Ready && preview.Draw(stream,&image));
+        CHECK(!IsWindowVisible(window.value));
         const auto identity=preview.GetDevice()->Status().identity;
         CHECK(preview.ReplaceDevice() && preview.GetDevice()->Status().identity!=identity);
         CHECK(preview.Draw(stream,&image) && image.pixels[(16*64+16)*4]==41);
@@ -50,5 +50,6 @@ int main(int argc,char** argv){
     }
     auto invalid=desc;invalid.samples=8;CHECK(!preview.Open(invalid,options) && preview.State()==PreviewState::Failed && !preview.Draw(Fixture()));
     CHECK(preview.Close() && preview.Open(desc,options) && preview.Draw(Fixture()));
-    std::printf("PASS %s: repeat close/open, resize, suspend, replacement, scene unload and recovery\n",mode.c_str());return 0;
+    CHECK(!IsWindowVisible(window.value));
+    std::printf("PASS %s: repeat close/open, resize, zero-size suspension, replacement, scene unload and recovery; no window shown\n",mode.c_str());return 0;
 }

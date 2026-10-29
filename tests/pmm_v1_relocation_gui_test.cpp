@@ -1207,45 +1207,6 @@ int Run(const fs::path& executable, const fs::path& fixture,
                 std::printf("%s\n", text.substr(at, text.find('\n', at) - at).c_str());
             }
 #endif
-            if(_wgetenv(L"MDS_RHI_CPU_PREVIEW_UI_TEST")){
-                // Same application process: release the loaded v1 scene, show
-                // the unsupported empty-scene status, then open saved v2 via
-                // the actual file dialog. No native checkpoint is requested.
-                PostMessageW(main,WM_COMMAND,0xcc,0);
-                if(!WaitForDialog(child.info.hProcess,child.info.dwProcessId,dialog,false,20))return 35;
-                PostMessageW(ActionButton(dialog),BM_CLICK,0,0);
-                const auto emptyDeadline=Clock::now()+std::chrono::seconds(20);bool empty=false;
-                while(Clock::now()<emptyDeadline){DWORD_PTR count=0;
-                    if(SendMessageTimeoutW(GetDlgItem(main,436),CB_GETCOUNT,0,0,SMTO_ABORTIFHUNG,1000,&count) && count==1){empty=true;break;}
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));}
-                if(!empty)return 35;
-                SendMessageW(main,WM_COMMAND,0xe110,0);InvalidateRect(main,nullptr,FALSE);
-                const auto ledger=fs::path(_wgetenv(L"MDS_RHI_CPU_GEOMETRY_DIR"))/("cpu_resident."+std::to_string(child.info.dwProcessId)+".csv");
-                const auto presents=[&](){std::ifstream f(ledger);std::string line;unsigned count=0;while(std::getline(f,line))if(line.find(",dx11,present,PASS,")!=std::string::npos)++count;return count;};
-                const auto before=presents();
-                bool statusShown=false;const auto statusDeadline=Clock::now()+std::chrono::seconds(10);
-                while(Clock::now()<statusDeadline){
-                    struct Status {DWORD pid;bool shown=false;};Status state{child.info.dwProcessId};
-                    EnumWindows([](HWND w,LPARAM data)->BOOL{auto& s=*reinterpret_cast<Status*>(data);DWORD pid=0;GetWindowThreadProcessId(w,&pid);
-                        wchar_t type[64]{};GetClassNameW(w,type,64);if(pid==s.pid && !wcscmp(type,L"MDS_CPU_RHI_PREVIEW")){
-                            const auto label=FindWindowExW(w,nullptr,L"STATIC",nullptr);char text[512]{};GetWindowTextA(label,text,sizeof(text));
-                            s.shown=IsWindowVisible(label) && std::strstr(text,"Load a PMM scene");}return TRUE;},reinterpret_cast<LPARAM>(&state));
-                    if(state.shown){statusShown=true;break;}InvalidateRect(main,nullptr,FALSE);std::this_thread::sleep_for(std::chrono::milliseconds(100));}
-                if(!statusShown)return 35;
-                PostMessageW(main,WM_COMMAND,0xcd,0);
-                if(!WaitForDialog(child.info.hProcess,child.info.dwProcessId,dialog,true,20) || !SetFileName(automation.Get(),dialog,saved.wstring()))return 35;
-                PostMessageW(ActionButton(dialog),BM_CLICK,0,0);
-                const auto reloadDeadline=Clock::now()+std::chrono::seconds(40);bool drawn=false;
-                while(Clock::now()<reloadDeadline){InvalidateRect(main,nullptr,FALSE);if(presents()>before){drawn=true;break;}
-                    if(WaitForSingleObject(child.info.hProcess,0)!=WAIT_TIMEOUT)break;std::this_thread::sleep_for(std::chrono::milliseconds(100));}
-                if(!drawn)return 35;
-                std::puts("CPU_PREVIEW_UI same_process_v1_unload_empty_status_v2_reload=PASS");std::fflush(stdout);
-                // This test verifies sequential scene workflows, not two
-                // concurrent full application renderers. Release the first
-                // preview and DX9 device before the fresh-process v2 run.
-                SendMessageW(main,WM_COMMAND,0xe100,0);
-                child.Close();
-            }
             std::wstring reopenCommand = L"\"" + executable.wstring() +
                 L"\" \"" + saved.wstring() + L"\"";
             std::vector<wchar_t> reopenBuffer(reopenCommand.begin(),

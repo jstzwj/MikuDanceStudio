@@ -43,36 +43,6 @@ def live_history_exact(groups):
         seen[phase] = True
     return set(seen) == set(LIVE_PHASES) and owners['v1'] != owners['v2']
 
-def resident_preview_exact(rows, processes, backends, image_counts=None):
-    # Loading can deliberately block unsupported transitional frames; none is
-    # submitted. Image and window lifecycle evidence must never be missing.
-    if len(processes) != 2 or not rows or any(r['status'] != 'PASS' or int(r['differentPixels']) != 0 for r in rows if r['backend'] != 'cpu'):
-        return False
-    for process in processes:
-        for backend in backends:
-            group = [r for r in rows if r['process'] == process and r['backend'] == backend]
-            images = [r for r in group if r['operation'] == 'image']
-            presents = [r for r in group if r['operation'] == 'present']
-            if len(images) < 4 or len(presents) <= len(images) or not {'resize', 'suspend', 'replace'}.issubset(r['operation'] for r in group):
-                return False
-            if image_counts is not None and len(images) != image_counts.get(process, 0):
-                return False
-            if not any(a['uploads'] == b['uploads'] and a['textureUploads'] == b['textureUploads'] and a['device'] == b['device'] for a, b in zip(presents, presents[1:])):
-                return False
-    return True
-
-
-def preview_ui_exact(rows, processes, gui_text):
-    if len(processes)!=2 or gui_text.count('menu_open_close_cycles=3 per_backend PASS')!=2 or \
-            gui_text.count('same_process_v1_unload_empty_status_v2_reload=PASS')!=1:
-        return False
-    for process in processes:
-        for backend in ('dx11','dx12'):
-            closed=[r for r in rows if r['process']==process and r['backend']==backend and r['operation']=='close']
-            if len(closed)<3 or any(r['status']!='PASS' or any(int(r[k])!=0 for k in ('resident','retiring','device','epoch')) for r in closed):
-                return False
-    return True
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -100,8 +70,6 @@ def main():
     parser.add_argument('--texture-fma',action='store_true',help='default-off ordered fused texture-coordinate transform on measured diagnostic DX11/DX12 devices')
     parser.add_argument('--specular-fma',action='store_true',help='default-off prepared camera matrix and fused local-viewer half vector on measured DX11/DX12 devices')
     parser.add_argument('--live-history',action='store_true',help='bounded acknowledged full CPU scene captures during v1/v2 seek, play, edit and save/reopen')
-    parser.add_argument('--resident-preview',choices=('dx11','dx12','both'),help='default-off resident CPU scene windows; image gate plus resize/minimize/replacement checks')
-    parser.add_argument('--preview-ui',action='store_true',help='exercise the real preview menu and close button three times per backend')
     parser.add_argument('--screen-source',choices=('scene','empty-background'),default='scene',help='explicit temporary GUI screen-source selection; dynamic native screen capture remains unsupported')
     args = parser.parse_args()
     materials=[int(n) for n in args.materials.split(',')] if args.materials else [args.material]
@@ -118,8 +86,6 @@ def main():
     if args.texture_fma and not args.preview:raise ValueError('--texture-fma requires --preview')
     if args.specular_fma and not args.preview:raise ValueError('--specular-fma requires --preview')
     if args.live_history and not (args.cpu_prefix=='full-scene' and args.lifecycle and args.play):raise ValueError('--live-history requires --cpu-prefix full-scene --lifecycle --play')
-    if args.resident_preview and not args.live_history:raise ValueError('--resident-preview requires --live-history')
-    if args.preview_ui and args.resident_preview!='both':raise ValueError('--preview-ui requires --resident-preview both')
     identity=dict(applicationSha256=hashlib.sha256(args.application.read_bytes()).hexdigest(),
                   fixtureSha256=hashlib.sha256(args.fixture.read_bytes()).hexdigest(),guiSha256=hashlib.sha256(args.gui.read_bytes()).hexdigest(),model=args.model,material=materials[0],materials=materials,translucent=args.translucent,switchToon=args.switch_toon,cpuInputContract=4,sceneHistory=args.history,groundTemporaryFixture=args.ground)
     identity['cpuPrefixFamilies']=args.cpu_prefix
@@ -129,8 +95,6 @@ def main():
     identity['diagnosticTextureFma']=args.texture_fma
     identity['diagnosticSpecularFma']=args.specular_fma
     identity['liveHistory']=args.live_history
-    identity['residentPreview']=args.resident_preview
-    identity['previewUi']=args.preview_ui
     identity['liveReportContract']=1 if args.live_history else None
     identity['screenSource']=args.screen_source
     if args.inputs=='direct':
@@ -144,8 +108,6 @@ def main():
         raise ValueError('choose a fresh evidence directory')
     output.mkdir(parents=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith('MDS_RHI_')}
-    if args.resident_preview:env['MDS_RHI_CPU_SCENE_PREVIEW']=args.resident_preview
-    if args.preview_ui:env['MDS_RHI_CPU_PREVIEW_UI_TEST']='1'
     env.update(MDS_PMM_GUI_FIXTURE=str(args.fixture.resolve()), MDS_PMM_RELOCATE_MODEL=args.model,
                MDS_RHI_CPU_GEOMETRY='1', MDS_RHI_CPU_GEOMETRY_UPLOAD='1' if args.upload else '0',
                MDS_RHI_CPU_GEOMETRY_DIR=str(output))
@@ -337,18 +299,6 @@ def main():
             versions[key]=value
         report.update(mipPreparationChecks=len(mip_rows),mipPreparationExact=mip_exact)
         passed=passed and mip_exact
-    if args.resident_preview:
-        resident=evidence('cpu_resident.')
-        backends=('dx11','dx12') if args.resident_preview=='both' else (args.resident_preview,)
-        processes={r['process'] for r in full_rows}
-        image_counts={process:sum(owner==process for owner,_ in full_groups) for process in processes}
-        resident_exact=resident_preview_exact(resident,processes,backends,image_counts)
-        passed=passed and resident_exact
-        report.update(residentPreviewChecks=len(resident),residentPreviewExact=resident_exact,cpuBlockedFrames=sum(r['backend']=='cpu' and r['status']=='BLOCKED' for r in resident))
-        if args.preview_ui:
-            ui_exact=preview_ui_exact(resident,processes,(output/'gui.log').read_text(encoding='utf-8',errors='replace'))
-            report.update(previewUiExact=ui_exact)
-            passed=passed and ui_exact
     fixture_preserved=hashlib.sha256(args.fixture.read_bytes()).hexdigest()==identity['fixtureSha256']
     passed=passed and fixture_preserved
     report.update(fixturePreserved=fixture_preserved,status='PASS' if passed else 'UNAVAILABLE' if exit_code == 77 else 'FAIL',

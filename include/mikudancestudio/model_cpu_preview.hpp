@@ -1,7 +1,7 @@
 #pragma once
 #include "rhi_model_pipeline.hpp"
 #include "rhi_model_replay.hpp"
-#include "scene_preview_ui.hpp"
+#include "scene_cpu_frame.hpp"
 namespace mikudancestudio {
 class MMDApp;
 namespace mdl {
@@ -18,7 +18,6 @@ void SubmitCpuModelPreview(MMDApp*, mdl::ModelRecord*, unsigned material, unsign
                            const std::array<rhi::MaterialTextureAsset, 3>&,
                            const rhi::ModelPipeline* reference = nullptr);
 void FinishCpuFullSceneValidation(MMDApp*);
-const rhi::ModelOptions& CpuDiagnosticModelOptions();
 bool CpuSceneNativeCheckpointPending();
 #endif
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
@@ -26,23 +25,15 @@ bool CpuSceneNativeCheckpointPending();
 void BeginCpuSceneFrame(MMDApp*, unsigned clearFlags, unsigned clearColor);
 void FinishCpuSceneFrame(MMDApp*);
 bool CpuSceneFrameRecording();
-bool CpuScenePreviewRequested();
 void AppendCpuSceneFrame(render::SceneDrawReplacement);
 void ObserveCpuSceneDraw(const char* pass);
 void ExpectCpuSceneEmptyMesh();
 bool ConsumeCpuSceneEmptyMesh();
 void BlockCpuSceneFrame(const char*);
 bool CopyAssembledCpuSceneFrame(rhi::ModelReplayStream&);
-void PresentCpuSceneFrame(MMDApp*);
-bool ValidateResidentCpuSceneFrame(MMDApp*, const rhi::RgbaImage&);
 void ReleaseCpuSceneFrame();
-void InvalidateCpuScenePreviewGate();
 #endif
 #ifndef MIKUDANCESTUDIO_DIAG
-inline const rhi::ModelOptions& CpuDiagnosticModelOptions() {
-    static const rhi::ModelOptions options;
-    return options;
-}
 inline bool CpuSceneNativeCheckpointPending() {
     return false;
 }

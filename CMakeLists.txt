@@ -213,14 +213,12 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME rhi_multipass_dx12_debug_warp COMMAND rhi_multipass_gpu_test dx12-warp-debug)
         set_tests_properties(rhi_multipass_dx12_debug_warp PROPERTIES TIMEOUT 90 LABELS "offscreen")
-        add_executable(scene_preview_gui_test tests/scene_preview_gui_test.cpp)
-        target_link_libraries(scene_preview_gui_test PRIVATE user32)
         add_executable(rhi_scene_preview_test tests/rhi_scene_preview_test.cpp)
         target_link_libraries(rhi_scene_preview_test PRIVATE mikudancestudio_rhi user32)
         foreach(api IN ITEMS dx11 dx12)
             foreach(driver IN ITEMS warp hardware)
                 add_test(NAME rhi_preview_${api}_${driver} COMMAND rhi_scene_preview_test ${api}-${driver})
-                set_tests_properties(rhi_preview_${api}_${driver} PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+                set_tests_properties(rhi_preview_${api}_${driver} PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE LABELS "hidden;presentation")
             endforeach()
         endforeach()
         add_executable(rhi_backend_scene_test tests/rhi_backend_scene_test.cpp)
@@ -580,7 +578,7 @@ add_library(mikudancestudio_core STATIC
     src/render/model_batch_bridge.cpp
     src/render/model_cpu_preview.cpp
     src/render/editor_viewport.cpp
-    src/render/scene_cpu_preview.cpp
+    src/render/scene_cpu_frame.cpp
     src/render/scene_cpu_submission.cpp
     src/render/model_input_bridge.cpp
     src/render/rhi_scene_history.cpp
@@ -728,7 +726,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(MIKUDANCESTUDIO_DIAG
        "Compile the porting-era diagnostics probes (MIKUDANCESTUDIO_* env dumps/traces)" OFF)
-option(MIKUDANCESTUDIO_RHI_PREVIEW "Include RHI editor viewport and CPU preview menus (runtime default DX9)" ON)
+option(MIKUDANCESTUDIO_RHI_PREVIEW "Include RHI editor viewport and independent host (runtime default DX9)" ON)
 if(MIKUDANCESTUDIO_DIAG OR (MIKUDANCESTUDIO_RHI_PREVIEW AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12 OR MIKUDANCESTUDIO_RHI_VULKAN)))
     target_compile_definitions(mikudancestudio_core PUBLIC MIKUDANCESTUDIO_CPU_RENDERING=1)
     target_sources(mikudancestudio_core PRIVATE src/render/editor_scene.cpp)

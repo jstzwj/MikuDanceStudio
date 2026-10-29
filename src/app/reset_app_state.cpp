@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "mikudancestudio/scene_preview_ui.hpp"
+#include "mikudancestudio/scene_cpu_frame.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/scene_ownership.hpp"

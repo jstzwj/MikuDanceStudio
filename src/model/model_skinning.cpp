@@ -28,7 +28,7 @@
 #include "mikudancestudio/model.hpp"
 #include "LinearMath/btMmdMath.h"
 #include "mikudancestudio/ported_funcs.hpp"
-#include "mikudancestudio/scene_preview_ui.hpp"
+#include "mikudancestudio/scene_cpu_frame.hpp"
 #include "mikudancestudio/model_cpu_bridge.hpp"
 
 namespace mikudancestudio {
@@ -678,7 +678,7 @@ bool CpuGeometryOption(const char* name) {
     return GetEnvironmentVariableA(name, flag, 2) == 1 && flag[0] == '1';
 }
 bool AcceptedCpuInputRoute() {
-    if (CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT"))
+    if (CpuSceneInputsRequested() && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT"))
         return true;
 #ifdef MIKUDANCESTUDIO_DIAG
     return CpuGeometryOption("MDS_RHI_CPU_INPUTS") &&
@@ -792,7 +792,7 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const flo
         return;
     const bool hasCpu = app->CpuModelFrames().count(model) != 0;
     const float cpuDistance = hasCpu ? PmdEdgeDistance(app, model,
-                                                       (CpuScenePreviewRequested() ||
+                                                       (CpuSceneInputsRequested() ||
                                                         CpuGeometryOption("MDS_RHI_CPU_INPUTS")) &&
                                                                app->CpuRenderFrameReady()
                                                            ? app->CpuRenderFrame().world.data()
@@ -837,7 +837,7 @@ void InitializeModelCpuGeometry(MMDApp* app, mdl::ModelRecord* model, bool requi
     if (!app || !model)
         return;
     app->CpuModelFrames().erase(model);
-    if (!required && !CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_GEOMETRY"))
+    if (!required && !CpuSceneInputsRequested() && !CpuGeometryOption("MDS_RHI_CPU_GEOMETRY"))
         return;
     const auto& state = *model;
     const bool pmx = state.physicsMode == 2;
@@ -918,7 +918,7 @@ void UpdateModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float 
     ApplyPmdVertexMorphs(model);
     const bool hasCpu = app->CpuModelFrames().count(model) != 0;
     const float cpuDistance = hasCpu ? PmdEdgeDistance(app, model,
-                                                       (CpuScenePreviewRequested() ||
+                                                       (CpuSceneInputsRequested() ||
                                                         CpuGeometryOption("MDS_RHI_CPU_INPUTS")) &&
                                                                app->CpuRenderFrameReady()
                                                            ? app->CpuRenderFrame().world.data()

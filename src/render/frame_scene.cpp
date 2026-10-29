@@ -1934,7 +1934,6 @@ void RenderFrameScene(MMDApp* app) {
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
         BlockHistoryReplay("begin_scene_failed");
         FinishCpuSceneFrame(app);
-        PresentCpuSceneFrame(app);
 #endif
         return;
     }
@@ -1958,7 +1957,6 @@ void RenderFrameScene(MMDApp* app) {
 #ifdef MIKUDANCESTUDIO_DIAG
     FinishCpuFullSceneValidation(app);
 #endif
-    PresentCpuSceneFrame(app);
 #endif
     ComposeSelfShadow(app, sub, device);
     ComposeCallbackTexture(app, device);

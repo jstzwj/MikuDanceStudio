@@ -11,8 +11,8 @@ Backend=vulkan
 
 可选值为 `dx9`、`dx11`、`dx12`、`vulkan`。恢复设置时，未编译的后端回退到 DX9。
 `Renderer → Recreate device` 重建当前 RHI 设备；菜单末行报告当前实际使用的后端和
-兼容回退原因。`Renderer Preview` 仍是独立的旧预览窗口入口，其限制见
-[预览控制器](RHI_PREVIEW_CONTROLLER.md)。
+兼容回退原因。旧 `Renderer Preview` 菜单和独立窗口已移除；共享
+[控制器](RHI_PREVIEW_CONTROLLER.md)继续由正式视口使用。
 
 ## 数据与呈现
 
