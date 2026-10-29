@@ -108,6 +108,7 @@ struct EditorSceneProducer::Impl {
     std::array<Overlay, 3> overlays;
     CpuSceneFrameAssembler assembler;
     ScreenTextureHistory history;
+    std::vector<MmePortableEffect> pendingEffects;
     AtlasAsset helper, sprite, font;
     std::uint64_t fontSourceRevision = 0;
     RuntimeCpuAccessory axis;
@@ -256,15 +257,20 @@ void EditorSceneProducer::Clear(EditorOverlay kind) {
 }
 void EditorSceneProducer::Commit() {
     impl->history.Commit();
+    for (const auto& effect : impl->pendingEffects)
+        MmePortableCommitParameters(effect);
+    impl->pendingEffects.clear();
 }
 void EditorSceneProducer::ResetHistory() {
     impl->history.Reset();
+    impl->pendingEffects.clear();
 }
 void EditorSceneProducer::Reset() {
     impl = std::make_unique<Impl>();
 }
 bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, RenderFrame& output,
                                 std::string& reason) {
+    impl->pendingEffects.clear();
     const auto fail = [&](const std::string& why) {
         reason = why;
         return false;
@@ -331,6 +337,7 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
         else
             ++i;
     std::vector<MmePortableEffect> assigned;
+    MmePortablePrepareParameters();
     if (!MmePortableEffects(assigned, reason))
         return false;
     const MmePortableEffect* postEffect = nullptr;
@@ -603,6 +610,7 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
     if (!valid)
         return fail(valid.reason);
     output = std::move(result);
+    impl->pendingEffects = std::move(assigned);
     reason.clear();
     return true;
 }

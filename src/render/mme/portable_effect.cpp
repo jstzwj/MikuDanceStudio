@@ -4,12 +4,14 @@
 #include "mikudancestudio/rhi_post_process.hpp"
 #include "../rhi_model_constants.hpp"
 #include <d3dcompiler.h>
+#include <d3d11shader.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <cstring>
 #include <regex>
 #include <map>
 #include <cctype>
+#include <set>
 namespace mikudancestudio {
 namespace {
 using namespace rhi;
@@ -86,8 +88,8 @@ bool ValidateLegacy(const Source& source, const MmePortableEffect& effect,
         {"slopescaledepthbias", "0"},
         {"vertexshader", "compilevs_3_0" + Compact(pass.vertex) + "()"},
         {"pixelshader", "compileps_3_0" + Compact(pass.pixel) + "()"}};
-    if (pass.colors.size() == 2)
-        required["colorwriteenable1"] = "15";
+    for (unsigned slot = 1; slot < pass.colors.size(); ++slot)
+        required["colorwriteenable" + std::to_string(slot)] = "15";
     bool found = false;
     for (std::sregex_iterator it(source.legacy.begin(), source.legacy.end(), pattern), end;
          it != end; ++it) {
@@ -169,7 +171,10 @@ bool ValidateLegacy(const Source& source, const MmePortableEffect& effect,
         }
         ++count;
     }
-    if (count != (effect.post ? effect.targets.size() - 1 : 1u)) {
+    const auto colorTargets =
+        std::count_if(effect.targets.begin(), effect.targets.end(),
+                      [](const auto& t) { return !t.depth && t.name != "FinalColor"; });
+    if (count != (effect.post ? colorTargets : 1u)) {
         reason = "MME_sampler_not_supported";
         return false;
     }
@@ -181,6 +186,157 @@ SnapshotBytes Bytes(const void* bytes, std::size_t size) {
     std::memcpy(out.data(), bytes, size);
     out.Seal();
     return out;
+}
+bool ReflectParameters(ShaderProgramDesc& d, const MmePortableEffect& effect, std::string& reason) {
+    if (effect.parameters.empty())
+        return true;
+    for (const auto* module : {&d.vertex, &d.pixel}) {
+        ComPtr<ID3DBlob> code, errors;
+        const auto hr = D3DCompile(
+            module->hlsl.data(), module->hlsl.size(), "mme-parameters", nullptr, nullptr,
+            module->entry.c_str(), module->stage == ShaderStage::Vertex ? "vs_5_0" : "ps_5_0",
+            D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_IEEE_STRICTNESS, 0, &code, &errors);
+        if (FAILED(hr)) {
+            reason = errors ? std::string(static_cast<const char*>(errors->GetBufferPointer()),
+                                          errors->GetBufferSize())
+                            : "MME_parameter_shader_compile";
+            return false;
+        }
+        ComPtr<ID3D11ShaderReflection> reflection;
+        if (FAILED(D3DReflect(code->GetBufferPointer(), code->GetBufferSize(),
+                              IID_PPV_ARGS(&reflection)))) {
+            reason = "MME_parameter_reflection";
+            return false;
+        }
+        D3D11_SHADER_DESC sd{};
+        reflection->GetDesc(&sd);
+        for (unsigned n = 0; n < sd.BoundResources; ++n) {
+            D3D11_SHADER_INPUT_BIND_DESC resource{};
+            reflection->GetResourceBindingDesc(n, &resource);
+            if (resource.Type != D3D_SIT_CBUFFER || resource.BindPoint == 0)
+                continue;
+            if (resource.BindPoint >= 4 || resource.BindCount != 1) {
+                reason = "MME_parameter_slot";
+                return false;
+            }
+            auto* cb = reflection->GetConstantBufferByName(resource.Name);
+            D3D11_SHADER_BUFFER_DESC block{};
+            cb->GetDesc(&block);
+            ShaderBinding binding{ShaderBindingKind::Constants, resource.BindPoint,
+                                  unsigned(module->stage), block.Size};
+            for (unsigned i = 0; i < block.Variables; ++i) {
+                auto* var = cb->GetVariableByIndex(i);
+                D3D11_SHADER_VARIABLE_DESC v{};
+                D3D11_SHADER_TYPE_DESC t{};
+                var->GetDesc(&v);
+                var->GetType()->GetDesc(&t);
+                const auto parameter =
+                    std::find_if(effect.parameters.begin(), effect.parameters.end(),
+                                 [&](const auto& p) { return p.name == v.Name; });
+                if (parameter == effect.parameters.end() || t.Rows != parameter->rows ||
+                    t.Columns != parameter->columns ||
+                    (t.Elements ? t.Elements : 1) != parameter->elements) {
+                    reason = "MME_parameter_layout_mismatch";
+                    return false;
+                }
+                ShaderValueType type;
+                if (t.Type == D3D_SVT_FLOAT &&
+                    parameter->type == MmePortableParameter::Type::Float) {
+                    if (t.Rows == 4 && t.Columns == 4 && t.Class == D3D_SVC_MATRIX_ROWS)
+                        type = ShaderValueType::Matrix4x4;
+                    else if (t.Rows == 1)
+                        type = t.Columns == 1   ? ShaderValueType::Float
+                               : t.Columns == 2 ? ShaderValueType::Float2
+                               : t.Columns == 3 ? ShaderValueType::Float3
+                                                : ShaderValueType::Float4;
+                    else {
+                        reason = "MME_parameter_matrix_not_supported";
+                        return false;
+                    }
+                } else if (t.Rows == 1 && t.Columns == 1 && t.Type == D3D_SVT_INT &&
+                           parameter->type == MmePortableParameter::Type::Int)
+                    type = ShaderValueType::Int;
+                else if (t.Rows == 1 && t.Columns == 1 && t.Type == D3D_SVT_UINT &&
+                         parameter->type == MmePortableParameter::Type::Bool)
+                    type = ShaderValueType::UInt;
+                else {
+                    reason = "MME_parameter_type_mismatch";
+                    return false;
+                }
+                binding.members.push_back(
+                    {v.Name, type, v.StartOffset, t.Elements ? t.Elements : 1});
+            }
+            const auto previous =
+                std::find_if(d.bindings.begin(), d.bindings.end(), [&](const auto& b) {
+                    return b.kind == ShaderBindingKind::Constants && b.slot == binding.slot;
+                });
+            if (previous == d.bindings.end())
+                d.bindings.push_back(std::move(binding));
+            else {
+                if (previous->bytes != binding.bytes ||
+                    previous->members.size() != binding.members.size()) {
+                    reason = "MME_parameter_stage_layout";
+                    return false;
+                }
+                for (unsigned i = 0; i < binding.members.size(); ++i) {
+                    const auto& a = previous->members[i];
+                    const auto& b = binding.members[i];
+                    if (a.name != b.name || a.offset != b.offset || a.type != b.type ||
+                        a.count != b.count) {
+                        reason = "MME_parameter_stage_layout";
+                        return false;
+                    }
+                }
+                previous->stages |= binding.stages;
+            }
+        }
+    }
+    return true;
+}
+bool BindParameters(ReplayShader& shader, const MmePortableEffect& effect, std::string& reason) {
+    for (const auto& binding : shader.pipeline.program->description.bindings) {
+        if (binding.kind != ShaderBindingKind::Constants || !binding.slot)
+            continue;
+        SnapshotBytes bytes;
+        bytes.resize(binding.bytes);
+        for (const auto& member : binding.members) {
+            const auto p = std::find_if(effect.parameters.begin(), effect.parameters.end(),
+                                        [&](const auto& p) { return p.name == member.name; });
+            if (p == effect.parameters.end()) {
+                reason = "MME_parameter_missing_value";
+                return false;
+            }
+            const bool floating = p->type == MmePortableParameter::Type::Float;
+            const auto expected = member.type == ShaderValueType::Float       ? 1u
+                                  : member.type == ShaderValueType::Float2    ? 2u
+                                  : member.type == ShaderValueType::Float3    ? 3u
+                                  : member.type == ShaderValueType::Float4    ? 4u
+                                  : member.type == ShaderValueType::Matrix4x4 ? 16u
+                                                                              : 0u;
+            if ((expected && (!floating || p->rows * p->columns != expected ||
+                              p->rows != (expected == 16 ? 4u : 1u))) ||
+                (!expected && (p->rows != 1 || p->columns != 1 ||
+                               p->type != (member.type == ShaderValueType::Int
+                                               ? MmePortableParameter::Type::Int
+                                               : MmePortableParameter::Type::Bool)))) {
+                reason = "MME_parameter_snapshot_type";
+                return false;
+            }
+            const unsigned size = p->rows * p->columns * 4,
+                           stride = p->elements > 1 ? (size + 15) / 16 * 16 : size;
+            if (member.offset + stride * (member.count - 1) + size > bytes.size() ||
+                member.count != p->elements || p->value.size() != size * p->elements) {
+                reason = "MME_parameter_snapshot_layout";
+                return false;
+            }
+            for (unsigned i = 0; i < member.count; ++i)
+                std::memcpy(bytes.data() + member.offset + i * stride, p->value.data() + i * size,
+                            size);
+        }
+        bytes.Seal();
+        shader.constants.push_back({binding.slot, std::move(bytes)});
+    }
+    return true;
 }
 }
 std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEffect& effect,
@@ -225,6 +381,8 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
         d.bindings.push_back({ShaderBindingKind::Texture, slot});
         d.bindings.push_back({ShaderBindingKind::Sampler, slot});
     }
+    if (!ReflectParameters(d, effect, reason))
+        return {};
     auto program = std::make_shared<const ShaderProgram>(std::move(d));
     source->programs.emplace(key, program);
     return program;
@@ -276,6 +434,8 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
     Constants c{detail::Dx9MatrixMultiply(detail::Dx9MatrixMultiply(p.world, p.view), p.projection),
                 p.nativeDiffuse, effect.multiply};
     shader.constants.push_back({0, Bytes(&c, sizeof(c))});
+    if (!BindParameters(shader, effect, reason))
+        return false;
     shader.textures.push_back({0, draw.textures[base], draw.targetTextures[base]});
     ShaderSamplerBinding sampler;
     sampler.sampler.u = sampler.sampler.v = SamplerAddress::Wrap;
@@ -286,8 +446,143 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
     draw.shadowTarget = 0;
     return true;
 }
+bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, std::string& reason) {
+    const auto fail = [&](const char* r) {
+        reason = r;
+        return false;
+    };
+    const auto source = std::find_if(frame.targets.begin(), frame.targets.end(),
+                                     [&](const auto& t) { return t.id == frame.finalColor; });
+    if (source == frame.targets.end() || source->description.format != TextureFormat::Rgba8)
+        return fail("MME_post_missing_scene_color");
+    const unsigned width = source->description.width, height = source->description.height;
+    const auto capture = std::find_if(effect.steps.begin(), effect.steps.end(), [](const auto& s) {
+        return s.kind == MmePortableStep::Kind::Capture;
+    });
+    if (capture == effect.steps.end() || capture->colors.size() != 1)
+        return fail("MME_scene_capture_layout");
+    auto next = frame;
+    next.passes.clear();
+    std::map<std::string, std::uint64_t> ids;
+    std::map<std::string, TextureFormat> formats;
+    ids[capture->colors[0]] = frame.finalColor;
+    formats[capture->colors[0]] = TextureFormat::Rgba8;
+    if (!capture->depth.empty())
+        for (const auto& pass : frame.passes)
+            if (PrimaryAttachment(pass) && PrimaryAttachment(pass)->target == frame.finalColor &&
+                pass.depthStencil)
+                ids[capture->depth] = pass.depthStencil->target;
+    auto descriptions = effect.targets;
+    descriptions.push_back({"FinalColor", MmePortableFormat::Rgba8});
+    descriptions.push_back({"FinalDepth", MmePortableFormat::Rgba8, true});
+    std::uint64_t id = 16;
+    for (const auto& t : frame.targets)
+        id = std::max(id, t.id + 1);
+    for (const auto& t : descriptions) {
+        const auto format = t.depth ? TextureFormat::Depth24Stencil8
+                            : t.format == MmePortableFormat::Rgba16Float
+                                ? TextureFormat::Rgba16Float
+                                : TextureFormat::Rgba8;
+        formats[t.name] = format;
+        if (ids.count(t.name))
+            continue;
+        ids[t.name] = id++;
+        next.targets.push_back({ids[t.name],
+                                {width, height, format,
+                                 t.depth ? unsigned(TextureAccess::DepthStencilAttachment)
+                                         : TextureAccess::ColorAttachment | TextureAccess::Sampled |
+                                               TextureAccess::CopySource}});
+    }
+    std::set<std::uint64_t> initialized;
+    for (const auto& step : effect.steps) {
+        if (step.kind == MmePortableStep::Kind::Capture) {
+            for (auto pass : frame.passes) {
+                const auto preserve = [&](FrameAttachment& a) {
+                    if (initialized.count(a.target))
+                        a.load = AttachmentLoad::Load;
+                    initialized.insert(a.target);
+                };
+                if (pass.color)
+                    preserve(*pass.color);
+                for (auto& a : pass.colors)
+                    preserve(a);
+                if (pass.depthStencil)
+                    preserve(*pass.depthStencil);
+                next.passes.push_back(std::move(pass));
+            }
+            continue;
+        }
+        FramePass output;
+        output.name = "MME/script";
+        const auto attachment = [&](const std::string& name, bool clear) {
+            FrameAttachment a{ids.at(name)};
+            a.load = clear                         ? AttachmentLoad::Clear
+                     : initialized.count(a.target) ? AttachmentLoad::Load
+                                                   : AttachmentLoad::Discard;
+            a.clear = {step.color[0], step.color[1], step.color[2], step.color[3]};
+            a.clearDepth = step.depthValue;
+            initialized.insert(a.target);
+            return a;
+        };
+        if (step.kind == MmePortableStep::Kind::Draw || step.clearColor)
+            for (const auto& name : step.colors)
+                output.colors.push_back(attachment(name, step.clearColor));
+        if (!step.depth.empty() &&
+            ((step.kind == MmePortableStep::Kind::Draw && initialized.count(ids.at(step.depth))) ||
+             step.clearDepth))
+            output.depthStencil = attachment(step.depth, step.clearDepth);
+        if (step.kind == MmePortableStep::Kind::Draw) {
+            const auto& pass = effect.passes[step.pass];
+            auto instance = effect;
+            instance.parameters = step.parameters;
+            ModelReplayDraw draw;
+            if (!AttachFullscreenTriangle(next, draw))
+                return fail("MME_post_geometry_failed");
+            ReplayShader shader;
+            shader.pipeline.program = PortableMmeProgram(effect, pass, reason);
+            if (!shader.pipeline.program)
+                return false;
+            shader.pipeline.viewport = ModelViewport{0, 0, width, height, 0, 1};
+            shader.pipeline.raster.cull = BatchCull::None;
+            shader.pipeline.raster.depthTest = shader.pipeline.raster.depthWrite =
+                shader.pipeline.raster.alphaBlend = false;
+            shader.pipeline.colorFormats.clear();
+            for (const auto& name : step.colors)
+                shader.pipeline.colorFormats.push_back(formats.at(name));
+            std::array<float, 8> constants;
+            std::copy(effect.multiply.begin(), effect.multiply.end(), constants.begin());
+            std::copy(effect.add.begin(), effect.add.end(), constants.begin() + 4);
+            shader.constants.push_back({0, Bytes(constants.data(), sizeof(constants))});
+            if (!BindParameters(shader, instance, reason))
+                return false;
+            for (unsigned slot = 0; slot < pass.sampled.size(); ++slot) {
+                const auto input = ids.at(pass.sampled[slot]);
+                output.sampled.push_back(input);
+                shader.textures.push_back({slot, {}, {input, width, height}});
+                shader.samplers.push_back(
+                    {slot,
+                     {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point,
+                      SamplerAddress::Clamp, SamplerAddress::Clamp, 1}});
+            }
+            draw.shader = std::move(shader);
+            output.draws.push_back(std::move(draw));
+            output.name = "MME/" + pass.technique + "/" + pass.name;
+        }
+        next.passes.push_back(std::move(output));
+    }
+    next.finalColor = ids.at("FinalColor");
+    const auto valid = ValidateRenderFrame(next);
+    if (!valid) {
+        reason = valid.reason;
+        return false;
+    }
+    frame = std::move(next);
+    return true;
+}
 bool AppendPortableMmePost(rhi::RenderFrame& frame, const MmePortableEffect& effect,
                            std::string& reason) {
+    if (effect.profile == "scene-v2")
+        return AppendPortableScene(frame, effect, reason);
     if (!effect.post || effect.passes.empty() || effect.targets.empty()) {
         reason = "MME_post_pass_count";
         return false;
@@ -353,6 +648,8 @@ bool AppendPortableMmePost(rhi::RenderFrame& frame, const MmePortableEffect& eff
         std::copy(effect.multiply.begin(), effect.multiply.end(), constants.begin());
         std::copy(effect.add.begin(), effect.add.end(), constants.begin() + 4);
         shader.constants.push_back({0, Bytes(constants.data(), sizeof(constants))});
+        if (!BindParameters(shader, effect, reason))
+            return false;
         for (unsigned slot = 0; slot < pass.sampled.size(); ++slot) {
             const auto& name = pass.sampled[slot];
             if (!targets.count(name)) {

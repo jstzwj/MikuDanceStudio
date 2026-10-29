@@ -6,6 +6,8 @@
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/mme_portable.hpp"
 #include "mme_portable_api.h"
+#include "sas_exec.h"
+#include "pass_planner.h"
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -73,12 +75,17 @@ void Compare(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>
     for (std::size_t n = 0; n < a.size(); ++n)
         maximum = std::max(maximum, unsigned(std::abs(int(a[n]) - int(b[n]))));
     std::printf("%s DX9 max channel delta=%u (limit=%u)\n", label, maximum, limit);
+    if (maximum > limit)
+        std::printf("first rgba: native=%u,%u,%u,%u DX9=%u,%u,%u,%u\n", a[0], a[1], a[2], a[3],
+                    b[0], b[1], b[2], b[3]);
     CHECK(maximum <= limit);
 }
 }
 int main(int argc, char** argv) try {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const std::string api = argc > 1 ? argv[1] : "dx11";
+    const bool sceneScript = argc > 2 && std::string(argv[2]) == "scene";
+    const bool controls = sceneScript || (argc > 2 && std::string(argv[2]) == "controls");
     BackendOptions options;
     options.backend = api.find("dx11") == 0   ? Backend::D3D11
                       : api.find("dx12") == 0 ? Backend::D3D12
@@ -113,19 +120,115 @@ int main(int argc, char** argv) try {
     pp.EnableAutoDepthStencil = TRUE;
     pp.AutoDepthStencilFormat = D3DFMT_D24S8;
     ComPtr<IDirect3DDevice9> dx9;
-    CHECK(SUCCEEDED(d3d->CreateDevice(0, D3DDEVTYPE_HAL, window.h,
-                                      D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &dx9)));
-    const auto material = Effect(L"MaterialTint.fx", false), post = Effect(L"TwoStage.fx", true);
+    const auto deviceResult = d3d->CreateDevice(0, D3DDEVTYPE_HAL, window.h,
+                                                D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &dx9);
+    if (FAILED(deviceResult)) {
+        char diagnostic[80];
+        std::snprintf(diagnostic, sizeof(diagnostic), "DX9 CreateDevice failed: 0x%08lX",
+                      static_cast<unsigned long>(deviceResult));
+        throw std::runtime_error(diagnostic);
+    }
+    auto material = Effect(controls ? L"ControlMaterial.fx" : L"MaterialTint.fx", false),
+         post = Effect(sceneScript ? L"SceneScript.fx"
+                       : controls  ? L"ControlPost.fx"
+                                   : L"TwoStage.fx",
+                       true);
+    if (controls)
+        for (auto* effect : {&material, &post}) {
+            const auto value = [&](const char* name, unsigned rows, unsigned columns,
+                                   const std::vector<float>& values) {
+                MmePortableParameter p;
+                p.name = name;
+                p.rows = rows;
+                p.columns = columns;
+                p.elements = unsigned(values.size()) / (rows * columns);
+                p.value.resize(values.size() * 4);
+                std::memcpy(p.value.data(), values.data(), p.value.size());
+                effect->parameters.push_back(p);
+            };
+            value("controlPosition", 1, 4, {.25f, .5f, 0, 1});
+            value("controlWorld", 4, 4, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, .25f, .5f, 0, 1});
+            value("sharedExposure", 1, 1, {1});
+            effect->parameters.back().shared = true;
+            value("weights", 1, 2, {.5f, .25f, .5f, .75f});
+            value("enabled", 1, 1, {0});
+            effect->parameters.back().type = MmePortableParameter::Type::Bool;
+            const std::uint32_t enabled = 1;
+            std::memcpy(effect->parameters.back().value.data(), &enabled, 4);
+        }
+    if (sceneScript) {
+        post.profile = "scene-v2";
+        post.passes = {{"Post", "Grade", "fullscreen_vs", "grade_ps", {"SceneColor"}},
+                       {"Post", "Lift", "fullscreen_vs", "lift_ps", {"Ping"}},
+                       {"Post", "Finish", "fullscreen_vs", "finish_ps", {"Pong"}}};
+        post.targets = {
+            {"SceneColor"}, {"Ping"}, {"Pong"}, {"Depth", MmePortableFormat::Rgba8, true}};
+        for (const auto& [name, number] : {std::pair{"iterations", 2}, {"iteration", 0}}) {
+            MmePortableParameter p;
+            p.name = name;
+            p.type = MmePortableParameter::Type::Int;
+            p.value.resize(4);
+            std::memcpy(p.value.data(), &number, 4);
+            post.parameters.push_back(p);
+        }
+        MmePortableParameter clear;
+        clear.name = "clearColor";
+        clear.columns = 4;
+        const float color[] = {1, 1, 1, 0};
+        clear.value.resize(sizeof(color));
+        std::memcpy(clear.value.data(), color, sizeof(color));
+        post.parameters.push_back(clear);
+        using K = MmePortableCommand::Kind;
+        post.script = {{K::ColorTarget, "SceneColor", 0},
+                       {K::DepthTarget, "Depth"},
+                       {K::ClearColorValue, "clearColor"},
+                       {K::Clear, "", D3DCLEAR_TARGET},
+                       {K::Clear, "", D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL},
+                       {K::Capture},
+                       {K::ColorTarget, "Ping", 0},
+                       {K::DepthTarget},
+                       {K::Clear, "", D3DCLEAR_TARGET},
+                       {K::Pass, "", 0},
+                       {K::ColorTarget, "Pong", 0},
+                       {K::Clear, "", D3DCLEAR_TARGET},
+                       {K::Loop, "iterations"},
+                       {K::LoopIndex, "iteration"},
+                       {K::Pass, "", 1},
+                       {K::LoopEnd},
+                       {K::ColorTarget},
+                       {K::Clear, "", D3DCLEAR_TARGET},
+                       {K::Pass, "", 2}};
+        std::string reason;
+        CHECK(MmePortableSceneLayout(post, reason));
+    }
     auto compile = [&](const MmePortableEffect& source) {
         ComPtr<ID3DXEffect> fx;
         ComPtr<ID3DXBuffer> errors;
         const auto path = std::filesystem::path(MDS_TEST_SOURCE_DIR) / L"assets/effects/portable" /
-                          (source.post ? L"TwoStage.fx" : L"MaterialTint.fx");
+                          (source.post ? (sceneScript ? L"SceneScript.fx"
+                                          : controls  ? L"ControlPost.fx"
+                                                      : L"TwoStage.fx")
+                                       : (controls ? L"ControlMaterial.fx" : L"MaterialTint.fx"));
         const auto result = D3DXCreateEffectFromFileW(dx9.Get(), path.c_str(), nullptr, nullptr, 0,
                                                       nullptr, &fx, &errors);
         if (FAILED(result))
             throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer())
                                             : "DX9 FX compile failed");
+        if (controls)
+            for (const auto& p : source.parameters) {
+                if (p.type == MmePortableParameter::Type::Bool)
+                    CHECK(SUCCEEDED(fx->SetBool(p.name.c_str(), TRUE)));
+                else if (p.type == MmePortableParameter::Type::Int) {
+                    int value = 0;
+                    std::memcpy(&value, p.value.data(), 4);
+                    CHECK(SUCCEEDED(fx->SetInt(p.name.c_str(), value)));
+                } else {
+                    std::vector<float> values(p.value.size() / 4);
+                    std::memcpy(values.data(), p.value.data(), p.value.size());
+                    CHECK(SUCCEEDED(
+                        fx->SetFloatArray(p.name.c_str(), values.data(), unsigned(values.size()))));
+                }
+            }
         return fx;
     };
     auto materialFx = compile(material), postFx = compile(post);
@@ -214,6 +317,23 @@ int main(int argc, char** argv) try {
     draw.pipeline.shader.world = draw.pipeline.shader.view = draw.pipeline.shader.projection =
         identity;
     draw.pipeline.shader.nativeDiffuse = {1, 1, 1, 1};
+    if (controls) {
+        const auto reject = [&](MmePortableEffect bad, const char* expected) {
+            auto invalid = draw;
+            CHECK(!ApplyPortableMmeMaterial(invalid, bad, reason));
+            CHECK(reason == expected);
+            CHECK(!invalid.shader); // Failure must leave the draw unchanged.
+        };
+        auto bad = material;
+        bad.parameters.pop_back();
+        reject(bad, "MME_parameter_missing_value");
+        bad = material;
+        bad.parameters[2].value.resize(1);
+        reject(bad, "MME_parameter_snapshot_layout");
+        bad = material;
+        bad.parameters[2].type = MmePortableParameter::Type::Int;
+        reject(bad, "MME_parameter_snapshot_type");
+    }
     CHECK(ApplyPortableMmeMaterial(draw, material, reason));
     FramePass pass;
     pass.color = FrameAttachment{1};
@@ -233,26 +353,77 @@ int main(int argc, char** argv) try {
     Compare(actual.bytes, legacyMaterial, 1, "material");
     // Execute the same two FX passes on DX9, using the original MME quad mapping.
     postFx->SetFloatArray("viewportSize", size, 2);
-    postFx->SetTexture("SceneColor", scene.Get());
-    postFx->SetTexture("Ping", ping.Get());
-    postFx->SetTechnique("Post");
-    CHECK(SUCCEEDED(dx9->BeginScene()));
-    CHECK(SUCCEEDED(postFx->Begin(&passes, 0)));
-    CHECK(passes == 2);
-    const float left = -1 - 2.f / Width, top = 1 + 2.f / Height, u = -1.f / Width,
-                v = -1.f / Height;
-    const float quad[][8] = {{1, -1, 0, 0, 0, 0, 1, 1},
-                             {left, -1, 0, 0, 0, 0, u, 1},
-                             {left, top, 0, 0, 0, 0, u, v},
-                             {1, top, 0, 0, 0, 0, 1, v}};
-    for (unsigned p = 0; p < 2; ++p) {
-        CHECK(SUCCEEDED(dx9->SetRenderTarget(0, p ? finalSurface.Get() : pingSurface.Get())));
-        CHECK(SUCCEEDED(postFx->BeginPass(p)));
-        CHECK(SUCCEEDED(dx9->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, quad, 32)));
-        CHECK(SUCCEEDED(postFx->EndPass()));
+    if (sceneScript) {
+        struct SasOracle {
+            mme::SasEffect* sas = nullptr;
+            mme::SasRunState* state = nullptr;
+            IDirect3DDevice9* device;
+            ~SasOracle() {
+                if (state) {
+                    mme::SasRestoreRunState(device, state);
+                    mme::SasDestroyRunState(state);
+                }
+                if (sas)
+                    mme::SasUnload(sas);
+                mme::SasSetHostCallbacks({});
+            }
+        } oracle{nullptr, nullptr, dx9.Get()};
+        CHECK(SUCCEEDED(dx9->SetRenderTarget(0, finalSurface.Get())));
+        oracle.sas = mme::SasParse(postFx.Get(), "SceneScript.fx", dx9.Get());
+        CHECK(oracle.sas && !mme::SasHadErrors(oracle.sas));
+        mme::SasHostCallbacks callbacks{};
+        callbacks.ctx = dx9.Get();
+        callbacks.RunPass = [](void* context, mme::SasEffect* sas, int kind, int index) -> long {
+            CHECK(kind == 1);
+            return mme::SasDefaultDrawBufferPass(sas->effect,
+                                                 static_cast<IDirect3DDevice9*>(context), index);
+        };
+        mme::SasSetHostCallbacks(callbacks);
+        oracle.state = mme::SasCreateRunState(dx9.Get());
+        CHECK(oracle.state && oracle.sas->techniques.size() == 1);
+        CHECK(mme::SasExecuteTechniqueStep(oracle.sas, &oracle.sas->techniques[0], dx9.Get(),
+                                           oracle.state));
+        CHECK(SUCCEEDED(dx9->BeginScene()));
+        // ScriptExternal resumes the actual scene draw against the script's
+        // clear color. Copying an earlier composited frame would hide Alpha /
+        // capture-timing errors in both the implementation and the oracle.
+        CHECK(SUCCEEDED(dx9->SetFVF(D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1)));
+        CHECK(SUCCEEDED(materialFx->Begin(&passes, 0)));
+        CHECK(SUCCEEDED(materialFx->BeginPass(0)));
+        CHECK(SUCCEEDED(dx9->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, vertices, 32)));
+        CHECK(SUCCEEDED(materialFx->EndPass()));
+        CHECK(SUCCEEDED(materialFx->End()));
+        CHECK(SUCCEEDED(mme::SasResumeTechnique(oracle.sas, &oracle.sas->techniques[0], dx9.Get(),
+                                                oracle.state)));
+        CHECK(SUCCEEDED(dx9->EndScene()));
+        ComPtr<IDirect3DBaseTexture9> pongBase;
+        ComPtr<IDirect3DTexture9> pong;
+        CHECK(SUCCEEDED(postFx->GetTexture("Pong", &pongBase)));
+        CHECK(SUCCEEDED(pongBase.As(&pong)));
+        pingSurface.Reset();
+        CHECK(SUCCEEDED(pong->GetSurfaceLevel(0, &pingSurface)));
+    } else {
+        postFx->SetTexture("SceneColor", scene.Get());
+        postFx->SetTexture("Ping", ping.Get());
+        postFx->SetTechnique("Post");
+        CHECK(SUCCEEDED(dx9->BeginScene()));
+        CHECK(SUCCEEDED(postFx->Begin(&passes, 0)));
+        CHECK(passes == 2);
+        const float left = -1 - 2.f / Width, top = 1 + 2.f / Height, u = -1.f / Width,
+                    v = -1.f / Height;
+        const float quad[][8] = {{1, -1, 0, 0, 0, 0, 1, 1},
+                                 {left, -1, 0, 0, 0, 0, u, 1},
+                                 {left, top, 0, 0, 0, 0, u, v},
+                                 {1, top, 0, 0, 0, 0, 1, v}};
+        for (unsigned p = 0; p < 2; ++p) {
+            CHECK(SUCCEEDED(dx9->SetRenderTarget(0, p ? finalSurface.Get() : pingSurface.Get())));
+            CHECK(SUCCEEDED(postFx->BeginPass(p)));
+            CHECK(SUCCEEDED(dx9->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, quad, 32)));
+            CHECK(SUCCEEDED(postFx->EndPass()));
+        }
+        postFx->End();
+        CHECK(SUCCEEDED(dx9->EndScene()));
     }
-    postFx->End();
-    CHECK(SUCCEEDED(dx9->EndScene()));
     const auto legacyFinal = Read(dx9.Get(), finalSurface.Get());
     CHECK(legacyFinal == Read(dx9.Get(), pingSurface.Get()));
     RenderFrame missingTarget;
@@ -267,7 +438,7 @@ int main(int argc, char** argv) try {
     CHECK(renderer.ReadTarget(1, frame.finalColor, actual));
     Compare(actual.bytes, legacyFinal, 2, "two-stage post");
     AttachmentReadback intermediate;
-    CHECK(renderer.ReadTarget(1, 16, intermediate));
+    CHECK(renderer.ReadTarget(1, sceneScript ? 17 : 16, intermediate));
     CHECK(actual.bytes == intermediate.bytes);
     for (unsigned n = 0; n < 12; ++n)
         CHECK(renderer.Submit(prepared, token));

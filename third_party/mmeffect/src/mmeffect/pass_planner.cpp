@@ -766,6 +766,58 @@ void MmeRefreshObjectPlan(ModelData* model, int hostIndex)
 // FUN_18002baa0 + FUN_18005fd30
 // ---------------------------------------------------------------------------
 
+void MmeRefreshPortableParameters()
+{
+    auto* ctx = g_context;
+    auto* manager = g_ownerManager;
+    if (!ctx || !manager || !ctx->effectEnabled) {
+        return;
+    }
+    ctx->modelsByName.Clear();
+    const auto refresh = [&](bool accessory) {
+        const int count = accessory ? ExpGetAcsNum() : ExpGetPmdNum();
+        for (int i = 0; i < count; ++i) {
+            const auto id = reinterpret_cast<unsigned long long>(
+                accessory ? ExpGetAcsID(i) : ExpGetPmdID(i));
+            const auto found = ctx->modelRegistry.find(id);
+            if (found == ctx->modelRegistry.end() || !found->second) {
+                continue;
+            }
+            auto* model = found->second;
+            MmeRefreshObjectPlan(model, i);
+            if (accessory) {
+                MmeResolveAccessoryAttach(model, id);
+            }
+            ctx->modelsByName.Add(model->name(), model->passPlanScratch().renderOrder, model);
+        }
+    };
+    refresh(false);
+    refresh(true);
+    auto carriers = ctx->models;
+    carriers.erase(std::remove(carriers.begin(), carriers.end(), nullptr), carriers.end());
+    std::sort(carriers.begin(), carriers.end(), [](const auto* a, const auto* b) {
+        if (a->passPlanScratch().renderOrder != b->passPlanScratch().renderOrder)
+            return a->passPlanScratch().renderOrder < b->passPlanScratch().renderOrder;
+        return reinterpret_cast<uintptr_t>(a) < reinterpret_cast<uintptr_t>(b);
+    });
+    std::set<MaterialBinding*> visited;
+    for (auto* model : carriers) {
+        const auto update = [&](int subset) {
+            const auto found = manager->bindings.find({0, model, subset});
+            if (found != manager->bindings.end() && found->second &&
+                visited.insert(found->second).second) {
+                MmeUpdateControlObjects(model, found->second, nullptr);
+            }
+        };
+        update(-1);
+        if (model->renderClass() == 0) {
+            for (int subset = 0; subset < model->materialCount(); ++subset) {
+                update(subset);
+            }
+        }
+    }
+}
+
 void MmeSortPlanObjects(MmeContext* ctx,
                         const std::map<int, ModelData*>& orderMap)
 {

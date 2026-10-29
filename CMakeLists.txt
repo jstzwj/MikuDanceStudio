@@ -133,6 +133,8 @@ target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(mme_scene_plan_test tests/mme_scene_plan_test.cpp third_party/mmeffect/src/mme_scene_plan.cpp)
+    add_test(NAME mme_scene_plan COMMAND mme_scene_plan_test)
     add_executable(rhi_shader_contract_test tests/rhi_shader_contract_test.cpp)
     target_link_libraries(rhi_shader_contract_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_shader_contract COMMAND rhi_shader_contract_test)
@@ -853,6 +855,7 @@ include(cmake/D3dxRuntime.cmake)
 add_library(MMEffect STATIC
     third_party/mmeffect/src/mme_host.cpp
     third_party/mmeffect/src/mme_portable.cpp
+    third_party/mmeffect/src/mme_scene_plan.cpp
     third_party/mmeffect/src/mmhack/mmhack_registry.cpp
     third_party/mmeffect/src/mmhack/mmhack_material.cpp
     third_party/mmeffect/src/mmhack/mmhack_material_table.cpp
@@ -1064,6 +1067,7 @@ if(BUILD_TESTING)
         target_link_libraries(editor_frame_test PRIVATE mikudancestudio_core MMEffect dsound)
         target_link_options(editor_frame_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
         add_executable(mme_portable_shader_test tests/mme_portable_shader_test.cpp)
+        target_include_directories(mme_portable_shader_test PRIVATE third_party/mmeffect/src/mmeffect)
         target_compile_definitions(mme_portable_shader_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(mme_portable_shader_test PRIVATE mikudancestudio_core MMEffect dsound)
         add_executable(mme_mrt_hdr_test tests/mme_mrt_hdr_test.cpp)
@@ -1075,6 +1079,10 @@ if(BUILD_TESTING)
                (api STREQUAL "vulkan" AND MIKUDANCESTUDIO_RHI_VULKAN))
                 add_test(NAME editor_viewport_${api} COMMAND editor_viewport_test ${api})
                 add_test(NAME mme_portable_shader_${api} COMMAND mme_portable_shader_test ${api})
+                add_test(NAME mme_portable_controls_${api} COMMAND mme_portable_shader_test ${api} controls)
+                set_tests_properties(mme_portable_controls_${api} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "offscreen;MME;rhi;parameters" RUN_SERIAL TRUE)
+                add_test(NAME mme_scene_script_${api} COMMAND mme_portable_shader_test ${api} scene)
+                set_tests_properties(mme_scene_script_${api} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "offscreen;MME;rhi;SAS" RUN_SERIAL TRUE)
                 add_test(NAME mme_mrt_hdr_${api} COMMAND mme_mrt_hdr_test ${api})
                 set_tests_properties(mme_mrt_hdr_${api} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "offscreen;MME;rhi;MRT;HDR" RUN_SERIAL TRUE)
                 set_tests_properties(mme_portable_shader_${api} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "offscreen;MME;rhi" RUN_SERIAL TRUE)

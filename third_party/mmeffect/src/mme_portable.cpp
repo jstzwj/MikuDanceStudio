@@ -7,9 +7,15 @@
 #include "mmeffect/effect_engine.h"
 #include "mmeffect/sas_interpreter.h"
 #include "mmeffect/emm_manager.h"
+#include "mmeffect/pass_planner.h"
+#include "mmeffect/sas_exec.h"
+#include "../include/mmhack_api.h"
+#include "../include/MMDExport.h"
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <cstring>
+#include <sstream>
 namespace {
 std::string Text(ID3DXEffect* fx, D3DXHANDLE handle, const char* annotation = nullptr) {
     const char* value = nullptr;
@@ -23,6 +29,133 @@ std::string Compact(std::string text) {
                text.end());
     return text;
 }
+bool ControlAnnotations(ID3DXEffect* fx, D3DXHANDLE handle, unsigned count) {
+    bool name = false, item = false;
+    for (unsigned i = 0; i < count; ++i) {
+        auto a = fx->GetAnnotation(handle, i);
+        D3DXPARAMETER_DESC desc{};
+        const char* text = nullptr;
+        if (!a || FAILED(fx->GetParameterDesc(a, &desc)) || !desc.Name ||
+            desc.Type != D3DXPT_STRING || FAILED(fx->GetString(a, &text)))
+            return false;
+        if (!_stricmp(desc.Name, "Name") && !name)
+            name = true;
+        else if (!_stricmp(desc.Name, "Item") && !item)
+            item = true;
+        else
+            return false;
+    }
+    return name;
+}
+bool ReadParameter(ID3DXEffect* fx, D3DXHANDLE handle, const D3DXPARAMETER_DESC& p,
+                   MmePortableParameter& out) {
+    if ((p.Type != D3DXPT_FLOAT && p.Type != D3DXPT_INT && p.Type != D3DXPT_BOOL) || !p.Rows ||
+        p.Rows > 4 || !p.Columns || p.Columns > 4 || p.StructMembers || p.Elements > 256)
+        return false;
+    out.name = p.Name;
+    out.semantic = p.Semantic ? p.Semantic : "";
+    out.rows = p.Rows;
+    out.columns = p.Columns;
+    out.elements = p.Elements ? p.Elements : 1;
+    out.shared = (p.Flags & D3DX_PARAMETER_SHARED) != 0;
+    out.type = p.Type == D3DXPT_FLOAT  ? MmePortableParameter::Type::Float
+               : p.Type == D3DXPT_BOOL ? MmePortableParameter::Type::Bool
+                                       : MmePortableParameter::Type::Int;
+    const auto components = out.rows * out.columns * out.elements;
+    out.value.resize(components * 4);
+    if (p.Type == D3DXPT_FLOAT) {
+        std::vector<float> values(components);
+        if (FAILED(fx->GetFloatArray(handle, values.data(), components)))
+            return false;
+        std::memcpy(out.value.data(), values.data(), out.value.size());
+    } else {
+        std::vector<int> values(components);
+        const auto hr = p.Type == D3DXPT_BOOL ? fx->GetBoolArray(handle, values.data(), components)
+                                              : fx->GetIntArray(handle, values.data(), components);
+        if (FAILED(hr))
+            return false;
+        std::memcpy(out.value.data(), values.data(), out.value.size());
+    }
+    return true;
+}
+bool Visible(const mme::ModelData& object) {
+    const bool accessory = object.kind() == 0;
+    const int count = accessory ? ExpGetAcsNum() : ExpGetPmdNum();
+    for (int i = 0; i < count; ++i) {
+        const auto id =
+            reinterpret_cast<unsigned long long>(accessory ? ExpGetAcsID(i) : ExpGetPmdID(i));
+        if (id == object.objectId())
+            return accessory ? ExpGetAcsDisp(i) != 0 : ExpGetPmdDisp(i) != 0;
+    }
+    return false;
+}
+bool ExportScript(mme::SasEffect& sas, MmePortableEffect& out, std::string& reason) {
+    const auto color = GetClearColor();
+    out.scriptClearColor = {float((color >> 16) & 255) / 255, float((color >> 8) & 255) / 255,
+                            float(color & 255) / 255, float((color >> 24) & 255) / 255};
+    if (sas.techniques.size() != 1 || !sas.techniques[0].hasScript || sas.hasErrors) {
+        reason = "MME_scene_technique_script";
+        return false;
+    }
+    using K = MmePortableCommand::Kind;
+    for (const auto& cmd : sas.techniques[0].cmds) {
+        MmePortableCommand value{K::Pass};
+        value.value = cmd.value;
+        if (cmd.param && cmd.id != mme::kSasCmdPass) {
+            D3DXPARAMETER_DESC p{};
+            if (FAILED(sas.effect->GetParameterDesc(cmd.param, &p)) || !p.Name) {
+                reason = "MME_scene_command_parameter";
+                return false;
+            }
+            value.parameter = p.Name;
+        }
+        switch (cmd.id) {
+        case mme::kSasCmdPass:
+            value.kind = K::Pass;
+            break;
+        case mme::kSasCmdRenderColorTarget0:
+        case mme::kSasCmdRenderColorTarget1:
+        case mme::kSasCmdRenderColorTarget2:
+        case mme::kSasCmdRenderColorTarget3:
+            if (cmd.param && cmd.value >= 0) {
+                reason = "MME_scene_texture_subresource";
+                return false;
+            }
+            value.kind = K::ColorTarget;
+            value.value = cmd.id - mme::kSasCmdRenderColorTarget0;
+            break;
+        case mme::kSasCmdRenderDepthTarget:
+            value.kind = K::DepthTarget;
+            break;
+        case mme::kSasCmdClearSetColor:
+            value.kind = K::ClearColorValue;
+            break;
+        case mme::kSasCmdClearSetDepth:
+            value.kind = K::ClearDepthValue;
+            break;
+        case mme::kSasCmdClear:
+            value.kind = K::Clear;
+            break;
+        case mme::kSasCmdScriptExternal:
+            value.kind = K::Capture;
+            break;
+        case mme::kSasCmdLoopByCount:
+            value.kind = K::Loop;
+            break;
+        case mme::kSasCmdLoopGetIndex:
+            value.kind = K::LoopIndex;
+            break;
+        case mme::kSasCmdLoopEnd:
+            value.kind = K::LoopEnd;
+            break;
+        default:
+            reason = "MME_scene_command_not_supported";
+            return false;
+        }
+        out.script.push_back(std::move(value));
+    }
+    return MmePortableSceneLayout(out, reason);
+}
 bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBinding& binding,
               MmePortableEffect& out, std::string& reason) {
     const auto fail = [&](const char* r) {
@@ -34,7 +167,8 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
         return fail("MME_portable_source_or_turn");
     const auto profile = Text(fx, fx->GetParameterByName(nullptr, "MDSRhiProfile"));
     const bool hdr = profile == "mrt-hdr-v1";
-    if (profile != "material-v1" && profile != "post-v1" && !hdr)
+    const bool scene = profile == "scene-v2";
+    if (profile != "material-v1" && profile != "post-v1" && !hdr && !scene)
         return fail("MME_profile_not_supported");
     out.object = key.model->objectId();
     out.subset = key.subset;
@@ -67,10 +201,45 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     for (UINT n = 0; n < effect.Parameters; ++n) {
         D3DXPARAMETER_DESC p{};
         auto h = fx->GetParameter(nullptr, n);
-        if (FAILED(fx->GetParameterDesc(h, &p)) || !p.Name ||
-            !(out.post ? post : material).count(p.Name))
+        if (FAILED(fx->GetParameterDesc(h, &p)) || !p.Name)
             return fail("MME_parameter_not_supported");
         const std::string name = p.Name;
+        if (scene && p.Type >= D3DXPT_SAMPLER && p.Type <= D3DXPT_SAMPLERCUBE) {
+            if ((p.Type != D3DXPT_SAMPLER && p.Type != D3DXPT_SAMPLER2D) || p.Annotations ||
+                p.Elements)
+                return fail("MME_sampler_parameter_layout");
+            continue;
+        }
+        if (scene && p.Type >= D3DXPT_TEXTURE && p.Type <= D3DXPT_TEXTURECUBE) {
+            if ((p.Type != D3DXPT_TEXTURE && p.Type != D3DXPT_TEXTURE2D) || p.Elements ||
+                p.Annotations != 1)
+                return fail("MME_scene_target_annotations");
+            const bool depth = p.Semantic && !_stricmp(p.Semantic, "RENDERDEPTHSTENCILTARGET");
+            if (!depth && (!p.Semantic || _stricmp(p.Semantic, "RENDERCOLORTARGET")))
+                return fail("MME_scene_resource_semantic");
+            const auto format = Text(fx, h, "Format");
+            if ((depth && format != "D24S8") ||
+                (!depth && format != "A8R8G8B8" && format != "A16B16G16R16F"))
+                return fail("MME_target_format_or_extent_not_supported");
+            out.targets.push_back({name,
+                                   format == "A16B16G16R16F" ? MmePortableFormat::Rgba16Float
+                                                             : MmePortableFormat::Rgba8,
+                                   depth});
+            continue;
+        }
+        if (!(out.post ? post : material).count(name)) {
+            const bool control = p.Semantic && !_stricmp(p.Semantic, "CONTROLOBJECT");
+            if (p.Semantic && *p.Semantic && !control)
+                return fail("MME_parameter_semantic_not_supported");
+            if ((!control && p.Annotations) ||
+                (control && !ControlAnnotations(fx, h, p.Annotations)))
+                return fail("MME_parameter_annotations_not_supported");
+            MmePortableParameter value;
+            if (!ReadParameter(fx, h, p, value))
+                return fail("MME_constant_parameter_layout");
+            out.parameters.push_back(std::move(value));
+            continue;
+        }
         const char* semantic = name == "worldViewProjection" ? "WORLDVIEWPROJECTION"
                                : name == "materialDiffuse"   ? "DIFFUSE"
                                : name == "viewportSize"      ? "VIEWPORTPIXELSIZE"
@@ -134,10 +303,10 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     for (int n = 0; n < count; ++n) {
         mme::SasTechniqueInfo t{};
         if (!mme::SasGetTechniqueInfo(binding.sas, n, &t) || !t.hardwareOk || !t.shaderMixOk ||
-            t.passCount != (out.post ? (hdr ? 4 : 2) : 1) ||
+            (!scene && t.passCount != (out.post ? (hdr ? 4 : 2) : 1)) ||
             (!out.post && (t.hasScript || (t.mmdPass != 0 && t.mmdPass != 1))))
             return fail("MME_technique_not_supported");
-        if (out.post &&
+        if (out.post && !scene &&
             Compact(Text(fx, t.handle, "Script")) !=
                 (hdr ? "RenderColorTarget0=SceneColor;RenderDepthStencilTarget=Depth;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget0=LayerA;RenderColorTarget1=LayerB;RenderDepthStencilTarget=;Pass=Split;RenderColorTarget1=;RenderColorTarget0=Hdr;Pass=Combine;RenderColorTarget0=Tone;Pass=ToneMap;RenderColorTarget0=;Pass=Finish;"
                      : "RenderColorTarget0=SceneColor;RenderDepthStencilTarget=Depth;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget0=Ping;Pass=Grade;RenderColorTarget0=;RenderDepthStencilTarget=;Pass=Finish;"))
@@ -154,15 +323,51 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
                                   Text(fx, h, "MDSRhiPS")};
             const char* hdrNames[] = {"Split", "Combine", "ToneMap", "Finish"};
             if (value.vertex.empty() || value.pixel.empty() ||
-                (out.post && value.name != (hdr ? hdrNames[p] : (p ? "Finish" : "Grade"))))
+                (out.post && !scene &&
+                 value.name != (hdr ? hdrNames[p] : (p ? "Finish" : "Grade"))))
                 return fail("MME_pass_not_supported");
+            if (scene) {
+                std::istringstream inputs(Compact(Text(fx, h, "MDSRhiInputs")));
+                std::string input;
+                while (std::getline(inputs, input, ',')) {
+                    if (input.empty())
+                        return fail("MME_scene_input_layout");
+                    value.sampled.push_back(input);
+                }
+                if (value.sampled.size() > 4)
+                    return fail("MME_scene_input_layout");
+            }
             out.passes.push_back(std::move(value));
         }
     }
+    if (scene)
+        return ExportScript(*binding.sas, out, reason);
     if (out.post && !MmePortablePostLayout(out, reason))
         return false;
     return !out.passes.empty() || fail("MME_empty_effect");
 }
+}
+void MmePortablePrepareParameters() {
+    mme::MmeRefreshPortableParameters();
+}
+void MmePortableCommitParameters(const MmePortableEffect& effect) {
+    if (!MmeHostEffectsEnabled() || !mme::g_ownerManager || effect.writes.empty())
+        return;
+    for (const auto& entry : mme::g_ownerManager->bindings) {
+        const auto* binding = entry.second;
+        if (entry.first.turnId || !entry.first.model || !binding || !binding->effect ||
+            entry.first.model->objectId() != effect.object || entry.first.subset != effect.subset ||
+            !binding->instance || binding->instance->originalSource != effect.source)
+            continue;
+        for (const auto& p : effect.writes) {
+            if (p.shared || p.type != MmePortableParameter::Type::Int || p.value.size() != 4)
+                continue;
+            int value = 0;
+            std::memcpy(&value, p.value.data(), 4);
+            binding->effect->SetInt(p.name.c_str(), value);
+        }
+        return;
+    }
 }
 bool MmePortablePostLayout(MmePortableEffect& effect, std::string& reason) {
     const bool hdr = effect.profile == "mrt-hdr-v1";
@@ -228,6 +433,8 @@ bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason
         MmePortableEffect value;
         if (!Describe(entry.first, *entry.second, value, reason))
             return false;
+        if (value.post && !Visible(*entry.first.model))
+            continue;
         if (value.post && ++posts > 1) {
             reason = "MME_multiple_post_effects";
             return false;

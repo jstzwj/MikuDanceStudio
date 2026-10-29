@@ -63,6 +63,9 @@ void MmeResetObjectPlanState(ModelData* model);
 // [0x180059aa0] FUN_180059aa0: refresh the per-object plan scratch from the
 // host (host index, |order|, visibility, accessory world matrix).
 void MmeRefreshObjectPlan(ModelData* model, int hostIndex);
+// Refresh names/placement/attachments and evaluate live base-assignment controls
+// without changing native targets, planner queues or suspended script state.
+void MmeRefreshPortableParameters();
 
 // [0x18002baa0 + 0x18005fd30] FUN_18002baa0: sort the scanned objects by
 // |order|, split renderClass 1/2 into ctx+0xb8/ctx+0xd8, publish the extra

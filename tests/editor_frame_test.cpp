@@ -655,6 +655,124 @@ int main(int argc, char** argv) try {
             frame(true);
             CHECK(image().pixels == graded);
         }
+        const auto controlsPath = (sourceRoot / L"assets/effects/portable/ControlPost.fx").string();
+        const auto controlMaterial =
+            (sourceRoot / L"assets/effects/portable/ControlMaterial.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, controlsPath));
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     controlMaterial));
+        if (!CheckPortableMme(portableReason))
+            throw std::runtime_error(portableReason);
+        frame(runtimeEffects);
+        const auto controlBaseline = image().pixels;
+        std::vector<MmePortableEffect> controlEffects;
+        CHECK(MmePortableEffects(controlEffects, portableReason));
+        const auto exportedControl = std::find_if(controlEffects.begin(), controlEffects.end(),
+            [&](const auto& e) { return e.object == reinterpret_cast<std::uintptr_t>(&carrier); });
+        CHECK(exportedControl != controlEffects.end());
+        const auto exposure = std::find_if(exportedControl->parameters.begin(),
+            exportedControl->parameters.end(), [](const auto& p) { return p.name == "sharedExposure"; });
+        CHECK(exposure != exportedControl->parameters.end() && exposure->shared &&
+              exposure->type == MmePortableParameter::Type::Float && exposure->value.size() == 4);
+        carrier.position[0] = 2;
+        carrier.position[1] = 4;
+        frame(runtimeEffects);
+        float position[4]{}, world[16]{};
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetFloatArray("controlPosition", position, 4)));
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetFloatArray("controlWorld", world, 16)));
+        CHECK(position[0] == 2 && position[1] == 4 && world[12] == 2 && world[13] == 4);
+        if (runtimeEffects)
+            CHECK(image().pixels != controlBaseline);
+        CHECK(SUCCEEDED(assignedEffect(model.get())->SetFloat("sharedExposure", .25f)));
+        float shared = 0;
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetFloat("sharedExposure", &shared)) &&
+              shared == .25f);
+        frame(runtimeEffects);
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetFloat("sharedExposure", &shared)) &&
+              shared == .25f);
+        carrier.position[0] = carrier.position[1] = 0;
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloat("sharedExposure", 1)));
+        frame(runtimeEffects);
+        if (runtimeEffects) {
+            CHECK(image().pixels == controlBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == controlBaseline);
+        }
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     materialEffect));
+        const auto sceneScript = (sourceRoot / L"assets/effects/portable/SceneScript.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, sceneScript));
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->SetInt("iteration", 77)));
+        if (!CheckPortableMme(portableReason))
+            throw std::runtime_error(portableReason);
+        int untouchedIndex = -1;
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetInt("iteration", &untouchedIndex)) &&
+              untouchedIndex == 77); // Eligibility cannot execute the script.
+        frame(runtimeEffects);
+        const auto scriptBaseline = image().pixels;
+        int scriptIndex = -1;
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetInt("iteration", &scriptIndex)) &&
+              scriptIndex == 1);
+        if (runtimeEffects)
+            CHECK(scriptBaseline[0] >= 174 && scriptBaseline[0] <= 176);
+        carrier.visible = 0;
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels[0] == 255);
+        carrier.visible = 1;
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels == scriptBaseline);
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->SetInt("iterations", 3)));
+        frame(runtimeEffects);
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->GetInt("iteration", &scriptIndex)) &&
+              scriptIndex == 2);
+        if (runtimeEffects)
+            CHECK(image().pixels[0] >= 190 && image().pixels[0] <= 192);
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->SetInt("iterations", 0)));
+        CHECK(CheckPortableMme(portableReason));
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels[0] == 255);
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->SetInt("iterations", -4097)));
+        CHECK(!CheckPortableMme(portableReason));
+        const auto beforeScriptFallback = app->ViewportRenderer().Statistics();
+        frame(false);
+        CHECK(app->ViewportRenderer().Statistics().submissions == beforeScriptFallback.submissions);
+        CHECK(SUCCEEDED(assignedEffect(&carrier)->SetInt("iterations", 2)));
+        CHECK(CheckPortableMme(portableReason));
+        frame(runtimeEffects);
+        if (runtimeEffects) {
+            CHECK(image().pixels == scriptBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == scriptBaseline);
+        }
+        // Keep the live effect/pool and control object across backend ownership
+        // changes. Normal native frames must still execute zero DX9 scene draws.
+        auto switchBaseline = runtimeEffects ? scriptBaseline : SnapshotBytes{};
+        for (const auto selected :
+             {Backend::D3D9, Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+            if (selected != Backend::D3D9 && !BackendAvailable(selected))
+                continue;
+            CHECK(app->ViewportRenderer().Select(*app, selected, false));
+            if (selected == Backend::D3D9) {
+                frame(false);
+                continue;
+            }
+            const bool shaderSupport = selected != Backend::Vulkan ||
+                                       (sizeof(void*) == 8 && runtimeEffects);
+            frame(shaderSupport);
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->GetFloat("sharedExposure", &shared)) &&
+                  shared == 1);
+            if (shaderSupport) {
+                CHECK(app->ViewportRenderer().GetDevice()->ShaderFeatures().hlsl);
+                if (switchBaseline.empty())
+                    switchBaseline = image().pixels;
+                CHECK(image().pixels == switchBaseline);
+            }
+        }
         const auto hdrPath = (sourceRoot / L"assets/effects/portable/MrtHdr.fx").string();
         CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, hdrPath));
         if (!CheckPortableMme(portableReason))
