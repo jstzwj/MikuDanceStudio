@@ -220,8 +220,6 @@ struct EditorViewport::Impl {
         }
     }
 };
-EditorViewport::EditorViewport() = default;
-EditorViewport::~EditorViewport() = default;
 bool EditorViewport::Requested() const {
     return impl && impl->selected != Backend::D3D9;
 }
@@ -243,7 +241,7 @@ std::uintptr_t EditorViewport::Window() const {
 }
 void EditorViewport::InstallMenu(MMDApp& app) {
     if (!impl)
-        impl = std::make_unique<Impl>();
+        impl = std::make_shared<Impl>();
     if (!impl->loadedSettings && app.ExeDir()[0]) {
         impl->loadedSettings = true;
         wchar_t value[32]{};
@@ -262,7 +260,7 @@ void EditorViewport::InstallMenu(MMDApp& app) {
 }
 bool EditorViewport::Select(MMDApp& app, Backend selected, bool persist) {
     if (!impl)
-        impl = std::make_unique<Impl>();
+        impl = std::make_shared<Impl>();
     impl->loadedSettings = true;
     if (selected != Backend::D3D9 && !BackendAvailable(selected)) {
         impl->reason = "backend_not_built";
@@ -417,8 +415,6 @@ bool EditorRhiRequested() {
 #else
 namespace mikudancestudio {
 struct EditorViewport::Impl {};
-EditorViewport::EditorViewport() = default;
-EditorViewport::~EditorViewport() = default;
 bool EditorViewport::Requested() const {
     return false;
 }

@@ -16,8 +16,10 @@ constexpr unsigned EditorDX9Command = 0xe140, EditorDX11Command = 0xe141,
 // animation and physics owner; this host only owns rendering and presentation.
 class EditorViewport {
 public:
-    EditorViewport();
-    ~EditorViewport();
+    EditorViewport() = default;
+    ~EditorViewport() = default;
+    EditorViewport(const EditorViewport&) = delete;
+    EditorViewport& operator=(const EditorViewport&) = delete;
     bool Requested() const;
     bool OwnsPresentation() const;
     rhi::Backend Selected() const;
@@ -36,7 +38,10 @@ public:
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> impl;
+    // Type-erased destruction keeps an unused viewport independent of the
+    // rendering implementation in standalone CPU/editor tests. Copies of the
+    // viewport remain forbidden; Impl still owns and retires all GPU resources.
+    std::shared_ptr<Impl> impl;
 };
 bool EditorRhiRequested();
 }

@@ -1,6 +1,7 @@
 // A separate copy of the adapter exists only inside the diagnostic executable.
 // No application can create this backend through the production factory.
 #define CreateD3D11Device CreateD3D11WCandidateInternal
+#define CreateD3D11OffscreenDevice CreateD3D11WCandidateOffscreenDevice
 #define ReadD3D11Swapchain ReadD3D11WCandidateSwapchain
 #define ResizeD3D11Offscreen ResizeD3D11WCandidateOffscreen
 #define ReadD3D11Offscreen ReadD3D11WCandidateOffscreen
