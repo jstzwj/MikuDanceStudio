@@ -1,4 +1,5 @@
 #include "mikudancestudio/rhi_frame_passes.hpp"
+#include "mikudancestudio/rhi_post_process.hpp"
 #include "material_sampling_fixture.hpp"
 #include <cstdio>
 using namespace mikudancestudio::rhi;
@@ -109,6 +110,18 @@ int main() {
     rejected = sampled;
     rejected.passes[1].sampled = {1};
     CHECK(ValidateRenderFrame(rejected).reason == "attachment_feedback");
+    auto post = f;
+    CHECK(AppendPostProcess(post, 2, 10, 17, 13));
+    CHECK(post.finalColor == 10 && ValidateRenderFrame(post));
+    CHECK(!AppendPostProcess(post, 10, 10, 17, 13));
+    CHECK(!AppendPostProcess(post, 1, 11, 17, 13)); // R32 is not an RGBA color input
+    CHECK(!AppendPostProcess(post, 10, 11, 0, 13));
+    PostProcessState invalid{PostProcessMode::ColorTransform};
+    invalid.uvRect = {2, 1, 0, 0};
+    CHECK(!AppendPostProcess(post, 10, 11, 17, 13, invalid));
+    CHECK(post.finalColor == 10 && post.passes.size() == f.passes.size() + 1);
+    post.passes.back().draws[0].pipeline.raster.alphaBlend = true;
+    CHECK(ValidateRenderFrame(post).reason == "invalid_postprocess_pipeline");
     std::puts(
         "frame graph: ordered dependencies, attachments, discard and unsupported ranges passed");
 }

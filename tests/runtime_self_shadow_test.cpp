@@ -7,6 +7,7 @@
 #include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "self_shadow_dx9_reference.hpp"
+#include "mikudancestudio/rhi_post_process.hpp"
 #include "self_shadow_compare.hpp"
 #include <dbghelp.h>
 #include <algorithm>
@@ -147,6 +148,10 @@ int main(int argc, char** argv) try {
                   !frame.passes[1].draws.empty());
             CHECK(ApplyMaterialSampling(frame, samplingPolicy));
             frame.finalColor = 1;
+            // Preserve the original frame for the independent SM3 oracle.
+            const auto referenceFrame = frame;
+            CHECK(AppendPostProcess(frame, 1, 5, width, 96));
+            CHECK(AppendPostProcess(frame, 5, 6, width, 96));
             CHECK(ValidateRenderFrame(frame));
             // Main and caster packets must share immutable geometry IDs/versions.
             for (const auto& cast : frame.passes[0].draws)
@@ -168,7 +173,7 @@ int main(int argc, char** argv) try {
             CHECK(renderer.Submit(prepared, token));
             AttachmentReadback repeated;
             CHECK(renderer.ReadTarget(1, 1, repeated) && repeated.bytes == color.bytes);
-            reference.Render(frame);
+            reference.Render(referenceFrame);
             const auto nativeColor = reference.Read(1), nativeDepth = reference.Read(3);
             const auto c = Compare(color, nativeColor), d = Compare(depth, nativeDepth);
             std::cout << "mode=" << mode << " size=" << width << " color_channels=" << c.elements

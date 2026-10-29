@@ -4,3 +4,4 @@ static const char* modelPixelSource=R"MDS(@MDS_MODEL_PS@)MDS";
 static const char* modelDx9CompatibilitySource=R"MDS(@MDS_MODEL_DX9_COMPATIBILITY@)MDS";
 static const char* fixedScreenSource=R"MDS(@MDS_FIXED_SCREEN@)MDS";
 static const char* builtinShadowSource=R"MDS(@MDS_BUILTIN_SHADOW@)MDS";
+static const char* postProcessSource=R"MDS(@MDS_POST_PROCESS@)MDS";

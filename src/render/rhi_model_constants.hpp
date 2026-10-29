@@ -3,6 +3,14 @@
 #include "mikudancestudio/rhi_model_shader_constants.hpp"
 
 namespace mikudancestudio::rhi::detail {
+struct PostProcessConstants {
+    std::array<float, 4> multiply, add, uvRect;
+    std::array<unsigned, 4> options;
+};
+inline PostProcessConstants BuildPostProcessConstants(const ModelPipeline& p) {
+    const auto& s = p.postProcess;
+    return {s.multiply, s.add, s.uvRect, {unsigned(s.mode), unsigned(s.linear), 0, 0}};
+}
 inline BuiltinShadowConstants BuildBuiltinShadowConstants(const ModelPipeline& p,
                                                           const ModelViewport& viewport) {
     const auto& s = p.shadow;

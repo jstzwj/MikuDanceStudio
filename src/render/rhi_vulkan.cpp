@@ -203,6 +203,7 @@ public:
     std::map<std::string, VkSampler> samplers;
     VkShaderModule modelVs = VK_NULL_HANDLE, colorVs = VK_NULL_HANDLE, modelPs = VK_NULL_HANDLE;
     VkShaderModule shadowVs = VK_NULL_HANDLE, outlineVs = VK_NULL_HANDLE, shadowPs = VK_NULL_HANDLE;
+    VkShaderModule postVs = VK_NULL_HANDLE, postPs = VK_NULL_HANDLE;
     std::string reason;
 #ifdef _WIN32
     PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR = nullptr;
@@ -286,7 +287,8 @@ public:
                 vkDestroyPipeline(native, p.second, nullptr);
             for (auto s : samplers)
                 vkDestroySampler(native, s.second, nullptr);
-            for (auto module : {modelVs, colorVs, modelPs, shadowVs, outlineVs, shadowPs})
+            for (auto module :
+                 {modelVs, colorVs, modelPs, shadowVs, outlineVs, shadowPs, postVs, postPs})
                 if (module)
                     vkDestroyShaderModule(native, module, nullptr);
             if (pipelineLayout)
@@ -1610,7 +1612,8 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     };
     if (!module(spirv::model_vertex, modelVs) || !module(spirv::color_vertex, colorVs) ||
         !module(spirv::model_pixel, modelPs) || !module(spirv::shadow_vertex, shadowVs) ||
-        !module(spirv::outline_vertex, outlineVs) || !module(spirv::shadow_pixel, shadowPs))
+        !module(spirv::outline_vertex, outlineVs) || !module(spirv::shadow_pixel, shadowPs) ||
+        !module(spirv::post_vertex, postVs) || !module(spirv::post_pixel, postPs))
         return false;
     white.texture = {1, 1, TextureFormat::Rgba8};
     if (!AllocateImage(1, 1, VK_FORMAT_R8G8B8A8_UNORM, 1,
@@ -1641,6 +1644,7 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
                        unsigned(p.vertexLayout),
                        unsigned(p.topology),
                        unsigned(p.shadow.mode),
+                       unsigned(p.postProcess.mode),
                        unsigned(p.raster.cull),
                        unsigned(p.raster.depthTest),
                        unsigned(p.raster.depthWrite),
@@ -1679,6 +1683,12 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
     stages[0].pName = builtin ? (outline ? "shadow_outline_vs" : "shadow_vs") : "main";
     stages[1].module = builtin ? shadowPs : modelPs;
     stages[1].pName = builtin ? "shadow_ps" : "main";
+    if (p.postProcess.mode != PostProcessMode::None) {
+        stages[0].module = postVs;
+        stages[0].pName = "post_vs";
+        stages[1].module = postPs;
+        stages[1].pName = "post_ps";
+    }
     VkVertexInputBindingDescription binding{0, ModelVertexStride(p.vertexLayout),
                                             VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription attrs[] = {{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
@@ -1694,6 +1704,10 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
     vi.pVertexBindingDescriptions = &binding;
     vi.vertexAttributeDescriptionCount = p.vertexLayout == VertexLayout::PositionColor ? 2 : 3;
     vi.pVertexAttributeDescriptions = attrs;
+    if (p.postProcess.mode != PostProcessMode::None) {
+        attrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, 24};
+        vi.vertexAttributeDescriptionCount = 2;
+    }
     VkPipelineInputAssemblyStateCreateInfo ia{
         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = p.topology == PrimitiveTopology::LineList ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
@@ -1776,7 +1790,7 @@ bool VulkanDevice::SetModelPipeline(const ModelPipeline& p) {
     const auto& s = p.shader;
     std::array<float, 4> evaluated;
     std::array<std::array<float, 4>, 3> samples{};
-    if (!Live() || !inFrame || !ValidBuiltinShadowState(p.shadow) ||
+    if (!Live() || !inFrame || !ValidPostProcess(p) || !ValidBuiltinShadowState(p.shadow) ||
         (p.shadow.mode != BuiltinShadowMode::None &&
          (!passes.Active() || p.vertexLayout != BuiltinShadowVertexLayout(p.shadow.mode) ||
           p.topology != PrimitiveTopology::TriangleList)) ||
@@ -1918,6 +1932,9 @@ bool VulkanDevice::BindDraw() {
         !uniform(2, shadowConstants))
         return false;
     buffers[3] = buffers[2];
+    if (pipeline.postProcess.mode != PostProcessMode::None &&
+        !uniform(3, detail::BuildPostProcessConstants(pipeline)))
+        return false;
     VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     alloc.descriptorPool = f.descriptors;
     alloc.descriptorSetCount = 1;

@@ -5,6 +5,7 @@
 #include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_d3d12.hpp"
 #include "material_sampling_fixture.hpp"
+#include "mikudancestudio/rhi_post_process.hpp"
 #include <cstdio>
 #include <stdexcept>
 using namespace mikudancestudio::rhi;
@@ -76,13 +77,15 @@ int main(int argc, char** argv) try {
                 target.description.height = height;
             }
         frame.finalColor = 1;
+        CHECK(AppendPostProcess(frame, 1, 5, width, height));
+        CHECK(AppendPostProcess(frame, 5, 6, width, height));
         auto expectedFrame = frame;
         CHECK(ApplyMaterialSampling(expectedFrame, options.materialSampling));
         PreparedModelFrame prepared;
         CompletionToken token;
         AttachmentReadback expected;
         CHECK(offscreen.Prepare(1, expectedFrame, prepared) && offscreen.Submit(prepared, token) &&
-              offscreen.ReadTarget(1, 1, expected));
+              offscreen.ReadTarget(1, 6, expected));
         RgbaImage presented;
         CHECK(controller.Draw(frame, &presented));
         CHECK(presented.width == width && presented.height == height &&

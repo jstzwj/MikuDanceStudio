@@ -111,6 +111,18 @@ inline VertexLayout BuiltinShadowVertexLayout(BuiltinShadowMode mode) {
     return mode == BuiltinShadowMode::Outline ? VertexLayout::PositionColor
                                               : VertexLayout::PositionNormalUv;
 }
+enum class PostProcessMode {
+    None,
+    Copy,
+    ColorTransform
+};
+struct PostProcessState {
+    PostProcessMode mode = PostProcessMode::None;
+    std::array<float, 4> multiply{1, 1, 1, 1}, add{};
+    // Normalized source rectangle, scale XY then bias XY; top-left origin.
+    std::array<float, 4> uvRect{1, 1, 0, 0};
+    bool linear = false;
+};
 struct ModelPipeline {
     // PositionColor: float3 + RGBA8 (16 bytes), no normal or UV attributes.
     // PositionNormalUv: float3 + float3 + float2 (32 bytes).
@@ -130,7 +142,29 @@ struct ModelPipeline {
                    stencilPass = ModelStencilOp::Keep;
     PrimitiveTopology topology = PrimitiveTopology::TriangleList;
     BuiltinShadowState shadow;
+    PostProcessState postProcess;
 };
+inline bool ValidPostProcess(const ModelPipeline& p) {
+    const auto& s = p.postProcess;
+    if (s.mode == PostProcessMode::None)
+        return true;
+    if (s.mode != PostProcessMode::Copy && s.mode != PostProcessMode::ColorTransform)
+        return false;
+    for (const auto* a : {&s.multiply, &s.add, &s.uvRect})
+        for (float v : *a)
+            if (!std::isfinite(v))
+                return false;
+    if (s.uvRect[0] <= 0 || s.uvRect[1] <= 0 || s.uvRect[2] < 0 || s.uvRect[3] < 0 ||
+        s.uvRect[0] + s.uvRect[2] > 1.000001f || s.uvRect[1] + s.uvRect[3] > 1.000001f)
+        return false;
+    return p.vertexLayout == VertexLayout::PositionNormalUv &&
+           p.topology == PrimitiveTopology::TriangleList &&
+           p.shadow.mode == BuiltinShadowMode::None && !p.raster.depthTest &&
+           !p.raster.depthWrite && !p.raster.alphaBlend && !p.stencil && p.colorWriteMask == 15 &&
+           p.shader.layout.stages[0].role == MaterialTextureRole::Base &&
+           p.shader.layout.stages[1].role == MaterialTextureRole::None &&
+           p.shader.layout.stages[2].role == MaterialTextureRole::None && !p.shader.srgbSample[0];
+}
 inline unsigned ModelPrimitiveArity(PrimitiveTopology topology) {
     return topology == PrimitiveTopology::TriangleList ? 3
            : topology == PrimitiveTopology::LineList   ? 2

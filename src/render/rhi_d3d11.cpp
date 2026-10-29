@@ -56,6 +56,57 @@ public:
     ComPtr<ID3D11InputLayout> shadowLayout, shadowOutlineLayout;
     ComPtr<ID3D11Buffer> shadowConstants;
     ComPtr<ID3D11SamplerState> shadowSampler;
+    ComPtr<ID3D11VertexShader> postVs;
+    ComPtr<ID3D11PixelShader> postPs;
+    ComPtr<ID3D11InputLayout> postLayout;
+    ComPtr<ID3D11Buffer> postConstants;
+    bool SetPostProcess(const ModelPipeline& p) {
+        if (p.postProcess.mode == PostProcessMode::None)
+            return true;
+        if (!postConstants) {
+            postVs.Reset();
+            postPs.Reset();
+            postLayout.Reset();
+            ComPtr<ID3DBlob> vertex, pixel, errors;
+            lastError = D3DCompile(postProcessSource, std::strlen(postProcessSource), nullptr,
+                                   nullptr, nullptr, "post_vs", "vs_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &vertex, &errors);
+            if (SUCCEEDED(lastError))
+                lastError = D3DCompile(postProcessSource, std::strlen(postProcessSource), nullptr,
+                                       nullptr, nullptr, "post_ps", "ps_5_0",
+                                       D3DCOMPILE_IEEE_STRICTNESS, 0, &pixel, &errors);
+            if (FAILED(lastError))
+                return false;
+            lastError = native->CreateVertexShader(vertex->GetBufferPointer(),
+                                                   vertex->GetBufferSize(), nullptr, &postVs);
+            if (SUCCEEDED(lastError))
+                lastError = native->CreatePixelShader(pixel->GetBufferPointer(),
+                                                      pixel->GetBufferSize(), nullptr, &postPs);
+            if (FAILED(lastError))
+                return false;
+            const D3D11_INPUT_ELEMENT_DESC elements[] = {
+                {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+            lastError = native->CreateInputLayout(elements, 2, vertex->GetBufferPointer(),
+                                                  vertex->GetBufferSize(), &postLayout);
+            if (FAILED(lastError))
+                return false;
+            D3D11_BUFFER_DESC b{};
+            b.ByteWidth = sizeof(detail::PostProcessConstants);
+            b.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            lastError = native->CreateBuffer(&b, nullptr, &postConstants);
+            if (FAILED(lastError))
+                return false;
+        }
+        const auto c = detail::BuildPostProcessConstants(p);
+        context->UpdateSubresource(postConstants.Get(), 0, nullptr, &c, 0, 0);
+        auto* cb = postConstants.Get();
+        context->PSSetConstantBuffers(2, 1, &cb);
+        context->IASetInputLayout(postLayout.Get());
+        context->VSSetShader(postVs.Get(), nullptr, 0);
+        context->PSSetShader(postPs.Get(), nullptr, 0);
+        return true;
+    }
     bool SetBuiltinShadow(const ModelPipeline& p, const ModelViewport& viewport) {
         shadowTexture = {};
         ID3D11ShaderResourceView* empty = nullptr;
@@ -891,7 +942,7 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     std::array<float, 4> evaluated;
     std::array<std::array<float, 4>, 3> samples{};
     if (!ModelVertexStride(p.vertexLayout) || !ModelPrimitiveArity(p.topology) || !Live() ||
-        !inFrame || !ValidateMaterialShaderInputs(s) ||
+        !inFrame || !ValidPostProcess(p) || !ValidateMaterialShaderInputs(s) ||
         !EvaluateMaterialTextureCascade(s.layout, {1, 1, 1, 1}, samples, evaluated) ||
         static_cast<unsigned>(p.raster.depthCompare) > 7 ||
         static_cast<unsigned>(p.raster.cull) > 2 || !Blend(p.raster.sourceBlend) ||
@@ -1190,7 +1241,7 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     }
 #endif
     context->RSSetViewports(1, &nativeViewport);
-    if (!SetBuiltinShadow(p, viewport))
+    if (!SetBuiltinShadow(p, viewport) || !SetPostProcess(p))
         return false;
     modelPipeline = p;
     modelReady = true;

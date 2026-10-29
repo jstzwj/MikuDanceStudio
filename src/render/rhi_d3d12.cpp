@@ -110,6 +110,7 @@ public:
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3DBlob> vertex, colorVertex, pixel;
     ComPtr<ID3DBlob> screenVertex, screenPixel, shadowVertex, shadowOutlineVertex, shadowPixel;
+    ComPtr<ID3DBlob> postVertex, postPixel;
     Handle shadowTexture;
     std::map<std::string, ComPtr<ID3D12PipelineState>> pipelines;
     std::array<Frame, FrameCount> frames;
@@ -924,9 +925,17 @@ public:
             lastError = D3DCompile(builtinShadowSource, std::strlen(builtinShadowSource), nullptr,
                                    nullptr, nullptr, "shadow_ps", "ps_5_0",
                                    D3DCOMPILE_IEEE_STRICTNESS, 0, &shadowPixel, &errors);
+        if (SUCCEEDED(lastError))
+            lastError = D3DCompile(postProcessSource, std::strlen(postProcessSource), nullptr,
+                                   nullptr, nullptr, "post_vs", "vs_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &postVertex, &errors);
+        if (SUCCEEDED(lastError))
+            lastError = D3DCompile(postProcessSource, std::strlen(postProcessSource), nullptr,
+                                   nullptr, nullptr, "post_ps", "ps_5_0",
+                                   D3DCOMPILE_IEEE_STRICTNESS, 0, &postPixel, &errors);
         if (FAILED(lastError)) {
             if (errors)
-                std::fprintf(stderr, "shadow shader: %s\n",
+                std::fprintf(stderr, "builtin shader: %s\n",
                              static_cast<const char*>(errors->GetBufferPointer()));
             return false;
         }
@@ -1213,6 +1222,7 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     append(d.NumRenderTargets);
     append(layout);
     append(p.shadow.mode);
+    append(p.postProcess.mode);
     auto state = pipelines.find(key);
     if (state == pipelines.end()) {
         d.InputLayout =
@@ -1238,7 +1248,7 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
     std::array<float, 4> evaluated;
     std::array<std::array<float, 4>, 3> samples{};
-    if (!Live() || !inFrame || !ValidBuiltinShadowState(p.shadow) ||
+    if (!Live() || !inFrame || !ValidPostProcess(p) || !ValidBuiltinShadowState(p.shadow) ||
         (p.shadow.mode != BuiltinShadowMode::None &&
          (!passes.Active() || p.vertexLayout != BuiltinShadowVertexLayout(p.shadow.mode) ||
           p.topology != PrimitiveTopology::TriangleList)) ||
@@ -1292,8 +1302,11 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     if (p.shadow.mode != BuiltinShadowMode::None)
         vs = p.shadow.mode == BuiltinShadowMode::Outline ? shadowOutlineVertex.Get()
                                                          : shadowVertex.Get();
-    if (!UsePipeline(p, p.vertexLayout, vs,
-                     p.shadow.mode == BuiltinShadowMode::None ? pixel.Get() : shadowPixel.Get()))
+    const bool post = p.postProcess.mode != PostProcessMode::None;
+    if (!UsePipeline(p, p.vertexLayout, post ? postVertex.Get() : vs,
+                     post                                       ? postPixel.Get()
+                     : p.shadow.mode == BuiltinShadowMode::None ? pixel.Get()
+                                                                : shadowPixel.Get()))
         return false;
     detail::ModelConstants constants;
     const bool measured = support.selected == ModelCompatibility::Dx9Measured;
@@ -1308,6 +1321,13 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     list->SetGraphicsRootConstantBufferView(0, vc);
     list->SetGraphicsRootConstantBufferView(1, pc);
     list->SetGraphicsRootConstantBufferView(2, combined);
+    if (post) {
+        const auto c = detail::BuildPostProcessConstants(p);
+        const auto cb = Constants(&c, sizeof(c));
+        if (!cb)
+            return false;
+        list->SetGraphicsRootConstantBufferView(5, cb);
+    }
     if (p.shadow.mode != BuiltinShadowMode::None) {
         const auto shadow = detail::BuildBuiltinShadowConstants(p, view);
         const auto cb = Constants(&shadow, sizeof(shadow));

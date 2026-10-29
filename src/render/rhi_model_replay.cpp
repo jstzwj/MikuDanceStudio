@@ -99,6 +99,8 @@ static ModelReplayResult ValidateReplay(const ModelReplayStream& stream, bool fr
             return fail("unsupported_event");
         const auto& d = event.draw;
         const auto& p = d.pipeline;
+        if (!ValidPostProcess(p))
+            return fail("invalid_postprocess_pipeline");
         if (!ValidBuiltinShadowState(p.shadow) ||
             (p.shadow.mode != BuiltinShadowMode::None &&
              (p.vertexLayout != BuiltinShadowVertexLayout(p.shadow.mode) ||

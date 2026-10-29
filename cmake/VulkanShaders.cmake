@@ -29,6 +29,8 @@ mds_spirv(model_pixel src/render/shaders/model_material_pixel.hlsl main ps_6_0 0
 mds_spirv(shadow_vertex src/render/shaders/builtin_shadow.hlsl shadow_vs vs_6_0 0)
 mds_spirv(outline_vertex src/render/shaders/builtin_shadow.hlsl shadow_outline_vs vs_6_0 1)
 mds_spirv(shadow_pixel src/render/shaders/builtin_shadow.hlsl shadow_ps ps_6_0 0)
+mds_spirv(post_vertex src/render/shaders/post_process.hlsl post_vs vs_6_0 0)
+mds_spirv(post_pixel src/render/shaders/post_process.hlsl post_ps ps_6_0 0)
 set(MDS_SPIRV_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rhi_vulkan_spirv.hpp")
 add_custom_command(OUTPUT "${MDS_SPIRV_HEADER}"
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/embed_spirv.py"

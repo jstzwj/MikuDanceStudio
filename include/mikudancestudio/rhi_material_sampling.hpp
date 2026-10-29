@@ -13,12 +13,13 @@ inline bool ApplyMaterialSampling(ModelPipeline& pipeline, MaterialSamplingPolic
         policy != MaterialSamplingPolicy::PortableTrilinear)
         return false;
     if (policy == MaterialSamplingPolicy::PortableTrilinear)
-        for (unsigned stage = 0; stage < 3; ++stage)
-            if (pipeline.shader.layout.stages[stage].role != MaterialTextureRole::None) {
-                auto& sampler = pipeline.shader.samplers[stage];
-                sampler.min = sampler.mag = sampler.mip = SamplerFilter::Linear;
-                sampler.maxAnisotropy = 1;
-            }
+        if (pipeline.postProcess.mode == PostProcessMode::None)
+            for (unsigned stage = 0; stage < 3; ++stage)
+                if (pipeline.shader.layout.stages[stage].role != MaterialTextureRole::None) {
+                    auto& sampler = pipeline.shader.samplers[stage];
+                    sampler.min = sampler.mag = sampler.mip = SamplerFilter::Linear;
+                    sampler.maxAnisotropy = 1;
+                }
     return true;
 }
 inline bool ApplyMaterialSampling(RenderFrame& frame, MaterialSamplingPolicy policy) {
