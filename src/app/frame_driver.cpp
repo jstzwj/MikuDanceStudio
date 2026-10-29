@@ -583,7 +583,13 @@ void FrameDriver(MMDApp* app) {
     static HRESULT hr = D3D_OK;        // stale-local equivalent
     bool presented = false;
     if (device != nullptr) {
-        if (s.state.messageSeen != 0 && s.AviStereoOutput() == 0) {
+        // A failed preparation/BeginScene must not present an old backbuffer,
+        // but recovery still needs polling when no new frame was rendered.
+        if (s.state.messageSeen != 0 && !s.FrameRenderingStats().rendered &&
+            device->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+            PostDeviceReset(app);
+        if (s.state.messageSeen != 0 && s.AviStereoOutput() == 0 &&
+            s.FrameRenderingStats().rendered) {
             presented = true;
             if (s.ViewportRenderer().OwnsPresentation() && !s.RecordingWindow() &&
                 !s.FullscreenMode()) {

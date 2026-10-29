@@ -26,6 +26,7 @@
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model_cpu_preview.hpp"
+#include "mikudancestudio/model_cpu_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/rhi_d3d9.hpp"
 #include "mikudancestudio/rhi_assets.hpp"
@@ -1868,7 +1869,25 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
 // Keep the recovered update order independent of the renderer that consumes
 // this frame. Playback/physics and next-frame text/lines remain in FrameDriver;
 // a rendering fallback must never enter this preparation a second time.
-bool PrepareFrameSceneInputs(MMDApp* app, D3DMATRIX& frameWorld) {
+struct PreparedSceneInputs {
+    D3DMATRIX world{};
+    std::vector<mdl::ModelRecord*> cpuModels;
+    bool cpuOnly = false, tryRhi = false, cpuReady = true;
+};
+bool NativeDiagnosticFrameRequested() {
+#ifdef MIKUDANCESTUDIO_DIAG
+    // An explicit native capture remains a DX9 oracle. Normal diagnostic
+    // builds still run the selected RHI without drawing a second scene.
+    for (const auto* name : {"MDS_RHI_CPU_GEOMETRY_DIR", "MDS_RHI_LIVE_COMPARE_DIR",
+                             "MIKUDANCESTUDIO_VB_DUMP_DIR", "MDS_RHI_SCENE_HISTORY",
+                             "MDS_RHI_CPU_FULL_SCENE", "MDS_RHI_CPU_INPUTS_AUDIT"})
+        if (GetEnvironmentVariableA(name, nullptr, 0))
+            return true;
+#endif
+    return false;
+}
+bool PrepareFrameSceneInputs(MMDApp* app, PreparedSceneInputs& prepared) {
+    auto& frameWorld = prepared.world;
     auto* device = app->Renderer()->device;
     SetupFrameWorldTransform(app);
     UpdateFrameStereo(app);
@@ -1880,11 +1899,25 @@ bool PrepareFrameSceneInputs(MMDApp* app, D3DMATRIX& frameWorld) {
     // (messageSeen) != 0; frames without a message leave both untouched.
     if (app->state.messageSeen == 0)
         return false;
+    ++app->FrameRenderingStats().preparations;
+    prepared.cpuOnly = app->ViewportRenderer().Requested() && !NativeDiagnosticFrameRequested();
+    prepared.tryRhi = prepared.cpuOnly && app->ViewportRenderer().CanRenderFrame(*app);
+    if (app->ViewportRenderer().Requested() && !prepared.cpuOnly) {
+        app->ViewportRenderer().UseLegacyFrame(*app, "native_diagnostic");
+        prepared.tryRhi = false;
+    }
     if (app->state.accessoryEditDialogOpen == 0) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
-            if (model != nullptr)
-                UpdateModelVertexBuffers(app, model, reinterpret_cast<const float*>(&frameWorld));
+            if (!model || !model->loadComplete || !model->vertexCount)
+                continue;
+            ++app->FrameRenderingStats().geometryUpdates;
+            if (prepared.cpuOnly) {
+                prepared.cpuModels.push_back(model);
+                if (!PrepareEditorModelGeometry(app, model, &frameWorld.m[0][0]))
+                    prepared.cpuReady = false;
+            } else
+                UpdateModelVertexBuffers(app, model, &frameWorld.m[0][0]);
         }
     }
     return true;
@@ -1897,6 +1930,13 @@ void WritePmmWorldParityReport(MMDApp* app);
 #endif
 
 void RenderFrameScene(MMDApp* app) {
+    RenderFrameScene(app, nullptr);
+}
+
+void RenderFrameScene(MMDApp* app, rhi::RgbaImage* acceptance) {
+    auto& stats = app->FrameRenderingStats();
+    stats.rendered = false;
+    stats.lastBackend = rhi::Backend::D3D9;
     if (!ApplicationSwapchainCanRender(app))
         return;
     D3DRenderer* sub = app->Renderer();
@@ -1907,9 +1947,44 @@ void RenderFrameScene(MMDApp* app) {
     if (device == nullptr)
         return;
 
-    D3DMATRIX frameWorld{};
-    if (!PrepareFrameSceneInputs(app, frameWorld))
+    PreparedSceneInputs prepared;
+    if (!PrepareFrameSceneInputs(app, prepared))
         return;
+    const auto& frameWorld = prepared.world;
+    if (prepared.tryRhi) {
+        if (prepared.cpuReady && app->ViewportRenderer().Render(*app, acceptance)) {
+            ++stats.rhiFrames;
+            stats.lastBackend = app->ViewportRenderer().Selected();
+            stats.rendered = true;
+            // Native screen.bmp history no longer advances while RHI owns the
+            // scene. Retire it on a successful handover so a later DX9 frame
+            // cannot sample an image from before this sequence of RHI frames.
+            if (auto*& capture = app->CaptureTexture()) {
+                capture->Release();
+                capture = nullptr;
+            }
+            app->CpuNativeCaptureTexturePresent() = false;
+            // Ground blending is recovered persistent frame state. Advance
+            // the same tail state even though this frame did not draw in DX9.
+            app->CpuRenderFrame().groundAlphaBlend = true;
+            device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+            device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+            device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+            return; // no DX9 clear, scene, shadow, overlays or screen capture
+        }
+    }
+    if (prepared.cpuOnly) {
+        ++stats.rhiFallbacks;
+        if (!prepared.cpuReady)
+            app->ViewportRenderer().UseLegacyFrame(*app, "live_model_geometry_unavailable");
+        for (auto* model : prepared.cpuModels) {
+            if (!UploadPreparedEditorGeometry(app, model, &frameWorld.m[0][0])) {
+                app->ViewportRenderer().UseLegacyFrame(*app, "legacy_geometry_upload_failed");
+                return; // never present a legacy frame containing old geometry
+            }
+            ++stats.fallbackGeometryUploads;
+        }
+    }
 #ifdef MIKUDANCESTUDIO_DIAG
     WritePmmWorldParityReport(app);
 #endif
@@ -1948,6 +2023,7 @@ void RenderFrameScene(MMDApp* app) {
         return;
     }
 
+    ++stats.legacyScenes;
     const bool effectRenderer = UseEffectModelRenderer(app);
     if (effectRenderer)
         RenderShadowMap(app, reinterpret_cast<const float*>(&frameWorld));
@@ -1956,6 +2032,7 @@ void RenderFrameScene(MMDApp* app) {
     // another pass by incrementing A0270 while a pass is in progress.
     while (app->state.renderPassCount > 0) {
         --app->state.renderPassCount;
+        ++stats.legacyPasses;
         if (effectRenderer)
             RenderModelsEffect(app, reinterpret_cast<const float*>(&frameWorld));
         else
@@ -1985,10 +2062,9 @@ void RenderFrameScene(MMDApp* app) {
     // 0x46E208: the recording/sub-window path ends the scene here; it never
     // draws debug geometry or the dynamic overlay batches.
     if (app->RecordingWindow() != nullptr) {
-        mme::EndScene(app, device);
+        stats.rendered = SUCCEEDED(mme::EndScene(app, device));
         ReportModelBatchComparison(device);
         DumpAccessoryScreenTexture(app, device);
-        app->ViewportRenderer().Render(*app); // hides the child during legacy recording
         return;
     }
 
@@ -2020,14 +2096,13 @@ void RenderFrameScene(MMDApp* app) {
     DrawTextOverlay(app, device);
     DrawLineOverlay(app, sub, device);
     DrawSpriteOverlay(app, device);
-    mme::EndScene(app, device);
+    stats.rendered = SUCCEEDED(mme::EndScene(app, device));
     ReportModelBatchComparison(device);
 #ifdef MIKUDANCESTUDIO_DIAG
     ReportSelectionLiveCapture(device);
     ReportSpriteSameFrame(device);
 #endif
     DumpAccessoryScreenTexture(app, device);
-    app->ViewportRenderer().Render(*app);
 }
 
 } // namespace mikudancestudio

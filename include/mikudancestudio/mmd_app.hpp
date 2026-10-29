@@ -32,6 +32,7 @@
 #include "mikudancestudio/render_scene_passes.hpp"
 #include "mikudancestudio/render_model_inputs.hpp"
 #include "mikudancestudio/editor_viewport.hpp"
+#include "mikudancestudio/frame_scene.hpp"
 
 namespace mikudancestudio {
 
@@ -197,6 +198,7 @@ public:
     }
     CpuSimulationState& CpuSimulation() { return m_cpuSimulation; }
     EditorViewport& ViewportRenderer() { return m_editorViewport; }
+    FrameSceneStats& FrameRenderingStats() { return m_frameSceneStats; }
     // Application-only association. Published RHI keys never contain a model
     // address; disposal and reload allocate fresh, non-reused scene IDs.
     auto& CpuModelFrames() { return m_cpuModelFrames; }
@@ -769,7 +771,7 @@ public:
     std::uint8_t& ShadowTrackActive() { return state.shadowTrackActive; }
     std::uint32_t& GravityTrackCursor() { return state.gravityTrackCursor; }
     std::uint8_t& GravityTrackActive() { return state.gravityTrackActive; }
-    std::uint32_t& AccessoryTrackCursor(int slot) { return state.accessoryTrackCursor[slot]; }
+    std::uint32_t& AccessoryTrackCursor(int slot) { return m_runtime.accessoryTrackCursor[slot]; }
     std::uint8_t& AccessoryTrackActive(int slot) { return m_runtime.accessoryTrackActive[slot]; }
     float* CameraPosition() { return state.cameraPosition; }
     float* CameraRotation() { return &state.cameraPitch; }
@@ -877,6 +879,7 @@ public:
 private:
     std::unique_ptr<format::SceneSession> m_portableSceneSession;
     EditorViewport m_editorViewport;
+    FrameSceneStats m_frameSceneStats;
     CpuSimulationState m_cpuSimulation;
     std::map<const mdl::ModelRecord*, std::unique_ptr<ModelCpuFrame>> m_cpuModelFrames;
     std::map<const void*, render::AccessoryCpuResource> m_cpuAccessoryResources;

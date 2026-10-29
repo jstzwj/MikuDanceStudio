@@ -900,6 +900,60 @@ bool UpdateCpuOnlyModelGeometry(MMDApp* app, mdl::ModelRecord* model, float edge
     return true;
 }
 
+bool PrepareEditorModelGeometry(MMDApp* app, mdl::ModelRecord* model, const float world[16]) {
+    if (!model || !model->loadComplete || !model->vertexCount)
+        return true;
+    if (!app->CpuModelFrames().count(model))
+        InitializeModelCpuGeometry(app, model, true);
+    if (!app->CpuModelFrames().count(model)) {
+        // Even an unsupported CPU layout needs the original restore/morph
+        // step once before the legacy upload worker consumes this frame.
+        if (model->physicsMode == 2)
+            ApplyPmxVertexMorphs(model);
+        else
+            ApplyPmdVertexMorphs(model);
+        return false;
+    }
+    return UpdateCpuOnlyModelGeometry(app, model, PmdEdgeDistance(app, model, world),
+                                      model->physicsMode == 2 && app->state.selfShadowEnabled);
+}
+
+bool UploadPreparedEditorGeometry(MMDApp* app, mdl::ModelRecord* model, const float world[16]) {
+    if (!model || !model->loadComplete || !model->vertexCount)
+        return true;
+    const bool pmx = model->physicsMode == 2;
+    const unsigned uv = pmx ? model->pmxAdditionalUvCount : 0;
+    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(model->vertexBuffer);
+    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(model->vertexBuffer2);
+    if (!mainVb || !edgeVb || uv > 4)
+        return false;
+    void* main = nullptr;
+    mdl::EdgeVertex* edge = nullptr;
+    const UINT size = (32 + 16 * uv) * model->vertexCount;
+    if (FAILED(mainVb->Lock(0, size, &main, 0)))
+        return false;
+    if (FAILED(edgeVb->Lock(0, 16 * model->vertexCount, reinterpret_cast<void**>(&edge), 0))) {
+        mainVb->Unlock();
+        return false;
+    }
+    const auto found = app->CpuModelFrames().find(model);
+    const auto* cpu = found == app->CpuModelFrames().end() ? nullptr : found->second.get();
+    if (cpu && cpu->ready && !cpu->failed) {
+        std::memcpy(main, cpu->geometry.MainData(), size);
+        std::memcpy(edge, cpu->geometry.Edges().data(), 16 * model->vertexCount);
+    } else {
+        // CPU publication/layout failure: skin the already morphed source
+        // directly, without running the restore/morph or CPU producer again.
+        const auto distance = PmdEdgeDistance(app, model, world);
+        if (pmx)
+            SkinPmxDispatch(model, distance, app->state.selfShadowEnabled != 0, uv, edge, main);
+        else
+            SkinPmd(model, distance, edge, static_cast<mdl::SkinnedVertexBase*>(main));
+    }
+    const auto mainStatus = mainVb->Unlock(), edgeStatus = edgeVb->Unlock();
+    return SUCCEEDED(mainStatus) && SUCCEEDED(edgeStatus);
+}
+
 void UpdateModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float frameWorld[16]) {
     if (app == nullptr || model == nullptr || frameWorld == nullptr)
         return;

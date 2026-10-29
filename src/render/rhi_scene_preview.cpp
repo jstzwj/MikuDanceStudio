@@ -57,6 +57,16 @@ bool ScenePreviewController::Resize(std::uint32_t width, std::uint32_t height) {
 bool ScenePreviewController::ReplaceDevice() {
     return SwitchBackend(options);
 }
+bool ScenePreviewController::PrepareRetirement() {
+    // A pending, live device still owns retained resource handles. Complete
+    // its surface reset before draining/destroying them: Destroy deliberately
+    // rejects ResetPending resources, and pending is not confirmed removal.
+    if (backend && backend.device->Status().state == DeviceState::ResetPending &&
+        !backend.device->RestoreAfterReset() &&
+        backend.swapchain->Rebuild(description, RebuildReason::Resize) != RebuildResult::Success)
+        return Fail("retirement_surface_restore_failed");
+    return true;
+}
 bool ScenePreviewController::SwitchBackend(const BackendOptions& selected) {
     if (backend && selected.backend != options.backend) {
         reason = "backend_switch_requires_new_surface";
@@ -74,7 +84,7 @@ bool ScenePreviewController::SwitchBackend(const BackendOptions& selected) {
     }
     const auto old = backend.device->Status();
     state = PreviewState::Failed; // stop submissions throughout the transaction
-    if (!renderer->Detach() || !backend.swapchain->Retire())
+    if (!PrepareRetirement() || !renderer->Detach() || !backend.swapchain->Retire())
         return Fail("replacement_release_failed");
     backend.swapchain.reset();
     backend.device.reset();
@@ -114,7 +124,7 @@ bool ScenePreviewController::SwitchBackend(const SwapchainDesc& desc,
         reason = candidate.reason;
         return false;
     }
-    if (!renderer->Detach()) {
+    if (!PrepareRetirement() || !renderer->Detach()) {
         candidate.swapchain->Retire();
         return Fail("replacement_release_failed");
     }

@@ -47,6 +47,7 @@ private:
     bool Fail(const char*);
     bool ReadyToDraw();
     bool SuspendUnavailableSurface();
+    bool PrepareRetirement();
     bool FinishDraw(RgbaImage*);
     BackendDevice backend;
     std::unique_ptr<SceneRenderer> renderer;

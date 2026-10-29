@@ -86,6 +86,8 @@ const wchar_t* FriendlyReason(const std::string& reason) {
         return L"accessory shadows";
     if (reason == "model_display_override")
         return L"model display override";
+    if (reason == "native_diagnostic")
+        return L"native rendering diagnostic";
     if (reason == "live_model_geometry_unavailable" || reason == "live_frame_unavailable")
         return L"waiting for scene data";
     return L"renderer unavailable; use Recreate device to retry";
@@ -112,6 +114,9 @@ struct EditorViewport::Impl {
     }
     void Hide(const std::string& why) {
         presenting = false;
+        // DX9 will capture its own frames during fallback. Start fresh on
+        // return instead of sampling the last RHI frame from before fallback.
+        producer.ResetHistory();
         reason = why;
         if (window && IsWindow(window))
             ShowWindow(window, SW_HIDE);
@@ -342,16 +347,29 @@ bool EditorViewport::HandleCommand(MMDApp& app, unsigned command) {
     }
     return true;
 }
-bool EditorViewport::Render(MMDApp& app, RgbaImage* acceptance) {
+void EditorViewport::UseLegacyFrame(MMDApp& app, const char* reason) {
+    if (impl) {
+        impl->Hide(reason ? reason : "");
+        impl->Menu(app);
+    }
+}
+bool EditorViewport::CanRenderFrame(MMDApp& app) {
     if (!Requested())
+        return false;
+    if (const auto why = CompatibilityReason(app)) {
+        UseLegacyFrame(app, why);
+        return false;
+    }
+    return true;
+}
+bool EditorViewport::Render(MMDApp& app, RgbaImage* acceptance) {
+    if (!CanRenderFrame(app))
         return false;
     const auto finish = [&](const std::string& why) {
         impl->Hide(why);
         impl->Menu(app);
         return false;
     };
-    if (const auto why = CompatibilityReason(app))
-        return finish(why);
     if (!impl->EnsureWindow(app))
         return finish("viewport_window_failed");
     if (impl->reason == "window_suspended")
@@ -434,6 +452,11 @@ bool EditorViewport::Select(MMDApp&, rhi::Backend, bool) {
 }
 bool EditorViewport::Render(MMDApp&, rhi::RgbaImage*) {
     return false;
+}
+bool EditorViewport::CanRenderFrame(MMDApp&) {
+    return false;
+}
+void EditorViewport::UseLegacyFrame(MMDApp&, const char*) {
 }
 void EditorViewport::CaptureOverlay(EditorOverlay, const void*, std::size_t, unsigned) {
 }

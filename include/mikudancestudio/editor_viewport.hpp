@@ -26,6 +26,11 @@ public:
     void InstallMenu(MMDApp&);
     bool HandleCommand(MMDApp&, unsigned);
     bool Select(MMDApp&, rhi::Backend, bool persist = true);
+    // Frame-level compatibility check before CPU-only geometry preparation.
+    // Render performs resource preparation/submission; false selects DX9 for
+    // this same prepared frame and hides the previous RHI image.
+    bool CanRenderFrame(MMDApp&);
+    void UseLegacyFrame(MMDApp&, const char* reason);
     bool Render(MMDApp&, rhi::RgbaImage* acceptance = nullptr);
     void CaptureOverlay(EditorOverlay, const void*, std::size_t vertices, unsigned stride);
     void ClearOverlay(EditorOverlay);

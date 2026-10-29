@@ -12,6 +12,11 @@ void InitializeModelCpuGeometry(MMDApp*, mdl::ModelRecord* model, bool required 
 // matrices. Neither publication nor readiness depends on native buffers.
 bool UpdateCpuOnlyModelGeometry(MMDApp*, mdl::ModelRecord* model, float edgeDistance,
                                 bool opaqueEdge);
+// Live-frame preparation applies morphs/skinning once without touching DX9
+// buffers. A failed RHI attempt uploads the same prepared output to DX9; it
+// must not restore morphs, advance simulation or publish a second CPU version.
+bool PrepareEditorModelGeometry(MMDApp*, mdl::ModelRecord*, const float frameWorld[16]);
+bool UploadPreparedEditorGeometry(MMDApp*, mdl::ModelRecord*, const float frameWorld[16]);
 float CpuModelEdgeDistance(mdl::ModelRecord* model, const float frameWorld[16],
                            const float camera[3], float fov);
 }
