@@ -120,7 +120,11 @@ public:
     bool genericReady = false, genericBound = false;
     std::string genericError;
     ShaderCapabilities ShaderFeatures() const override {
-        return GraphicsShaderProfile(true, false);
+        auto caps = GraphicsShaderProfile(true, false);
+        caps.constantAlignment = 256;
+        caps.legacyDrawConstantBytes = 4096;
+        caps.maxFrameConstantBytes = ConstantBytes;
+        return caps;
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;

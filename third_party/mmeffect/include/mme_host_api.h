@@ -132,6 +132,9 @@ int __cdecl MmeHostEffectsActive(void);
 int __cdecl MmeHostEffectsEnabled(void);
 // CPU assignment policy, excluding the built-in standard effect.
 int __cdecl MmeHostHasAssignedEffects(void);
+// Synchronize live objects and auto-assigned effects without BeginScene or
+// render-script execution. Used before shared-RHI frame eligibility checks.
+int __cdecl MmeHostPrepareEffectAssignments(IDirect3DDevice9* device);
 
 #ifdef __cplusplus
 }

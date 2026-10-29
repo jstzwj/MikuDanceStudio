@@ -7,6 +7,8 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/rhi_scene_preview.hpp"
 #include "mme_host_api.h"
+#include "mikudancestudio/mme_bridge.hpp"
+#include "mikudancestudio/mme_portable.hpp"
 #include <algorithm>
 #include <filesystem>
 
@@ -64,12 +66,15 @@ const char* CompatibilityReason(MMDApp& app) {
     if (app.DepthTextureCompositionEnabled() && app.DepthDeviceEnabled() &&
         app.DepthTextureCallback())
         return "depth_camera";
-    if (MmeHostHasAssignedEffects())
-        return "MME";
+    if (MmeHostHasAssignedEffects()) {
+        std::string reason;
+        if (!CheckPortableMme(reason))
+            return "MME";
+    }
     return nullptr;
 }
 const wchar_t* FriendlyReason(const std::string& reason) {
-    if (reason == "MME")
+    if (reason.rfind("MME", 0) == 0)
         return L"MME effects";
     if (reason == "background")
         return L"background picture / AVI";
@@ -102,6 +107,8 @@ struct EditorViewport::Impl {
     bool loadedSettings = false, presenting = false;
     unsigned width = 0, height = 0;
     std::string reason;
+    std::uint64_t rejectedDevice = 0;
+    std::string rejectedProgram, rejectedReason;
     std::wstring menuStatus;
     ~Impl() { Close(); }
     void Close() {
@@ -361,6 +368,10 @@ void EditorViewport::UseLegacyFrame(MMDApp& app, const char* reason) {
 bool EditorViewport::CanRenderFrame(MMDApp& app) {
     if (!Requested())
         return false;
+    if (!mme::PrepareEffectAssignments(&app)) {
+        UseLegacyFrame(app, "MME");
+        return false;
+    }
     if (const auto why = CompatibilityReason(app)) {
         UseLegacyFrame(app, why);
         return false;
@@ -398,6 +409,30 @@ bool EditorViewport::Render(MMDApp& app, RgbaImage* acceptance) {
     std::string reason;
     if (!impl->producer.Build(app, impl->width, impl->height, frame, reason))
         return finish(reason);
+    // Effect compilation is a frame eligibility failure. Keep the controller
+    // healthy so changing/reloading the effect can immediately recover.
+    auto* shaderDevice = impl->controller.GetDevice();
+    if (shaderDevice) {
+        const auto identity = shaderDevice->Status().identity;
+        if (impl->rejectedDevice != identity) {
+            impl->rejectedDevice = identity;
+            impl->rejectedProgram.clear();
+            impl->rejectedReason.clear();
+        }
+        for (const auto& pass : frame.passes)
+            for (const auto& draw : pass.draws)
+                if (draw.shader) {
+                    const auto& key = draw.shader->pipeline.program->key;
+                    if (key == impl->rejectedProgram)
+                        return finish(impl->rejectedReason);
+                    if (!shaderDevice->PrepareShaderPipeline(draw.shader->pipeline)) {
+                        impl->rejectedProgram = key;
+                        impl->rejectedReason =
+                            "MME_shader: " + std::string(shaderDevice->ShaderDiagnostic());
+                        return finish(impl->rejectedReason);
+                    }
+                }
+    }
     if (!impl->controller.Draw(frame, acceptance))
         return finish(impl->controller.Reason());
     if (impl->controller.State() != PreviewState::Ready)

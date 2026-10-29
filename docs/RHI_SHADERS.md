@@ -36,6 +36,9 @@ HLSL on Vulkan needs a matching-architecture `dxcompiler.dll`; this is queried
 as a capability. In particular a 64-bit SDK compiler cannot compile runtime
 effects in a 32-bit editor. A precompiled SPIR-V module remains usable there.
 The frontend must not claim runtime-effect support when that compiler is absent.
+Explicit backends also report constant alignment and the per-frame upload
+budget. Preparation counts generic constants together with legacy draws and
+rejects overflow before scene resource uploads or GPU submission.
 
 Offscreen gates: `rhi_generic_shader_*` checks row-major matrices, constant
 alignment, non-default texture/sampler slots, alpha, repeat submission, device

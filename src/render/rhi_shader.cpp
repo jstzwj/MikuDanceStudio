@@ -90,6 +90,19 @@ ShaderProgram::ShaderProgram(ShaderProgramDesc d)
 ShaderCapabilities GraphicsShaderProfile(bool hlsl, bool spirv) {
     return {true, hlsl, spirv, 4, 4, 4, 65536};
 }
+std::uint64_t ShaderConstantBytes(const ShaderPipeline& p, ShaderCapabilities caps) {
+    const auto alignment = std::max(1u, caps.constantAlignment);
+    const auto aligned = [&](std::uint64_t n) {
+        return (n + alignment - 1) / alignment * alignment;
+    };
+    // Native explicit APIs also bind a zero-filled constant for unused slots.
+    std::uint64_t bytes = aligned(16);
+    if (p.program)
+        for (const auto& b : p.program->description.bindings)
+            if (b.kind == ShaderBindingKind::Constants)
+                bytes += aligned(b.bytes);
+    return bytes;
+}
 std::vector<ShaderVertexInput> StandardShaderInputs(VertexLayout layout) {
     if (layout == VertexLayout::PositionColor)
         return {{"POSITION", 0, 0, 0, ShaderVertexFormat::Float3},
@@ -149,6 +162,7 @@ ShaderResult ValidateShaderPipeline(const ShaderPipeline& p, ShaderCapabilities 
     for (const auto& i : d.inputs) {
         const auto size = InputBytes(i.format);
         if (i.semantic.empty() || !size || i.location >= 16 ||
+            (i.format != ShaderVertexFormat::Rgba8 && i.offset % 4) ||
             !locations.insert(i.location).second ||
             !semantics.emplace(i.semantic, i.semanticIndex).second || i.offset > stride ||
             size > stride - i.offset)

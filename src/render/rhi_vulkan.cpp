@@ -194,7 +194,20 @@ public:
     bool genericReady = false, genericBound = false;
     std::string genericError;
     ShaderCapabilities ShaderFeatures() const override {
-        return GraphicsShaderProfile(detail::RuntimeSpirvCompilerAvailable(), true);
+        auto caps = GraphicsShaderProfile(detail::RuntimeSpirvCompilerAvailable(), true);
+        caps.maxConstantBytes =
+            (std::min)(caps.maxConstantBytes, properties.limits.maxUniformBufferRange);
+        caps.constantAlignment = unsigned(
+            (std::max)(VkDeviceSize(1), properties.limits.minUniformBufferOffsetAlignment));
+        const auto aligned = [&](unsigned bytes) {
+            return (bytes + caps.constantAlignment - 1) / caps.constantAlignment *
+                   caps.constantAlignment;
+        };
+        caps.legacyDrawConstantBytes =
+            aligned(sizeof(ModelVertexConstants)) + aligned(sizeof(detail::ModelPixelConstants)) +
+            aligned(sizeof(BuiltinShadowConstants)) + aligned(sizeof(detail::PostProcessConstants));
+        caps.maxFrameConstantBytes = UniformBytes;
+        return caps;
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;
@@ -1974,11 +1987,19 @@ bool VulkanDevice::PrepareShaderPipeline(const ShaderPipeline& p) {
         GenericProgram program;
         SnapshotBytes vs, ps;
         const auto& desc = p.program->description;
+        std::map<unsigned, std::vector<unsigned>> vertexOutputs, pixelInputs;
         if (!detail::CompileSpirv(desc.vertex, vs, genericError) ||
             !detail::CompileSpirv(desc.pixel, ps, genericError) ||
-            !detail::ReflectSpirv(desc, desc.vertex, vs, genericError) ||
-            !detail::ReflectSpirv(desc, desc.pixel, ps, genericError))
+            !detail::ReflectSpirv(desc, desc.vertex, vs, genericError, &vertexOutputs) ||
+            !detail::ReflectSpirv(desc, desc.pixel, ps, genericError, &pixelInputs))
             return false;
+        for (const auto& input : pixelInputs) {
+            const auto found = vertexOutputs.find(input.first);
+            if (found == vertexOutputs.end() || found->second != input.second) {
+                genericError = "shader_stage_interface_mismatch";
+                return false;
+            }
+        }
         const auto module = [&](const SnapshotBytes& bytes, VkShaderModule& output) {
             std::vector<std::uint32_t> words(bytes.size() / 4);
             std::memcpy(words.data(), bytes.data(), bytes.size());

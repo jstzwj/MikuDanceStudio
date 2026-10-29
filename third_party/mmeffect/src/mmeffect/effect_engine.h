@@ -47,6 +47,8 @@ struct LoadedEffect {
     // Instances retain their compiled source; their parameters, scripts and
     // non-shared render targets belong to this instance alone.
     std::shared_ptr<LoadedEffect> source;
+    // Immutable bytes of this loaded revision, shared by assignment clones.
+    std::shared_ptr<const std::string> originalSource;
     bool assigned = false;  // first assignment uses the freshly compiled instance
     ID3DXEffect*  effect = nullptr;   // created by D3DXCreateEffectFromFileW
     std::string   path;               // narrow (CP 0) path as requested

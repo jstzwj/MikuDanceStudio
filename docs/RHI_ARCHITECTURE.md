@@ -8,6 +8,11 @@ removed; shared controllers remain. See [editor integration](RHI_EDITOR_VIEWPORT
 Changing geometry now uses completion-protected buffer reuse; DX12 retains its
 upload allocations and Vulkan retires native resources at each resource's last
 use. See [dynamic buffers and resource retirement](RHI_DYNAMIC_BUFFERS.md).
+Generic VS/PS programs, constant layouts and resource bindings now execute on
+all three new backends; shared fullscreen postprocessing uses that path.
+See [shader contracts](RHI_SHADERS.md). The first explicit material and two-pass
+MME profiles also enter the editor's shared frame after whole-frame validation;
+other effects retain same-frame DX9 fallback. See [portable MME](RHI_MME_PORTABLE.md).
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.

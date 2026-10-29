@@ -60,7 +60,34 @@ float4 pixel(Output o):SV_TARGET { return image.SampleLevel(imageSampler,o.uv,0)
     invalid.program = std::make_shared<const ShaderProgram>(wrong);
     CHECK(!native.device->PrepareShaderPipeline(invalid));
     wrong = desc;
+    auto& pixelSource = wrong.pixel.hlsl;
+    const auto varying = pixelSource.find("float2 uv:TEXCOORD0");
+    pixelSource.replace(varying, std::strlen("float2 uv:TEXCOORD0"), "float3 uv:TEXCOORD0");
+    const auto assignment = pixelSource.find("o.uv=uv");
+    pixelSource.replace(assignment, std::strlen("o.uv=uv"), "o.uv=float3(uv,0)");
+    const auto function = pixelSource.find("float4 pixel");
+    pixelSource.erase(function);
+    pixelSource +=
+        "float4 pixel(Output o):SV_TARGET { return image.SampleLevel(imageSampler,o.uv.xy,0)*tint*(1+o.uv.z); }";
+    invalid.program = std::make_shared<const ShaderProgram>(wrong);
+    CHECK(!native.device->PrepareShaderPipeline(invalid));
+    CHECK(std::string(native.device->ShaderDiagnostic()) == "shader_stage_interface_mismatch");
+    wrong = desc;
+    for (auto* module : {&wrong.vertex, &wrong.pixel}) {
+        const auto at = module->hlsl.find("row_major");
+        module->hlsl.replace(at, 9, "column_major");
+    }
+    invalid.program = std::make_shared<const ShaderProgram>(wrong);
+    CHECK(!native.device->PrepareShaderPipeline(invalid));
+    wrong = desc;
     wrong.pixel.hlsl += "\n invalid shader";
+    invalid.program = std::make_shared<const ShaderProgram>(wrong);
+    CHECK(!native.device->PrepareShaderPipeline(invalid));
+    wrong = desc;
+    wrong.pixel.hlsl = R"(
+struct Output { float4 p:SV_POSITION; float2 uv:TEXCOORD0; };
+float4 pixel(Output o):SV_TARGET { double value=double(o.uv.x);return float(value*value); }
+)";
     invalid.program = std::make_shared<const ShaderProgram>(wrong);
     CHECK(!native.device->PrepareShaderPipeline(invalid));
     RenderFrame frame;
@@ -117,6 +144,24 @@ float4 pixel(Output o):SV_TARGET { return image.SampleLevel(imageSampler,o.uv,0)
         CHECK(pixel(40, 4, 1) == 255 && pixel(40, 4, 3) == 64);
         CHECK(pixel(9, 28, 2) == 255 && pixel(9, 28, 3) == 96);
         CHECK(pixel(40, 28, 0) == 255 && pixel(40, 28, 3) == 127);
+    }
+    if (native.device->ShaderFeatures().maxFrameConstantBytes) {
+        auto wide = desc;
+        for (auto* module : {&wide.vertex, &wide.pixel}) {
+            const auto at = module->hlsl.find("float4 tint;");
+            module->hlsl.insert(at + std::strlen("float4 tint;"), " float4 reserved[4091];");
+        }
+        wide.bindings[0].bytes = 65536;
+        auto tooLarge = frame;
+        auto largeDraw = draw;
+        largeDraw.shader->pipeline.program = std::make_shared<const ShaderProgram>(wide);
+        largeDraw.shader->constants[0].bytes.resize(65536);
+        largeDraw.shader->constants[0].bytes.Seal();
+        tooLarge.passes[0].draws.assign(40, largeDraw);
+        const auto uploads = renderer.Stats().uploads;
+        const auto rejected = renderer.Prepare(1, tooLarge, prepared);
+        CHECK(!rejected && rejected.reason == "shader_frame_constant_budget_exceeded");
+        CHECK(renderer.Stats().uploads == uploads);
     }
     auto replacement = CreateOffscreenBackendDevice(48, 32, options);
     CHECK(replacement);

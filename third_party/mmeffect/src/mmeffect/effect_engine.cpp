@@ -6,6 +6,8 @@
 #include <vector>
 #include <set>
 #include <algorithm>
+#include <fstream>
+#include <filesystem>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -324,6 +326,15 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     // [big-C 11239-11240] the wide path for D3DXCreateEffectFromFileW
     // (FUN_180006610 = CP 0 ansi->wide, same as MmeAnsiToWide).
     std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
+    {
+        std::ifstream source(std::filesystem::path(pathWide), std::ios::binary | std::ios::ate);
+        const auto size=source.tellg();
+        if(source && size>0 && size<=1024*1024) {
+            std::string text(static_cast<std::size_t>(size), '\0');
+            source.seekg(0); source.read(text.data(), size);
+            if(source) entry->originalSource=std::make_shared<const std::string>(std::move(text));
+        }
+    }
 
     // [big-C 11296-11305 / 0x18000c0a4-0x18000c0f3] The macro array contains only two entries:
     //   defines[0] = {"_INDEX", "PSIZE15"}: _INDEX's value is the string
@@ -499,6 +510,7 @@ std::shared_ptr<LoadedEffect> MmeEngineCreateEffectInstance(
     }
     auto instance = std::make_shared<LoadedEffect>();
     instance->source = source;
+    instance->originalSource = source->originalSource;
     instance->path = source->path;
     instance->fileStamp = source->fileStamp;
     // Original cache-hit loader: CloneEffect, then parse this assignment's SAS.

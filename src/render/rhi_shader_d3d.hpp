@@ -3,6 +3,9 @@
 #include <d3dcompiler.h>
 #include <d3d11shader.h>
 #include <wrl/client.h>
+#include <map>
+#include <tuple>
+#include <cctype>
 
 namespace mikudancestudio::rhi::detail {
 struct D3DShaderProgram {
@@ -11,6 +14,7 @@ struct D3DShaderProgram {
 inline bool CompileD3DProgram(const ShaderProgram& program, D3DShaderProgram& out,
                               std::string& error) {
     const auto& desc = program.description;
+    std::map<std::pair<std::string, unsigned>, std::pair<unsigned, unsigned>> outputs;
     for (unsigned stage = 1; stage <= 2; ++stage) {
         const auto& source = stage == 1 ? desc.vertex : desc.pixel;
         auto& binary = stage == 1 ? out.vertex : out.pixel;
@@ -33,6 +37,44 @@ inline bool CompileD3DProgram(const ShaderProgram& program, D3DShaderProgram& ou
         }
         D3D11_SHADER_DESC shader{};
         reflection->GetDesc(&shader);
+        if (reflection->GetRequiresFlags()) {
+            error = "shader_feature_not_supported";
+            return false;
+        }
+        if (stage == 1) {
+            bool position = false;
+            for (unsigned n = 0; n < shader.OutputParameters; ++n) {
+                D3D11_SIGNATURE_PARAMETER_DESC output{};
+                reflection->GetOutputParameterDesc(n, &output);
+                if (output.SystemValueType == D3D_NAME_POSITION)
+                    position =
+                        output.Mask == 15 && output.ComponentType == D3D_REGISTER_COMPONENT_FLOAT32;
+                std::string semantic = output.SemanticName;
+                for (auto& c : semantic)
+                    c = char(std::toupper(static_cast<unsigned char>(c)));
+                outputs[{semantic, output.SemanticIndex}] = {output.ComponentType, output.Mask};
+            }
+            if (!position) {
+                error = "shader_vertex_position_missing";
+                return false;
+            }
+        } else
+            for (unsigned n = 0; n < shader.InputParameters; ++n) {
+                D3D11_SIGNATURE_PARAMETER_DESC input{};
+                reflection->GetInputParameterDesc(n, &input);
+                if (input.SystemValueType != D3D_NAME_UNDEFINED)
+                    continue;
+                std::string semantic = input.SemanticName;
+                for (auto& c : semantic)
+                    c = char(std::toupper(static_cast<unsigned char>(c)));
+                const auto found = outputs.find({semantic, input.SemanticIndex});
+                if (found == outputs.end() ||
+                    found->second !=
+                        std::make_pair(unsigned(input.ComponentType), unsigned(input.Mask))) {
+                    error = "shader_stage_interface_mismatch";
+                    return false;
+                }
+            }
         for (unsigned n = 0; n < shader.BoundResources; ++n) {
             D3D11_SHADER_INPUT_BIND_DESC resource{};
             reflection->GetResourceBindingDesc(n, &resource);
@@ -40,10 +82,17 @@ inline bool CompileD3DProgram(const ShaderProgram& program, D3DShaderProgram& ou
             if (resource.Type == D3D_SIT_CBUFFER)
                 kind = ShaderBindingKind::Constants;
             else if (resource.Type == D3D_SIT_TEXTURE &&
-                     resource.Dimension == D3D_SRV_DIMENSION_TEXTURE2D)
+                     resource.Dimension == D3D_SRV_DIMENSION_TEXTURE2D &&
+                     (resource.ReturnType == D3D_RETURN_TYPE_FLOAT ||
+                      resource.ReturnType == D3D_RETURN_TYPE_UNORM ||
+                      resource.ReturnType == D3D_RETURN_TYPE_SNORM))
                 kind = ShaderBindingKind::Texture;
             else if (resource.Type == D3D_SIT_SAMPLER)
-                kind = ShaderBindingKind::Sampler;
+                if (resource.uFlags & D3D_SIF_COMPARISON_SAMPLER) {
+                    error = "comparison_sampling_not_supported";
+                    return false;
+                } else
+                    kind = ShaderBindingKind::Sampler;
             else {
                 error = "shader_resource_type_not_supported";
                 return false;

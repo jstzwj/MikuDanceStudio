@@ -261,6 +261,10 @@ struct ShaderCapabilities {
     // slots of each kind, VS/PS constants and PS-only Texture2D sampling.
     unsigned constantSlots = 0, textureSlots = 0, samplerSlots = 0;
     unsigned maxConstantBytes = 0;
+    unsigned constantAlignment = 16, legacyDrawConstantBytes = 0;
+    // Zero means no fixed per-frame upload arena. Includes legacy and generic
+    // draws; frame preparation must reject overflow before GPU submission.
+    std::uint64_t maxFrameConstantBytes = 0;
 };
 // Reports implemented adapter behavior, not all capabilities of its native API.
 // Ready describes the adapter reset protocol; it is not a native GPU health probe.

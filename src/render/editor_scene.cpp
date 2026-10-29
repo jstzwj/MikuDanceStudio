@@ -10,6 +10,8 @@
 #include "mikudancestudio/rhi_post_process.hpp"
 #include "mikudancestudio/rhi_screen_texture.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/mme_portable.hpp"
+#include "mme_portable_api.h"
 #include <algorithm>
 #include <cstring>
 #include <set>
@@ -328,7 +330,46 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
             i = impl->models.erase(i);
         else
             ++i;
+    std::vector<MmePortableEffect> assigned;
+    if (!MmePortableEffects(assigned, reason))
+        return false;
+    const MmePortableEffect* postEffect = nullptr;
+    for (const auto& effect : assigned)
+        if (effect.post)
+            postEffect = &effect;
+    std::vector<std::pair<int, MmePortableEffect>> effects;
     const auto append = [&](unsigned slot, SceneDrawReplacement draw) {
+        MmePortableEffect effect;
+        int selection = 0;
+        const bool accessory = draw.family == SceneDrawFamily::AccessoryMaterial;
+        const ModelReplayDraw* command = nullptr;
+        for (const auto& event : draw.cpu.events)
+            if (event.op == ModelReplayOp::Draw)
+                command = &event.draw;
+        const bool hostObject =
+            accessory ? slot < mdl::kAccessorySlotCount : slot < kModelSlotCount;
+        if (!assigned.empty() && hostObject && command &&
+            (accessory || draw.family == SceneDrawFamily::ModelMaterial ||
+             draw.family == SceneDrawFamily::ModelOutline ||
+             draw.family == SceneDrawFamily::ProjectedModelShadow)) {
+            const auto object = accessory ? static_cast<const void*>(app.AccessorySlot(slot))
+                                          : static_cast<const void*>(app.ModelSlot(slot));
+            unsigned flags = 0;
+            for (const auto& stage : command->pipeline.shader.layout.stages)
+                flags |= stage.role == MaterialTextureRole::Base     ? 1u
+                         : stage.role == MaterialTextureRole::Sphere ? 2u
+                         : stage.role == MaterialTextureRole::Toon   ? 4u
+                                                                     : 0u;
+            const int pass = draw.family == SceneDrawFamily::ModelOutline           ? 3
+                             : draw.family == SceneDrawFamily::ProjectedModelShadow ? 2
+                             : mode                                                 ? 1
+                                                                                    : 0;
+            selection = MmePortableDraw(reinterpret_cast<std::uintptr_t>(object),
+                                        int(draw.material), pass, flags, effect, reason);
+            if (selection < 0)
+                impl->assembler.Block(reason.c_str());
+        }
+        effects.emplace_back(selection, std::move(effect));
         draw.model = slot;
         impl->assembler.Append(std::move(draw));
     };
@@ -353,7 +394,9 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                     continue;
                 if ((int(order) >= app.AccessoryRenderSplitOrder()) != after || !a->visible)
                     break;
-                if (a->shadowEnabled && (projected || mode))
+                const bool carrier =
+                    postEffect && postEffect->object == reinterpret_cast<std::uintptr_t>(a);
+                if (!carrier && a->shadowEnabled && (projected || mode))
                     return fail("accessory_shadows");
                 auto& cached = impl->accessories[slot];
                 const std::filesystem::path path = a->sourcePath;
@@ -505,6 +548,11 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                 ++ordinal;
                 continue;
             }
+            const auto& effect = effects.at(ordinal);
+            if (effect.first == 2) {
+                ++ordinal;
+                continue;
+            }
             if (mode && e.draw.shadowCaster) {
                 auto caster = e.draw;
                 caster.pipeline.shadow = shadow;
@@ -520,6 +568,8 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
             }
             if (e.draw.pipeline.shadow.mode == BuiltinShadowMode::Material)
                 e.draw.shadowTarget = 3;
+            if (effect.first == 1 && !ApplyPortableMmeMaterial(e.draw, effect.second, reason))
+                return false;
             if (std::find(screens.begin(), screens.end(), ordinal++) != screens.end())
                 consumers.push_back({mode ? 1u : 0u, main.draws.size()});
             main.draws.push_back(std::move(e.draw));
@@ -527,8 +577,15 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
     if (mode)
         result.passes.push_back(std::move(generate));
     result.passes.push_back(std::move(main));
+    if (postEffect) {
+        if (!screens.empty())
+            return fail("MME_screen_history_not_supported");
+        result.finalColor = 1;
+        if (!AppendPortableMmePost(result, *postEffect, reason))
+            return false;
+    }
     // Capture before editor gizmos/HUD, matching the native screen.bmp timing.
-    if (!AppendPostProcess(result, 1, 5, width, height) ||
+    if (!AppendPostProcess(result, result.finalColor ? result.finalColor : 1, 5, width, height) ||
         !impl->history.Apply(result, consumers, ScreenCaptureKind(app.CaptureMode()), 5))
         return fail("editor_screen_history");
     if (!axes.draws.empty()) {

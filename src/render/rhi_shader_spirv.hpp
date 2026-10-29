@@ -3,6 +3,7 @@
 #include <cstring>
 #include <map>
 #include <stdexcept>
+#include <tuple>
 #ifdef _WIN32
 #include <unknwn.h>
 #include <oaidl.h>
@@ -120,7 +121,8 @@ inline bool CompileSpirv(const ShaderModule& source, SnapshotBytes& output, std:
 // Reflect the bounded graphics ABI before passing modules to the native driver.
 // Arbitrary storage resources, descriptor arrays/sets and MRT are not in this profile.
 inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& source,
-                         const SnapshotBytes& binary, std::string& error) try {
+                         const SnapshotBytes& binary, std::string& error,
+                         std::map<unsigned, std::vector<unsigned>>* stageInterface = nullptr) try {
     const auto fail = [&](const char* why) {
         error = why;
         return false;
@@ -142,6 +144,7 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
     std::map<unsigned, Variable> variables;
     std::map<std::pair<unsigned, unsigned>, unsigned> decorations, offsets;
     std::map<std::pair<unsigned, unsigned>, std::string> memberNames;
+    std::map<std::tuple<unsigned, unsigned, unsigned>, unsigned> memberDecorations;
     std::map<unsigned, unsigned> constants;
     bool entry = false;
     for (std::size_t n = 5; n < words.size();) {
@@ -149,7 +152,15 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
         if (!count || count > words.size() - n)
             return fail("invalid_spirv_instruction");
         const auto* w = words.data() + n;
-        if (op == 15) {
+        if (op == 89 || op == 90 || op == 93 || op == 94 || op == 97)
+            return fail("comparison_sampling_not_supported");
+        if (op == 17) {
+            // Float32 signed-zero/Inf/NaN preservation is required when the
+            // Vulkan device is selected, and emitted by DXC's strict mode.
+            if (count != 2 || (w[1] != 0 && w[1] != 1 && w[1] != 50 && w[1] != 51 && w[1] != 4466 &&
+                               w[1] != 5379))
+                return fail("shader_feature_not_supported");
+        } else if (op == 15) {
             if (count < 4)
                 return fail("invalid_spirv_entrypoint");
             const auto* name = reinterpret_cast<const char*>(w + 3);
@@ -171,6 +182,8 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
             decorations[{w[1], w[2]}] = w[3];
         else if (op == 72 && count >= 5 && w[3] == 35)
             offsets[{w[1], w[2]}] = w[4];
+        else if (op == 72 && count >= 4)
+            memberDecorations[{w[1], w[2], w[3]}] = count >= 5 ? w[4] : 1;
         else if (op >= 19 && op <= 33 && count >= 2)
             types[w[1]] = {op, std::vector<unsigned>(w + 2, w + count)};
         else if (op == 43 && count == 4)
@@ -216,6 +229,7 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
         }
         return 0;
     };
+    bool vertexPosition = false;
     for (const auto& v : variables) {
         const auto pointer = types.find(v.second.type);
         if (pointer == types.end() || pointer->second.op != 32 || pointer->second.data.size() != 2)
@@ -224,6 +238,33 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
         const auto type = types.find(pointee);
         if (type == types.end())
             return fail("invalid_spirv_type");
+        if (source.stage == ShaderStage::Vertex && v.second.storage == 3) {
+            const auto builtin = decorations.find({v.first, 11});
+            if (builtin != decorations.end() && builtin->second == 0)
+                vertexPosition = type->second.op == 23 && type->second.data.size() == 2 &&
+                                 type->second.data[1] == 4 &&
+                                 types.at(type->second.data[0]).op == 22 &&
+                                 types.at(type->second.data[0]).data == std::vector<unsigned>{32};
+        }
+        if (stageInterface && ((source.stage == ShaderStage::Vertex && v.second.storage == 3) ||
+                               (source.stage == ShaderStage::Pixel && v.second.storage == 1))) {
+            const auto location = decorations.find({v.first, 30});
+            if (location != decorations.end()) {
+                auto t = type->second;
+                unsigned components = 1;
+                if (t.op == 23 && t.data.size() == 2) {
+                    components = t.data[1];
+                    t = types.at(t.data[0]);
+                }
+                if ((t.op != 21 && t.op != 22) || t.data.empty() || t.data[0] != 32 ||
+                    !components || components > 4)
+                    return fail("shader_stage_interface_not_supported");
+                auto shape = t.data;
+                shape.insert(shape.begin(), {t.op, components});
+                if (!stageInterface->emplace(location->second, std::move(shape)).second)
+                    return fail("shader_stage_interface_mismatch");
+            }
+        }
         if (v.second.storage == 0 || v.second.storage == 2 || v.second.storage == 12) {
             const auto set = decorations.find({v.first, 34}),
                        binding = decorations.find({v.first, 33});
@@ -234,7 +275,9 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
                 kind = ShaderBindingKind::Constants;
             else if (v.second.storage == 0 && type->second.op == 25 &&
                      type->second.data.size() >= 7 && type->second.data[1] == 1 &&
-                     !type->second.data[3] && !type->second.data[4] && type->second.data[5] == 1)
+                     type->second.data[2] != 1 && !type->second.data[3] && !type->second.data[4] &&
+                     type->second.data[5] == 1 && types.at(type->second.data[0]).op == 22 &&
+                     types.at(type->second.data[0]).data == std::vector<unsigned>{32})
                 kind = ShaderBindingKind::Texture;
             else if (v.second.storage == 0 && type->second.op == 26)
                 kind = ShaderBindingKind::Sampler;
@@ -268,6 +311,11 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
                         value = types.at(value.data[0]);
                     }
                     const bool matrix = member.type == ShaderValueType::Matrix4x4;
+                    // DXC represents an HLSL row-major matrix as a transposed
+                    // SPIR-V matrix with ColMajor storage, stride 16.
+                    if (matrix && (memberDecorations[{pointee, index, 5}] != 1 ||
+                                   memberDecorations[{pointee, index, 7}] != 16))
+                        return fail("shader_reflection_matrix_layout_mismatch");
                     if (elements != member.count ||
                         (matrix &&
                          (value.op != 24 || value.data.size() != 2 || value.data[1] != 4)))
@@ -306,14 +354,17 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
                                                                                            : 4u)
                                           : 0;
             if (!found || type->second.op != 23 || type->second.data.size() != 2 ||
-                type->second.data[1] != components)
+                type->second.data[1] != components || types.at(type->second.data[0]).op != 22 ||
+                types.at(type->second.data[0]).data != std::vector<unsigned>{32})
                 return fail("shader_reflection_vertex_input_mismatch");
         } else if (v.second.storage == 3 && source.stage == ShaderStage::Pixel) {
             const auto location = decorations.find({v.first, 30});
-            if (location != decorations.end() && location->second)
-                return fail("multiple_color_outputs_not_supported");
+            if (location == decorations.end() || location->second)
+                return fail("shader_output_not_supported");
         }
     }
+    if (source.stage == ShaderStage::Vertex && !vertexPosition)
+        return fail("shader_vertex_position_missing");
     return true;
 } catch (const std::out_of_range&) {
     error = "invalid_spirv_type_reference";

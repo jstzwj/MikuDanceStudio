@@ -103,6 +103,7 @@ struct ShaderTextureInfo {
 };
 ShaderCapabilities GraphicsShaderProfile(bool hlsl, bool spirv);
 ShaderResult ValidateShaderPipeline(const ShaderPipeline&, ShaderCapabilities);
+std::uint64_t ShaderConstantBytes(const ShaderPipeline&, ShaderCapabilities);
 ShaderResult ValidateShaderBindings(const ShaderPipeline&, const ShaderResourceBindings&,
                                     const std::function<ShaderTextureInfo(Handle)>&);
 // Allocation-time query for the first graphics profile, with explicit reasons.

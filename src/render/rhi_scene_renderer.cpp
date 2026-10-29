@@ -255,9 +255,19 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
         return {false, 0, 0, "unsupported_frame_output"};
     if (result.draws > caps.maxDraws)
         return {false, 0, 0, "backend_draw_limit"};
+    const auto shaderCaps = d.ShaderFeatures();
+    std::uint64_t constantBytes = 0;
     for (const auto& e : stream.events)
         if (e.op == ModelReplayOp::Draw) {
             const auto& draw = e.draw;
+            constantBytes +=
+                draw.shader ? ShaderConstantBytes(draw.shader->pipeline, shaderCaps)
+                : draw.pipeline.postProcess.mode != PostProcessMode::None
+                    ? ShaderConstantBytes(PostProcessPipeline(draw.pipeline), shaderCaps)
+                    : shaderCaps.legacyDrawConstantBytes;
+            if (shaderCaps.maxFrameConstantBytes &&
+                constantBytes > shaderCaps.maxFrameConstantBytes)
+                return {false, e.sequence, 0, "shader_frame_constant_budget_exceeded"};
             if (draw.shader) {
                 const auto check =
                     ValidateShaderPipeline(draw.shader->pipeline, d.ShaderFeatures());

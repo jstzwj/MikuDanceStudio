@@ -716,6 +716,7 @@ add_library(mikudancestudio_core STATIC
     src/render/toon_textures.cpp
     src/render/scene_font.cpp
     src/render/mme/mme_bridge.cpp
+    src/render/mme/portable_effect.cpp
     src/exports/effect_api.cpp
     src/app/late_ports.cpp
 )
@@ -843,6 +844,7 @@ set_target_properties(MMDxShow PROPERTIES
 include(cmake/D3dxRuntime.cmake)
 add_library(MMEffect STATIC
     third_party/mmeffect/src/mme_host.cpp
+    third_party/mmeffect/src/mme_portable.cpp
     third_party/mmeffect/src/mmhack/mmhack_registry.cpp
     third_party/mmeffect/src/mmhack/mmhack_material.cpp
     third_party/mmeffect/src/mmhack/mmhack_material_table.cpp
@@ -1047,13 +1049,20 @@ if(BUILD_TESTING)
         target_link_options(editor_scene_import_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
         add_executable(editor_frame_test tests/editor_frame_test.cpp)
         target_include_directories(editor_frame_test PRIVATE src/app)
+        target_include_directories(editor_frame_test PRIVATE third_party/mmeffect/src/mmeffect)
+        target_compile_definitions(editor_frame_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(editor_frame_test PRIVATE mikudancestudio_core MMEffect dsound)
         target_link_options(editor_frame_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
+        add_executable(mme_portable_shader_test tests/mme_portable_shader_test.cpp)
+        target_compile_definitions(mme_portable_shader_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(mme_portable_shader_test PRIVATE mikudancestudio_core MMEffect dsound)
         foreach(api IN ITEMS dx11 dx12 vulkan)
             if((api STREQUAL "dx11" AND MIKUDANCESTUDIO_RHI_D3D11) OR
                (api STREQUAL "dx12" AND MIKUDANCESTUDIO_RHI_D3D12) OR
                (api STREQUAL "vulkan" AND MIKUDANCESTUDIO_RHI_VULKAN))
                 add_test(NAME editor_viewport_${api} COMMAND editor_viewport_test ${api})
+                add_test(NAME mme_portable_shader_${api} COMMAND mme_portable_shader_test ${api})
+                set_tests_properties(mme_portable_shader_${api} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "offscreen;MME;rhi" RUN_SERIAL TRUE)
                 set_tests_properties(editor_viewport_${api} PROPERTIES TIMEOUT 120 LABELS "hidden-window;editor;rhi" RUN_SERIAL TRUE)
                 if(Python3_Interpreter_FOUND)
                     add_test(NAME editor_frame_${api} COMMAND ${Python3_EXECUTABLE}

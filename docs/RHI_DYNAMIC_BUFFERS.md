@@ -101,5 +101,5 @@ ctest --test-dir build-x64/build -C Release --output-on-failure -R '^rhi_vulkan_
 build-x64/build/Release/editor_frame_test.exe vulkan 'C:\assets\model.pmx' --benchmark 60
 ```
 
-下一批继续通用效果／着色器绑定与最小 MME 场景；按效果实际需要扩展能力查询、MRT、
+接续批次已落实[通用着色器绑定](RHI_SHADERS.md)和[首批 MME 场景](RHI_MME_PORTABLE.md)；继续按效果实际需要扩展能力查询、MRT、
 浮点颜色和深度采样。GPU timestamp、统一显存预算、子分配器和异步上传仍是后续工作。

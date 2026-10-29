@@ -258,6 +258,11 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device, IDirect3DSurface
         return;
     MmeHostPreRenderTargetCopy(device, source);
 }
+bool PrepareEffectAssignments(MMDApp* app) {
+    if (!g_deviceRegistered) return true;
+    auto* renderer=app->Renderer();
+    return renderer && MmeHostPrepareEffectAssignments(renderer->device)!=0;
+}
 
 // ---------------------------------------------------------------------------
 // Draw forwarding

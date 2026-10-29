@@ -208,31 +208,9 @@ HRESULT __cdecl MmeHostClear(IDirect3DDevice9* device, unsigned long rect_count,
     return OnClear(device, rect_count, rects, flags, color, z, stencil, mainTarget);
 }
 
-// [0x180002de0] Device BeginScene slot 41 - frame-start state machine.
-HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode) {
-    g_host.endSceneFired = 0;            // +0x2c = 0
-    g_mmh.notEditMode = not_edit_mode;   // DAT_18006e796 (semantics supplied by host,
-                                         // replacing MmhProbeEditMode's
-                                         // 0x13D/0x1A1 control probing)
-    g_mmh.frameTime = ExpGetFrameTime(); // DAT_18006e79c
-
-    // Lazy MMEffect initialization: the first BeginScene calls Initialize.
-    if (!g_host.initialization.EnsureReady(
-            [device] { return Initialize(device); },
-            [] {
-                const char* msg = (g_mmh.currentEffect != nullptr)
-                                      ? "Initialize Error"
-                                      : "Initialize Error: failed to load default effect file. "
-                                        "Please check video card capability.";
-                MessageBoxA(g_mmh.mainWindow, msg, "MikuMikuEffect", MB_ICONERROR);
-                g_mmh.effectsDisabled = 1; // DAT_18006e794
-            }))
-        return S_OK; // Original failure returns 0 without real BeginScene.
-
-    HRESULT hr = device->BeginScene(); // Real slot 41 (+0x148)
-    if (hr != 0)
-        return hr;
-
+// Shared object/assignment synchronization. RHI uses this before selecting a
+// frame without entering a DX9 scene or executing MME render scripts.
+static void MmeSyncHostObjects(IDirect3DDevice9* device) {
     // --- Build the set of currently live host object IDs ----------------------------------------
     int pmdNum = ExpGetPmdNum();
     int acsNum = ExpGetAcsNum();
@@ -330,6 +308,42 @@ HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode) {
         if (f != g_host.objectById.end())
             g_host.objectByOrder[ExpGetAcsOrder(i)] = f->second;
     }
+}
+int __cdecl MmeHostPrepareEffectAssignments(IDirect3DDevice9* device) {
+    if (!device || !g_mmh.currentEffect)
+        return 0;
+    if (!g_host.initialization.EnsureReady([device] { return Initialize(device); }, [] {}))
+        return 0;
+    MmeSyncHostObjects(device);
+    return 1;
+}
+
+// [0x180002de0] Device BeginScene slot 41 - frame-start state machine.
+HRESULT __cdecl MmeHostBeginScene(IDirect3DDevice9* device, int not_edit_mode) {
+    g_host.endSceneFired = 0;            // +0x2c = 0
+    g_mmh.notEditMode = not_edit_mode;   // DAT_18006e796 (semantics supplied by host,
+                                         // replacing MmhProbeEditMode's
+                                         // 0x13D/0x1A1 control probing)
+    g_mmh.frameTime = ExpGetFrameTime(); // DAT_18006e79c
+
+    // Lazy MMEffect initialization: the first BeginScene calls Initialize.
+    if (!g_host.initialization.EnsureReady(
+            [device] { return Initialize(device); },
+            [] {
+                const char* msg = (g_mmh.currentEffect != nullptr)
+                                      ? "Initialize Error"
+                                      : "Initialize Error: failed to load default effect file. "
+                                        "Please check video card capability.";
+                MessageBoxA(g_mmh.mainWindow, msg, "MikuMikuEffect", MB_ICONERROR);
+                g_mmh.effectsDisabled = 1; // DAT_18006e794
+            }))
+        return S_OK; // Original failure returns 0 without real BeginScene.
+
+    HRESULT hr = device->BeginScene(); // Real slot 41 (+0x148)
+    if (hr != 0)
+        return hr;
+
+    MmeSyncHostObjects(device);
 
     // World matrix and inverse (used for lighting matrix calculations)
     device->GetTransform(D3DTS_WORLDMATRIX(0), &g_mmh.worldMatrix);

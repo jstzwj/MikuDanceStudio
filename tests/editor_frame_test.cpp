@@ -12,12 +12,23 @@
 #include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_d3d12.hpp"
 #include "pump_input.hpp"
+#include "mme_host_api.h"
+#include "mme_portable_api.h"
+#include "mikudancestudio/mme_portable.hpp"
+#include "effect_engine.h"
+#include "emm_manager.h"
+#include "mme_context.h"
+#include "mme_globals.h"
+#include "model_data.h"
+#include "material_bind.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <vector>
 
@@ -210,9 +221,9 @@ int main(int argc, char** argv) try {
         const auto catchups = app->state.recordedFrameCount;
         app->MessageSeen() = 1;
 #ifdef MIKUDANCESTUDIO_DIAG
-        const auto indexed = mme::ProbeIndexedDrawBridge().calls;
-        const auto triangles = mme::ProbeTriangleDrawBridge().calls;
-        const auto lineDraws = mme::ProbeLineDrawBridge().calls;
+        const auto indexed = mikudancestudio::mme::ProbeIndexedDrawBridge().calls;
+        const auto triangles = mikudancestudio::mme::ProbeTriangleDrawBridge().calls;
+        const auto lineDraws = mikudancestudio::mme::ProbeLineDrawBridge().calls;
 #endif
         if (driver)
             FrameDriver(app.get());
@@ -238,9 +249,9 @@ int main(int argc, char** argv) try {
                   after.legacyScenes == before.legacyScenes &&
                   after.legacyPasses == before.legacyPasses);
 #ifdef MIKUDANCESTUDIO_DIAG
-            CHECK(indexed == mme::ProbeIndexedDrawBridge().calls &&
-                  triangles == mme::ProbeTriangleDrawBridge().calls &&
-                  lineDraws == mme::ProbeLineDrawBridge().calls);
+            CHECK(indexed == mikudancestudio::mme::ProbeIndexedDrawBridge().calls &&
+                  triangles == mikudancestudio::mme::ProbeTriangleDrawBridge().calls &&
+                  lineDraws == mikudancestudio::mme::ProbeLineDrawBridge().calls);
 #endif
         } else
             CHECK(after.legacyScenes == before.legacyScenes + 1 &&
@@ -333,22 +344,23 @@ int main(int argc, char** argv) try {
 #ifdef MIKUDANCESTUDIO_RHI_VULKAN
             if (api == Backend::Vulkan) {
                 const auto vk = QueryVulkanStats(*app->ViewportRenderer().GetDevice());
-                std::printf("vulkan allocations=%llu timeline_waits=%llu idle_waits=%llu "
-                            "frame_waits=%llu transfer_waits=%llu busy_uploads=%llu retiring=%zu\n",
-                            vk.bufferAllocations - vkBefore.bufferAllocations,
-                            vk.timelineWaits - vkBefore.timelineWaits, vk.idleWaits - vkBefore.idleWaits,
-                            vk.frameWaits - vkBefore.frameWaits,
-                            vk.transferWaits - vkBefore.transferWaits,
-                            vk.uploadBusyRejects - vkBefore.uploadBusyRejects, vk.retiringResources);
+                std::printf(
+                    "vulkan allocations=%llu timeline_waits=%llu idle_waits=%llu "
+                    "frame_waits=%llu transfer_waits=%llu busy_uploads=%llu retiring=%zu\n",
+                    vk.bufferAllocations - vkBefore.bufferAllocations,
+                    vk.timelineWaits - vkBefore.timelineWaits, vk.idleWaits - vkBefore.idleWaits,
+                    vk.frameWaits - vkBefore.frameWaits, vk.transferWaits - vkBefore.transferWaits,
+                    vk.uploadBusyRejects - vkBefore.uploadBusyRejects, vk.retiringResources);
             }
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_D3D12
             if (api == Backend::D3D12) {
                 const auto dx = QueryD3D12Stats(*app->ViewportRenderer().GetDevice());
-                std::printf("dx12 default_allocations=%llu upload_allocations=%llu upload_reuses=%llu\n",
-                            dx.bufferAllocations - dxBefore.bufferAllocations,
-                            dx.uploadBufferAllocations - dxBefore.uploadBufferAllocations,
-                            dx.uploadBufferReuses - dxBefore.uploadBufferReuses);
+                std::printf(
+                    "dx12 default_allocations=%llu upload_allocations=%llu upload_reuses=%llu\n",
+                    dx.bufferAllocations - dxBefore.bufferAllocations,
+                    dx.uploadBufferAllocations - dxBefore.uploadBufferAllocations,
+                    dx.uploadBufferReuses - dxBefore.uploadBufferReuses);
             }
 #endif
             std::fflush(stdout);
@@ -503,6 +515,156 @@ int main(int argc, char** argv) try {
     // normal catch-up/physics/text/line tail, rather than a second frame path.
     frame(true, true);
     CHECK(app->FrameRenderingStats().fallbackGeometryUploads >= 2);
+    // Actual MME assignments enter the shared frame only when the complete
+    // profile is supported. The host window remains hidden throughout.
+    ComPtr<ID3DXEffect> standard;
+    ComPtr<ID3DXBuffer> compileErrors;
+    const auto sourceRoot = std::filesystem::path(MDS_TEST_SOURCE_DIR);
+    CHECK(SUCCEEDED(D3DXCreateEffectFromFileW(
+        device.Get(), (sourceRoot / L"res/assets/skin_effect_sm3.fx").c_str(), nullptr, nullptr, 0,
+        nullptr, &standard, &compileErrors)));
+    wrapper->effect = standard.Get();
+    mikudancestudio::mme::OnDeviceCreated(app.get(), window.value);
+    struct MmeCleanup {
+        MMDApp* app;
+        D3DRenderer* renderer;
+        ~MmeCleanup() {
+            mikudancestudio::mme::OnDeviceDestroyed(app);
+            renderer->effect = nullptr;
+        }
+    } mmeCleanup{app.get(), wrapper.get()};
+    CHECK(app->ViewportRenderer().CanRenderFrame(*app));
+    CHECK(MmeHostEffectsEnabled());
+    const auto materialEffect = (sourceRoot / L"assets/effects/portable/MaterialTint.fx").string();
+    CHECK(
+        ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, materialEffect));
+    std::string portableReason;
+    if (!CheckPortableMme(portableReason))
+        throw std::runtime_error(portableReason);
+    const auto assignedEffect = [&](const void* object) -> ID3DXEffect* {
+        for (const auto& entry : ::mme::g_ownerManager->bindings)
+            if (entry.first.model &&
+                entry.first.model->objectId() == reinterpret_cast<std::uintptr_t>(object) &&
+                entry.first.subset == -1)
+                return entry.second->effect;
+        return nullptr;
+    };
+    const bool runtimeEffects = app->ViewportRenderer().GetDevice()->ShaderFeatures().hlsl;
+    frame(runtimeEffects);
+    if (runtimeEffects) {
+        const auto portableImage = image();
+        frame(true);
+        CHECK(image().pixels == portableImage.pixels);
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), 0, ""));
+        frame(true);
+        CHECK(image().pixels != portableImage.pixels);
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), 0,
+                                     materialEffect));
+        frame(true);
+        CHECK(image().pixels == portableImage.pixels);
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     materialEffect));
+        const float tint[] = {.25f, .5f, 1, 1}, originalTint[] = {.75f, 1, .5f, 1};
+        CHECK(assignedEffect(model.get()));
+        CHECK(SUCCEEDED(assignedEffect(model.get())->SetFloatArray("tint", tint, 4)));
+        frame(true);
+        CHECK(image().pixels != portableImage.pixels);
+        CHECK(SUCCEEDED(assignedEffect(model.get())->SetFloatArray("tint", originalTint, 4)));
+        frame(true);
+        CHECK(image().pixels == portableImage.pixels);
+        CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+        frame(true);
+        CHECK(image().pixels == portableImage.pixels);
+    }
+    if (std::filesystem::exists(path.parent_path() / L"bound.x")) {
+        mdl::AccessoryRecord carrier{};
+        CHECK(LoadAccessoryObject(app.get(), &carrier, (path.parent_path() / L"bound.x").c_str()));
+        carrier.parentModel = -1;
+        carrier.visible = 1;
+        carrier.opacity = 1;
+        carrier.scale = 1;
+        app->AccessorySlot(0) = &carrier;
+        struct RemoveCarrier {
+            MMDApp* app;
+            mdl::AccessoryRecord* record;
+            ~RemoveCarrier() {
+                app->AccessorySlot(0) = nullptr;
+                DisposeAccessory(record);
+            }
+        } removeCarrier{app.get(), &carrier};
+        CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));
+        const auto postPath = (sourceRoot / L"assets/effects/portable/TwoStage.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, postPath));
+        if (!CheckPortableMme(portableReason))
+            throw std::runtime_error(portableReason);
+        frame(runtimeEffects);
+        if (runtimeEffects) {
+            CHECK(image().pixels[0] == 159 && image().pixels[1] == 207 &&
+                  image().pixels[2] == 255 && image().pixels[3] == 32);
+            const auto graded = image().pixels;
+            frame(true);
+            CHECK(image().pixels == graded);
+            const float add[] = {.25f, .0625f, 0, .125f};
+            CHECK(assignedEffect(&carrier));
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloatArray("addColor", add, 4)));
+            frame(true);
+            CHECK(image().pixels[0] == 191);
+            const auto savedWidth = app->ViewportRect().right;
+            app->ViewportRect().right += 8;
+            frame(true);
+            CHECK(image().pixels[0] == 191);
+            app->ViewportRect().right = savedWidth;
+            const float originalAdd[] = {.125f, .0625f, 0, .125f};
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloatArray("addColor", originalAdd, 4)));
+            frame(true);
+            CHECK(image().pixels == graded);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == graded);
+        }
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, ""));
+        app->AccessorySlot(0) = nullptr;
+        CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));
+    }
+    // A shader with no portable opt-in must still use the same-frame DX9 path.
+    const auto unsupported = (sourceRoot / L"res/assets/skin_effect_sm3.fx").string();
+    CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, unsupported));
+    CHECK(!CheckPortableMme(portableReason));
+    frame(false);
+    CHECK(app->ViewportRenderer().Reason() == "MME");
+    CHECK(
+        ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, materialEffect));
+    frame(runtimeEffects);
+    if (runtimeEffects) {
+        const auto brokenPath =
+            std::filesystem::temp_directory_path() /
+            ("mds-broken-portable-" + std::to_string(GetCurrentProcessId()) + ".fx");
+        struct TemporaryEffect {
+            std::filesystem::path p;
+            ~TemporaryEffect() {
+                std::error_code ec;
+                std::filesystem::remove(p, ec);
+            }
+        } temporaryEffect{brokenPath};
+        std::ifstream source(materialEffect, std::ios::binary);
+        std::string text(std::istreambuf_iterator<char>(source), {});
+        const auto at = text.find("baseTexture.Sample(baseSampler,o.uv)");
+        CHECK(at != std::string::npos);
+        text.replace(at, std::strlen("baseTexture.Sample(baseSampler,o.uv)"),
+                     "UnknownPortableFunction(o.uv)");
+        std::ofstream(brokenPath, std::ios::binary) << text;
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     brokenPath.string()));
+        CHECK(CheckPortableMme(portableReason));
+        const auto before = app->ViewportRenderer().Statistics();
+        frame(false);
+        CHECK(app->ViewportRenderer().Reason().rfind("MME_shader:", 0) == 0);
+        CHECK(app->ViewportRenderer().Statistics().uploads == before.uploads);
+        frame(false); // failed-program cache; no repeated compiler work
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     materialEffect));
+        frame(true); // same device, no explicit recreation required
+    }
     std::printf(
         "PASS %s %s: real frame owner, zero DX9 draws on RHI frames, once-only geometry, same-frame fallback, history handover, device recovery, switching, resize, unload and driver; window never shown\n",
         mode.c_str(), path.extension().u8string().c_str());
