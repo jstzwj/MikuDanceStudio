@@ -1865,6 +1865,31 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
         textureSurface->Release();
 }
 
+// Keep the recovered update order independent of the renderer that consumes
+// this frame. Playback/physics and next-frame text/lines remain in FrameDriver;
+// a rendering fallback must never enter this preparation a second time.
+bool PrepareFrameSceneInputs(MMDApp* app, D3DMATRIX& frameWorld) {
+    auto* device = app->Renderer()->device;
+    SetupFrameWorldTransform(app);
+    UpdateFrameStereo(app);
+    PrepareFrameSpriteOverlay(app); // 0x46BD79, after transform setup
+    device->GetTransform(D3DTS_WORLD, &frameWorld);
+
+    // 0x46DB41: the whole block - per-model VB update (inner gate
+    // app+0xA0665 == 0) AND the Clear - runs only when app+0xA0D6C
+    // (messageSeen) != 0; frames without a message leave both untouched.
+    if (app->state.messageSeen == 0)
+        return false;
+    if (app->state.accessoryEditDialogOpen == 0) {
+        for (int slot = 0; slot < kModelSlotCount; ++slot) {
+            auto* model = app->ModelSlot(slot);
+            if (model != nullptr)
+                UpdateModelVertexBuffers(app, model, reinterpret_cast<const float*>(&frameWorld));
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -1882,24 +1907,9 @@ void RenderFrameScene(MMDApp* app) {
     if (device == nullptr)
         return;
 
-    SetupFrameWorldTransform(app);
-    UpdateFrameStereo(app);
-    PrepareFrameSpriteOverlay(app); // 0x46BD79, after transform setup
     D3DMATRIX frameWorld{};
-    device->GetTransform(D3DTS_WORLD, &frameWorld);
-
-    // 0x46DB41: the whole block - per-model VB update (inner gate
-    // app+0xA0665 == 0) AND the Clear - runs only when app+0xA0D6C
-    // (messageSeen) != 0; frames without a message leave both untouched.
-    if (app->state.messageSeen == 0)
+    if (!PrepareFrameSceneInputs(app, frameWorld))
         return;
-    if (app->state.accessoryEditDialogOpen == 0) {
-        for (int slot = 0; slot < kModelSlotCount; ++slot) {
-            auto* model = app->ModelSlot(slot);
-            if (model != nullptr)
-                UpdateModelVertexBuffers(app, model, reinterpret_cast<const float*>(&frameWorld));
-        }
-    }
 #ifdef MIKUDANCESTUDIO_DIAG
     WritePmmWorldParityReport(app);
 #endif
