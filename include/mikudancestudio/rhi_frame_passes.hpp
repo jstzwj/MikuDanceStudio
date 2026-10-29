@@ -22,6 +22,7 @@ struct FramePass {
     std::optional<FrameAttachment> color, depthStencil;
     std::vector<std::uint64_t> sampled;
     std::vector<ModelReplayDraw> draws;
+    std::vector<FrameAttachment> colors;
 };
 // One CPU snapshot per immutable resource ID. Target IDs are a separate scene
 // namespace and name mutable render products, never immutable upload versions.

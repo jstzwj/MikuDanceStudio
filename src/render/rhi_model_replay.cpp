@@ -100,8 +100,9 @@ static ModelReplayResult ValidateReplay(const ModelReplayStream& stream, bool fr
         const auto& d = event.draw;
         const auto p = d.shader ? ShaderRasterAdapter(d.shader->pipeline) : d.pipeline;
         if (d.shader) {
-            const auto check =
-                ValidateShaderPipeline(d.shader->pipeline, GraphicsShaderProfile(true, true));
+            auto capabilities = GraphicsShaderProfile(true, true);
+            capabilities.maxColorAttachments = 4;
+            const auto check = ValidateShaderPipeline(d.shader->pipeline, capabilities);
             if (!check)
                 return fail(check.reason.c_str());
             if (d.shadowTarget)

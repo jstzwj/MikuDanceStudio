@@ -1,6 +1,7 @@
 #include "mikudancestudio/rhi.hpp"
 #include "mikudancestudio/rhi_render_pass.hpp"
 #include "mikudancestudio/rhi_shader.hpp"
+#include "mikudancestudio/rhi_float.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -21,30 +22,43 @@ class NullDevice final : public Device {
 public:
     Backend BackendType() const override { return Backend::Null; }
     Capabilities Features() const override { return {}; }
-    ShaderCapabilities ShaderFeatures() const override { return GraphicsShaderProfile(true, true); }
+    ShaderCapabilities ShaderFeatures() const override {
+        auto c = GraphicsShaderProfile(true, true);
+        c.maxColorAttachments = 4;
+        return c;
+    }
+    TextureFormatCapabilities FormatFeatures(TextureFormat f) const override {
+        if (!TexturePixelBytes(f))
+            return {};
+        const bool color = f != TextureFormat::Depth24Stencil8;
+        return {true, color, color, true};
+    }
     bool PrepareShaderPipeline(const ShaderPipeline& p) override {
-        const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+        const auto result = ValidateShaderTargetSupport(*this, p);
         shaderError_ = result.reason;
         return bool(result);
     }
     const char* ShaderDiagnostic() const override { return shaderError_.c_str(); }
     bool SetShaderPipeline(const ShaderPipeline& p) override {
         shaderReady_ = bindingsReady_ = linePipelineReady_ = false;
-        const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+        const auto result = ValidateShaderTargetSupport(*this, p);
         shaderError_ = result.reason;
         if (!inFrame_ || resetPending_ || !result)
             return false;
         const auto& pass = passes_.Current();
         const auto* target =
-            passes_.Active()
-                ? passes_.Description(pass.color ? pass.color->texture : pass.depthStencil->texture)
-                : nullptr;
+            passes_.Active() ? passes_.Description(PrimaryAttachment(pass)->texture) : nullptr;
         if (p.viewport &&
             (!target || !ValidModelViewport(*p.viewport, target->width, target->height)))
             return false;
         if ((p.raster.depthTest || p.raster.depthWrite) &&
             (!passes_.Active() || !pass.depthStencil))
             return false;
+        const auto layout = ValidateShaderAttachments(p, passes_.ColorFormats());
+        if (!layout) {
+            shaderError_ = layout.reason;
+            return false;
+        }
         shader_ = p;
         shaderReady_ = true;
         return true;
@@ -75,11 +89,11 @@ public:
         return {true, true, true, true, false};
     }
     Handle CreateRenderTexture(const RenderTextureDesc& d) override {
-        if (inFrame_ || resetPending_ || !ValidRenderTextureDesc(d))
+        if (inFrame_ || resetPending_ || !QueryShaderTextureSupport(*this, d))
             return {};
         Resource r;
         r.alive = r.texture = true;
-        r.bytes.resize(std::size_t(d.width) * d.height * 4);
+        r.bytes.resize(std::size_t(d.width) * d.height * TexturePixelBytes(d.format));
         const auto h = Insert(std::move(r));
         return passes_.Register(h, d) ? h : Handle{};
     }
@@ -89,11 +103,23 @@ public:
         linePipelineReady_ = false;
         shaderReady_ = bindingsReady_ = false;
         boundTexture_ = {};
-        for (const auto* a :
-             {p.color ? &*p.color : nullptr, p.depthStencil ? &*p.depthStencil : nullptr}) {
-            if (!a || a->load != AttachmentLoad::Clear)
+        auto attachments = ColorAttachments(p);
+        if (p.depthStencil)
+            attachments.push_back(*p.depthStencil);
+        for (const auto& attachment : attachments) {
+            const auto* a = &attachment;
+            if (a->load != AttachmentLoad::Clear)
                 continue;
             const auto& d = *passes_.Description(a->texture);
+            if (d.format == TextureFormat::Rgba16Float) {
+                const std::uint16_t rgba[] = {
+                    FloatToHalf(a->clear.red), FloatToHalf(a->clear.green),
+                    FloatToHalf(a->clear.blue), FloatToHalf(a->clear.alpha)};
+                auto& bytes = Find(a->texture)->bytes;
+                for (std::size_t n = 0; n < bytes.size(); n += 8)
+                    std::memcpy(bytes.data() + n, rgba, 8);
+                continue;
+            }
             std::uint32_t value = 0;
             if (d.format == TextureFormat::R32Float)
                 std::memcpy(&value, &a->clear.red, 4);

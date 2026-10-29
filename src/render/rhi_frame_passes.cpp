@@ -15,9 +15,9 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
     s.source = f.source;
     s.resources = f.resources;
     if (pass) {
-        if (!pass->color && !pass->depthStencil)
+        if (!PrimaryAttachment(*pass))
             return {};
-        const auto* t = Target(f, pass->color ? pass->color->target : pass->depthStencil->target);
+        const auto* t = Target(f, PrimaryAttachment(*pass)->target);
         if (!t)
             return {};
         s.target.width = t->description.width;
@@ -44,9 +44,9 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
     for (const auto& p : f.passes) {
         if (pass && &p != pass)
             continue;
-        if (!p.color && !p.depthStencil)
+        if (!PrimaryAttachment(p))
             return {};
-        const auto* target = Target(f, p.color ? p.color->target : p.depthStencil->target);
+        const auto* target = Target(f, PrimaryAttachment(p)->target);
         if (!target)
             return {};
         for (const auto& d : p.draws) {
@@ -112,6 +112,12 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         };
         if (!attachment(p.color, native.color) || !attachment(p.depthStencil, native.depthStencil))
             return fail("unknown_frame_attachment");
+        for (const auto& a : p.colors) {
+            std::optional<PassAttachment> out;
+            if (!attachment(a, out))
+                return fail("unknown_frame_attachment");
+            native.colors.push_back(*out);
+        }
         for (auto id : p.sampled) {
             const auto i = handles.find(id);
             if (i == handles.end())
@@ -122,6 +128,10 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
             return {false, 0, draws, state.Reason()};
         for (const auto& d : p.draws) {
             if (d.shader) {
+                const auto layout =
+                    ValidateShaderAttachments(d.shader->pipeline, state.ColorFormats());
+                if (!layout)
+                    return fail(layout.reason.c_str());
                 const auto& raster = d.shader->pipeline.raster;
                 if ((raster.depthTest || raster.depthWrite) && !p.depthStencil)
                     return fail("draw_requires_depth_attachment");
@@ -132,13 +142,16 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
                     const auto* t = Target(f, ref.target);
                     if (!t ||
                         (t->description.format != TextureFormat::Rgba8 &&
-                         t->description.format != TextureFormat::R32Float) ||
+                         t->description.format != TextureFormat::R32Float &&
+                         t->description.format != TextureFormat::Rgba16Float) ||
                         t->description.width != ref.width || t->description.height != ref.height ||
                         !state.CanSample(handles.at(t->id)))
                         return fail("invalid_or_undeclared_target_texture");
                 }
                 continue;
             }
+            if (ColorAttachments(p).size() != 1)
+                return fail("legacy_draw_requires_single_color");
             for (const auto& ref : d.targetTextures)
                 if (ref.target) {
                     const auto* t = Target(f, ref.target);

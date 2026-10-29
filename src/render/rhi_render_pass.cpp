@@ -7,19 +7,32 @@ namespace {
 bool Has(const RenderTextureDesc& d, TextureAccess a) {
     return (d.access & std::uint32_t(a)) != 0;
 }
-bool ValidColor(ClearColor c) {
+bool ValidColor(ClearColor c, TextureFormat format) {
     for (float v : {c.red, c.green, c.blue, c.alpha})
-        if (!std::isfinite(v) || v < 0 || v > 1)
+        if (!std::isfinite(v) || (format == TextureFormat::Rgba8 && (v < 0 || v > 1)) ||
+            (format == TextureFormat::Rgba16Float && std::abs(v) > 65504))
             return false;
     return true;
 }
+}
+unsigned TexturePixelBytes(TextureFormat f) {
+    switch (f) {
+    case TextureFormat::Rgba16Float:
+        return 8;
+    case TextureFormat::Rgba8:
+    case TextureFormat::R32Float:
+    case TextureFormat::Depth24Stencil8:
+        return 4;
+    }
+    return 0;
 }
 bool ValidRenderTextureDesc(const RenderTextureDesc& d) {
     if (!d.width || !d.height || d.width > 4096 || d.height > 4096 || d.mips != 1 ||
         d.layers != 1 || d.samples != 1 || !d.access || (d.access & ~15u))
         return false;
     const bool depth = d.format == TextureFormat::Depth24Stencil8;
-    if (!depth && d.format != TextureFormat::Rgba8 && d.format != TextureFormat::R32Float)
+    if (!depth && d.format != TextureFormat::Rgba8 && d.format != TextureFormat::R32Float &&
+        d.format != TextureFormat::Rgba16Float)
         return false;
     if (depth)
         return Has(d, TextureAccess::DepthStencilAttachment) &&
@@ -48,19 +61,25 @@ bool RenderPassState::Begin(const RenderPassDesc& p) {
     };
     if (active_)
         return fail("nested_render_pass");
-    if (!p.color && !p.depthStencil)
+    if (p.color && !p.colors.empty())
+        return fail("ambiguous_color_attachments");
+    auto attachments = ColorAttachments(p);
+    const auto colorCount = attachments.size();
+    if (colorCount > 4)
+        return fail("too_many_color_attachments");
+    if (!colorCount && !p.depthStencil)
         return fail("missing_attachment");
     std::set<Key> writes, reads;
     std::uint32_t width = 0, height = 0;
-    for (const auto* a :
-         {p.color ? &*p.color : nullptr, p.depthStencil ? &*p.depthStencil : nullptr}) {
-        if (!a)
-            continue;
+    if (p.depthStencil)
+        attachments.push_back(*p.depthStencil);
+    for (std::size_t n = 0; n < attachments.size(); ++n) {
+        const auto* a = &attachments[n];
         const auto i = entries_.find(key(a->texture));
         if (i == entries_.end())
             return fail("invalid_attachment_handle");
         const auto& d = i->second.desc;
-        const bool depth = a == (p.depthStencil ? &*p.depthStencil : nullptr);
+        const bool depth = n == colorCount;
         if (!Has(d, depth ? TextureAccess::DepthStencilAttachment : TextureAccess::ColorAttachment))
             return fail("attachment_usage_mismatch");
         if (!writes.insert(i->first).second)
@@ -80,7 +99,7 @@ bool RenderPassState::Begin(const RenderPassDesc& p) {
             return fail("load_before_write");
         if (a->load == AttachmentLoad::Clear &&
             (depth ? !std::isfinite(a->clearDepth) || a->clearDepth < 0 || a->clearDepth > 1
-                   : !ValidColor(a->clear)))
+                   : !ValidColor(a->clear, d.format)))
             return fail("invalid_attachment_clear");
     }
     for (const auto h : p.sampled) {
@@ -106,13 +125,20 @@ bool RenderPassState::End() {
         reason_ = "no_render_pass";
         return false;
     }
-    for (const auto* a : {current_.color ? &*current_.color : nullptr,
-                          current_.depthStencil ? &*current_.depthStencil : nullptr})
-        if (a)
-            entries_.at(key(a->texture)).initialized = a->store == AttachmentStore::Store;
+    auto attachments = ColorAttachments(current_);
+    if (current_.depthStencil)
+        attachments.push_back(*current_.depthStencil);
+    for (const auto& a : attachments)
+        entries_.at(key(a.texture)).initialized = a.store == AttachmentStore::Store;
     active_ = false;
     current_ = {};
     return true;
+}
+std::vector<TextureFormat> RenderPassState::ColorFormats() const {
+    std::vector<TextureFormat> result;
+    for (const auto& a : ColorAttachments(current_))
+        result.push_back(Description(a.texture)->format);
+    return result;
 }
 bool RenderPassState::CanSample(Handle h) const {
     if (!active_)

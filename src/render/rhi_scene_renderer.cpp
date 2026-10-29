@@ -497,6 +497,11 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
             };
             attachment(p.color, pass.description.color);
             attachment(p.depthStencil, pass.description.depthStencil);
+            for (const auto& a : p.colors) {
+                std::optional<PassAttachment> out;
+                attachment(a, out);
+                pass.description.colors.push_back(*out);
+            }
             for (auto id : p.sampled)
                 pass.description.sampled.push_back(scene.targets.at(id).handle);
             data->passes.push_back(std::move(pass));

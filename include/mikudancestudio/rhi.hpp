@@ -93,7 +93,12 @@ enum class StencilOperation {
 enum class TextureFormat {
     Rgba8,
     Depth24Stencil8,
-    R32Float
+    R32Float,
+    Rgba16Float
+};
+unsigned TexturePixelBytes(TextureFormat);
+struct TextureFormatCapabilities {
+    bool render = false, sampled = false, blend = false, readback = false;
 };
 
 enum class HistoryRepresentation {
@@ -265,6 +270,7 @@ struct ShaderCapabilities {
     // Zero means no fixed per-frame upload arena. Includes legacy and generic
     // draws; frame preparation must reject overflow before GPU submission.
     std::uint64_t maxFrameConstantBytes = 0;
+    unsigned maxColorAttachments = 1;
 };
 // Reports implemented adapter behavior, not all capabilities of its native API.
 // Ready describes the adapter reset protocol; it is not a native GPU health probe.
@@ -442,6 +448,7 @@ public:
     virtual Backend BackendType() const = 0;
     virtual Capabilities Features() const = 0;
     virtual ShaderCapabilities ShaderFeatures() const { return {}; }
+    virtual TextureFormatCapabilities FormatFeatures(TextureFormat) const { return {}; }
     // CPU/native shader creation and reflection before any frame is submitted.
     virtual bool PrepareShaderPipeline(const ShaderPipeline&) { return false; }
     virtual bool SetShaderPipeline(const ShaderPipeline&) { return false; }

@@ -58,6 +58,8 @@ struct ShaderProgramDesc {
     ShaderModule vertex, pixel{ShaderStage::Pixel};
     std::vector<ShaderBinding> bindings;
     std::vector<ShaderVertexInput> inputs;
+    // Number of float components written to each dense SV_TargetN output.
+    std::vector<unsigned> colorOutputs{4};
 };
 // Immutable CPU description. Native program caches belong to each Device;
 // replacement recompiles/recreates from this snapshot, never native pointers.
@@ -74,6 +76,7 @@ struct ShaderPipeline {
     BatchRasterState raster;
     std::optional<ModelViewport> viewport;
     std::uint8_t colorWriteMask = 15;
+    std::vector<TextureFormat> colorFormats{TextureFormat::Rgba8};
 };
 struct ShaderConstantBinding {
     unsigned slot = 0;
@@ -103,6 +106,8 @@ struct ShaderTextureInfo {
 };
 ShaderCapabilities GraphicsShaderProfile(bool hlsl, bool spirv);
 ShaderResult ValidateShaderPipeline(const ShaderPipeline&, ShaderCapabilities);
+ShaderResult ValidateShaderTargetSupport(const Device&, const ShaderPipeline&);
+ShaderResult ValidateShaderAttachments(const ShaderPipeline&, const std::vector<TextureFormat>&);
 std::uint64_t ShaderConstantBytes(const ShaderPipeline&, ShaderCapabilities);
 ShaderResult ValidateShaderBindings(const ShaderPipeline&, const ShaderResourceBindings&,
                                     const std::function<ShaderTextureInfo(Handle)>&);

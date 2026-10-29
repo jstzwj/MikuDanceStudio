@@ -76,6 +76,9 @@ std::string Key(const ShaderProgramDesc& d) {
         value(i.offset);
         value(i.format);
     }
+    value(d.colorOutputs.size());
+    for (auto c : d.colorOutputs)
+        value(c);
     return key;
 }
 ShaderProgramDesc Seal(ShaderProgramDesc d) {
@@ -141,6 +144,15 @@ ShaderResult ValidateShaderPipeline(const ShaderPipeline& p, ShaderCapabilities 
         if (!m->spirv.empty() && (m->spirv.size() < 20 || m->spirv.size() % 4))
             return Fail("invalid_spirv_size");
     }
+    if (d.colorOutputs.empty() || d.colorOutputs.size() != p.colorFormats.size() ||
+        d.colorOutputs.size() > caps.maxColorAttachments)
+        return Fail("shader_output_layout_mismatch");
+    for (std::size_t i = 0; i < d.colorOutputs.size(); ++i)
+        if (!d.colorOutputs[i] || d.colorOutputs[i] > 4 ||
+            (p.colorFormats[i] != TextureFormat::Rgba8 &&
+             p.colorFormats[i] != TextureFormat::R32Float &&
+             p.colorFormats[i] != TextureFormat::Rgba16Float))
+            return Fail("shader_output_layout_mismatch");
     const auto stride = ModelVertexStride(p.vertexLayout);
     if (!stride || !ModelPrimitiveArity(p.topology) || p.colorWriteMask > 15 ||
         unsigned(p.raster.cull) > 2 || unsigned(p.raster.depthCompare) > 7 ||
@@ -235,7 +247,8 @@ ShaderResult ValidateShaderBindings(const ShaderPipeline& p, const ShaderResourc
             return Fail("uninitialized_shader_texture");
         if (!info.sampleable)
             return Fail("shader_texture_not_declared_sampled");
-        if ((info.format != TextureFormat::Rgba8 && info.format != TextureFormat::R32Float) ||
+        if ((info.format != TextureFormat::Rgba8 && info.format != TextureFormat::R32Float &&
+             info.format != TextureFormat::Rgba16Float) ||
             info.srgb != b->srgb)
             return Fail("shader_texture_usage_mismatch");
     }
@@ -251,6 +264,22 @@ ShaderResult ValidateShaderBindings(const ShaderPipeline& p, const ShaderResourc
         return Fail("missing_shader_binding");
     return {true, "bound"};
 }
+ShaderResult ValidateShaderAttachments(const ShaderPipeline& p,
+                                       const std::vector<TextureFormat>& formats) {
+    return p.colorFormats == formats ? ShaderResult{true, "supported"}
+                                     : Fail("shader_attachment_layout_mismatch");
+}
+ShaderResult ValidateShaderTargetSupport(const Device& d, const ShaderPipeline& p) {
+    const auto valid = ValidateShaderPipeline(p, d.ShaderFeatures());
+    if (!valid)
+        return valid;
+    for (auto f : p.colorFormats) {
+        const auto c = d.FormatFeatures(f);
+        if (!c.render || (p.raster.alphaBlend && !c.blend))
+            return Fail("shader_attachment_format_not_supported");
+    }
+    return {true, "supported"};
+}
 ShaderResult QueryShaderTextureSupport(const Device& d, const RenderTextureDesc& desc) {
     if (!d.ShaderFeatures().programs)
         return Fail("shader_programs_not_supported");
@@ -259,6 +288,10 @@ ShaderResult QueryShaderTextureSupport(const Device& d, const RenderTextureDesc&
         return Fail("depth_sampling_not_supported");
     if (!ValidRenderTextureDesc(desc))
         return Fail("invalid_render_texture_description");
+    const auto c = d.FormatFeatures(desc.format);
+    if (!c.render || ((desc.access & unsigned(TextureAccess::Sampled)) && !c.sampled) ||
+        ((desc.access & unsigned(TextureAccess::CopySource)) && !c.readback))
+        return Fail("render_texture_format_not_supported");
     return {true, "supported"};
 }
 }

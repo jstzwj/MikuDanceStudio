@@ -45,15 +45,31 @@ struct PassAttachment {
     std::uint8_t clearStencil = 0;
 };
 struct RenderPassDesc {
-    // One color attachment in this milestone; MRT is not advertised.
+    // Legacy single-color spelling. Do not combine with colors.
     std::optional<PassAttachment> color, depthStencil;
     // Every render-texture sample must be declared here, including Load passes.
     // Same-pass feedback and reading undefined/discarded contents are invalid.
     std::vector<Handle> sampled;
+    // Dense ordered attachments, mapped to SV_Target0..N-1. Common blend and
+    // write-mask state applies to every target; independent blending is absent.
+    std::vector<PassAttachment> colors;
 };
+template <class Pass> auto ColorAttachments(const Pass& p) {
+    auto result = p.colors;
+    if (p.color)
+        result.insert(result.begin(), *p.color);
+    return result;
+}
+template <class Pass> const auto* PrimaryAttachment(const Pass& p) {
+    return p.color             ? &*p.color
+           : !p.colors.empty() ? &p.colors.front()
+           : p.depthStencil    ? &*p.depthStencil
+                               : nullptr;
+}
 struct AttachmentReadback {
     RenderTextureDesc description;
-    // Tightly packed rows. RGBA8 bytes, IEEE float32 R32, or D24(low)/S8(high).
+    // Tightly packed native-value rows: RGBA8, IEEE binary16 RGBA (8 bytes),
+    // IEEE float32 R32, or D24(low)/S8(high). No UNORM conversion for floats.
     std::vector<std::uint8_t> bytes;
 };
 // Shared validation for Null and native backends. The owner registers only
@@ -69,6 +85,7 @@ public:
     bool CanSample(Handle) const;
     bool CanRead(Handle) const;
     const RenderTextureDesc* Description(Handle) const;
+    std::vector<TextureFormat> ColorFormats() const;
     const RenderPassDesc& Current() const { return current_; }
     const std::string& Reason() const { return reason_; }
     void InvalidateContents();
