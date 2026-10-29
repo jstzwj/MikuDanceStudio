@@ -3,12 +3,13 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include "rhi_snapshot_bytes.hpp"
 
 namespace mikudancestudio::rhi {
 struct RgbaImage {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    std::vector<std::uint8_t> pixels;
+    SnapshotBytes pixels;
 };
 // Explicit levels are immutable CPU upload data, even when an optional backend
 // service prepared them. Native generation is a distinct compatibility recipe,

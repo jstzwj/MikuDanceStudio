@@ -7,7 +7,8 @@
 namespace mikudancestudio::rhi {
 bool PrepareMaterialMipChain(MaterialTextureAsset& asset, MipPreparationPolicy policy,
                              TexturePreparer* backend, bool sceneActive) {
-    const auto& source = asset.usePrepared ? asset.prepared : asset.content;
+    auto& source = asset.usePrepared ? asset.prepared : asset.content;
+    source.image.pixels.Seal();
     if (!source.revision || source.revision != ImageRevision(source.image))
         return false;
     PreparedMipChain chain;

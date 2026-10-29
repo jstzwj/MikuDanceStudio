@@ -72,7 +72,7 @@ struct Resource {
     bool alive = false, texture = false, srgb = false, uploaded = false;
     BufferDesc buffer{};
     TextureDesc image{};
-    std::vector<std::uint8_t> indices;
+    SnapshotBytes indices;
     ComPtr<ID3D12Resource> native;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COPY_DEST;
 };
@@ -395,6 +395,7 @@ public:
         if (initial && d.usage == BufferUsage::Index)
             r.indices.assign(static_cast<const std::uint8_t*>(initial),
                              static_cast<const std::uint8_t*>(initial) + d.size);
+        r.indices.Seal();
         UploadJob job;
         job.destination = r.native;
         job.bytes = d.size;
@@ -431,6 +432,7 @@ public:
             if (r->indices.empty())
                 r->indices.resize(r->buffer.size);
             std::memcpy(r->indices.data() + offset, data, bytes);
+            r->indices.Seal();
         }
         pendingUploads.push_back(std::move(job));
         r->state = pendingUploads.back().after;
@@ -1058,12 +1060,8 @@ public:
         if (d.firstIndex > i->indices.size() / step ||
             d.indexCount > i->indices.size() / step - d.firstIndex)
             return false;
-        for (SIZE_T n = d.firstIndex; n < SIZE_T(d.firstIndex) + d.indexCount; ++n) {
-            unsigned index = 0;
-            std::memcpy(&index, i->indices.data() + n * step, step);
-            if (index >= d.vertexCount)
-                return false;
-        }
+        if (!i->indices.IndicesFit(d.firstIndex, d.indexCount, step, d.vertexCount))
+            return false;
         if (!BindDrawDescriptors())
             return false;
         D3D12_VERTEX_BUFFER_VIEW vb{v->native->GetGPUVirtualAddress(),

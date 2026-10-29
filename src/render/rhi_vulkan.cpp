@@ -110,7 +110,7 @@ struct Resource {
     bool alive = false, uploaded = false;
     BufferDesc description{};
     Buffer buffer;
-    std::vector<std::uint8_t> indices;
+    SnapshotBytes indices;
     TextureDesc texture{};
     unsigned mips = 1;
     VkImage image = VK_NULL_HANDLE;
@@ -568,6 +568,7 @@ public:
             r.indices.resize(d.size);
             if (initial)
                 std::memcpy(r.indices.data(), initial, d.size);
+            r.indices.Seal();
         }
         if (initial)
             ++stats.resourceUploads;
@@ -582,6 +583,7 @@ public:
         std::memcpy(static_cast<char*>(r->buffer.mapped) + offset, data, size);
         if (!r->indices.empty())
             std::memcpy(r->indices.data() + offset, data, size);
+        r->indices.Seal();
         r->uploaded = true;
         ++stats.resourceUploads;
         return true;
@@ -2007,12 +2009,8 @@ bool VulkanDevice::DrawIndexed(IndexedDraw d) {
     if (d.firstIndex > i->indices.size() / step ||
         d.indexCount > i->indices.size() / step - d.firstIndex)
         return false;
-    for (std::size_t n = d.firstIndex; n < std::size_t(d.firstIndex) + d.indexCount; ++n) {
-        unsigned index = 0;
-        std::memcpy(&index, i->indices.data() + n * step, step);
-        if (index >= d.vertexCount)
-            return false;
-    }
+    if (!i->indices.IndicesFit(d.firstIndex, d.indexCount, step, d.vertexCount))
+        return false;
     if (!BindDraw())
         return false;
     VkDeviceSize offset = 0;

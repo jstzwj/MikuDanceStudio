@@ -128,9 +128,7 @@ bool DecodePngRgba(const void* bytes, std::size_t length, RgbaImage& image) {
            DecodeTextureRgba(bytes, length, image);
 }
 std::uint64_t ImageRevision(const RgbaImage& image) {
-    std::uint64_t revision = 1469598103934665603ull;
-    for (const auto byte : image.pixels)
-        revision = (revision ^ byte) * 1099511628211ull;
+    std::uint64_t revision = image.pixels.Fingerprint();
     revision = (revision ^ image.width) * 1099511628211ull;
     revision = (revision ^ image.height) * 1099511628211ull;
     return revision ? revision : 1;

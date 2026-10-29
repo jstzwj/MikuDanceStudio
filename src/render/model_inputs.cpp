@@ -38,19 +38,21 @@ rhi::ModelReplayResult ModelSubmissionBuilder::Build(
                 const auto& asset = packet.textureResources[stage] ? *packet.textureResources[stage]
                                                                    : packet.textures[stage];
                 const auto& cpu = asset.usePrepared ? asset.prepared : asset.content;
+                const bool srgb = draw.pipeline.shader.srgbSample[stage];
+                auto found = std::find_if(registry.begin(), registry.end(), [&](const Texture& t) {
+                    return t.identity == asset.identity && t.resource.texture.srgb == srgb;
+                });
                 if (asset.identity.empty() || !cpu.revision || cpu.image.pixels.empty() ||
                     asset.mips != rhi::TextureDesc::Mips::SingleLevel)
                     return fail("unavailable_cpu_texture");
                 if (asset.mipChain && (!rhi::ValidatePreparedMipChain(cpu.image, *asset.mipChain) ||
                                        asset.mipChain->sourceRevision != cpu.revision))
                     return fail("invalid_cpu_mip_chain");
-                const auto levels = asset.mipChain ? asset.mipChain->levels
-                                                   : std::vector<rhi::RgbaImage>{cpu.image};
+                const std::vector<rhi::RgbaImage> single =
+                    asset.mipChain ? std::vector<rhi::RgbaImage>{}
+                                   : std::vector<rhi::RgbaImage>{cpu.image};
+                const auto& levels = asset.mipChain ? asset.mipChain->levels : single;
                 const auto preparationRevision = asset.mipChain ? asset.mipChain->revision : 0;
-                const bool srgb = draw.pipeline.shader.srgbSample[stage];
-                auto found = std::find_if(registry.begin(), registry.end(), [&](const Texture& t) {
-                    return t.identity == asset.identity && t.resource.texture.srgb == srgb;
-                });
                 if (found == registry.end()) {
                     if (!next || next == std::numeric_limits<std::uint64_t>::max())
                         return fail("texture_id_overflow");
@@ -85,6 +87,8 @@ rhi::ModelReplayResult ModelSubmissionBuilder::Build(
                         return fail("texture_version_overflow");
                     ++resource.key.version;
                     resource.texture.levels = levels;
+                    for (auto& level : resource.texture.levels)
+                        level.pixels.Seal();
                     found->preparationRevision = preparationRevision;
                     found->sourceRevision = asset.content.revision;
                 }

@@ -24,7 +24,7 @@ DXGI_FORMAT Depth(SurfaceDepth d) {
 struct Resource {
     std::uint32_t generation = 1;
     bool alive = false, uploaded = false;
-    std::vector<std::uint8_t> indices;
+    SnapshotBytes indices;
     bool srgb = false;
     BufferDesc description{};
     TextureDesc textureDescription{};
@@ -465,6 +465,7 @@ public:
                 std::memcpy(r.indices.data(), data, d.size);
             else
                 return {};
+            r.indices.Seal();
         }
         lastError = native->CreateBuffer(&b, data ? &initial : nullptr, &r.buffer);
         return SUCCEEDED(lastError) ? Insert(std::move(r)) : Handle{};
@@ -540,6 +541,7 @@ public:
         }
         if (!r->indices.empty())
             std::memcpy(r->indices.data() + offset, data, size);
+        r->indices.Seal();
         return native->GetDeviceRemovedReason() == S_OK;
     }
     bool Destroy(Handle h) override {
@@ -803,13 +805,9 @@ public:
         if (command.firstIndex > i->indices.size() / step ||
             command.indexCount > i->indices.size() / step - command.firstIndex)
             return false;
-        for (std::size_t index = command.firstIndex;
-             index < static_cast<std::size_t>(command.firstIndex) + command.indexCount; ++index) {
-            std::uint32_t value = 0;
-            std::memcpy(&value, i->indices.data() + index * step, step);
-            if (value >= command.vertexCount)
-                return false;
-        }
+        if (!i->indices.IndicesFit(command.firstIndex, command.indexCount, step,
+                                   command.vertexCount))
+            return false;
         for (unsigned stage = 0; stage < 3; ++stage)
             if (modelPipeline.shader.layout.stages[stage].role != MaterialTextureRole::None) {
                 auto* t = Find(modelTextures[stage]);

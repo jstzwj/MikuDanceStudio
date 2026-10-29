@@ -12,6 +12,7 @@ void Replace(rhi::ModelReplayResource& resource, std::vector<std::uint8_t> bytes
     if (Changed(resource, bytes)) {
         ++resource.key.version;
         resource.bytes = std::move(bytes);
+        resource.bytes.Seal();
     }
 }
 }

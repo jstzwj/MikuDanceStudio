@@ -159,12 +159,8 @@ static ModelReplayResult ValidateReplay(const ModelReplayStream& stream, bool fr
                 d.indexCount % arity || d.firstIndex > i->bytes.size() / step ||
                 d.indexCount > i->bytes.size() / step - d.firstIndex)
                 return fail("invalid_draw_range");
-            for (std::size_t n = d.firstIndex; n < std::size_t(d.firstIndex) + d.indexCount; ++n) {
-                std::uint32_t index = 0;
-                std::memcpy(&index, i->bytes.data() + n * step, step);
-                if (index >= d.vertexCount)
-                    return fail("index_out_of_range");
-            }
+            if (!i->bytes.IndicesFit(d.firstIndex, d.indexCount, step, d.vertexCount))
+                return fail("index_out_of_range");
         } else {
             if (d.indices.id || d.indices.version || d.firstIndex || d.indexCount || d.vertexCount)
                 return fail("mixed_draw_ranges");

@@ -20,7 +20,7 @@ struct ModelReplayResource {
     ReplayResourceKey key;
     ReplayResourceKind kind = ReplayResourceKind::Vertices;
     IndexFormat indexFormat = IndexFormat::UInt16;
-    std::vector<std::uint8_t> bytes;
+    SnapshotBytes bytes;
     ModelTextureData texture;
 };
 // Mutable RGBA8 product, distinct from immutable upload versions. History

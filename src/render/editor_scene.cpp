@@ -129,10 +129,12 @@ struct EditorSceneProducer::Impl {
                 if (fontSourceRevision != native.revision) {
                     atlas.image = {512, 512, {native.pixels, native.pixels + native.bytes}};
                     atlas.revision = ImageRevision(atlas.image);
+                    atlas.image.pixels.Seal();
                     fontSourceRevision = native.revision;
                 }
             } else if (!atlas.revision && !LoadAtlas(Builtins(app), AssetId::HudSprites, atlas))
                 return false;
+            atlas.image.pixels.Seal();
         }
         const auto view = app.ViewportRect();
         const auto count = source.bytes.size() / stride;

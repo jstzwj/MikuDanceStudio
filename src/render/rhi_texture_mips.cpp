@@ -62,6 +62,8 @@ bool SealPreparedMipChain(const RgbaImage& source, MipPreparationPolicy policy,
         return false;
     }
     candidate.revision = Revision(candidate);
+    for (auto& level : candidate.levels)
+        level.pixels.Seal();
     output = std::move(candidate);
     return true;
 }
