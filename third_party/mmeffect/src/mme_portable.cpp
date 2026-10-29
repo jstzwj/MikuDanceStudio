@@ -1,4 +1,6 @@
 #include "../include/mme_portable_api.h"
+#include "../include/mme_standard_api.h"
+#include "mmhack/mmhack_state.h"
 #include "../include/mme_host_api.h"
 #include "mmeffect/mme_context.h"
 #include "mmeffect/mme_globals.h"
@@ -188,37 +190,14 @@ bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::Materia
     out.legacySource = binding.instance->legacySource;
     out.modernSource = binding.instance->modernSource;
     out.legacy = owner->legacyImport;
-    static const std::set<std::string> matrices = {
-        "WORLD", "VIEW", "PROJECTION", "WORLDVIEW", "VIEWPROJECTION", "WORLDVIEWPROJECTION"};
-    // The native bridge also updates these unannotated names per draw. Plain
-    // snapshots would retain a previous DX9 draw's values, so reject them until
-    // their providers are represented by the CPU draw contract.
-    static const std::set<std::string> namedDrawParameters = {
-        "MATWORLD", "MATWORLDVIEWPROJ", "MATLIGHTVIEWPROJ", "MATROTATE",
-        "EGCOLOR",  "TOONCOLOR",        "LIGHTDIR",         "SPCCOLOR",
-        "PLACE",    "DIFCOLOR",         "PARTHF",           "SPADD",
-        "TRANSP",   "USE_TEXTURE",      "USE_SPHEREMAP",    "USE_SUBTEXTURE",
-        "USE_TOON", "VERTEXCOUNT",      "SUBSETCOUNT",      "OPADD",
-        "TEXCADD",  "TEXCMUL",          "SPHCADD",          "SPHCMUL"};
+    out.clock = {mme::g_frameTimeBase, mme::g_deltaSeconds, mme::g_lastFrameTime,
+                 mme::g_frameDelta};
+    out.clockReady = mme::g_timeInitialized != 0;
+    out.counts = {-1, key.model->materialCount()}; // CPU producer supplies vertex count.
     for (const auto& v : out.legacy->variables) {
-        const auto& s = v.semantic;
-        auto name = v.name;
-        std::transform(name.begin(), name.end(), name.begin(),
-                       [](unsigned char c) { return char(std::toupper(c)); });
-        if (s.empty() && namedDrawParameters.count(name))
-            return fail("MME_legacy_named_draw_parameter");
-        if (!s.empty() && s != "CONTROLOBJECT" && s != "VIEWPORTPIXELSIZE" && s != "DIFFUSE" &&
-            s != "AMBIENT" && s != "SPECULAR" && s != "EMISSIVE" && s != "SPECULARPOWER" &&
-            !matrices.count(s))
-            return fail("MME_legacy_parameter_semantic");
-        if ((matrices.count(s) && (v.rows != 4 || v.columns != 4 || v.elements != 1)) ||
-            (!s.empty() && s != "CONTROLOBJECT" && v.type.rfind("float", 0) != 0) ||
-            (s == "VIEWPORTPIXELSIZE" && (v.rows != 1 || v.columns != 2 || v.elements != 1)) ||
-            ((s == "DIFFUSE" || s == "AMBIENT" || s == "SPECULAR" || s == "EMISSIVE") &&
-             (v.rows != 1 || v.columns != 4 || v.elements != 1 || v.object != "GEOMETRY")) ||
-            (s == "SPECULARPOWER" &&
-             (v.rows != 1 || v.columns != 1 || v.elements != 1 || v.object != "GEOMETRY")))
-            return fail("MME_legacy_semantic_shape");
+        MmeStandardBinding standard;
+        if (!MmeStandardClassify(v, standard, reason))
+            return false;
         MmePortableParameter p;
         D3DXPARAMETER_DESC d{};
         auto h = binding.effect->GetParameterByName(nullptr, v.name.c_str());
@@ -226,7 +205,7 @@ bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::Materia
             !ReadParameter(binding.effect, h, d, p) || p.rows != v.rows || p.columns != v.columns ||
             p.elements != v.elements)
             return fail("MME_legacy_parameter_layout");
-        if (p.shared && !s.empty() && s != "CONTROLOBJECT")
+        if (p.shared && standard.kind != MmeStandardBinding::Kind::Value)
             return fail("MME_legacy_shared_draw_semantic");
         out.parameters.push_back(std::move(p));
     }
@@ -445,6 +424,17 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
         return false;
     return !out.passes.empty() || fail("MME_empty_effect");
 }
+}
+void MmePortableBeginFrameClock(int notEditMode) {
+    if (!MmeHostEffectsEnabled())
+        return;
+    g_mmh.notEditMode = notEditMode;
+    g_mmh.frameTime = ExpGetFrameTime();
+    mme::MmeUpdateFrameTime();
+    mme::g_frameClockFrozen = true;
+}
+void MmePortableEndFrameClock() {
+    mme::g_frameClockFrozen = false;
 }
 void MmePortablePrepareParameters() {
     mme::MmeRefreshPortableParameters();

@@ -11,6 +11,9 @@ They contain no external model or texture assets.
   or modern shader branch. It exercises automatic declaration/sampler/I/O
   translation, current draw matrices, arrays, bools and live shared/control
   values. See [the bounded importer](../../../docs/RHI_MME_LEGACY_IMPORT.md).
+- `LegacyStandard.fx`: unchanged FX9 source exercising all 24 camera/geometry
+  matrix variants, camera/light vectors and colors, native names, frame clocks
+  and float4 POSITION with out parameters. No profile or alternate branch.
 - `TwoStage.fx`: assign to one scene carrier, usually a small accessory. Its
   script captures the scene at `ScriptExternal`, grades it into Ping, then
   copies Ping to the final color target. Editor overlays follow this chain.
@@ -28,7 +31,7 @@ They contain no external model or texture assets.
   LoopByCount/LoopGetIndex, and copies Pong exactly. Zero iterations preserve
   Pong's clear color. Private loop-index writes persist after successful frames.
 
-All files also run as ordinary DX9 effects. Except for LegacyMaterial.fx,
+All files also run as ordinary DX9 effects. Except for LegacyMaterial.fx and LegacyStandard.fx,
 `MDS_RHI` selects their HLSL 5/6
 shader branch. Explicit profile and pass annotations opt into the initial
 portable ABI. Changing the shader functions within that ABI is supported;

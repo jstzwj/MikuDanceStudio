@@ -22,6 +22,7 @@
 // cpp / model_query_helpers.cpp) and likewise never queries 'E'.
 #include "mikudancestudio/panel_controls.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
+#include "mme_portable_api.h"
 
 #include <Windows.h>
 #include <string.h>
@@ -262,6 +263,13 @@ bool PrepareEffectAssignments(MMDApp* app) {
     if (!g_deviceRegistered) return true;
     auto* renderer=app->Renderer();
     return renderer && MmeHostPrepareEffectAssignments(renderer->device)!=0;
+}
+void BeginPortableFrameClock() {
+    if (g_deviceRegistered)
+        MmePortableBeginFrameClock(ProbeNotEditMode(g_registeredWindow));
+}
+void EndPortableFrameClock() {
+    MmePortableEndFrameClock();
 }
 
 // ---------------------------------------------------------------------------

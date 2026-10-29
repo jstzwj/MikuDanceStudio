@@ -75,6 +75,8 @@ bool EffectsActive();
 // User-visible effect policy, independent of bridge/resource initialization.
 bool EffectsEnabled();
 bool PrepareEffectAssignments(MMDApp* app);
+void BeginPortableFrameClock();
+void EndPortableFrameClock();
 
 // Accessory mesh DrawSubset equivalent: when MME is active, set streams/indices/FVF manually and forward
 // the draw (replicating ID3DXMesh::DrawSubset's hardware path); otherwise call the original

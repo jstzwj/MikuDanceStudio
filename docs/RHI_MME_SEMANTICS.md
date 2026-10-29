@@ -87,7 +87,7 @@ explicit fallback boundaries, not silent truncation of the native script.
 | Includes in explicit portable profiles | Expanded once per loaded revision |
 | Bounded legacy model-material FX9 source | Automatically imported without profile annotations |
 | General legacy FX9 shader syntax | Outside the bounded importer |
-| Per-draw standard semantics | Six matrix products, geometry colors/power and viewport size; other providers remain pending |
+| Per-draw standard semantics | 24 camera/geometry matrix variants, camera/light vectors and colors, geometry colors/power, viewport, native draw names and shared frame clocks; light matrices and remaining native names retain fallback |
 | Shared render-target identity across effects | Not migrated |
 | Multiple nested scene carriers and DefaultEffect child turns | Not migrated |
 | Render-target mip generation and viewport-ratio targets | Not migrated |
@@ -97,9 +97,9 @@ explicit fallback boundaries, not silent truncation of the native script.
 Normal native switching for arbitrary MME requires completing those missing
 contracts and testing real legacy effects. A Ray fallback/recovery pass is not
 evidence of native Ray execution. The importer uses retained preprocessed source
-revisions for legacy shader I/O, samplers and actual bindings. Broader standard
-semantics and shared target/child-turn execution still need their original
-script order. Required formats and mip timing should follow Ray's live resource
+revisions for legacy shader I/O, samplers and actual bindings. Standard CPU providers and shared frame-clock behavior are documented in
+[RHI_MME_STANDARDS.md](RHI_MME_STANDARDS.md). Shared target/child-turn execution
+still needs its original script order. Required formats and mip timing should follow Ray's live resource
 records rather than hard-coded effect filenames.
 
 ## Verification

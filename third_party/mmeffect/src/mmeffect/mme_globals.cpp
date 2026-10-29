@@ -8,6 +8,7 @@
 #include "mme_context.h"
 #include "mme_log.h"
 #include "mmhack_api.h"  // GetCurrentFrameTime / IsEditMode
+#include "../../include/mme_standard_api.h"
 #include "anime_texture.h"  // [Phase 4] MmeAnimeTick
 #include "mme_dlg.h"
 #include "mme_ui.h"         // [Phase 4] MmeUiInstallHooks / MmeUiTickAutoReload
@@ -117,43 +118,24 @@ bool MmeIsEnglishUiMode()
     return g_uiJapaneseFlag == 0;
 }
 
+bool g_frameClockFrozen = false;
+unsigned long long g_frameClockUpdates = 0;
 void MmeUpdateFrameTime()
 {
-    // [0x180056f80] FUN_180056f80 - full port.
-    DWORD now = timeGetTime();
-    float frameTime = GetCurrentFrameTime();   // MMHack
-    if (g_timeInitialized == 0) {
-        g_timeInitialized = 1;
-        g_timeBase = now;
-        g_wasEditMode = IsEditMode() ? 1 : 0;
-        g_frameTimeBase = frameTime;
-        if (g_wasEditMode != 0) {
-            g_frameTimeBase = 0.0f;            // [L70287-70289]
-        }
-        g_frameDelta = 0.0f;
-        g_deltaSeconds = 0.033333335f;         // [L70291]
-    } else {
-        bool editMode = IsEditMode() != 0;     // [L70294]
-        if (!editMode) {
-            if (g_wasEditMode == 0) {
-                g_deltaSeconds = frameTime - g_frameTimeBase;
-                g_frameTimeBase = frameTime;
-            } else {
-                g_deltaSeconds = static_cast<float>(now - g_lastTick) / 1000.0f;
-                g_frameTimeBase = frameTime;
-            }
-        } else {
-            if (g_wasEditMode == 0) {
-                g_timeBase = now;
-            }
-            g_deltaSeconds = static_cast<float>(now - g_lastTick) / 1000.0f;
-            g_frameTimeBase = static_cast<float>(now - g_timeBase) / 1000.0f;
-        }
-        g_frameDelta = frameTime - g_lastFrameTime;   // [L70312]
-    }
-    g_lastFrameTime = frameTime;               // [L70314]
-    g_wasEditMode = IsEditMode() ? 1 : 0;      // [L70315]
-    g_lastTick = now;                          // [L70316]
+    if (g_frameClockFrozen) return;
+    // [0x180056f80] The same edit/play clock machine serves both render paths.
+    MmeFrameClock state{g_timeInitialized != 0, g_wasEditMode != 0, g_lastTick,
+                        g_timeBase, g_frameTimeBase, g_deltaSeconds, g_lastFrameTime, g_frameDelta};
+    MmeAdvanceFrameClock(state, timeGetTime(), GetCurrentFrameTime(), IsEditMode() != 0);
+    g_timeInitialized = state.initialized ? 1 : 0;
+    g_wasEditMode = state.edit ? 1 : 0;
+    g_lastTick = state.tick;
+    g_timeBase = state.base;
+    g_frameTimeBase = state.time;
+    g_deltaSeconds = state.delta;
+    g_lastFrameTime = state.raw;
+    g_frameDelta = state.rawDelta;
+    ++g_frameClockUpdates;
 }
 
 void MmeInitEffectEngine(IDirect3DDevice9* device, bool mipFilterAvailable)

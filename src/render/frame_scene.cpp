@@ -1950,6 +1950,17 @@ void RenderFrameScene(MMDApp* app, rhi::RgbaImage* acceptance) {
     PreparedSceneInputs prepared;
     if (!PrepareFrameSceneInputs(app, prepared))
         return;
+    struct FrameClockScope {
+        bool active;
+        explicit FrameClockScope(bool rhi) : active(rhi) {
+            if (active)
+                mme::BeginPortableFrameClock();
+        }
+        ~FrameClockScope() {
+            if (active)
+                mme::EndPortableFrameClock();
+        }
+    } frameClock(prepared.tryRhi);
     const auto& frameWorld = prepared.world;
     if (prepared.tryRhi) {
         if (prepared.cpuReady && app->ViewportRenderer().Render(*app, acceptance)) {

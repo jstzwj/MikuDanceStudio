@@ -22,15 +22,15 @@ functions and parameter names are retained. Supported `tex2D`, `tex2Dlod`,
 Texture2D operations. Declarations are emitted into reflected row-major b1
 constants and ordered tN/sN resources. Scalar FX bools use uint transport.
 
-The VS reads float3 POSITION/NORMAL and float2 TEXCOORD0 from the existing
-32-byte vertex record, either directly or through a structure. It returns a
-structure with float4 POSITION and TEXCOORD varyings. The PS takes a structure
-with matching fields and returns float4 COLOR0. Generated wrappers map the
-outputs to SV_POSITION/SV_Target0 and reproduce DX9 pixel centers with a
-viewport-dependent clip-space correction. Pixel POSITION reads, whole-input
-aliasing/passing and COLOR varyings are rejected until their legacy behavior
-is explicitly represented. Function overloads and compile arguments are also
-outside this initial subset.
+The physical 32-byte vertex record contains float3 POSITION/NORMAL and float2
+TEXCOORD0. Wrappers accept float3 or float4 POSITION (w=1), POSITION0/NORMAL0
+aliases, direct or struct parameters, return values and VS out/inout arguments.
+The PS accepts matching direct/struct inputs and a single float4 COLOR0 return
+or out result, including a struct result. Generated wrappers map the outputs to
+SV_POSITION/SV_Target0 and reproduce DX9 pixel centers with a viewport-dependent
+clip-space correction. Pixel POSITION reads, whole-input escape when position
+is present, PS inout, duplicate output semantics and COLOR varyings are rejected.
+Function overloads and compile arguments remain outside this subset.
 
 ## Parameters and resources
 
@@ -41,7 +41,10 @@ state, rather than a previous DX9 draw:
 
 | Semantic | Accepted layout |
 | --- | --- |
-| WORLD, VIEW, PROJECTION, WORLDVIEW, VIEWPROJECTION, WORLDVIEWPROJECTION | float4x4 |
+| WORLD, VIEW, PROJECTION, WORLDVIEW, VIEWPROJECTION, WORLDVIEWPROJECTION, and their INVERSE / TRANSPOSE / INVERSETRANSPOSE variants | float4x4, camera/geometry family |
+| POSITION, DIRECTION with Object=Camera/Light/Light0 | float4 |
+| DIFFUSE, AMBIENT, SPECULAR with Object=Light/Light0 | float4, alpha=1 |
+| TIME, ELAPSEDTIME, TIME2, ELAPSEDTIME2 | float, shared native frame clock |
 | DIFFUSE, AMBIENT, SPECULAR, EMISSIVE with Object=Geometry | float4 |
 | SPECULARPOWER with Object=Geometry | float, native zero-to-0.1 rule |
 | VIEWPORTPIXELSIZE | float2 |
@@ -50,15 +53,17 @@ state, rather than a previous DX9 draw:
 
 Supported numeric storage is float scalar/vector/float4x4, scalar int/bool and
 literal arrays up to 256 elements. Dynamic draw semantics cannot be shared
-until their pool-write ordering is modeled. The native MME name-table aliases
-such as matWorld, DifColor and use_texture are explicitly rejected; treating
-them as ordinary constants would read stale state. Other camera/light/time
-semantics and their annotations also retain fallback.
+until their pool-write ordering is modeled. Native case-insensitive names
+matWorld, matWorldViewProj, LightDir, use_texture, use_spheremap, use_subtexture,
+use_toon, transp, VertexCount and SubsetCount have explicit current-draw providers.
+Place retains its instance value, matching the native absence of a setter.
+Other native names and light-family matrices still select fallback. See
+[standard parameter providers and frame clock](RHI_MME_STANDARDS.md).
 
 Material base, sphere and toon texture semantics resolve through the draw's
 actual resource roles. At most four declared samplers get independent slots,
 including multiple samplers of one texture. Each sampler explicitly specifies
-point/linear min, mag and mip filtering and Wrap/Clamp U/V. Missing resources,+sRGB sampling, MipFilter=None, anisotropy and unrepresented sampler state
+point/linear min, mag and mip filtering and Wrap/Clamp U/V. Missing resources, sRGB sampling, MipFilter=None, anisotropy and unrepresented sampler state
 select fallback. The normal model pipeline's portable trilinear default is
 unchanged; imported effects retain their supported explicit sampler settings.
 
@@ -96,6 +101,10 @@ desktop input.
 - `mme_legacy_samplers_*`: generated variant with distinct base/toon textures,
   reversed declaration/binding order, linear/wrap and point/clamp sampling.
   DX12 debug and Vulkan validation variants exercise the same chain.
+- `mme_standard_shader_*`, `mme_standard_struct_*`, `mme_standard_inout_*`:
+  all 24 matrix variants and camera/light/clock/name values against the native
+  DX9 binder, float4 POSITION and direct/struct/out/inout signatures; DX12 debug
+  and Vulkan validation gates also run the standard fixture.
 - `editor_frame_*`: actual generated PMD/PMX assignments, live parameters,
   DX9/DX11/DX12/Vulkan switching, resize and device reconstruction. Successful
   RHI frames must perform zero DX9 scene draws and exactly one scene update.
@@ -118,6 +127,5 @@ x64/x86 application builds, the diagnostics-off product build and the build
 with newer backends disabled all succeeded. These measurements cover generated
 models/textures and Ray fallback, not native Ray rendering or arbitrary assets.
 
-Next work is native standard-parameter providers, broader shader signatures,
-automatic scene-effect import, shared render-target identity, DefaultEffect
+Next work is automatic scene-effect import, shared render-target identity, DefaultEffect
 child turns and mip timing, following actual Ray bindings and script order.

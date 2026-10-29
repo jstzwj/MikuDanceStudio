@@ -67,10 +67,11 @@ int main(int argc, char** argv) try {
                      : mode == "dx12" ? Backend::D3D12
                                       : Backend::Vulkan;
     const auto path = std::filesystem::absolute(std::filesystem::u8path(argv[2]));
+    const bool realStandard = argc > 3 && std::string(argv[3]) == "--mme-standard";
     const bool benchmark = argc > 3 && std::string(argv[3]) == "--benchmark";
     const unsigned count = argc > 4 ? std::max(3, std::atoi(argv[4])) : 12;
     std::filesystem::path rayEffect;
-    if (!benchmark && argc > 4) {
+    if (!benchmark && !realStandard && argc > 4) {
         CHECK(argc == 6 && std::string(argv[4]) == "--ray-effect");
         rayEffect = std::filesystem::absolute(std::filesystem::u8path(argv[5]));
         CHECK(std::filesystem::is_regular_file(rayEffect));
@@ -90,11 +91,17 @@ int main(int argc, char** argv) try {
         ~Globals() { g_Block = nullptr; }
     } globals;
     struct Window {
-        HWND value = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"STATIC",
-                                     L"Hidden frame owner", WS_OVERLAPPEDWINDOW, 0, 0, 1400, 900,
-                                     nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND value;
+        Window(int width, int height) {
+            RECT rect{0, 0, width, height};
+            AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+            value = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"STATIC",
+                                    L"Hidden frame owner", WS_OVERLAPPEDWINDOW, 0, 0,
+                                    rect.right - rect.left, rect.bottom - rect.top, nullptr,
+                                    nullptr, GetModuleHandleW(nullptr), nullptr);
+        }
         ~Window() { DestroyWindow(value); }
-    } window;
+    } window(benchmark ? 1280 : 160, benchmark ? 720 : 120);
     CHECK(window.value && !IsWindowVisible(window.value));
     app->MainWindow() = window.value;
     app->HInstance() = GetModuleHandleW(nullptr);
@@ -246,6 +253,8 @@ int main(int argc, char** argv) try {
     CHECK(SUCCEEDED(device->SetTransform(D3DTS_PROJECTION, &projection)));
     RgbaImage lastImage;
     const auto frame = [&](bool expectRhi, bool driver = false) {
+        const auto clockUpdates = ::mme::g_frameClockUpdates;
+        const bool effectsEnabled = MmeHostEffectsEnabled() != 0;
         const auto before = app->FrameRenderingStats();
         const auto updates = app->CpuModelFrames().at(model.get())->frames;
         const auto catchups = app->state.recordedFrameCount;
@@ -291,6 +300,9 @@ int main(int argc, char** argv) try {
             CHECK(after.legacyScenes == before.legacyScenes + 1 &&
                   after.legacyPasses > before.legacyPasses);
         CHECK(!IsWindowVisible(window.value));
+        CHECK(!::mme::g_frameClockFrozen);
+        if (effectsEnabled)
+            CHECK(::mme::g_frameClockUpdates == clockUpdates + 1);
     };
     const auto image = [&]() -> const RgbaImage& { return lastImage; };
     const auto legacyImage = [&] {
@@ -310,6 +322,76 @@ int main(int argc, char** argv) try {
         CHECK(SUCCEEDED(cpu->UnlockRect()));
         return bytes;
     };
+    if (realStandard) {
+        ComPtr<ID3DXEffect> hostEffect;
+        ComPtr<ID3DXBuffer> errors;
+        const auto root = std::filesystem::path(MDS_TEST_SOURCE_DIR);
+        CHECK(SUCCEEDED(D3DXCreateEffectFromFileW(
+            device.Get(), (root / L"res/assets/skin_effect_sm3.fx").c_str(), nullptr, nullptr, 0,
+            nullptr, &hostEffect, &errors)));
+        wrapper->effect = hostEffect.Get();
+        mikudancestudio::mme::OnDeviceCreated(app.get(), window.value);
+        struct EffectOwner {
+            MMDApp* app;
+            D3DRenderer* renderer;
+            ~EffectOwner() {
+                mikudancestudio::mme::OnDeviceDestroyed(app);
+                renderer->effect = nullptr;
+            }
+        } effectOwner{app.get(), wrapper.get()};
+        CHECK(app->ViewportRenderer().CanRenderFrame(*app));
+        CHECK(MmeHostEffectsEnabled());
+        const auto effect = (root / L"assets/effects/portable/LegacyStandard.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, effect));
+        std::string reason;
+        CHECK(CheckPortableMme(reason));
+        struct TimelineControl {
+            HWND value;
+            ~TimelineControl() { DestroyWindow(value); }
+        } timeline{CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_DISABLED, 0, 0, 1, 1,
+                                   window.value, reinterpret_cast<HMENU>(317),
+                                   GetModuleHandleW(nullptr), nullptr)};
+        CHECK(timeline.value && !IsWindowVisible(timeline.value));
+        SnapshotBytes baseline;
+        for (const auto selected :
+             {api, Backend::D3D9, Backend::D3D11, Backend::D3D12, Backend::Vulkan}) {
+            if (selected != Backend::D3D9 && !BackendAvailable(selected))
+                continue;
+            CHECK(app->ViewportRenderer().Select(*app, selected, false));
+            const bool supported = selected != Backend::D3D9 &&
+                                   app->ViewportRenderer().GetDevice()->ShaderFeatures().hlsl;
+            frame(supported);
+            frame(supported);
+            if (!supported)
+                continue;
+            if (baseline.empty())
+                baseline = image().pixels;
+            CHECK(image().pixels == baseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == baseline);
+            app->CurrentFrame() = 12;
+            frame(true);
+            app->CurrentFrame() = 4;
+            frame(true); // backwards seek
+            CHECK(app->ViewportRenderer().GetDevice()->PrepareForReset());
+            frame(false); // same-frame native fallback, single clock/geometry update
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            app->CurrentFrame() = 0;
+            frame(true);
+            frame(true);
+            CHECK(image().pixels == baseline);
+        }
+        CHECK(!baseline.empty());
+        bool coverage = false;
+        for (std::size_t p = 0; p < baseline.size(); p += 4)
+            coverage |= baseline[p] != 255 || baseline[p + 1] != 255 || baseline[p + 2] != 255;
+        CHECK(coverage);
+        std::printf(
+            "PASS real MME standard parameters: vertices=%u materials=%u, native switches, device rebuild, seek, same-frame fallback, zero DX9 draws on RHI; window never shown\n",
+            model->vertexCount, model->materialCount);
+        return 0;
+    }
     // An unused native capture from the previous owner must not survive a
     // successful RHI handover, even with capture disabled for this frame.
     CHECK(SUCCEEDED(device->CreateTexture(16, 16, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8,
@@ -664,6 +746,51 @@ int main(int argc, char** argv) try {
             CHECK(image().pixels == importBaseline);
         }
     }
+    CHECK(
+        ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, materialEffect));
+    frame(runtimeEffects);
+    // Standard semantics use this frame's CPU state and the original clock.
+    const auto standardEffect =
+        (sourceRoot / L"assets/effects/portable/LegacyStandard.fx").string();
+    CHECK(
+        ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, standardEffect));
+    CHECK(CheckPortableMme(portableReason));
+    struct ClockControl {
+        HWND value;
+        ~ClockControl() { DestroyWindow(value); }
+    } clockControl{CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_DISABLED, 0, 0, 1, 1,
+                                   window.value, reinterpret_cast<HMENU>(317),
+                                   GetModuleHandleW(nullptr), nullptr)};
+    CHECK(clockControl.value && !IsWindowVisible(clockControl.value));
+    const auto savedFrame = app->CurrentFrame();
+    frame(runtimeEffects);
+    frame(runtimeEffects); // paused timeline: both elapsed clocks settle at zero
+    const auto standardImage = image().pixels;
+    for (const auto selected :
+         {Backend::D3D9, Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+        if (selected != Backend::D3D9 && !BackendAvailable(selected))
+            continue;
+        CHECK(app->ViewportRenderer().Select(*app, selected, false));
+        const bool supported = selected != Backend::D3D9 && runtimeShaderSupport.at(selected);
+        frame(supported);
+        if (supported && runtimeEffects)
+            CHECK(image().pixels == standardImage);
+    }
+    app->CurrentFrame() += 6;
+    frame(runtimeEffects);
+    if (runtimeEffects) {
+        std::vector<MmePortableEffect> snapshot;
+        CHECK(MmePortableEffects(snapshot, portableReason));
+        CHECK(!snapshot.empty() && snapshot[0].clockReady && snapshot[0].clock[3] != 0);
+        frame(true);
+        CHECK(app->ViewportRenderer().GetDevice()->PrepareForReset());
+        frame(false); // clock was already advanced; native fallback must reuse it
+        CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+        frame(true);
+    }
+    app->CurrentFrame() = savedFrame;
+    DestroyWindow(clockControl.value);
+    clockControl.value = nullptr;
     CHECK(
         ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, materialEffect));
     frame(runtimeEffects);

@@ -373,6 +373,11 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                                                                                     : 0;
             selection = MmePortableDraw(reinterpret_cast<std::uintptr_t>(object),
                                         int(draw.material), pass, flags, effect, reason);
+            if (selection == 1 && !accessory && effect.legacy)
+                effect.counts[0] = int(app.ModelSlot(slot)->vertexCount);
+            if (selection == 1 && effect.legacy)
+                effect.transparent =
+                    UseEffectModelRenderer(&app) && app.state.characterTransparentMode != 0;
             if (selection < 0)
                 impl->assembler.Block(reason.c_str());
         }

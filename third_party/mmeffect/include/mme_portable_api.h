@@ -89,6 +89,10 @@ struct MmePortableEffect {
 // CPU-only host refresh and the original ordered control-object assignment walk.
 // Never enters a scene, binds native render targets or executes SAS draws.
 void MmePortablePrepareParameters();
+// Frame-scoped clock preparation: a DX9 fallback in this scope reuses the
+// same clock. End is required on every exit, including failed preparation.
+void MmePortableBeginFrameClock(int notEditMode);
+void MmePortableEndFrameClock();
 void MmePortableCommitParameters(const MmePortableEffect&);
 // Bounded, versioned script profiles. SceneColor captures the incoming frame;
 // FinalColor is the final output. All targets use the scene's viewport extent.

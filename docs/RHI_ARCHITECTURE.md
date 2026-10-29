@@ -30,7 +30,9 @@ A bounded source importer now translates unannotated FX9 model-material effects
 to the shared shader contract, including actual sampler bindings and current
 per-draw matrices/material values. Hidden tests retain these effects across
 backend switches. See [legacy FX9 import](RHI_MME_LEGACY_IMPORT.md); general
-scene effects and native Ray execution remain pending.
+scene effects and native Ray execution remain pending. Camera/geometry matrix
+variants, camera/light vectors, native draw names and once-per-frame MME clocks
+now have CPU providers; see [standard parameters](RHI_MME_STANDARDS.md).
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.

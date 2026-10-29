@@ -112,6 +112,8 @@ extern float g_mouseClickTime[3];        // DAT_1800d9bd4/be4/bf4 (g_frameTimeBa
 
 // [0x180056f80] per-frame time bookkeeping (full port; OnBeginScene).
 void MmeUpdateFrameTime();
+extern bool g_frameClockFrozen;
+extern unsigned long long g_frameClockUpdates;
 
 // [0x18000a8e0] effect-pool/engine init: forwards to effect_engine's
 // MmeEngineInit (teardown, D3DXCreateEffectPool, CreateRenderTarget(16,16,

@@ -1119,6 +1119,13 @@ if(BUILD_TESTING)
                     add_test(NAME editor_frame_${api} COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_frame.py --test $<TARGET_FILE:editor_frame_test> --backend ${api})
                     set_tests_properties(editor_frame_${api} PROPERTIES TIMEOUT 360 LABELS "hidden-window;editor;rhi;frame-owner" RUN_SERIAL TRUE)
+                    foreach(format IN ITEMS pmd pmx)
+                        add_test(NAME editor_mme_standard_${format}_${api} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_frame.py
+                            --test $<TARGET_FILE:editor_frame_test> --backend ${api} --external ${format})
+                        set_tests_properties(editor_mme_standard_${format}_${api} PROPERTIES TIMEOUT 300
+                            SKIP_RETURN_CODE 77 LABELS "hidden-window;editor;rhi;frame-owner;MME;parameters;external" RUN_SERIAL TRUE)
+                    endforeach()
                     if(MIKUDANCESTUDIO_RAY_TEST_EFFECT)
                         add_test(NAME editor_ray_fallback_${api} COMMAND ${Python3_EXECUTABLE}
                             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_frame.py
