@@ -55,10 +55,22 @@ bool ScenePreviewController::Resize(std::uint32_t width, std::uint32_t height) {
     return true;
 }
 bool ScenePreviewController::ReplaceDevice() {
+    return SwitchBackend(options);
+}
+bool ScenePreviewController::SwitchBackend(const BackendOptions& selected) {
+    if (backend && selected.backend != options.backend) {
+        reason = "backend_switch_requires_new_surface";
+        return false;
+    }
+    if (!BackendAvailable(selected.backend)) {
+        reason = "backend_not_built";
+        return false;
+    }
+    const auto previous = options;
+    const auto next = selected;
     if (!backend || !renderer) {
         const auto desc = description;
-        const auto selected = options;
-        return Open(desc, selected);
+        return Open(desc, next);
     }
     const auto old = backend.device->Status();
     state = PreviewState::Failed; // stop submissions throughout the transaction
@@ -66,13 +78,61 @@ bool ScenePreviewController::ReplaceDevice() {
         return Fail("replacement_release_failed");
     backend.swapchain.reset();
     backend.device.reset();
-    backend = CreateBackendDevice(description, options);
-    if (!backend)
-        return Fail(backend.reason.c_str());
+    backend = CreateBackendDevice(description, next);
+    if (!backend) {
+        const auto failure = backend.reason;
+        backend = CreateBackendDevice(description, previous);
+        if (!backend || !renderer->Rebind(*backend.device))
+            return Fail((failure + "; previous_backend_restore_failed").c_str());
+        hasPrepared = false;
+        state = PreviewState::Ready;
+        reason = failure;
+        return false;
+    }
+    options = next;
     if (!renderer->Rebind(*backend.device))
         return Fail("replacement_rebind_failed");
     CompletionToken token;
     if (backend.device->Status().identity == old.identity ||
+        (hasPrepared && renderer->Submit(prepared, token)))
+        return Fail("replacement_old_submission_accepted");
+    hasPrepared = false;
+    state = PreviewState::Ready;
+    reason.clear();
+    return true;
+}
+bool ScenePreviewController::SwitchBackend(const SwapchainDesc& desc,
+                                           const BackendOptions& selected) {
+    if (!backend || !renderer)
+        return Open(desc, selected);
+    if (desc.window.handle == description.window.handle) {
+        reason = "backend_switch_requires_new_surface";
+        return false;
+    }
+    auto candidate = CreateBackendDevice(desc, selected);
+    if (!candidate) {
+        reason = candidate.reason;
+        return false;
+    }
+    if (!renderer->Detach()) {
+        candidate.swapchain->Retire();
+        return Fail("replacement_release_failed");
+    }
+    if (!backend.swapchain->Retire()) {
+        candidate.swapchain->Retire();
+        renderer->Rebind(*backend.device);
+        return Fail("replacement_release_failed");
+    }
+    const auto old = backend.device->Status().identity;
+    backend.swapchain.reset();
+    backend.device.reset();
+    backend = std::move(candidate);
+    description = desc;
+    options = selected;
+    if (!renderer->Rebind(*backend.device))
+        return Fail("replacement_rebind_failed");
+    CompletionToken token;
+    if (backend.device->Status().identity == old ||
         (hasPrepared && renderer->Submit(prepared, token)))
         return Fail("replacement_old_submission_accepted");
     hasPrepared = false;

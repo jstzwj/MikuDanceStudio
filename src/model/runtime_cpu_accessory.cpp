@@ -123,7 +123,7 @@ std::filesystem::path Path(const std::string& raw) {
     return text;
 }
 struct Mat {
-    ModelMaterialInputs input;
+    ModelMaterialInputs input, axisMaterial;
     std::string filename;
     unsigned textureType = 0;
     std::array<rhi::MaterialTextureAsset, 3> textures;
@@ -141,6 +141,8 @@ Mat ReadMaterial(ID3DXFileData* node) {
     for (unsigned c = 0; c < 3; ++c)
         m.emissive[c] = data.Float();
     data.End();
+    material.axisMaterial = m;
+    material.axisMaterial.ambient = {};
     for (unsigned c = 0; c < 3; ++c) {
         m.diffuse[c] *= .1f;
         m.specular[c] *= .1f;
@@ -167,19 +169,29 @@ RuntimeCpuAccessory::RuntimeCpuAccessory() = default;
 RuntimeCpuAccessory::~RuntimeCpuAccessory() = default;
 bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t id,
                                std::string& reason) {
+    std::ifstream source(path, std::ios::binary | std::ios::ate);
+    if (!source || source.tellg() <= 0 || source.tellg() > 64 * 1024 * 1024) {
+        reason = "x_file_size";
+        return false;
+    }
+    std::vector<unsigned char> bytes(std::size_t(source.tellg()));
+    source.seekg(0);
+    if (!source.read(reinterpret_cast<char*>(bytes.data()), bytes.size())) {
+        reason = "x_file_read";
+        return false;
+    }
+    return LoadMemory(bytes.data(), bytes.size(), path.parent_path(), id, reason);
+}
+bool RuntimeCpuAccessory::LoadMemory(const void* bytes, std::size_t size,
+                                     const std::filesystem::path& directory, std::uint64_t id,
+                                     std::string& reason, bool editorAxis) {
     try {
         Require(id && id < UINT64_MAX - 2, "x_geometry_identity");
-        std::ifstream source(path, std::ios::binary | std::ios::ate);
-        Require(bool(source) && source.tellg() > 0 && source.tellg() <= 64 * 1024 * 1024,
-                "x_file_size");
-        std::vector<unsigned char> bytes(std::size_t(source.tellg()));
-        source.seekg(0);
-        Require(bool(source.read(reinterpret_cast<char*>(bytes.data()), bytes.size())),
-                "x_file_read");
+        Require(bytes && size && size <= 64 * 1024 * 1024, "x_file_size");
         struct Memory {
             const void* data;
             SIZE_T size;
-        } memory{bytes.data(), bytes.size()};
+        } memory{bytes, size};
         ComPtr<ID3DXFile> file;
         ComPtr<ID3DXFileEnumObject> objects;
         Require(SUCCEEDED(D3DXFileCreate(&file)), "x_file_parser");
@@ -205,19 +217,28 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
         std::vector<std::array<float, 2>> uvs;
         std::vector<std::array<unsigned, 3>> faces, normalFaces;
         std::vector<unsigned> faceMaterials;
+        std::vector<unsigned> triangleOwners;
+        unsigned polygonCount = 0;
         {
             Data data(mesh.Get());
             positions.resize(data.Count());
             for (auto& p : positions)
                 for (auto& f : p)
                     f = data.Float();
-            faces.resize(data.Count());
-            Require(!positions.empty() && !faces.empty(), "x_empty_mesh");
-            for (auto& face : faces) {
-                Require(data.Count() == 3, "x_nontriangle_face_not_supported");
-                for (auto& index : face) {
+            polygonCount = data.Count();
+            Require(!positions.empty() && polygonCount, "x_empty_mesh");
+            for (unsigned polygon = 0; polygon < polygonCount; ++polygon) {
+                const auto count = data.Count();
+                Require(count == 3 || (editorAxis && count == 4),
+                        "x_nontriangle_face_not_supported");
+                std::vector<unsigned> indices(count);
+                for (auto& index : indices) {
                     index = data.Count();
                     Require(index < positions.size(), "x_vertex_index");
+                }
+                for (unsigned n = 1; n + 1 < count; ++n) {
+                    faces.push_back({indices[0], indices[n], indices[n + 1]});
+                    triangleOwners.push_back(polygon);
                 }
             }
             data.End();
@@ -231,15 +252,19 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
                 for (auto& p : normals)
                     for (auto& f : p)
                         f = data.Float();
-                normalFaces.resize(data.Count());
-                Require(normalFaces.size() == faces.size(), "x_normal_faces");
-                for (auto& face : normalFaces) {
-                    Require(data.Count() == 3, "x_normal_polygon");
-                    for (auto& index : face) {
+                Require(data.Count() == polygonCount, "x_normal_faces");
+                for (unsigned polygon = 0; polygon < polygonCount; ++polygon) {
+                    const auto count = data.Count();
+                    Require(count == 3 || (editorAxis && count == 4), "x_normal_polygon");
+                    std::vector<unsigned> indices(count);
+                    for (auto& index : indices) {
                         index = data.Count();
                         Require(index < normals.size(), "x_normal_index");
                     }
+                    for (unsigned n = 1; n + 1 < count; ++n)
+                        normalFaces.push_back({indices[0], indices[n], indices[n + 1]});
                 }
+                Require(normalFaces.size() == faces.size(), "x_normal_faces");
                 data.End();
             } else if (type == Uvs) {
                 Require(uvs.empty(), "x_duplicate_uvs");
@@ -256,7 +281,7 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
                 Data data(child);
                 const auto mats = data.Count();
                 faceMaterials.resize(data.Count());
-                Require(mats && faceMaterials.size() == faces.size(), "x_material_faces");
+                Require(mats && faceMaterials.size() == polygonCount, "x_material_faces");
                 for (auto& index : faceMaterials) {
                     index = data.Count();
                     Require(index < mats, "x_material_index");
@@ -267,16 +292,47 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
                     next->materials.push_back(ReadMaterial(entry));
                 });
                 Require(next->materials.size() == mats, "x_material_count");
-            } else
-                Require(false, "x_mesh_extension_not_supported");
+            } else {
+                const GUID vertexColors = {
+                    0x1630B821, 0x7842, 0x11cf, {0x8F, 0x52, 0, 0x40, 0x33, 0x35, 0x94, 0xA3}};
+                // The bundled axis contains only opaque white vertex colors;
+                // DX9 selects material colors for this operation mesh.
+                Require(editorAxis && type == vertexColors, "x_mesh_extension_not_supported");
+                Data data(child);
+                const auto count = data.Count();
+                for (unsigned n = 0; n < count; ++n) {
+                    Require(data.Count() < positions.size(), "x_color_index");
+                    for (unsigned c = 0; c < 4; ++c)
+                        Require(data.Float() == 1, "x_axis_vertex_color");
+                }
+                data.End();
+            }
         });
-        Require(materialList && !normals.empty(), "x_explicit_normals_and_materials_required");
+        Require(materialList && (editorAxis || !normals.empty()),
+                "x_explicit_normals_and_materials_required");
+        if (normals.empty() && editorAxis) {
+            // D3DX generates the bundled operation mesh's missing normals.
+            // Its convex quad faces were explicitly triangulated above.
+            for (const auto& face : faces) {
+                const auto& a = positions[face[0]];
+                const auto& b = positions[face[1]];
+                const auto& c = positions[face[2]];
+                D3DXVECTOR3 ab{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+                D3DXVECTOR3 ac{c[0] - a[0], c[1] - a[1], c[2] - a[2]}, normal;
+                normal = {ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z,
+                          ab.x * ac.y - ab.y * ac.x};
+                D3DXVec3Normalize(&normal, &normal);
+                const auto index = unsigned(normals.size());
+                normals.push_back({normal.x, normal.y, normal.z});
+                normalFaces.push_back({index, index, index});
+            }
+        }
         // D3DXLoadMeshFromX applies the accumulated frame transform even for a
         // root Mesh. Keep the coordinate reciprocal and explicit normal
         // normalization; both are observable even without a Frame node.
-        D3DXMATRIX transform{};
-        for (unsigned n = 0; n < 4; ++n)
-            transform.m[n][n] = 1;
+        // D3DXMATRIX's default constructor does not zero its elements.
+        D3DXMATRIX transform;
+        D3DXMatrixIdentity(&transform);
         for (auto& p : positions) {
             D3DXVECTOR3 out;
             D3DXVec3TransformCoord(&out, reinterpret_cast<const D3DXVECTOR3*>(p.data()),
@@ -306,7 +362,7 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
                         vertexMap.emplace(std::make_pair(p, n), unsigned(vertices.size())).first;
                     vertices.push_back(v);
                 }
-                groups[faceMaterials[f]].push_back(found->second);
+                groups[faceMaterials[triangleOwners[f]]].push_back(found->second);
             }
         ModelGeometry geometry(id, unsigned(vertices.size()));
         std::memcpy(geometry.MainData(), vertices.data(), vertices.size() * sizeof(ModelVertex));
@@ -340,8 +396,7 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
             const std::string names[]{primary, sphere};
             for (unsigned s = 0; s < 2; ++s)
                 if (!names[s].empty()) {
-                    Require(rhi::LoadMaterialTexture(path.parent_path(), Path(names[s]),
-                                                     m.textures[s]) ==
+                    Require(rhi::LoadMaterialTexture(directory, Path(names[s]), m.textures[s]) ==
                                 rhi::MaterialResourceStatus::Ready,
                             "x_texture_unavailable");
                     Require(rhi::PrepareMaterialMipChain(m.textures[s],
@@ -362,7 +417,7 @@ bool RuntimeCpuAccessory::Build(const render::ModelFrameInputs& input,
                                 const format::PmmEvaluatedAccessory& pose, bool additive,
                                 bool after, const rhi::HistoryDesc& target, rhi::ClearColor clear,
                                 const std::function<void(render::SceneDrawReplacement)>& append,
-                                std::string& reason) {
+                                std::string& reason, bool editorAxis) {
     if (!impl || !append) {
         reason = "cpu_accessory_not_loaded";
         return false;
@@ -394,8 +449,16 @@ bool RuntimeCpuAccessory::Build(const render::ModelFrameInputs& input,
         packet.material = subset.material;
         packet.firstIndex = subset.firstIndex;
         packet.indexCount = subset.indexCount;
-        if (!render::BuildAccessoryPassInputs(frame, p, {}, packet.pipeline,
-                                              LegacyCpuRenderMath())) {
+        bool supported = false;
+        if (editorAxis) {
+            supported = render::BuildModelInputs(frame, m.axisMaterial, {}, packet.pipeline,
+                                                 LegacyCpuRenderMath());
+            packet.pipeline.shader.layout = {};
+            packet.pipeline.shader.normalizeNormals = true;
+        } else
+            supported = render::BuildAccessoryPassInputs(frame, p, {}, packet.pipeline,
+                                                         LegacyCpuRenderMath());
+        if (!supported) {
             reason = "cpu_accessory_pipeline";
             return false;
         }

@@ -21,6 +21,13 @@ public:
     bool Open(const SwapchainDesc&, const BackendOptions&);
     bool Resize(std::uint32_t width, std::uint32_t height);
     bool ReplaceDevice();
+    // Rebuild GPU ownership while retaining CPU versions. On creation failure,
+    // restore the previous backend and report false with a usable controller.
+    bool SwitchBackend(const BackendOptions&);
+    // Cross-API changes use a fresh native window so presentation ownership
+    // never overlaps. Create first, then retire the old surface; failed
+    // creation leaves the current renderer usable.
+    bool SwitchBackend(const SwapchainDesc&, const BackendOptions&);
     bool Draw(const ModelReplayStream&, RgbaImage* acceptanceImage = nullptr);
     // Caller builds the final target at the current surface extent. Shadow
     // target dimensions and camera inputs are preserved, with no CPU readback.

@@ -20,6 +20,9 @@ public:
     RuntimeCpuModel(const RuntimeCpuModel&) = delete;
     RuntimeCpuModel& operator=(const RuntimeCpuModel&) = delete;
     bool Load(const std::filesystem::path&, std::string& reason);
+    // Borrow editor CPU state. The host owns the record and solved geometry;
+    // destruction never disposes that record or runs another animation solver.
+    bool AttachLive(MMDApp&, mdl::ModelRecord&, std::string& reason);
     bool Deform(const std::vector<render::ModelMatrix>& finalSkinMatrices,
                 const std::vector<float>& morphWeights, float edgeDistance, bool opaqueEdge,
                 std::string& reason);

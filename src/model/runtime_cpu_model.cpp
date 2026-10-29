@@ -15,26 +15,61 @@
 #include <map>
 
 namespace mikudancestudio {
+namespace {
+render::ModelMaterialInputs LiveMaterial(const mdl::ModelRecord& model, unsigned i) {
+    const auto& src = model.materials[i];
+    render::ModelMaterialInputs result;
+    std::copy_n(src.diffuse, 4, result.diffuse.begin());
+    std::copy_n(src.diffuseMirror, 4, result.ambient.begin());
+    std::copy_n(src.specular, 3, result.specular.begin());
+    std::memcpy(&result.specular[3], src.gap0, 4);
+    std::copy_n(src.ambient, 3, result.emissive.begin());
+    std::memcpy(&result.emissive[3], src.gap1, 4);
+    result.shininess = src.specularPower;
+    result.pmd = model.physicsMode != 2;
+    result.doubleSided = !result.pmd && (src.flags & 1);
+    result.base = src.texturePath;
+    result.sphere = src.spherePath;
+    result.sphereMode = src.sphereMode;
+    return result;
+}
+}
 struct RuntimeCpuModel::Impl {
     std::unique_ptr<MMDApp> ownedCpu;
     MMDApp* cpu = nullptr;
     PhysicsScene ownedPhysics{};
     PhysicsScene* physics = nullptr;
     mdl::ModelRecord storage{};
+    mdl::ModelRecord* borrowed = nullptr;
+    mdl::ModelRecord& Source() { return borrowed ? *borrowed : storage; }
     std::vector<render::ModelMaterialInputs> materials;
     std::vector<std::array<float, 4>> toonColors;
     std::vector<std::array<std::shared_ptr<const rhi::MaterialTextureAsset>, 3>> textures;
     render::ModelSubmissionBuilder submission;
     bool loaded = false, prepared = false;
     ~Impl() {
-        if (cpu)
+        if (cpu && !borrowed)
             cpu->CpuModelFrames().erase(&storage);
-        ModelDispose(&storage);
+        if (!borrowed)
+            ModelDispose(&storage);
         DisposePhysicsWorld(&ownedPhysics);
     }
 };
 RuntimeCpuModel::RuntimeCpuModel() = default;
 RuntimeCpuModel::~RuntimeCpuModel() = default;
+bool RuntimeCpuModel::AttachLive(MMDApp& app, mdl::ModelRecord& model, std::string& reason) {
+    if (!model.loadComplete || !app.CpuModelFrames().count(&model)) {
+        reason = "live_model_geometry_unavailable";
+        return false;
+    }
+    auto next = std::make_unique<Impl>();
+    next->cpu = &app;
+    next->borrowed = &model;
+    next->loaded = true;
+    impl = std::move(next);
+    reason.clear();
+    return true;
+}
 bool RuntimeCpuModel::Load(const std::filesystem::path& path, std::string& reason) {
     return Load(path, nullptr, nullptr, reason);
 }
@@ -118,7 +153,7 @@ bool RuntimeCpuModel::Deform(const std::vector<render::ModelMatrix>& matrices,
         reason = "cpu_model_not_loaded";
         return false;
     }
-    auto& model = impl->storage;
+    auto& model = impl->Source();
     if (matrices.size() != model.boneCount || morphs.size() != model.morphCount ||
         !std::isfinite(edgeDistance) || edgeDistance < 0) {
         reason = "cpu_deformation_shape";
@@ -163,7 +198,7 @@ bool RuntimeCpuModel::Deform(const std::vector<render::ModelMatrix>& matrices,
         reason.clear();
         return true;
     }
-    if (!UpdateCpuOnlyModelGeometry(impl->cpu, &impl->storage, edgeDistance, opaqueEdge)) {
+    if (!UpdateCpuOnlyModelGeometry(impl->cpu, &impl->Source(), edgeDistance, opaqueEdge)) {
         reason = "cpu_deformation_failed";
         return false;
     }
@@ -176,26 +211,14 @@ bool RuntimeCpuModel::PrepareMaterials(const rhi::ToonTextureResolver& resolver,
         reason = "cpu_model_not_loaded";
         return false;
     }
-    const auto& model = impl->storage;
+    const auto& model = impl->Source();
     std::vector<render::ModelMaterialInputs> materials;
     std::vector<std::array<float, 4>> toonColors;
     std::vector<std::array<std::shared_ptr<const rhi::MaterialTextureAsset>, 3>> textures;
     std::map<std::string, std::shared_ptr<const rhi::MaterialTextureAsset>> catalog;
     for (unsigned i = 0; i < model.materialCount; ++i) {
         const auto& src = model.materials[i];
-        render::ModelMaterialInputs material;
-        std::copy_n(src.diffuse, 4, material.diffuse.begin());
-        std::copy_n(src.diffuseMirror, 4, material.ambient.begin());
-        std::copy_n(src.specular, 3, material.specular.begin());
-        std::memcpy(&material.specular[3], src.gap0, 4);
-        std::copy_n(src.ambient, 3, material.emissive.begin());
-        std::memcpy(&material.emissive[3], src.gap1, 4);
-        material.shininess = src.specularPower;
-        material.pmd = model.physicsMode != 2;
-        material.doubleSided = !material.pmd && (src.flags & 1);
-        material.base = src.texturePath;
-        material.sphere = src.spherePath;
-        material.sphereMode = src.sphereMode;
+        auto material = LiveMaterial(model, i);
         rhi::ToonRequest toon;
         toon.modelDirectory = model.modelDirectory;
         toon.missing =
@@ -301,7 +324,7 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
                             std::string& reason, const rhi::BuiltinShadowState* shadow) {
     const auto* geometry = Geometry();
     if (impl && impl->loaded && impl->prepared && append &&
-        (!impl->storage.vertexCount || !impl->storage.indexCount)) {
+        (!impl->Source().vertexCount || !impl->Source().indexCount)) {
         reason.clear();
         return true;
     }
@@ -311,7 +334,7 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
     }
     std::vector<render::ModelMaterialPacket> packets;
     unsigned first = 0;
-    const auto& model = impl->storage;
+    const auto& model = impl->Source();
     for (unsigned i = 0; i < model.materialCount; ++i) {
         const auto count = model.materials[i].faceVertexCount;
         if (count < 0 || first > model.indexCount || unsigned(count) > model.indexCount - first) {
@@ -323,7 +346,12 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
             packet.material = i;
             packet.firstIndex = first;
             packet.indexCount = count;
-            if (!render::BuildModelInputs(frame, impl->materials[i], {}, packet.pipeline,
+            auto current = impl->borrowed ? LiveMaterial(model, i) : impl->materials[i];
+            // Preparation resolves missing files to an unbound texture. Keep
+            // that decision while using current material morph values.
+            current.base = impl->materials[i].base;
+            current.sphere = impl->materials[i].sphere;
+            if (!render::BuildModelInputs(frame, current, {}, packet.pipeline,
                                           LegacyCpuRenderMath())) {
                 reason = "cpu_model_shading";
                 return false;
@@ -331,7 +359,7 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
             if (shadow && model.toonFlag && shadow->mode == rhi::BuiltinShadowMode::Material) {
                 auto& p = packet.pipeline;
                 p.shadow = *shadow;
-                const auto& material = impl->materials[i];
+                const auto& material = current;
                 const auto& light = p.shader.lights[0];
                 for (unsigned c = 0; c < 3; ++c) {
                     p.shadow.color[c] =
@@ -349,7 +377,7 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
                 if (role != rhi::MaterialTextureRole::None)
                     packet.textureResources[stage] =
                         impl->textures[i][role == rhi::MaterialTextureRole::Sphere &&
-                                                  !impl->materials[i].sphere.empty()
+                                                  !current.sphere.empty()
                                               ? 2
                                               : 1];
             }
@@ -417,12 +445,12 @@ bool RuntimeCpuModel::Build(const render::ModelFrameInputs& frame, const rhi::Hi
 const render::ModelGeometrySnapshot* RuntimeCpuModel::Geometry() const {
     if (!impl || !impl->loaded)
         return nullptr;
-    const auto found = impl->cpu->CpuModelFrames().find(&impl->storage);
+    const auto found = impl->cpu->CpuModelFrames().find(&impl->Source());
     return found == impl->cpu->CpuModelFrames().end() ? nullptr
                                                       : &found->second->geometry.Snapshot();
 }
 mdl::ModelRecord* RuntimeCpuModel::Record() const {
-    return impl ? &impl->storage : nullptr;
+    return impl ? &impl->Source() : nullptr;
 }
 bool RuntimeCpuModel::BuildEdges(const render::ModelFrameInputs& frame,
                                  render::SceneDrawFamily family,
@@ -435,7 +463,7 @@ bool RuntimeCpuModel::BuildEdges(const render::ModelFrameInputs& frame,
         reason = "cpu_model_not_loaded";
         return false;
     }
-    auto& model = impl->storage;
+    auto& model = impl->Source();
     if (!model.loadComplete || !model.vertexCount || !model.indexCount) {
         reason.clear();
         return true;
