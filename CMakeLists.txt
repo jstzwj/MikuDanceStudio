@@ -133,6 +133,9 @@ target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(mme_legacy_source_test tests/mme_legacy_source_test.cpp third_party/mmeffect/src/mme_legacy_source.cpp)
+    target_compile_definitions(mme_legacy_source_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME mme_legacy_source COMMAND mme_legacy_source_test)
     add_executable(mme_scene_plan_test tests/mme_scene_plan_test.cpp third_party/mmeffect/src/mme_scene_plan.cpp)
     add_test(NAME mme_scene_plan COMMAND mme_scene_plan_test)
     add_executable(rhi_shader_contract_test tests/rhi_shader_contract_test.cpp)
@@ -856,6 +859,7 @@ add_library(MMEffect STATIC
     third_party/mmeffect/src/mme_host.cpp
     third_party/mmeffect/src/mme_portable.cpp
     third_party/mmeffect/src/mme_scene_plan.cpp
+    third_party/mmeffect/src/mme_legacy_source.cpp
     third_party/mmeffect/src/mmhack/mmhack_registry.cpp
     third_party/mmeffect/src/mmhack/mmhack_material.cpp
     third_party/mmeffect/src/mmhack/mmhack_material_table.cpp
