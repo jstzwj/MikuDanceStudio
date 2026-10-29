@@ -12,6 +12,9 @@ enum class FrameOutput {
 struct SceneRendererStats {
     std::uint64_t uploads = 0, uploadBytes = 0, textureUploads = 0, targetRebuilds = 0,
                   submissions = 0;
+    std::uint64_t bufferCreations = 0, bufferReuses = 0, bufferWaits = 0;
+    std::size_t pooledBuffers = 0, pooledBufferBytes = 0, residentBufferBytes = 0,
+                retiringBufferBytes = 0, peakRetiringResources = 0;
     std::size_t residentResources = 0, retiringResources = 0, cpuResources = 0;
 };
 class PreparedModelFrame {
@@ -32,6 +35,10 @@ private:
 // are CPU command snapshots, not a second native device or GPU resource owner.
 class SceneRenderer {
 public:
+    // Per logical resource in a single-version stream, including its current
+    // allocation. Explicit simultaneous versions raise the bound to active+1.
+    // Reuse never overwrites a current version or pending GPU submission.
+    static constexpr unsigned BufferSlots = 4;
     explicit SceneRenderer(Device&);
     ~SceneRenderer();
     SceneRenderer(const SceneRenderer&) = delete;

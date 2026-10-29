@@ -74,10 +74,14 @@ struct Resource {
     TextureDesc image{};
     SnapshotBytes indices;
     ComPtr<ID3D12Resource> native;
+    ComPtr<ID3D12Resource> dynamicUpload;
+    UINT64 uploadUse = 0;
+    bool uploadQueued = false;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COPY_DEST;
 };
 struct UploadJob {
     ComPtr<ID3D12Resource> destination, source;
+    Handle retainedSource;
     std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints;
     UINT64 offset = 0, bytes = 0;
     D3D12_RESOURCE_STATES before = D3D12_RESOURCE_STATE_COPY_DEST,
@@ -330,6 +334,10 @@ public:
         lastError = native->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &d, state, clear,
                                                     IID_PPV_ARGS(&out));
         if (SUCCEEDED(lastError)) {
+            if (d.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
+                stats.bufferAllocations += type == D3D12_HEAP_TYPE_DEFAULT;
+                stats.uploadBufferAllocations += type == D3D12_HEAP_TYPE_UPLOAD;
+            }
             const auto name = std::wstring(type == D3D12_HEAP_TYPE_UPLOAD     ? L"Upload"
                                            : type == D3D12_HEAP_TYPE_READBACK ? L"Readback"
                                                                               : L"Default") +
@@ -366,10 +374,7 @@ public:
                        retiring.end());
         return true;
     }
-    bool UploadData(ComPtr<ID3D12Resource>& upload, const void* data, UINT64 bytes) {
-        if (!Allocate(Buffer(bytes), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ,
-                      upload))
-            return false;
+    bool WriteUpload(ID3D12Resource* upload, const void* data, UINT64 bytes) {
         void* mapped = nullptr;
         D3D12_RANGE read{0, 0};
         lastError = upload->Map(0, &read, &mapped);
@@ -378,7 +383,13 @@ public:
         if (data)
             std::memcpy(mapped, data, static_cast<std::size_t>(bytes));
         upload->Unmap(0, nullptr);
+        stats.uploadBytes += data ? bytes : 0;
         return true;
+    }
+    bool UploadData(ComPtr<ID3D12Resource>& upload, const void* data, UINT64 bytes) {
+        return Allocate(Buffer(bytes), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ,
+                        upload) &&
+               WriteUpload(upload.Get(), data, bytes);
     }
     Handle CreateBuffer(BufferDesc d, const void* initial) override {
         if (!Live() || inFrame || !d.size || d.size > UINT_MAX ||
@@ -403,11 +414,17 @@ public:
                                                   : D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
         if (initial && !UploadData(job.source, initial, d.size))
             return {};
+        if (initial && d.dynamic) {
+            r.dynamicUpload = job.source;
+            r.uploadQueued = true;
+        }
         r.state = initial ? job.after : D3D12_RESOURCE_STATE_COPY_DEST;
         const auto h = Insert(std::move(r));
         if (!h)
             return {};
         if (initial) {
+            if (d.dynamic)
+                job.retainedSource = h;
             pendingUploads.push_back(std::move(job));
             ++stats.resourceUploads;
         }
@@ -426,7 +443,23 @@ public:
                         : D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
         job.offset = offset;
         job.bytes = bytes;
-        if (!UploadData(job.source, data, bytes))
+        // Each reusable DEFAULT buffer retains a matching upload allocation.
+        // An unfinished copy or another queued update must keep its source
+        // immutable; direct busy/partial callers get a separate upload job.
+        const auto completed = fence->GetCompletedValue();
+        const bool reusable = !offset && bytes == r->buffer.size && !r->uploadQueued &&
+                              completed != UINT64_MAX && r->uploadUse <= completed && !untracked;
+        if (reusable) {
+            if (r->dynamicUpload) {
+                if (!WriteUpload(r->dynamicUpload.Get(), data, bytes))
+                    return false;
+                ++stats.uploadBufferReuses;
+            } else if (!UploadData(r->dynamicUpload, data, bytes))
+                return false;
+            job.source = r->dynamicUpload;
+            job.retainedSource = h;
+            r->uploadQueued = true;
+        } else if (!UploadData(job.source, data, bytes))
             return false;
         if (r->buffer.usage == BufferUsage::Index) {
             if (r->indices.empty())
@@ -564,6 +597,8 @@ public:
         if (passes.Description(h))
             passes.Erase(h);
         Defer(r->native, issued + (inFrame ? 1 : 0));
+        Defer(r->dynamicUpload, r->uploadUse);
+        r->dynamicUpload.Reset();
         r->native.Reset();
         r->indices.clear();
         r->alive = false;
@@ -770,6 +805,10 @@ public:
                     list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
                 }
             Barrier(list, job.destination.Get(), D3D12_RESOURCE_STATE_COPY_DEST, job.after);
+            if (auto* r = Find(job.retainedSource)) {
+                r->uploadQueued = false;
+                r->uploadUse = issued + 1;
+            }
             f.uploads.push_back(std::move(job.source));
             f.uploads.push_back(std::move(job.destination));
         }

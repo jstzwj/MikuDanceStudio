@@ -9,27 +9,34 @@ using namespace mikudancestudio::rhi;
 // Deliberately delayed completion makes premature retirement observable.
 struct DelayedDevice final:Device {
     std::uint64_t identity=detail::NextDeviceIdentity(),epoch=1,issued=0,completed=0;unsigned uploads=0,destroyed=0,draws=0;
-    bool frame=false,failUpload=false,failSignal=false,failDestroy=false,removed=false;unsigned width=0,height=0;std::set<unsigned> handles;std::map<unsigned,std::uint64_t> uses;
+    bool frame=false,failUpload=false,failSignal=false,failDestroy=false,removed=false,completeOnWait=false,failTarget=false;unsigned width=0,height=0;std::set<unsigned> handles;std::map<unsigned,std::uint64_t> uses;
+    std::map<unsigned,BufferDesc> descriptions;std::map<unsigned,std::vector<std::uint8_t>> contents;
+    std::vector<CompletionToken> waits;Handle lastVertices;
     Backend BackendType()const override{return Backend::Null;}Capabilities Features()const override{return {};}
     DeviceStatus Status()const override{return {identity,epoch,removed?DeviceState::Removed:DeviceState::Ready};}
     ModelCapabilities ModelFeatures()const override{return {true,true,true,true,true,true,true,true,true,true,false,512};}
-    Handle CreateBuffer(BufferDesc,const void*)override{if(failUpload)return {};handles.insert(++uploads);return {uploads,1,identity};}
+    Handle CreateBuffer(BufferDesc desc,const void* data)override{if(failUpload)return {};handles.insert(++uploads);descriptions[uploads]=desc;if(data)contents[uploads].assign(static_cast<const std::uint8_t*>(data),static_cast<const std::uint8_t*>(data)+desc.size);return {uploads,1,identity};}
     Handle CreateTexture(TextureDesc)override{return CreateBuffer({},nullptr);}
     std::vector<RgbaImage> mipUpload;
     Handle CreateModelTexture(const ModelTextureData& data)override{mipUpload=data.levels;return CreateBuffer({},nullptr);}
-    bool UploadTexture(Handle,TexturePixels)override{return false;}bool Upload(Handle,std::size_t,const void*,std::size_t)override{return false;}
+    bool UploadTexture(Handle,TexturePixels)override{return false;}
+    unsigned bufferWrites=0;
+    bool Upload(Handle h,std::size_t offset,const void* data,std::size_t size)override{
+        if(failUpload || h.device!=identity || !handles.count(h.index) || !descriptions[h.index].dynamic || uses[h.index]>completed || offset || !data || size!=descriptions[h.index].size)return false;
+        contents[h.index].assign(static_cast<const std::uint8_t*>(data),static_cast<const std::uint8_t*>(data)+size);++bufferWrites;return true;
+    }
     bool BindTexture(std::uint32_t,Handle h)override{return handles.count(h.index) && h.device==identity;}
     bool Destroy(Handle h)override{if(failDestroy || h.device!=identity || (!removed && uses[h.index]>completed) || !handles.erase(h.index))return false;uses.erase(h.index);++destroyed;return true;}
     bool BeginFrame(ClearColor)override{if(frame)return false;frame=true;return true;}
     bool EndFrame()override{if(!frame)return false;frame=false;return true;}bool Present()override{return false;}
     bool SetFixedPipeline(FixedPipelineState)override{return false;}bool SetModelPipeline(const ModelPipeline&)override{return frame;}
-    bool Draw(NonIndexedDraw d)override{if(!frame || !IsCurrentSubmission(Status(),d.submission) || !handles.count(d.vertices.index))return false;++draws;return true;}
-    bool DrawIndexed(IndexedDraw d)override{if(!frame || !IsCurrentSubmission(Status(),d.submission) || !handles.count(d.vertices.index)||!handles.count(d.indices.index))return false;uses[d.vertices.index]=uses[d.indices.index]=issued+1;++draws;return true;}
+    bool Draw(NonIndexedDraw d)override{if(!frame || !IsCurrentSubmission(Status(),d.submission) || !handles.count(d.vertices.index))return false;lastVertices=d.vertices;uses[d.vertices.index]=issued+1;++draws;return true;}
+    bool DrawIndexed(IndexedDraw d)override{if(!frame || !IsCurrentSubmission(Status(),d.submission) || !handles.count(d.vertices.index)||!handles.count(d.indices.index))return false;lastVertices=d.vertices;uses[d.vertices.index]=uses[d.indices.index]=issued+1;++draws;return true;}
     bool PrepareForReset()override{return false;}bool RestoreAfterReset()override{return false;}
-    bool EnsureModelTarget(const HistoryDesc& t)override{if(frame)return false;if(width!=t.width || height!=t.height){width=t.width;height=t.height;++epoch;}return true;}
+    bool EnsureModelTarget(const HistoryDesc& t)override{if(frame || failTarget)return false;if(width!=t.width || height!=t.height){width=t.width;height=t.height;++epoch;}return true;}
     CompletionToken SignalCompletion()override{return failSignal?CompletionToken{}:CompletionToken{identity,++issued};}
     CompletionState PollCompletion(CompletionToken t)override{return t.device!=identity || !t.value || t.value>issued?CompletionState::Invalid:t.value<=completed?CompletionState::Complete:CompletionState::Pending;}
-    bool WaitCompletion(CompletionToken t,std::uint32_t)override{return PollCompletion(t)==CompletionState::Complete;}
+    bool WaitCompletion(CompletionToken t,std::uint32_t)override{waits.push_back(t);if(completeOnWait && t.device==identity && t.value<=issued)completed=(std::max)(completed,t.value);return PollCompletion(t)==CompletionState::Complete;}
 };
 ModelReplayStream Fixture(unsigned version=1) {
     ModelReplayStream s;s.complete=true;s.target.width=s.target.height=64;
@@ -41,7 +48,58 @@ ModelReplayStream Fixture(unsigned version=1) {
     for(auto* m:{&d.pipeline.shader.world,&d.pipeline.shader.view,&d.pipeline.shader.projection,&d.pipeline.shader.normalView})*m={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     auto& stage=d.pipeline.shader.layout.stages[0];stage.role=MaterialTextureRole::Base;stage.color=MaterialCombine::Modulate;stage.colorArg2=MaterialColorSource::LitDiffuse;s.events.push_back(e);return s;
 }
+ModelReplayStream Moving(unsigned version, unsigned size=96) {
+    auto stream=Fixture();stream.resources[0].key.version=version;
+    stream.resources[0].bytes.resize(size);stream.resources[0].bytes[0]=version%251;
+    stream.events[1].resource=stream.resources[0].key;stream.events.back().draw.vertices=stream.resources[0].key;
+    return stream;
+}
+int VerifyBufferPool() {
+    DelayedDevice gpu;gpu.completeOnWait=true;SceneRenderer renderer(gpu);PreparedModelFrame frame;CompletionToken token;
+    for(unsigned n=1;n<=100;++n){auto stream=Moving(n);CHECK(renderer.Prepare(1,stream,frame) && renderer.Submit(frame,token));
+        const auto stats=renderer.Stats();CHECK(stats.bufferCreations<=6 && stats.residentResources==3 && stats.pooledBuffers+stats.retiringResources<=4);
+        CHECK(gpu.contents[gpu.lastVertices.index][0]==n%251);}
+    CHECK(renderer.Stats().bufferReuses>90 && renderer.Stats().bufferWaits>0);
+    CHECK(gpu.completed<gpu.issued && !gpu.waits.empty()); // waits did not drain unrelated latest work
+    const auto created=renderer.Stats().bufferCreations;const auto latest=gpu.lastVertices;
+    // A timeout preserves the active prepared frame and all its immutable bytes.
+    gpu.completeOnWait=false;CHECK(renderer.Prepare(1,Moving(101),frame).reason=="resource_upload_failed");
+    CHECK(renderer.Submit(frame,token) && gpu.lastVertices.index==latest.index && gpu.contents[latest.index][0]==100);
+    gpu.completed=gpu.issued;CHECK(renderer.Collect());
+    const auto writes=gpu.bufferWrites;
+    CHECK(renderer.Prepare(1,Moving(99),frame).reason=="retired_resource_version" && gpu.bufferWrites==writes);
+    gpu.failUpload=true;CHECK(!renderer.Prepare(1,Moving(101),frame));gpu.failUpload=false;
+    CHECK(renderer.Submit(frame,token) && gpu.contents[latest.index][0]==100);
+    gpu.completed=gpu.issued;gpu.failTarget=true;
+    CHECK(renderer.Prepare(1,Moving(101),frame).reason=="target_prepare_failed");gpu.failTarget=false;
+    CHECK(renderer.Submit(frame,token) && gpu.contents[latest.index][0]==100);
+    // Completed slots of obsolete sizes are evicted at the same fixed bound.
+    gpu.completed=gpu.issued;gpu.completeOnWait=true;
+    for(unsigned n=101;n<=150;++n){CHECK(renderer.Prepare(1,Moving(n,96*(n%5+1)),frame) && renderer.Submit(frame,token));
+        CHECK(gpu.handles.size()<=7 && renderer.Stats().pooledBuffers+renderer.Stats().retiringResources<=4);}
+    gpu.completed=gpu.issued;CHECK(renderer.Unload(1) && gpu.handles.empty() && !renderer.Stats().pooledBuffers);
+    CHECK(created<=6);return 0;
+}
+int VerifySimultaneousVersions() {
+    DelayedDevice gpu;SceneRenderer renderer(gpu);PreparedModelFrame frame;CompletionToken token;
+    auto stream=Moving(1);
+    for(unsigned n=2;n<=6;++n)stream.resources.push_back(Moving(n).resources[0]);
+    auto draw=stream.events.back().draw;stream.events.resize(1);
+    for(const auto& resource:stream.resources)if(resource.key.id!=1){ModelReplayEvent e;e.sequence=stream.events.size()+1;e.op=ModelReplayOp::PublishResource;e.resource=resource.key;stream.events.push_back(e);}
+    for(unsigned n=1;n<=6;++n){ModelReplayEvent publish;publish.sequence=stream.events.size()+1;publish.op=ModelReplayOp::PublishResource;publish.resource={1,n};stream.events.push_back(publish);
+        ModelReplayEvent e;e.sequence=stream.events.size()+1;e.op=ModelReplayOp::Draw;e.draw=draw;e.draw.vertices={1,n};stream.events.push_back(e);}
+    CHECK(renderer.Prepare(1,stream,frame) && renderer.Submit(frame,token));
+    // Deliberately retaining six versions is legal. Promotion must preserve
+    // every active allocation while preparing a single replacement version.
+    CHECK(renderer.Prepare(1,Moving(7),frame) && renderer.Submit(frame,token));
+    CHECK(gpu.contents[gpu.lastVertices.index][0]==7);
+    CHECK(renderer.Unload(1) && !renderer.Stats().residentResources && !renderer.Stats().pooledBuffers);
+    CHECK(!gpu.handles.empty()); // all submitted versions still await completion
+    gpu.completed=gpu.issued;CHECK(renderer.Collect() && gpu.handles.empty());return 0;
+}
 int main(){DelayedDevice old,newDevice;SceneRenderer renderer(old);auto stream=Fixture();PreparedModelFrame f;CHECK(renderer.Prepare(1,stream,f));
+    CHECK(VerifyBufferPool()==0);
+    CHECK(VerifySimultaneousVersions()==0);
     CompletionToken token;for(unsigned n=0;n<1000;++n){CHECK(renderer.Submit(f,token));old.completed=token.value;}
     CHECK(old.uploads==3 && renderer.Stats().targetRebuilds==1 && renderer.Stats().submissions==1000);
     old.completed=old.issued-1;PreparedModelFrame edited;CHECK(renderer.Prepare(1,Fixture(2),edited));CHECK(old.uploads==4 && renderer.Stats().retiringResources==1 && old.destroyed==0);
@@ -77,7 +135,9 @@ int main(){DelayedDevice old,newDevice;SceneRenderer renderer(old);auto stream=F
         update.events.back().draw.vertices=update.resources[0].key;update.events.back().draw.indices=update.resources[1].key;
         CHECK(animated.Prepare(1,update,pose) && animated.Submit(pose,token));moving.completed=moving.issued>3?moving.issued-3:0;CHECK(animated.Collect());
         CHECK(animated.Stats().residentResources==3 && animated.Stats().retiringResources<=3);}
-    CHECK(animated.Stats().uploads==1002 && animated.Stats().textureUploads==1);moving.completed=moving.issued;CHECK(animated.Unload(1) && moving.handles.empty());
+    CHECK(animated.Stats().uploads==1002 && animated.Stats().textureUploads==1);
+    CHECK(animated.Stats().bufferCreations<=6 && animated.Stats().bufferReuses>990 && moving.bufferWrites>990);
+    moving.completed=moving.issued;CHECK(animated.Unload(1) && moving.handles.empty());
     DelayedDevice failing;SceneRenderer poisoned(failing);PreparedModelFrame poisonFrame;CHECK(poisoned.Prepare(1,Fixture(),poisonFrame));
     failing.failSignal=true;CHECK(poisoned.Submit(poisonFrame,token).reason=="completion_signal_failed");
     CHECK(poisoned.Submit(poisonFrame,token).reason=="untracked_gpu_work" && !poisoned.Collect());
@@ -111,7 +171,7 @@ int main(){DelayedDevice old,newDevice;SceneRenderer renderer(old);auto stream=F
         CHECK(assembler.Finish(assembled) && live.Prepare(1,assembled,resident) && live.Submit(resident,token));
         liveOld.completed=liveOld.issued;CHECK(live.Collect());
         CHECK(live.Stats().residentResources==5 && live.Stats().retiringResources==0 && assembler.Stats().identityCount==5);}
-    CHECK(live.Stats().uploads==1004 && live.Stats().textureUploads==1);
+    CHECK(live.Stats().uploads==1004 && live.Stats().textureUploads==1 && live.Stats().bufferCreations<=6 && liveOld.bufferWrites>990);
     // One logical asset cannot publish contradictory bytes in the same frame.
     assembler.Begin(desc);auto conflicting=Fixture();conflicting.source.frame=desc.frame;
     assembler.Append({0,mikudancestudio::render::SceneDrawFamily::ModelMaterial,0,0,conflicting,{"shared:toon"}});

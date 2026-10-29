@@ -59,6 +59,7 @@ struct SceneRenderer::Impl {
         ModelReplayResource cpu;
         Handle handle;
         CompletionToken lastUse;
+        BufferDesc buffer;
     };
     struct Scene {
         std::uint64_t generation = 0;
@@ -77,6 +78,8 @@ struct SceneRenderer::Impl {
     struct Retired {
         Handle handle;
         CompletionToken completion;
+        std::uint64_t scene = 0, resource = 0;
+        BufferDesc buffer;
     };
     Device* device;
     const std::uint64_t owner = detail::NextDeviceIdentity();
@@ -84,21 +87,100 @@ struct SceneRenderer::Impl {
     bool unknownWork = false;
     std::map<std::uint64_t, Scene> scenes;
     std::vector<Retired> retired;
+    std::vector<Retired> spare;
     SceneRendererStats stats;
     explicit Impl(Device& d) : device(&d) {}
-    void Retire(Entry& e) {
+    void Retire(Entry& e, std::uint64_t scene = 0) {
         if (e.handle)
-            retired.push_back({e.handle, e.lastUse});
+            retired.push_back({e.handle, e.lastUse, scene, e.cpu.key.id, e.buffer});
         e.handle = {};
     }
-    Handle Upload(const ModelReplayResource& r) {
-        if (r.kind == ReplayResourceKind::Texture)
-            return device->CreateModelTexture(r.texture);
+    bool Wanted(const Retired& r) const {
+        const auto s = scenes.find(r.scene);
+        if (!r.buffer.dynamic || s == scenes.end())
+            return false;
+        for (const auto& entry : s->second.resources)
+            if (entry.first.id == r.resource)
+                return true;
+        return false;
+    }
+    Entry Upload(std::uint64_t scene, const ModelReplayResource& r, unsigned reserved) {
+        Entry entry{r};
+        if (r.kind == ReplayResourceKind::Texture) {
+            entry.handle = device->CreateModelTexture(r.texture);
+            return entry;
+        }
         BufferDesc desc{r.kind == ReplayResourceKind::Vertices ? BufferUsage::Vertex
                                                                : BufferUsage::Index,
                         r.bytes.size()};
         desc.indexFormat = r.indexFormat;
-        return device->CreateBuffer(desc, r.bytes.data());
+        // Promote only changing resources. Immutable geometry keeps its
+        // original allocation and has no pool or repeated upload overhead.
+        const auto s = scenes.find(scene);
+        desc.dynamic = s != scenes.end() && s->second.versions.count(r.key.id) &&
+                       !device->ResourceLifecycleFeatures().invalidatesDynamicBuffers;
+        entry.buffer = desc;
+        if (desc.dynamic) {
+            const auto compatible = [&](const Retired& a) {
+                return a.scene == scene && a.resource == r.key.id && a.buffer.dynamic &&
+                       a.buffer.usage == desc.usage && a.buffer.size == desc.size &&
+                       a.buffer.indexFormat == desc.indexFormat;
+            };
+            auto ready = std::find_if(spare.begin(), spare.end(), compatible);
+            // Include pending allocations of other sizes in the bound. Size
+            // changes may evict a completed slot but cannot grow an idle pool.
+            unsigned active = reserved;
+            for (const auto& e : s->second.resources)
+                active += e.first.id == r.key.id && bool(e.second.handle);
+            unsigned allocated = active;
+            for (const auto& a : spare)
+                allocated += a.scene == scene && a.resource == r.key.id;
+            for (const auto& a : retired)
+                allocated += a.scene == scene && a.resource == r.key.id;
+            // A replay may deliberately publish several simultaneous versions
+            // of one logical resource. Preserve all active versions and reserve
+            // one replacement without making normal animation pools unbounded.
+            const auto limit = (std::max)(SceneRenderer::BufferSlots, active + 1);
+            if (ready == spare.end() && allocated >= limit) {
+                auto oldest = retired.end();
+                for (auto a = retired.begin(); a != retired.end(); ++a)
+                    if (a->scene == scene && a->resource == r.key.id &&
+                        (oldest == retired.end() || a->completion.value < oldest->completion.value))
+                        oldest = a;
+                auto free = std::find_if(spare.begin(), spare.end(), [&](const Retired& a) {
+                    return a.scene == scene && a.resource == r.key.id;
+                });
+                if (free == spare.end() && oldest != retired.end()) {
+                    ++stats.bufferWaits;
+                    if (oldest->completion && !device->WaitCompletion(oldest->completion, 5000))
+                        return entry;
+                    spare.push_back(*oldest);
+                    retired.erase(oldest);
+                    free = std::prev(spare.end());
+                }
+                ready = std::find_if(spare.begin(), spare.end(), compatible);
+                if (ready == spare.end()) {
+                    if (free == spare.end() || !device->Destroy(free->handle))
+                        return entry;
+                    spare.erase(free);
+                    ready = spare.end();
+                }
+            }
+            if (ready != spare.end()) {
+                // Upload failure can modify an unused slot, never the current
+                // frame. Keep the slot owned so rollback/retry cannot leak it.
+                if (!device->Upload(ready->handle, 0, r.bytes.data(), r.bytes.size()))
+                    return entry;
+                entry.handle = ready->handle;
+                spare.erase(ready);
+                ++stats.bufferReuses;
+                return entry;
+            }
+        }
+        entry.handle = device->CreateBuffer(desc, r.bytes.data());
+        if (entry.handle)
+            ++stats.bufferCreations;
+        return entry;
     }
     bool Drain(std::uint32_t timeout) {
         if (!device)
@@ -203,7 +285,18 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
                     return {false, 0, 0, "retired_resource_version"};
             }
         }
-    std::map<ReplayResourceKey, Handle> pending;
+    if (!Collect())
+        return {false, 0, 0, "resource_collection_failed"};
+    std::map<ReplayResourceKey, Impl::Entry> pending;
+    struct ResourceRollback {
+        Impl& impl;
+        std::uint64_t scene;
+        std::map<ReplayResourceKey, Impl::Entry>& entries;
+        ~ResourceRollback() {
+            for (auto& entry : entries)
+                impl.Retire(entry.second, scene);
+        }
+    } resourceRollback{*impl, id, pending};
     struct Rollback {
         Device& device;
         std::map<ReplayResourceKey, Handle>& handles;
@@ -211,16 +304,19 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
             for (const auto& h : handles)
                 device.Destroy(h.second);
         }
-    } rollback{d, pending};
+    };
     for (const auto& r : stream.resources) {
         const bool missing = existing == impl->scenes.end() ||
                              !existing->second.resources.count(r.key) ||
                              !existing->second.resources.at(r.key).handle;
         if (missing) {
-            const auto h = impl->Upload(r);
-            if (!h)
+            unsigned reserved = 0;
+            for (const auto& p : pending)
+                reserved += p.first.id == r.key.id;
+            auto entry = impl->Upload(id, r, reserved);
+            if (!entry.handle)
                 return {false, 0, 0, "resource_upload_failed"};
-            pending.emplace(r.key, h);
+            pending.emplace(r.key, std::move(entry));
         }
     }
     const auto before = d.Status();
@@ -285,7 +381,8 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
         if (found == scene.resources.end())
             found = scene.resources.emplace(r.key, Impl::Entry{r, {}, {}}).first;
         if (p != pending.end()) {
-            found->second.handle = p->second;
+            found->second.handle = p->second.handle;
+            found->second.buffer = p->second.buffer;
             ++impl->stats.uploads;
             impl->stats.uploadBytes += Bytes(r);
             impl->stats.textureUploads += r.kind == ReplayResourceKind::Texture;
@@ -297,7 +394,7 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
         scene.kinds[r.key.id] = r.kind;
     for (auto i = scene.resources.begin(); i != scene.resources.end();)
         if (!wanted.count(i->first)) {
-            impl->Retire(i->second);
+            impl->Retire(i->second, id);
             i = scene.resources.erase(i);
         } else
             ++i;
@@ -480,6 +577,8 @@ bool SceneRenderer::Collect() {
         return false;
     bool ok = true;
     auto& entries = impl->retired;
+    impl->stats.peakRetiringResources =
+        (std::max)(impl->stats.peakRetiringResources, entries.size());
     CompletionToken recent;
     for (const auto& s : impl->scenes)
         for (const auto& r : s.second.resources)
@@ -494,7 +593,10 @@ bool SceneRenderer::Collect() {
         const auto state =
             i->completion ? impl->device->PollCompletion(i->completion) : CompletionState::Complete;
         if (state == CompletionState::Complete) {
-            if (impl->device->Destroy(i->handle))
+            if (impl->Wanted(*i)) {
+                impl->spare.push_back(*i);
+                i = entries.erase(i);
+            } else if (impl->device->Destroy(i->handle))
                 i = entries.erase(i);
             else {
                 ok = false;
@@ -506,6 +608,16 @@ bool SceneRenderer::Collect() {
             ++i;
         }
     }
+    for (auto i = impl->spare.begin(); i != impl->spare.end();)
+        if (!impl->Wanted(*i)) {
+            if (impl->device->Destroy(i->handle))
+                i = impl->spare.erase(i);
+            else {
+                ok = false;
+                ++i;
+            }
+        } else
+            ++i;
     return ok;
 }
 bool SceneRenderer::Unload(std::uint64_t id) {
@@ -552,6 +664,13 @@ bool SceneRenderer::Detach(std::uint32_t timeout) {
             released = false;
             ++i;
         }
+    for (auto i = impl->spare.begin(); i != impl->spare.end();)
+        if (impl->device->Destroy(i->handle))
+            i = impl->spare.erase(i);
+        else {
+            released = false;
+            ++i;
+        }
     if (!released)
         return false;
     impl->device = nullptr;
@@ -584,8 +703,15 @@ SceneRendererStats SceneRenderer::Stats() const {
         for (const auto& r : s.second.resources) {
             ++out.cpuResources;
             out.residentResources += bool(r.second.handle);
+            if (r.second.handle)
+                out.residentBufferBytes += r.second.buffer.size;
         }
     out.retiringResources = impl->retired.size();
+    for (const auto& r : impl->retired)
+        out.retiringBufferBytes += r.buffer.size;
+    out.pooledBuffers = impl->spare.size();
+    for (const auto& r : impl->spare)
+        out.pooledBufferBytes += r.buffer.size;
     return out;
 }
 }

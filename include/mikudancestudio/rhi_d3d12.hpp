@@ -24,6 +24,10 @@ struct D3D12Options {
 };
 struct D3D12Stats {
     std::uint64_t submissions = 0, completed = 0, pipelineCreations = 0, resourceUploads = 0;
+    // DEFAULT buffers and UPLOAD buffers respectively; upload allocations also
+    // include frame constants and texture staging, not only dynamic geometry.
+    std::uint64_t bufferAllocations = 0, uploadBufferAllocations = 0, uploadBufferReuses = 0,
+                  uploadBytes = 0;
     std::size_t retiringResources = 0;
     unsigned debugErrors = 0;
 };
