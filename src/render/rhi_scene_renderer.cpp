@@ -146,7 +146,7 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
                                              const RenderFrame* frame) {
     if (output != FrameOutput::Offscreen && output != FrameOutput::Presentation)
         return {false, 0, 0, "invalid_frame_output"};
-    auto result = ValidateModelReplay(stream);
+    auto result = frame ? detail::ValidateFrameReplay(stream) : ValidateModelReplay(stream);
     if (!result)
         return result;
     if (!id)
@@ -314,7 +314,10 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
             prepared.sequence = e.sequence;
             for (unsigned slot = 0; slot < 3; ++slot)
                 if (draw.pipeline.shader.layout.stages[slot].role != MaterialTextureRole::None)
-                    prepared.textures[slot] = scene.resources.at(draw.textures[slot]).handle;
+                    prepared.textures[slot] =
+                        draw.targetTextures[slot].target
+                            ? scene.targets.at(draw.targetTextures[slot].target).handle
+                            : scene.resources.at(draw.textures[slot]).handle;
             const auto vb = scene.resources.at(draw.vertices).handle;
             if (draw.indexed)
                 prepared.command = d.Record(

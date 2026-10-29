@@ -4,7 +4,7 @@
 #include <map>
 #include <set>
 namespace mikudancestudio::rhi {
-ModelReplayResult ValidateModelReplay(const ModelReplayStream& stream) {
+static ModelReplayResult ValidateReplay(const ModelReplayStream& stream, bool frameTargets) {
     ModelReplayResult out;
     auto fail = [&](const char* why) {
         out.reason = why;
@@ -171,7 +171,16 @@ ModelReplayResult ValidateModelReplay(const ModelReplayStream& stream) {
                 d.drawVertexCount > v->bytes.size() / stride - d.firstVertex)
                 return fail("invalid_draw_range");
         }
-        for (unsigned slot = 0; slot < 3; ++slot)
+        for (unsigned slot = 0; slot < 3; ++slot) {
+            const auto& target = d.targetTextures[slot];
+            if (target.target || target.width || target.height) {
+                if (!frameTargets)
+                    return fail("render_target_requires_frame");
+                if (!target.target || !target.width || !target.height || d.textures[slot].id ||
+                    d.textures[slot].version ||
+                    s.layout.stages[slot].role == MaterialTextureRole::None || s.srgbSample[slot])
+                    return fail("invalid_target_texture_binding");
+            }
             if (s.layout.stages[slot].role != MaterialTextureRole::None) {
                 const auto& sampler = s.samplers[slot];
                 if (p.vertexLayout == VertexLayout::PositionColor &&
@@ -183,10 +192,12 @@ ModelReplayResult ValidateModelReplay(const ModelReplayStream& stream) {
                      sampler.min != SamplerFilter::Anisotropic &&
                      sampler.mag != SamplerFilter::Anisotropic))
                     return fail("unsupported_sampling");
-                auto texture = get(d.textures[slot], ReplayResourceKind::Texture);
-                if (!texture || texture->texture.srgb != s.srgbSample[slot])
+                auto texture =
+                    target.target ? nullptr : get(d.textures[slot], ReplayResourceKind::Texture);
+                if (!target.target && (!texture || texture->texture.srgb != s.srgbSample[slot]))
                     return fail("missing_stale_or_mismatched_texture");
             }
+        }
         ++out.draws;
     }
     // A deliberately empty scene is one clear and no resources. Do not admit
@@ -196,6 +207,12 @@ ModelReplayResult ValidateModelReplay(const ModelReplayStream& stream) {
     out.success = true;
     out.reason = "validated";
     return out;
+}
+ModelReplayResult ValidateModelReplay(const ModelReplayStream& stream) {
+    return ValidateReplay(stream, false);
+}
+ModelReplayResult detail::ValidateFrameReplay(const ModelReplayStream& stream) {
+    return ValidateReplay(stream, true);
 }
 ModelReplayResult ComposeModelReplay(const ModelReplayStream& prefix,
                                      const ModelReplayStream& suffix, ModelReplayStream& output) {

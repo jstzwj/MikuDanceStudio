@@ -1,4 +1,5 @@
 #include "mikudancestudio/rhi_frame_passes.hpp"
+#include "material_sampling_fixture.hpp"
 #include <cstdio>
 using namespace mikudancestudio::rhi;
 #define CHECK(x)                                                                                   \
@@ -75,6 +76,39 @@ int main() {
     bad.passes[0].color.reset();
     bad.passes[0].depthStencil.reset();
     CHECK(!ValidateModelReplay(FlattenRenderFrame(bad)));
+    auto sampled = sampling_fixture::Fixture(0, SamplerFilter::Linear, 1, SamplerAddress::Clamp, 1,
+                                             false, false);
+    sampled.resources.pop_back(); // no immutable material upload
+    sampled.targets.push_back({4, {17, 13, TextureFormat::Rgba8, access}});
+    sampled.passes[0].color = FrameAttachment{4};
+    sampled.passes[1].sampled = {4};
+    auto& draw = sampled.passes[1].draws[0];
+    draw.textures[0] = {};
+    draw.targetTextures[0] = {4, 17, 13};
+    CHECK(ValidateRenderFrame(sampled)); // normalized UV sampling permits different extents
+    CHECK(ValidateModelReplay(FlattenRenderFrame(sampled)).reason ==
+          "render_target_requires_frame");
+    auto rejected = sampled;
+    rejected.passes[1].draws[0].targetTextures[0].width = 18;
+    CHECK(ValidateRenderFrame(rejected).reason == "invalid_or_undeclared_target_texture");
+    rejected = sampled;
+    rejected.passes[1].draws[0].textures[0] = {2, 1};
+    CHECK(ValidateRenderFrame(rejected).reason == "invalid_target_texture_binding");
+    rejected = sampled;
+    rejected.passes[1].draws[0].pipeline.shader.srgbSample[0] = true;
+    CHECK(!ValidateRenderFrame(rejected));
+    rejected = sampled;
+    rejected.passes[1].sampled.clear();
+    CHECK(ValidateRenderFrame(rejected).reason == "invalid_or_undeclared_target_texture");
+    rejected = sampled;
+    std::swap(rejected.passes[0], rejected.passes[1]);
+    CHECK(ValidateRenderFrame(rejected).reason == "sample_before_write");
+    rejected = sampled;
+    rejected.passes[0].color->store = AttachmentStore::Discard;
+    CHECK(ValidateRenderFrame(rejected).reason == "sample_before_write");
+    rejected = sampled;
+    rejected.passes[1].sampled = {1};
+    CHECK(ValidateRenderFrame(rejected).reason == "attachment_feedback");
     std::puts(
         "frame graph: ordered dependencies, attachments, discard and unsupported ranges passed");
 }

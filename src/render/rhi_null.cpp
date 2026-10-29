@@ -132,7 +132,7 @@ public:
     bool BindTexture(std::uint32_t slot, Handle handle) override {
         auto* resource = Find(handle);
         if (!inFrame_ || !linePipelineReady_ || slot != 0 || !resource || !resource->texture ||
-            !resource->uploaded)
+            (passes_.Description(handle) ? !passes_.CanSample(handle) : !resource->uploaded))
             return false;
         boundTexture_ = handle;
         return true;

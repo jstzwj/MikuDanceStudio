@@ -106,6 +106,14 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         if (!state.Begin(native))
             return {false, 0, draws, state.Reason()};
         for (const auto& d : p.draws) {
+            for (const auto& ref : d.targetTextures)
+                if (ref.target) {
+                    const auto* t = Target(f, ref.target);
+                    if (!t || t->description.format != TextureFormat::Rgba8 ||
+                        t->description.width != ref.width || t->description.height != ref.height ||
+                        !state.CanSample(handles.at(t->id)))
+                        return fail("invalid_or_undeclared_target_texture");
+                }
             if ((d.pipeline.raster.depthTest || d.pipeline.stencil) && !p.depthStencil)
                 return fail("draw_requires_depth_attachment");
             if (d.pipeline.shadow.mode == BuiltinShadowMode::Depth &&
@@ -120,7 +128,7 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
             } else if (d.shadowTarget)
                 return fail("unexpected_shadow_target");
         }
-        const auto result = ValidateModelReplay(Stream(f, &p));
+        const auto result = detail::ValidateFrameReplay(Stream(f, &p));
         if (!result)
             return result;
         draws += result.draws;

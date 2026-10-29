@@ -56,6 +56,10 @@ int main() {
     CHECK(!d->Destroy(a) && !d->PrepareForReset() && !d->ReadRenderTexture(a, out));
     CHECK(d->EndRenderPass() && !d->EndRenderPass() && d->BeginRenderPass(read) &&
           d->EndRenderPass());
+    CHECK(d->BeginRenderPass(read));
+    CHECK(d->SetFixedPipeline(HudSpritePipeline()) && d->BindTexture(0, a));
+    CHECK(!d->BindTexture(0, b)); // undeclared write target
+    CHECK(d->EndRenderPass());
     auto discard = write;
     discard.color->store = AttachmentStore::Discard;
     CHECK(d->BeginRenderPass(discard) && d->EndRenderPass() && !d->BeginRenderPass(read));
@@ -74,6 +78,9 @@ int main() {
     CHECK(!d->BeginRenderPass(mismatch));
     read.sampled = {a};
     CHECK(!d->BeginRenderPass(read));
+    CHECK(d->BeginRenderPass(write) && d->SetFixedPipeline(HudSpritePipeline()));
+    CHECK(!d->BindTexture(0, a) && !d->BindTexture(0, replacement));
+    CHECK(d->EndRenderPass());
     write.color->clear = {.25f, .5f, .75f, 1};
     CHECK(d->BeginRenderPass(write) && d->EndRenderPass() && d->EndFrame() && d->Present());
     CHECK(d->ReadRenderTexture(replacement, out));

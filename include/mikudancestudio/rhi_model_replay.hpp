@@ -23,10 +23,19 @@ struct ModelReplayResource {
     std::vector<std::uint8_t> bytes;
     ModelTextureData texture;
 };
+// Mutable, frame-local RGBA8 product, distinct from immutable upload versions.
+// Dimensions are part of the reference: resizing requires rebuilding CPU draws.
+struct RenderTargetReference {
+    std::uint64_t target = 0;
+    std::uint32_t width = 0, height = 0;
+};
 struct ModelReplayDraw {
     ModelPipeline pipeline;
     ReplayResourceKey vertices, indices;
     std::array<ReplayResourceKey, 3> textures{};
+    // Exactly one source per active stage. Only RenderFrame may resolve these;
+    // its pass must declare the initialized, stored target in sampled.
+    std::array<RenderTargetReference, 3> targetTextures{};
     std::uint32_t firstIndex = 0, indexCount = 0, vertexCount = 0;
     // Indexed: vertexCount bounds every index; nonindexed range fields zero.
     // Nonindexed: no index key/range/vertexCount; firstVertex + drawVertexCount
@@ -78,6 +87,10 @@ struct ModelReplayResult {
 // Validates the entire stream, including events after the requested boundary.
 // Does not mutate the device or the stream. No file-format/ABI serialization.
 ModelReplayResult ValidateModelReplay(const ModelReplayStream&);
+namespace detail {
+// Internal geometry/pipeline validation after RenderFrame dependency validation.
+ModelReplayResult ValidateFrameReplay(const ModelReplayStream&);
+}
 // Append CPU draws to a complete preceding draw history, retaining its single
 // initial clear and known region. Suffix resource IDs get a disjoint namespace;
 // immutable versions and publish/draw order remain unchanged. Scene/frame and
