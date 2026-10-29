@@ -26,6 +26,11 @@ DX9 scene draws. This does not yet translate arbitrary FX9 shaders or execute
 Ray natively on the newer backends. Expanded include sources are now retained
 per loaded revision for stable device reconstruction. See
 [MME parameter and script scope](RHI_MME_SEMANTICS.md).
+A bounded source importer now translates unannotated FX9 model-material effects
+to the shared shader contract, including actual sampler bindings and current
+per-draw matrices/material values. Hidden tests retain these effects across
+backend switches. See [legacy FX9 import](RHI_MME_LEGACY_IMPORT.md); general
+scene effects and native Ray execution remain pending.
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.

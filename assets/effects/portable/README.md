@@ -7,6 +7,10 @@ They contain no external model or texture assets.
   material diffuse, world/view/projection and a live `tint` parameter. MME's
   existing technique selector handles object/object_ss, Subset and UseTexture.
   Materials without a matching technique retain their ordinary draw.
+- `LegacyMaterial.fx`: unmodified-style FX9 model material without a profile
+  or modern shader branch. It exercises automatic declaration/sampler/I/O
+  translation, current draw matrices, arrays, bools and live shared/control
+  values. See [the bounded importer](../../../docs/RHI_MME_LEGACY_IMPORT.md).
 - `TwoStage.fx`: assign to one scene carrier, usually a small accessory. Its
   script captures the scene at `ScriptExternal`, grades it into Ping, then
   copies Ping to the final color target. Editor overlays follow this chain.
@@ -24,7 +28,8 @@ They contain no external model or texture assets.
   LoopByCount/LoopGetIndex, and copies Pong exactly. Zero iterations preserve
   Pong's clear color. Private loop-index writes persist after successful frames.
 
-All files also run as ordinary DX9 effects. `MDS_RHI` selects their HLSL 5/6
+All files also run as ordinary DX9 effects. Except for LegacyMaterial.fx,
+`MDS_RHI` selects their HLSL 5/6
 shader branch. Explicit profile and pass annotations opt into the initial
 portable ABI. Changing the shader functions within that ABI is supported;
 adding unrecognized parameters, pass state, resources or script commands

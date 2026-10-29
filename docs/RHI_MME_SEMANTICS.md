@@ -5,8 +5,10 @@ DX9, DX11, DX12 and Vulkan. Successful RHI frames execute no DX9 scene draws.
 The existing DX9 effect instances remain CPU metadata/parameter-pool owners;
 new-backend draws receive immutable CPU bytes and resource dependencies.
 
-This is an extension of the explicit portable profiles, not automatic import
-of unmodified FX9 effects. Full Ray still uses same-frame DX9 fallback.
+The explicit profiles now coexist with a bounded automatic importer for
+unmodified model-material FX9 source. See [legacy import](RHI_MME_LEGACY_IMPORT.md)
+for accepted shader I/O, samplers and per-draw semantics. Full Ray still uses
+same-frame DX9 fallback.
 
 ## Shared parameters and CONTROLOBJECT
 
@@ -26,9 +28,10 @@ float4x4 matrices, scalar ints and scalar uint transport for FX bools. Arrays us
 16-byte element alignment, or 64-byte matrix elements. Binding checks validate
 the snapshot even when its immutable program was already cached.
 
-Existing b0 material/post ABIs are unchanged. Other standard numeric semantics,
-arbitrary structs, int/bool vectors and shared textures are not enabled by this
-batch. Unsupported declarations retain whole-frame fallback. CONTROLOBJECT
+Existing b0 material/post ABIs are unchanged. Automatic material import adds
+the per-draw semantics listed in the legacy-import document. Other providers,
+arbitrary structs, int/bool vectors and shared textures retain whole-frame
+fallback. CONTROLOBJECT
 `Name`/`Item` annotation names are case-insensitive; empty optional Item follows
 the native whole-object behavior.
 
@@ -82,8 +85,9 @@ explicit fallback boundaries, not silent truncation of the native script.
 | Numeric shared constants and CONTROLOBJECT | CPU resolver/pool reused, native constant binding |
 | Bounded single-carrier scene scripts | Native scene-v2 graph |
 | Includes in explicit portable profiles | Expanded once per loaded revision |
-| General legacy FX9 shader syntax | Not translated |
-| General per-draw camera/light/material/time semantics | Not migrated beyond existing profile ABIs |
+| Bounded legacy model-material FX9 source | Automatically imported without profile annotations |
+| General legacy FX9 shader syntax | Outside the bounded importer |
+| Per-draw standard semantics | Six matrix products, geometry colors/power and viewport size; other providers remain pending |
 | Shared render-target identity across effects | Not migrated |
 | Multiple nested scene carriers and DefaultEffect child turns | Not migrated |
 | Render-target mip generation and viewport-ratio targets | Not migrated |
@@ -92,9 +96,9 @@ explicit fallback boundaries, not silent truncation of the native script.
 
 Normal native switching for arbitrary MME requires completing those missing
 contracts and testing real legacy effects. A Ray fallback/recovery pass is not
-evidence of native Ray execution. The next importer can use retained preprocessed
-source revisions to translate legacy shader I/O/samplers, export actual bindings
-and standard semantics, then add shared target/child-turn execution in original
+evidence of native Ray execution. The importer uses retained preprocessed source
+revisions for legacy shader I/O, samplers and actual bindings. Broader standard
+semantics and shared target/child-turn execution still need their original
 script order. Required formats and mip timing should follow Ray's live resource
 records rather than hard-coded effect filenames.
 

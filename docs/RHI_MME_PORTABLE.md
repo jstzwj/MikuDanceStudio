@@ -1,8 +1,9 @@
 # First portable MME profiles
 
 The editor can execute a complete supported MME frame on DX11, DX12 or Vulkan.
-These are explicit opt-in profiles, not a general FX9 translator. Existing
-effects without the profile continue through same-frame DX9 fallback.
+These are explicit opt-in profiles. A separate [bounded legacy material importer](RHI_MME_LEGACY_IMPORT.md)
+also accepts supported effects without profile annotations. Other effects
+continue through same-frame DX9 fallback.
 
 ## Transport and selection
 
@@ -153,8 +154,9 @@ parameters, CONTROLOBJECT, the reflected b1..b3 constant layout and the scene-v2
 SAS command subset. Public CC0 examples are ControlMaterial.fx, ControlPost.fx
 and SceneScript.fx. The older profiles keep their versioned script restrictions.
 
-The next compatibility work remains automatic legacy shader import,
-per-draw standard parameter semantics, shared target identity, DefaultEffect
+Automatic legacy material import now handles a bounded SM3 source subset and
+basic per-draw semantics. The next work is broader standard parameter providers,
+automatic scene-effect import, shared target identity, DefaultEffect
 child effects and mip generation timing. Texture slots remain t0..t3; expand
 them using Ray's actual simultaneous bindings. Full Ray still uses same-frame
 DX9 fallback. Passing portable examples does not establish native Ray support.
