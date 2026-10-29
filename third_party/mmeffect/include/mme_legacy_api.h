@@ -32,6 +32,7 @@ struct MmeLegacyProgram {
     struct Function {
         struct Field {
             std::string type, name, semantic;
+            std::string direction = "in";
         };
         std::string result, name, semantic;
         std::vector<Field> parameters;

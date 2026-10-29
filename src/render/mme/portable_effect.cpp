@@ -2,6 +2,8 @@
 #include "mikudancestudio/mme_portable.hpp"
 #include "mme_portable_api.h"
 #include "mme_legacy_api.h"
+#include "mme_standard_api.h"
+#include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/rhi_post_process.hpp"
 #include "../rhi_model_constants.hpp"
 #include <d3dcompiler.h>
@@ -451,10 +453,42 @@ bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
     const std::array<float, 4> dimensions{1.f / viewport.width, 1.f / viewport.height,
                                           float(viewport.width), float(viewport.height)};
     shader.constants.push_back({0, Bytes(dimensions.data(), sizeof(dimensions))});
-    const auto wv = detail::Dx9MatrixMultiply(s.world, s.view),
-               vp = detail::Dx9MatrixMultiply(s.view, s.projection),
-               wvp = detail::Dx9MatrixMultiply(wv, s.projection);
-    const float specularPower = s.shininess == 0.f ? .1f : s.shininess;
+    MmeStandardInputs inputs;
+    inputs.world = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; // PMD/PMX object world
+    inputs.beginWorld = s.world;
+    inputs.view = detail::Dx9MatrixMultiply(s.world, s.view);
+    inputs.projection = s.projection;
+    inputs.material = {s.nativeDiffuse, s.materialAmbient, s.materialSpecular, s.emissive};
+    inputs.lightColor = {s.lights[0].diffuse, s.lights[0].ambient, s.lights[0].specular};
+    inputs.lightDirection = s.lights[0].direction;
+    inputs.viewport = {float(viewport.width), float(viewport.height)};
+    inputs.power = s.shininess;
+    inputs.clock = effect.clock;
+    inputs.clockReady = effect.clockReady;
+    inputs.counts = effect.counts;
+    for (const auto& stage : s.layout.stages) {
+        if (stage.role == MaterialTextureRole::Base)
+            inputs.flags[0] = true;
+        if (stage.role == MaterialTextureRole::Sphere) {
+            inputs.flags[1] = true;
+            inputs.flags[2] = stage.coordinates == MaterialCoordinates::MeshUv1;
+        }
+        if (stage.role == MaterialTextureRole::Toon)
+            inputs.flags[3] = true;
+    }
+    inputs.flags[4] = effect.transparent;
+    MmeStandardMath math;
+    math.multiply = detail::Dx9MatrixMultiply;
+    math.inverse = [](const auto& matrix, auto& inverse) {
+        using Matrix = d3dx::D3DXMATRIXF;
+        Matrix m, value;
+        std::memcpy(&m, matrix.data(), 64);
+        if (!d3dx::Get().inverse(&value, nullptr, &m))
+            return false;
+        std::memcpy(inverse.data(), &value, 64);
+        return true;
+    };
+    math.normalize = [](auto& value) { d3dx::Get().vec3Normalize(value.data(), value.data()); };
     for (auto& p : values.parameters) {
         const auto definition =
             std::find_if(effect.legacy->variables.begin(), effect.legacy->variables.end(),
@@ -463,24 +497,12 @@ bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
             reason = "MME_legacy_parameter_missing";
             return false;
         }
-        const auto& semantic = definition->semantic;
-        const float* data = semantic == "WORLD"                 ? s.world.data()
-                            : semantic == "VIEW"                ? s.view.data()
-                            : semantic == "PROJECTION"          ? s.projection.data()
-                            : semantic == "WORLDVIEW"           ? wv.data()
-                            : semantic == "VIEWPROJECTION"      ? vp.data()
-                            : semantic == "WORLDVIEWPROJECTION" ? wvp.data()
-                            : semantic == "DIFFUSE"             ? s.nativeDiffuse.data()
-                            : semantic == "AMBIENT"             ? s.materialAmbient.data()
-                            : semantic == "SPECULAR"            ? s.materialSpecular.data()
-                            : semantic == "EMISSIVE"            ? s.emissive.data()
-                            : semantic == "SPECULARPOWER"       ? &specularPower
-                            : semantic == "VIEWPORTPIXELSIZE"   ? dimensions.data() + 2
-                                                                : nullptr;
-        if (data) {
-            p.value.resize(p.rows * p.columns * p.elements * sizeof(float));
-            std::memcpy(p.value.data(), data, p.value.size());
-        }
+        MmeStandardBinding binding;
+        if (!MmeStandardClassify(*definition, binding, reason))
+            return false;
+        if (binding.kind != MmeStandardBinding::Kind::Value &&
+            !MmeStandardEvaluate(binding, inputs, math, p.value, reason))
+            return false;
     }
     if (!BindParameters(shader, values, reason))
         return false;

@@ -3,10 +3,16 @@
 #include <d3dx9.h>
 #include <wrl/client.h>
 #include "mikudancestudio/rhi_backend.hpp"
+#include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/mme_portable.hpp"
 #include "mme_portable_api.h"
 #include "mme_legacy_api.h"
+#include "mme_standard_api.h"
+#include "model_data.h"
+#include "material_bind.h"
+#include "effect_engine.h"
+#include "mme_globals.h"
 #include <d3dcompiler.h>
 #include "sas_exec.h"
 #include "pass_planner.h"
@@ -87,8 +93,10 @@ int main(int argc, char** argv) try {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const std::string api = argc > 1 ? argv[1] : "dx11";
     const bool sceneScript = argc > 2 && std::string(argv[2]) == "scene";
+    const std::string signature = argc > 2 ? argv[2] : "";
+    const bool standard = signature.find("standard") == 0;
     const bool legacyMulti = argc > 2 && std::string(argv[2]) == "legacy-multi";
-    const bool legacy = legacyMulti || (argc > 2 && std::string(argv[2]) == "legacy");
+    const bool legacy = standard || legacyMulti || (argc > 2 && std::string(argv[2]) == "legacy");
     const bool controls = sceneScript || (argc > 2 && std::string(argv[2]) == "controls");
     BackendOptions options;
     options.backend = api.find("dx11") == 0   ? Backend::D3D11
@@ -103,6 +111,102 @@ int main(int argc, char** argv) try {
     CHECK(native);
     if (!native.device->ShaderFeatures().hlsl)
         return 77;
+    auto material = Effect(standard   ? L"LegacyStandard.fx"
+                           : legacy   ? L"LegacyMaterial.fx"
+                           : controls ? L"ControlMaterial.fx"
+                                      : L"MaterialTint.fx",
+                           false),
+         post = Effect(sceneScript ? L"SceneScript.fx"
+                       : controls  ? L"ControlPost.fx"
+                                   : L"TwoStage.fx",
+                       true);
+    std::string vertexEntry = "VertexMain", pixelEntry = "PixelMain";
+    if (standard && signature != "standard") {
+        auto source = *material.source;
+        const bool inout = signature == "standard-inout";
+        const std::string wrapper = inout ? R"(
+void WrappedVertex(in float4 p:POSITION, in float3 n:NORMAL,
+                   inout float2 uv:TEXCOORD0, out float4 clip:POSITION,
+                   out float3 normal:TEXCOORD1) {
+    clip=VertexMain(p,n,uv,uv,normal);
+}
+struct PixelOutput { float4 color:COLOR0; };
+void WrappedPixel(in float2 uv:TEXCOORD0,in float3 n:TEXCOORD1,out PixelOutput result) {
+    PixelMain(uv,n,result.color);
+}
+)"
+                                          : R"(
+struct VertexInput { float4 p:POSITION0; float3 n:NORMAL0; float2 uv:TEXCOORD0; };
+struct VertexOutput { float4 p:POSITION; float2 uv:TEXCOORD0; float3 n:TEXCOORD1; };
+void WrappedVertex(in VertexInput input, out VertexOutput result) {
+    result.p=VertexMain(input.p,input.n,input.uv,result.uv,result.n);
+}
+struct PixelInput { float2 uv:TEXCOORD0; float3 n:TEXCOORD1; };
+struct PixelOutput { float4 color:COLOR0; };
+PixelOutput WrappedPixel(in PixelInput input) {
+    PixelOutput result; PixelMain(input.uv,input.n,result.color); return result;
+}
+)";
+        source.insert(source.find("technique Main"), wrapper);
+        for (const auto& entry : {std::string("VertexMain"), std::string("PixelMain")}) {
+            const std::string from = entry + "();",
+                              to = (entry == "VertexMain" ? "WrappedVertex" : "WrappedPixel") +
+                                   std::string("();");
+            for (auto at = source.find(from); at != std::string::npos;
+                 at = source.find(from, at + to.size()))
+                source.replace(at, from.size(), to);
+        }
+        vertexEntry = "WrappedVertex";
+        pixelEntry = "WrappedPixel";
+        material.source = std::make_shared<const std::string>(std::move(source));
+    }
+    if (legacyMulti) {
+        auto source = *material.source;
+        source.insert(source.find("sampler2D ColorSampler"),
+                      "texture Lookup : MATERIALTOONTEXTURE;\n"
+                      "sampler2D LookupSampler = sampler_state { Texture=<Lookup>;"
+                      " MinFilter=POINT; MagFilter=POINT; MipFilter=POINT;"
+                      " AddressU=CLAMP; AddressV=CLAMP; };\n");
+        const std::string original = "tex2D(ColorSampler,f.uv)";
+        source.replace(source.find(original), original.size(),
+                       "(.75*tex2D(ColorSampler,f.uv*2-.5)+"
+                       ".25*tex2D(LookupSampler,f.uv*2-.5))");
+        material.source = std::make_shared<const std::string>(std::move(source));
+    }
+    if (argc > 3 && std::string(argv[3]) == "--compile-only") {
+        CHECK(standard);
+        material.profile = "legacy-material-v1";
+        material.passes = {{"Main", "Tint", vertexEntry, pixelEntry}};
+        auto imported = std::make_shared<MmeLegacyProgram>();
+        std::string reason;
+        CHECK(MmeLegacyImport(*material.source, *imported, reason));
+        material.legacy = imported;
+        for (const auto& v : imported->variables) {
+            MmePortableParameter p;
+            p.name = v.name;
+            p.semantic = v.semantic;
+            p.rows = v.rows;
+            p.columns = v.columns;
+            p.elements = v.elements;
+            p.type = v.type == "bool"  ? MmePortableParameter::Type::Bool
+                     : v.type == "int" ? MmePortableParameter::Type::Int
+                                       : MmePortableParameter::Type::Float;
+            p.value.resize(v.rows * v.columns * v.elements * 4);
+            material.parameters.push_back(std::move(p));
+        }
+        const auto program = PortableMmeProgram(material, material.passes[0], reason);
+        if (!program)
+            throw std::runtime_error(reason);
+        ShaderPipeline pipeline;
+        pipeline.program = program;
+        const auto result = native.device->PrepareShaderPipeline(pipeline);
+        if (!result)
+            throw std::runtime_error(native.device->ShaderDiagnostic());
+        std::printf(
+            "PASS %s %s: actual native compilation/reflection of FX9 stage wrappers; no DX9 device\n",
+            api.c_str(), signature.c_str());
+        return 0;
+    }
     struct Window {
         HWND h = CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"Hidden portable FX oracle",
                                  WS_OVERLAPPED, 0, 0, 64, 64, nullptr, nullptr,
@@ -149,27 +253,6 @@ int main(int argc, char** argv) try {
         std::snprintf(diagnostic, sizeof(diagnostic), "DX9 CreateDevice failed: 0x%08lX",
                       static_cast<unsigned long>(deviceResult));
         throw std::runtime_error(diagnostic);
-    }
-    auto material = Effect(legacy     ? L"LegacyMaterial.fx"
-                           : controls ? L"ControlMaterial.fx"
-                                      : L"MaterialTint.fx",
-                           false),
-         post = Effect(sceneScript ? L"SceneScript.fx"
-                       : controls  ? L"ControlPost.fx"
-                                   : L"TwoStage.fx",
-                       true);
-    if (legacyMulti) {
-        auto source = *material.source;
-        source.insert(source.find("sampler2D ColorSampler"),
-                      "texture Lookup : MATERIALTOONTEXTURE;\n"
-                      "sampler2D LookupSampler = sampler_state { Texture=<Lookup>;"
-                      " MinFilter=POINT; MagFilter=POINT; MipFilter=POINT;"
-                      " AddressU=CLAMP; AddressV=CLAMP; };\n");
-        const std::string original = "tex2D(ColorSampler,f.uv)";
-        source.replace(source.find(original), original.size(),
-                       "(.75*tex2D(ColorSampler,f.uv*2-.5)+"
-                       ".25*tex2D(LookupSampler,f.uv*2-.5))");
-        material.source = std::make_shared<const std::string>(std::move(source));
     }
     if (controls)
         for (auto* effect : {&material, &post}) {
@@ -282,7 +365,7 @@ int main(int argc, char** argv) try {
         auto imported = std::make_shared<MmeLegacyProgram>();
         CHECK(MmeLegacyImport(*material.source, *imported, reason));
         material.legacy = imported;
-        material.passes = {{"Main", "Tint", "VertexMain", "PixelMain"}};
+        material.passes = {{"Main", "Tint", vertexEntry, pixelEntry}};
         for (const auto& v : imported->variables) {
             MmePortableParameter p;
             p.name = v.name;
@@ -295,6 +378,11 @@ int main(int argc, char** argv) try {
                 p.type = MmePortableParameter::Type::Bool;
                 BOOL value = FALSE;
                 CHECK(SUCCEEDED(materialFx->GetBool(v.name.c_str(), &value)));
+                std::memcpy(p.value.data(), &value, 4);
+            } else if (v.type == "int") {
+                p.type = MmePortableParameter::Type::Int;
+                int value = 0;
+                CHECK(SUCCEEDED(materialFx->GetInt(v.name.c_str(), &value)));
                 std::memcpy(p.value.data(), &value, 4);
             } else {
                 std::vector<float> values(p.value.size() / 4);
@@ -382,8 +470,11 @@ int main(int argc, char** argv) try {
                            reinterpret_cast<const D3DXMATRIX*>(legacyView.data()));
         D3DXMatrixMultiply(&legacyWvp, &worldView,
                            reinterpret_cast<const D3DXMATRIX*>(legacyProjection.data()));
-        CHECK(SUCCEEDED(materialFx->SetValue("ObjectWorld", legacyWorld.data(), 64)));
-        CHECK(SUCCEEDED(materialFx->SetValue("CameraView", legacyView.data(), 64)));
+        D3DXMATRIX cameraView{};
+        D3DXMatrixMultiply(&cameraView, reinterpret_cast<const D3DXMATRIX*>(legacyWorld.data()),
+                           reinterpret_cast<const D3DXMATRIX*>(legacyView.data()));
+        CHECK(SUCCEEDED(materialFx->SetValue("ObjectWorld", identity.data(), 64)));
+        CHECK(SUCCEEDED(materialFx->SetValue("CameraView", &cameraView, 64)));
         CHECK(SUCCEEDED(materialFx->SetValue("CameraProjection", legacyProjection.data(), 64)));
     }
     const float size[] = {float(Width), float(Height)}, diffuse[] = {1, 1, 1, 1};
@@ -395,6 +486,56 @@ int main(int argc, char** argv) try {
     materialFx->SetTexture(legacy ? "Albedo" : "baseTexture", base.Get());
     if (legacyMulti)
         CHECK(SUCCEEDED(materialFx->SetTexture("Lookup", lookup.Get())));
+    const std::array<float, 3> sunDirection{.25f, -.5f, .75f};
+    if (standard) {
+        auto app = std::make_unique<MMDApp>();
+        std::memset(&app->state, 0, sizeof(app->state));
+        struct HostScope {
+            MMDApp* previous;
+            ~HostScope() { g_Block = previous; }
+        } hostScope{g_Block};
+        g_Block = app.get();
+        mme::ModelData model(dx9.Get(), 1, "standard.pmx", 1, 2, nullptr);
+        model.setCachedPerVertexValue(3);
+        auto& snapshot = model.snapshot();
+        std::memset(&snapshot, 0, sizeof(snapshot));
+        snapshot.draw_type = 1;
+        snapshot.base_texture_present = 1;
+        snapshot.base_texture = base.Get();
+        std::memcpy(&snapshot.model_world, identity.data(), 64);
+        std::memcpy(&snapshot.effect_world, identity.data(), 64);
+        std::memcpy(&snapshot.world_view_projection, &legacyWvp, 64);
+        D3DXMATRIX cameraView{};
+        D3DXMatrixMultiply(&cameraView, reinterpret_cast<const D3DXMATRIX*>(legacyWorld.data()),
+                           reinterpret_cast<const D3DXMATRIX*>(legacyView.data()));
+        std::memcpy(&mme::g_worldViewMatrix, &cameraView, 64);
+        std::memcpy(&mme::g_projMatrix, legacyProjection.data(), 64);
+        D3DXMATRIX inverse{};
+        CHECK(D3DXMatrixInverse(&inverse, nullptr,
+                                reinterpret_cast<const D3DXMATRIX*>(legacyWorld.data())));
+        std::memcpy(&mme::g_invWorldAtBegin, &inverse, 64);
+        mme::g_cachedLight.Type = D3DLIGHT_DIRECTIONAL;
+        mme::g_cachedLight.Direction = {sunDirection[0], sunDirection[1], sunDirection[2]};
+        mme::g_beginViewport.Width = Width;
+        mme::g_beginViewport.Height = Height;
+        mme::g_cachedLight.Diffuse = {.25f, .5f, .75f, 0};
+        mme::g_cachedLight.Ambient = {.125f, .25f, .5f, 0};
+        mme::g_cachedLight.Specular = {.5f, .25f, .125f, 0};
+        CHECK(SUCCEEDED(dx9->SetLight(0, &mme::g_cachedLight)));
+        D3DMATERIAL9 nativeMaterial{};
+        nativeMaterial.Diffuse = {1, 1, 1, 1};
+        CHECK(SUCCEEDED(dx9->SetMaterial(&nativeMaterial)));
+        material.clock = {1.5f, .125f, 2.25f, -.25f};
+        material.clockReady = true;
+        material.counts = {3, 2};
+        mme::g_frameTimeBase = material.clock[0];
+        mme::g_deltaSeconds = material.clock[1];
+        mme::g_lastFrameTime = material.clock[2];
+        mme::g_frameDelta = material.clock[3];
+        mme::MaterialBinding binding{};
+        binding.effect = materialFx.Get();
+        mme::MmeBindStandardParameters(&model, &binding, snapshot);
+    }
     CHECK(SUCCEEDED(dx9->SetRenderTarget(0, sceneSurface.Get())));
     CHECK(SUCCEEDED(
         dx9->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1, 0)));
@@ -451,6 +592,12 @@ int main(int argc, char** argv) try {
         draw.pipeline.shader.projection = legacyProjection;
     }
     draw.pipeline.shader.nativeDiffuse = {1, 1, 1, 1};
+    if (standard) {
+        draw.pipeline.shader.lights[0].direction = sunDirection;
+        draw.pipeline.shader.lights[0].diffuse = {.25f, .5f, .75f, 0};
+        draw.pipeline.shader.lights[0].ambient = {.125f, .25f, .5f, 0};
+        draw.pipeline.shader.lights[0].specular = {.5f, .25f, .125f, 0};
+    }
     draw.pipeline.viewport = ModelViewport{0, 0, Width, Height};
     if (legacy) {
         auto invalid = draw;
@@ -487,6 +634,49 @@ int main(int argc, char** argv) try {
         reject(bad, "MME_parameter_snapshot_type");
     }
     CHECK(ApplyPortableMmeMaterial(draw, material, reason));
+    if (standard) {
+        auto singular = draw;
+        singular.pipeline.shader.view = {};
+        CHECK(!ApplyPortableMmeMaterial(singular, material, reason));
+        CHECK(reason == "MME_standard_singular_matrix");
+        // Compare generated constants against the original MME binder, not a
+        // second implementation of the expected formulas in the test.
+        const auto& description = draw.shader->pipeline.program->description;
+        for (const auto& layout : description.bindings)
+            if (layout.kind == ShaderBindingKind::Constants && layout.slot == 1) {
+                const auto value =
+                    std::find_if(draw.shader->constants.begin(), draw.shader->constants.end(),
+                                 [](const auto& c) { return c.slot == 1; });
+                CHECK(value != draw.shader->constants.end());
+                for (const auto& member : layout.members) {
+                    auto parameter =
+                        std::find_if(material.parameters.begin(), material.parameters.end(),
+                                     [&](const auto& p) { return p.name == member.name; });
+                    CHECK(parameter != material.parameters.end());
+                    if (parameter->type == MmePortableParameter::Type::Float) {
+                        std::vector<float> native(parameter->rows * parameter->columns);
+                        CHECK(SUCCEEDED(materialFx->GetFloatArray(
+                            member.name.c_str(), native.data(), UINT(native.size()))));
+                        for (unsigned n = 0; n < native.size(); ++n) {
+                            float actual;
+                            std::memcpy(&actual, value->bytes.data() + member.offset + n * 4, 4);
+                            if (std::abs(actual - native[n]) > 1.e-5f)
+                                std::fprintf(stderr, "%s[%u] cpu=%g DX9=%g\n", member.name.c_str(),
+                                             n, actual, native[n]);
+                            CHECK(std::abs(actual - native[n]) <= 1.e-5f);
+                        }
+                    } else {
+                        int native = 0;
+                        CHECK(SUCCEEDED(parameter->type == MmePortableParameter::Type::Int
+                                            ? materialFx->GetInt(member.name.c_str(), &native)
+                                            : materialFx->GetBool(member.name.c_str(), &native)));
+                        int actual;
+                        std::memcpy(&actual, value->bytes.data() + member.offset, 4);
+                        CHECK(actual == native);
+                    }
+                }
+            }
+    }
     FramePass pass;
     pass.color = FrameAttachment{1};
     pass.color->clear = {0, 0, 0, 0};

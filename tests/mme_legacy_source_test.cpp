@@ -63,6 +63,18 @@ int main() try {
     program.structures["Fragment"][1].semantic = "COLOR0";
     CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
     CHECK(reason == "MME_legacy_varying_semantic");
+    CHECK(MmeLegacyImport(source, program, reason));
+    program.functions["PixelMain"].parameters[0].direction = "inout";
+    CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
+    CHECK(reason == "MME_legacy_pixel_inout");
+    CHECK(MmeLegacyImport(source, program, reason));
+    program.structures["Fragment"][2].semantic = program.structures["Fragment"][1].semantic;
+    CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
+    CHECK(reason == "MME_legacy_varying_layout");
+    CHECK(MmeLegacyImport(source, program, reason));
+    program.functions["PixelMain"].semantic = "COLOR1";
+    CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
+    CHECK(reason == "MME_legacy_stage_signature");
     std::puts(
         "PASS FX9 source import: entries, declarations, samplers, stage wrappers and unsupported syntax");
 } catch (const std::exception& e) {

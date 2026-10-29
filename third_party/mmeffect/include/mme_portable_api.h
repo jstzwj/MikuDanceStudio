@@ -70,6 +70,10 @@ struct MmePortableEffect {
     std::shared_ptr<const std::string> source;
     std::shared_ptr<const std::string> legacySource, modernSource;
     std::shared_ptr<const MmeLegacyProgram> legacy;
+    std::array<float, 4> clock{};
+    bool clockReady = false;
+    std::array<int, 2> counts{-1, -1};
+    bool transparent = false;
     std::vector<MmePortablePass> passes;
     std::array<float, 4> multiply{1, 1, 1, 1}, add{};
     std::string profile;

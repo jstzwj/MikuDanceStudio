@@ -275,10 +275,11 @@ public:
             f.name = name;
             if (!Eat(")")) {
                 do {
-                    if (Peek() == "in")
-                        Take();
+                    std::string direction = "in";
+                    if (Peek() == "in" || Peek() == "out" || Peek() == "inout")
+                        direction = Take();
                     const auto pt = Name(), pn = Name(), semantic = Semantic();
-                    f.parameters.push_back({pt, pn, semantic});
+                    f.parameters.push_back({pt, pn, semantic, direction});
                 } while (Eat(","));
                 Need(")");
             }
@@ -397,9 +398,12 @@ public:
                     Fail("control_annotation");
             } else {
                 if (annotations.size() != 1 || !annotations.count("OBJECT") ||
-                    Upper(annotations["OBJECT"]) != "GEOMETRY")
+                    (Upper(annotations["OBJECT"]) != "GEOMETRY" &&
+                     Upper(annotations["OBJECT"]) != "CAMERA" &&
+                     Upper(annotations["OBJECT"]) != "LIGHT" &&
+                     Upper(annotations["OBJECT"]) != "LIGHT0"))
                     Fail("parameter_annotation");
-                v.object = "GEOMETRY";
+                v.object = Upper(annotations["OBJECT"]);
             }
         }
         Initializer();
@@ -495,97 +499,159 @@ bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
     const auto vs = program.functions.find(pass.vertex), ps = program.functions.find(pass.pixel);
     if (vs == program.functions.end() || ps == program.functions.end())
         return fail("entry_not_found");
-    const auto output = program.structures.find(vs->second.result);
-    if (output == program.structures.end() || ps->second.result != "float4" ||
-        (ps->second.semantic != "COLOR" && ps->second.semantic != "COLOR0") ||
-        ps->second.parameters.size() != 1)
-        return fail("stage_signature");
-    const auto pixelInput = program.structures.find(ps->second.parameters[0].type);
-    if (pixelInput == program.structures.end())
-        return fail("stage_signature");
-    std::string call, signature, varyings = "struct mdsLegacyVaryings {", position;
+    using Field = MmeLegacyProgram::Function::Field;
+    struct Value {
+        Field field;
+        std::string expression;
+    };
+    const auto canonical = [](std::string s) {
+        return s == "POSITION0" ? "POSITION" : s == "NORMAL0" ? "NORMAL" : s;
+    };
+    const auto fields = [&](const Field& field, const std::string& expression) {
+        std::vector<Value> values;
+        const auto structure = program.structures.find(field.type);
+        if (structure == program.structures.end())
+            values.push_back({field, expression});
+        else if (field.semantic.empty())
+            for (const auto& f : structure->second)
+                values.push_back({f, expression + "." + f.name});
+        return values;
+    };
     std::vector<MmeLegacyInput> nextInputs;
-    std::set<std::string> semantics;
-    const auto input = [&](const MmeLegacyProgram::Function::Field& f) {
-        unsigned columns = f.semantic == "POSITION" || f.semantic == "POSITION0" ||
-                                   f.semantic == "NORMAL" || f.semantic == "NORMAL0"
-                               ? 3
-                           : f.semantic == "TEXCOORD0" ? 2
-                                                       : 0;
-        if (!columns || f.type != "float" + std::to_string(columns) ||
-            !semantics.insert(f.semantic).second)
+    std::map<std::string, std::string> vertexInputs;
+    std::string inputStruct = "struct mdsLegacyVertexInput {", declarations, call;
+    const auto vertexAssign = [&](const Value& v) {
+        const auto semantic = canonical(v.field.semantic);
+        const bool position = semantic == "POSITION";
+        const unsigned columns = position || semantic == "NORMAL" ? 3
+                                 : semantic == "TEXCOORD0"        ? 2
+                                                                  : 0;
+        if (!columns || (v.field.type != "float" + std::to_string(columns) &&
+                         !(position && v.field.type == "float4")))
             return false;
-        nextInputs.push_back({f.semantic, columns});
+        auto found = vertexInputs.find(semantic);
+        if (found == vertexInputs.end()) {
+            const auto name = "v" + std::to_string(nextInputs.size());
+            nextInputs.push_back({semantic, columns});
+            inputStruct += "float" + std::to_string(columns) + " " + name + ":" + semantic + ";";
+            found = vertexInputs.emplace(semantic, "input." + name).first;
+        }
+        declarations += v.expression + "=" +
+                        (position && v.field.type == "float4" ? "float4(" + found->second + ",1)"
+                                                              : found->second) +
+                        ";";
         return true;
     };
-    for (const auto& f : vs->second.parameters) {
-        if (!call.empty()) {
-            call += ",";
-            signature += ",";
-        }
-        call += f.name;
-        signature += f.type + " " + f.name;
-        if (!f.semantic.empty()) {
-            signature += ":" + f.semantic;
-            if (!input(f))
-                return fail("vertex_input");
-        } else {
-            const auto fields = program.structures.find(f.type);
-            if (fields == program.structures.end())
-                return fail("vertex_input");
-            for (const auto& member : fields->second)
-                if (!input(member))
+    std::vector<Value> outputs;
+    for (unsigned i = 0; i < vs->second.parameters.size(); ++i) {
+        const auto& p = vs->second.parameters[i];
+        const auto name = "mdsLegacyArg" + std::to_string(i);
+        declarations += p.type + " " + name + ";";
+        const auto values = fields(p, name);
+        if (values.empty())
+            return fail("vertex_input");
+        if (p.direction != "out")
+            for (const auto& v : values)
+                if (!vertexAssign(v))
                     return fail("vertex_input");
-        }
+        if (p.direction != "in")
+            outputs.insert(outputs.end(), values.begin(), values.end());
+        if (!call.empty())
+            call += ",";
+        call += name;
     }
-    std::set<std::string> outputs;
-    for (const auto& f : output->second) {
-        if (!outputs.insert(f.semantic).second)
+    if (vs->second.result != "void") {
+        const auto values = fields({vs->second.result, "", vs->second.semantic}, "original");
+        outputs.insert(outputs.end(), values.begin(), values.end());
+    }
+    if (outputs.empty() || nextInputs.empty())
+        return fail("stage_signature");
+    std::map<std::string, Value> varyings;
+    std::string varyingStruct = "struct mdsLegacyVaryings {", copy;
+    std::string position;
+    for (const auto& v : outputs) {
+        const auto semantic = canonical(v.field.semantic);
+        if (varyings.count(semantic))
             return fail("varying_layout");
-        const bool pos = f.semantic == "POSITION" || f.semantic == "POSITION0";
-        if (pos) {
-            if (!position.empty() || f.type != "float4")
+        const auto name = "v" + std::to_string(varyings.size());
+        if (semantic == "POSITION") {
+            if (v.field.type != "float4")
                 return fail("vertex_position");
-            position = f.name;
-        } else if (f.semantic.rfind("TEXCOORD", 0) != 0)
+            position = name;
+        } else if (semantic.rfind("TEXCOORD", 0) != 0)
             return fail("varying_semantic");
-        varyings += f.type + " " + f.name + ":" + (pos ? "SV_POSITION" : f.semantic) + ";";
+        varyingStruct += v.field.type + " " + name + ":" +
+                         (semantic == "POSITION" ? "SV_POSITION" : semantic) + ";";
+        copy += "output." + name + "=" + v.expression + ";";
+        varyings.emplace(semantic, Value{v.field, "input." + name});
     }
-    if (position.empty() || nextInputs.empty())
+    if (position.empty())
         return fail("vertex_position");
-    varyings += "};\nmdsLegacyVaryings mdsLegacyVS(" + signature + "){" + vs->second.result +
-                " original=" + pass.vertex + "(" + call + ");mdsLegacyVaryings output;";
-    for (const auto& f : output->second)
-        varyings += "output." + f.name + "=original." + f.name + ";";
-    varyings += "output." + position +
+    std::string wrappers = inputStruct + "};\n" + varyingStruct +
+                           "};\nmdsLegacyVaryings mdsLegacyVS(mdsLegacyVertexInput input){" +
+                           declarations;
+    wrappers += (vs->second.result == "void" ? "" : vs->second.result + " original=") +
+                pass.vertex + "(" + call + ");mdsLegacyVaryings output;" + copy;
+    wrappers += "output." + position +
                 ".xy+=float2(mdsLegacyViewport.x,-mdsLegacyViewport.y)*output." + position +
                 ".w;return output;}\n";
-    varyings += "float4 mdsLegacyPS(mdsLegacyVaryings input):SV_Target0{" +
-                ps->second.parameters[0].type + " original;";
     const auto pixelTokens = Lex(ps->second.body);
-    // Passing the entire input to a helper or alias could hide a POSITION
-    // read. Only member access is imported until that data flow is modeled.
-    for (std::size_t i = 0; i < pixelTokens.size(); ++i)
-        if (pixelTokens[i] == ps->second.parameters[0].name &&
-            (i + 1 == pixelTokens.size() || pixelTokens[i + 1] != "."))
-            return fail("pixel_input_escape");
-    for (const auto& f : pixelInput->second) {
-        const auto field =
-            std::find_if(output->second.begin(), output->second.end(), [&](const auto& v) {
-                return v.semantic == f.semantic && v.type == f.type;
-            });
-        if (field == output->second.end())
-            return fail("stage_interface");
-        if (f.semantic == "POSITION" || f.semantic == "POSITION0") {
-            for (std::size_t i = 0; i + 2 < pixelTokens.size(); ++i)
-                if (pixelTokens[i] == ps->second.parameters[0].name && pixelTokens[i + 1] == "." &&
-                    pixelTokens[i + 2] == f.name)
-                    return fail("pixel_position_read");
+    declarations.clear();
+    call.clear();
+    std::vector<Value> pixelOutputs;
+    for (unsigned i = 0; i < ps->second.parameters.size(); ++i) {
+        const auto& p = ps->second.parameters[i];
+        if (p.direction == "inout")
+            return fail("pixel_inout");
+        const auto name = "mdsLegacyArg" + std::to_string(i);
+        const auto values = fields(p, name);
+        if (values.empty())
+            return fail("stage_signature");
+        declarations += p.type + " " + name + ";";
+        if (p.direction == "out")
+            pixelOutputs.insert(pixelOutputs.end(), values.begin(), values.end());
+        else {
+            const bool structure = program.structures.count(p.type) != 0;
+            bool hasPosition = false;
+            for (const auto& v : values)
+                hasPosition |= canonical(v.field.semantic) == "POSITION";
+            if (hasPosition && structure)
+                for (std::size_t n = 0; n < pixelTokens.size(); ++n)
+                    if (pixelTokens[n] == p.name &&
+                        (n + 1 == pixelTokens.size() || pixelTokens[n + 1] != "."))
+                        return fail("pixel_input_escape");
+            for (const auto& v : values) {
+                const auto semantic = canonical(v.field.semantic);
+                const auto found = varyings.find(semantic);
+                if (found == varyings.end() || found->second.field.type != v.field.type)
+                    return fail("stage_interface");
+                if (semantic == "POSITION") {
+                    for (std::size_t n = 0; n < pixelTokens.size(); ++n)
+                        if (pixelTokens[n] == p.name) {
+                            if (!structure ||
+                                (n + 2 < pixelTokens.size() && pixelTokens[n + 1] == "." &&
+                                 pixelTokens[n + 2] == v.field.name))
+                                return fail("pixel_position_read");
+                        }
+                }
+                declarations += v.expression + "=" + found->second.expression + ";";
+            }
         }
-        varyings += "original." + f.name + "=input." + field->name + ";";
+        if (!call.empty())
+            call += ",";
+        call += name;
     }
-    varyings += "return " + pass.pixel + "(original);}\n";
-    hlsl = program.hlsl + varyings;
+    if (ps->second.result != "void") {
+        const auto values = fields({ps->second.result, "", ps->second.semantic}, "original");
+        pixelOutputs.insert(pixelOutputs.end(), values.begin(), values.end());
+    }
+    if (pixelOutputs.size() != 1 || pixelOutputs[0].field.type != "float4" ||
+        (pixelOutputs[0].field.semantic != "COLOR" && pixelOutputs[0].field.semantic != "COLOR0"))
+        return fail("stage_signature");
+    wrappers += "float4 mdsLegacyPS(mdsLegacyVaryings input):SV_Target0{" + declarations +
+                (ps->second.result == "void" ? "" : ps->second.result + " original=") + pass.pixel +
+                "(" + call + ");return " + pixelOutputs[0].expression + ";}\n";
+    hlsl = program.hlsl + wrappers;
     inputs = std::move(nextInputs);
     reason.clear();
     return true;
