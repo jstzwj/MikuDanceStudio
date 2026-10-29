@@ -5,6 +5,9 @@ through the **Renderer** menu. The old **Renderer Preview** menu/window has been
 removed; shared controllers remain. See [editor integration](RHI_EDITOR_VIEWPORT.md),
 [shared controller](RHI_PREVIEW_CONTROLLER.md), [per-frame renderer selection](RHI_FRAME_OWNERSHIP.md), and the
 [current code review and priorities](RHI_REVIEW_2026-10-29.md).
+Changing geometry now uses completion-protected buffer reuse; DX12 retains its
+upload allocations and Vulkan retires native resources at each resource's last
+use. See [dynamic buffers and resource retirement](RHI_DYNAMIC_BUFFERS.md).
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.

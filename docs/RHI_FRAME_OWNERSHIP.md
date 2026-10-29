@@ -101,5 +101,5 @@ build-x64/build/Release/editor_frame_test.exe vulkan 'C:\assets\model.pmx' --ben
 
 编辑器启动、相机／覆盖层准备、字体及兼容回退仍依赖 DX9 设备。CPU 覆盖层目前仍通过原有
 顶点生产过程取得，尚未全部改为独立 CPU 存储。这批消除了正常 RHI 帧的 DX9 场景绘制，
-没有移除整个编辑器的 DX9 依赖。动画资源的物理缓冲复用、Vulkan 回收等待和通用 MME
-着色器绑定继续按[审查计划](RHI_REVIEW_2026-10-29.md)推进。
+没有移除整个编辑器的 DX9 依赖。接续批次已落实[动态缓冲复用与 Vulkan 回收](RHI_DYNAMIC_BUFFERS.md)，
+并补充新的完整驱动测量；通用 MME 着色器绑定继续按[审查计划](RHI_REVIEW_2026-10-29.md)推进。

@@ -1,4 +1,5 @@
 #include "mikudancestudio/editor_viewport.hpp"
+#include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
 #include "mikudancestudio/editor_scene.hpp"
@@ -241,6 +242,10 @@ const std::string& EditorViewport::Reason() const {
 Device* EditorViewport::GetDevice() const {
     return impl ? impl->controller.GetDevice() : nullptr;
 }
+rhi::SceneRendererStats EditorViewport::Statistics() const {
+    const auto* renderer = impl ? impl->controller.GetRenderer() : nullptr;
+    return renderer ? renderer->Stats() : rhi::SceneRendererStats{};
+}
 std::uintptr_t EditorViewport::Window() const {
     return impl ? reinterpret_cast<std::uintptr_t>(impl->window) : 0;
 }
@@ -472,6 +477,9 @@ const std::string& EditorViewport::Reason() const {
 }
 rhi::Device* EditorViewport::GetDevice() const {
     return nullptr;
+}
+rhi::SceneRendererStats EditorViewport::Statistics() const {
+    return {};
 }
 std::uintptr_t EditorViewport::Window() const {
     return 0;

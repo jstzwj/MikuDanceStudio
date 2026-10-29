@@ -8,6 +8,9 @@
 #include "mikudancestudio/model_cpu_bridge.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/rhi_scene_renderer.hpp"
+#include "mikudancestudio/rhi_vulkan.hpp"
+#include "mikudancestudio/rhi_d3d12.hpp"
 #include "pump_input.hpp"
 #include <algorithm>
 #include <chrono>
@@ -284,7 +287,19 @@ int main(int argc, char** argv) try {
         for (bool animated : {false, true}) {
             app->DeltaTime() = animated ? 1.f / 60 : 0;
             std::vector<double> times;
+            SceneRendererStats before;
+            VulkanStats vkBefore;
+            D3D12Stats dxBefore;
             for (unsigned n = 0; n < count + 3; ++n) {
+                if (n == 3) {
+                    before = app->ViewportRenderer().Statistics();
+#ifdef MIKUDANCESTUDIO_RHI_VULKAN
+                    vkBefore = QueryVulkanStats(*app->ViewportRenderer().GetDevice());
+#endif
+#ifdef MIKUDANCESTUDIO_RHI_D3D12
+                    dxBefore = QueryD3D12Stats(*app->ViewportRenderer().GetDevice());
+#endif
+                }
                 if (animated) {
                     for (unsigned b = 0; b < model->boneCount; ++b)
                         model->boneTable[b].matInit[12] = std::sin(n * .15f);
@@ -307,6 +322,35 @@ int main(int argc, char** argv) try {
                         times[times.size() / 2],
                         times[std::min(times.size() - 1, times.size() * 95 / 100)],
                         app->FrameRenderingStats().legacyPasses);
+            const auto stats = app->ViewportRenderer().Statistics();
+            std::printf("buffers created=%llu reused=%llu slot_waits=%llu resident=%zu pooled=%zu "
+                        "retiring=%zu bytes=%zu/%zu/%zu\n",
+                        stats.bufferCreations - before.bufferCreations,
+                        stats.bufferReuses - before.bufferReuses,
+                        stats.bufferWaits - before.bufferWaits, stats.residentResources,
+                        stats.pooledBuffers, stats.retiringResources, stats.residentBufferBytes,
+                        stats.pooledBufferBytes, stats.retiringBufferBytes);
+#ifdef MIKUDANCESTUDIO_RHI_VULKAN
+            if (api == Backend::Vulkan) {
+                const auto vk = QueryVulkanStats(*app->ViewportRenderer().GetDevice());
+                std::printf("vulkan allocations=%llu timeline_waits=%llu idle_waits=%llu "
+                            "frame_waits=%llu transfer_waits=%llu busy_uploads=%llu retiring=%zu\n",
+                            vk.bufferAllocations - vkBefore.bufferAllocations,
+                            vk.timelineWaits - vkBefore.timelineWaits, vk.idleWaits - vkBefore.idleWaits,
+                            vk.frameWaits - vkBefore.frameWaits,
+                            vk.transferWaits - vkBefore.transferWaits,
+                            vk.uploadBusyRejects - vkBefore.uploadBusyRejects, vk.retiringResources);
+            }
+#endif
+#ifdef MIKUDANCESTUDIO_RHI_D3D12
+            if (api == Backend::D3D12) {
+                const auto dx = QueryD3D12Stats(*app->ViewportRenderer().GetDevice());
+                std::printf("dx12 default_allocations=%llu upload_allocations=%llu upload_reuses=%llu\n",
+                            dx.bufferAllocations - dxBefore.bufferAllocations,
+                            dx.uploadBufferAllocations - dxBefore.uploadBufferAllocations,
+                            dx.uploadBufferReuses - dxBefore.uploadBufferReuses);
+            }
+#endif
             std::fflush(stdout);
         }
         return 0;

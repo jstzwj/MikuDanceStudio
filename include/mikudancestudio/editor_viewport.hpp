@@ -3,6 +3,9 @@
 #include <memory>
 
 namespace mikudancestudio {
+namespace rhi {
+struct SceneRendererStats;
+}
 class MMDApp;
 enum class EditorOverlay {
     Text,
@@ -39,6 +42,7 @@ public:
     const std::string& Reason() const;
     // Non-owning observation for hidden-window lifecycle tests.
     rhi::Device* GetDevice() const;
+    rhi::SceneRendererStats Statistics() const;
     std::uintptr_t Window() const;
 
 private:
