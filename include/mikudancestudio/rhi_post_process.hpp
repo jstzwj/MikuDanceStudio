@@ -3,6 +3,26 @@
 #include <algorithm>
 #include <cstring>
 namespace mikudancestudio::rhi {
+// Shared immutable geometry for built-in and programmable fullscreen passes.
+inline bool AttachFullscreenTriangle(RenderFrame& frame, ModelReplayDraw& draw) {
+    ModelReplayResource vb;
+    vb.key = {UINT64_MAX, 1};
+    const float vertices[][8] = {
+        {-1, 1, 0, 0, 0, 0, 0, 0}, {3, 1, 0, 0, 0, 0, 2, 0}, {-1, -3, 0, 0, 0, 0, 0, 2}};
+    vb.bytes.resize(sizeof(vertices));
+    std::memcpy(vb.bytes.data(), vertices, sizeof(vertices));
+    const auto shared = std::find_if(frame.resources.begin(), frame.resources.end(),
+                                     [&](const auto& r) { return r.key.id == vb.key.id; });
+    if (shared == frame.resources.end())
+        frame.resources.push_back(vb);
+    else if (shared->key.version != 1 || shared->kind != ReplayResourceKind::Vertices ||
+             shared->vertexLayout != VertexLayout::PositionNormalUv || shared->bytes != vb.bytes)
+        return false;
+    draw.indexed = false;
+    draw.vertices = vb.key;
+    draw.drawVertexCount = 3;
+    return true;
+}
 // Append a full-coverage pass and select its output. Existing output targets
 // must have the requested description. A failed append is atomic.
 inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint64_t output,
@@ -24,11 +44,7 @@ inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint
         return false;
     // Reserved immutable fullscreen geometry, shared by every pass. It stays
     // independent of changing model resource counts and capture modes.
-    constexpr std::uint64_t resource = UINT64_MAX;
     ModelReplayDraw draw;
-    draw.indexed = false;
-    draw.vertices = {resource, 1};
-    draw.drawVertexCount = 3;
     draw.targetTextures[0] = {input, source->description.width, source->description.height};
     auto& p = draw.pipeline;
     p.postProcess = effect;
@@ -47,27 +63,16 @@ inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint
     sampler.mip = SamplerFilter::Point;
     sampler.maxAnisotropy = 1;
     sampler.u = sampler.v = SamplerAddress::Clamp;
-    const float vertices[][8] = {
-        {-1, 1, 0, 0, 0, 0, 0, 0}, {3, 1, 0, 0, 0, 0, 2, 0}, {-1, -3, 0, 0, 0, 0, 0, 2}};
-    ModelReplayResource vb;
-    vb.key = draw.vertices;
-    vb.bytes.resize(sizeof(vertices));
-    std::memcpy(vb.bytes.data(), vertices, sizeof(vertices));
+    auto next = frame;
+    if (!AttachFullscreenTriangle(next, draw))
+        return false;
     FramePass pass;
     pass.name = "post_process";
     pass.color = FrameAttachment{output};
     pass.sampled = {input};
     pass.draws.push_back(draw);
-    auto next = frame;
     if (destination == frame.targets.end())
         next.targets.push_back({output, description});
-    const auto shared = std::find_if(next.resources.begin(), next.resources.end(),
-                                     [resource](const auto& r) { return r.key.id == resource; });
-    if (shared == next.resources.end())
-        next.resources.push_back(std::move(vb));
-    else if (shared->key.version != 1 || shared->kind != ReplayResourceKind::Vertices ||
-             shared->vertexLayout != VertexLayout::PositionNormalUv || shared->bytes != vb.bytes)
-        return false;
     next.passes.push_back(std::move(pass));
     next.finalColor = output;
     if (!ValidateRenderFrame(next))

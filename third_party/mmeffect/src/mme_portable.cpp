@@ -33,11 +33,13 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     if (!binding.instance || !binding.instance->originalSource || !binding.sas || key.turnId)
         return fail("MME_portable_source_or_turn");
     const auto profile = Text(fx, fx->GetParameterByName(nullptr, "MDSRhiProfile"));
-    if (profile != "material-v1" && profile != "post-v1")
+    const bool hdr = profile == "mrt-hdr-v1";
+    if (profile != "material-v1" && profile != "post-v1" && !hdr)
         return fail("MME_profile_not_supported");
     out.object = key.model->objectId();
     out.subset = key.subset;
-    out.post = profile == "post-v1";
+    out.profile = profile;
+    out.post = profile != "material-v1";
     out.source = binding.instance->originalSource;
     if (out.post) {
         if (key.subset != -1 || mme::SasGetScriptClass(binding.sas) != mme::kSasClassScene ||
@@ -49,9 +51,16 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     const std::set<std::string> material = {
         "MDSRhiProfile", "worldViewProjection", "materialDiffuse", "tint",
         "viewportSize",  "baseTexture",         "baseSampler"};
-    const std::set<std::string> post = {
-        "MDSRhiProfile", "Script",        "SceneColor", "Ping",         "Depth",
-        "viewportSize",  "multiplyColor", "addColor",   "SceneSampler", "PingSampler"};
+    std::set<std::string> post = {"MDSRhiProfile", "Script",       "SceneColor",    "Ping",
+                                  "Depth",         "viewportSize", "multiplyColor", "addColor",
+                                  "SceneSampler",  "PingSampler"};
+    if (hdr) {
+        post.erase("Ping");
+        post.erase("PingSampler");
+        for (const auto* name : {"LayerA", "LayerB", "Hdr", "Tone", "LayerASampler",
+                                 "LayerBSampler", "HdrSampler", "ToneSampler"})
+            post.insert(name);
+    }
     D3DXEFFECT_DESC effect{};
     if (FAILED(fx->GetDesc(&effect)))
         return fail("MME_effect_description");
@@ -62,12 +71,14 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
             !(out.post ? post : material).count(p.Name))
             return fail("MME_parameter_not_supported");
         const std::string name = p.Name;
-        const char* semantic = name == "worldViewProjection"              ? "WORLDVIEWPROJECTION"
-                               : name == "materialDiffuse"                ? "DIFFUSE"
-                               : name == "viewportSize"                   ? "VIEWPORTPIXELSIZE"
-                               : name == "baseTexture"                    ? "MATERIALTEXTURE"
-                               : name == "Script"                         ? "STANDARDSGLOBAL"
-                               : (name == "SceneColor" || name == "Ping") ? "RENDERCOLORTARGET"
+        const char* semantic = name == "worldViewProjection" ? "WORLDVIEWPROJECTION"
+                               : name == "materialDiffuse"   ? "DIFFUSE"
+                               : name == "viewportSize"      ? "VIEWPORTPIXELSIZE"
+                               : name == "baseTexture"       ? "MATERIALTEXTURE"
+                               : name == "Script"            ? "STANDARDSGLOBAL"
+                               : (name == "SceneColor" || name == "Ping" || name == "LayerA" ||
+                                  name == "LayerB" || name == "Hdr" || name == "Tone")
+                                   ? "RENDERCOLORTARGET"
                                : name == "Depth" ? "RENDERDEPTHSTENCILTARGET"
                                                  : "";
         if (p.Elements || _stricmp(p.Semantic ? p.Semantic : "", semantic))
@@ -75,10 +86,11 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
         if (name == "MDSRhiProfile") {
             if (p.Type != 4 || p.Annotations)
                 return fail("MME_profile_parameter_layout");
-        } else if (name == "baseSampler" || name == "SceneSampler" || name == "PingSampler") {
+        } else if (name == "baseSampler" || name.find("Sampler") != std::string::npos) {
             if ((p.Type != 10 && p.Type != 12) || p.Annotations)
                 return fail("MME_sampler_parameter_layout");
         } else if (name == "baseTexture" || name == "SceneColor" || name == "Ping" ||
+                   name == "LayerA" || name == "LayerB" || name == "Hdr" || name == "Tone" ||
                    name == "Depth") {
             if (p.Type != 5 && p.Type != 7)
                 return fail("MME_texture_dimension_not_supported");
@@ -86,7 +98,11 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
                 if (p.Annotations)
                     return fail("MME_texture_annotations_not_supported");
             } else if (p.Annotations != 1 ||
-                       Text(fx, h, "Format") != (name == "Depth" ? "D24S8" : "A8R8G8B8"))
+                       Text(fx, h, "Format") !=
+                           (name == "Depth" ? "D24S8"
+                            : (name == "LayerA" || name == "LayerB" || name == "Hdr")
+                                ? "A16B16G16R16F"
+                                : "A8R8G8B8"))
                 return fail("MME_target_format_or_extent_not_supported");
         } else {
             const unsigned columns = name == "viewportSize" ? 2 : name == "Script" ? 1 : 4;
@@ -118,12 +134,13 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     for (int n = 0; n < count; ++n) {
         mme::SasTechniqueInfo t{};
         if (!mme::SasGetTechniqueInfo(binding.sas, n, &t) || !t.hardwareOk || !t.shaderMixOk ||
-            t.passCount != (out.post ? 2 : 1) ||
+            t.passCount != (out.post ? (hdr ? 4 : 2) : 1) ||
             (!out.post && (t.hasScript || (t.mmdPass != 0 && t.mmdPass != 1))))
             return fail("MME_technique_not_supported");
         if (out.post &&
             Compact(Text(fx, t.handle, "Script")) !=
-                "RenderColorTarget0=SceneColor;RenderDepthStencilTarget=Depth;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget0=Ping;Pass=Grade;RenderColorTarget0=;RenderDepthStencilTarget=;Pass=Finish;")
+                (hdr ? "RenderColorTarget0=SceneColor;RenderDepthStencilTarget=Depth;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget0=LayerA;RenderColorTarget1=LayerB;RenderDepthStencilTarget=;Pass=Split;RenderColorTarget1=;RenderColorTarget0=Hdr;Pass=Combine;RenderColorTarget0=Tone;Pass=ToneMap;RenderColorTarget0=;Pass=Finish;"
+                     : "RenderColorTarget0=SceneColor;RenderDepthStencilTarget=Depth;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget0=Ping;Pass=Grade;RenderColorTarget0=;RenderDepthStencilTarget=;Pass=Finish;"))
             return fail("MME_script_not_supported");
         for (int p = 0; p < t.passCount; ++p) {
             auto h = fx->GetPass(t.handle, p);
@@ -135,14 +152,56 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
                 return fail("MME_pass_script_not_supported");
             MmePortablePass value{t.name, pass.Name ? pass.Name : "", Text(fx, h, "MDSRhiVS"),
                                   Text(fx, h, "MDSRhiPS")};
+            const char* hdrNames[] = {"Split", "Combine", "ToneMap", "Finish"};
             if (value.vertex.empty() || value.pixel.empty() ||
-                (out.post && value.name != (p ? "Finish" : "Grade")))
+                (out.post && value.name != (hdr ? hdrNames[p] : (p ? "Finish" : "Grade"))))
                 return fail("MME_pass_not_supported");
             out.passes.push_back(std::move(value));
         }
     }
+    if (out.post && !MmePortablePostLayout(out, reason))
+        return false;
     return !out.passes.empty() || fail("MME_empty_effect");
 }
+}
+bool MmePortablePostLayout(MmePortableEffect& effect, std::string& reason) {
+    const bool hdr = effect.profile == "mrt-hdr-v1";
+    const std::vector<std::string> names =
+        hdr ? std::vector<std::string>{"Split", "Combine", "ToneMap", "Finish"}
+            : std::vector<std::string>{"Grade", "Finish"};
+    if (!effect.post || (!hdr && effect.profile != "post-v1") ||
+        effect.passes.size() != names.size()) {
+        reason = "MME_post_layout_not_supported";
+        return false;
+    }
+    for (std::size_t i = 0; i < names.size(); ++i)
+        if (effect.passes[i].name != names[i]) {
+            reason = "MME_post_layout_not_supported";
+            return false;
+        }
+    using F = MmePortableFormat;
+    effect.targets = {{"SceneColor", F::Rgba8}};
+    if (hdr) {
+        for (const auto* name : {"LayerA", "LayerB", "Hdr"})
+            effect.targets.push_back({name, F::Rgba16Float});
+        effect.targets.push_back({"Tone", F::Rgba8});
+        effect.passes[0].sampled = {"SceneColor"};
+        effect.passes[0].colors = {"LayerA", "LayerB"};
+        effect.passes[1].sampled = {"LayerA", "LayerB"};
+        effect.passes[1].colors = {"Hdr"};
+        effect.passes[2].sampled = {"Hdr"};
+        effect.passes[2].colors = {"Tone"};
+        effect.passes[3].sampled = {"Tone"};
+        effect.passes[3].colors = {"FinalColor"};
+    } else {
+        effect.targets.push_back({"Ping", F::Rgba8});
+        effect.passes[0].sampled = {"SceneColor"};
+        effect.passes[0].colors = {"Ping"};
+        effect.passes[1].sampled = {"Ping"};
+        effect.passes[1].colors = {"FinalColor"};
+    }
+    effect.targets.push_back({"FinalColor", F::Rgba8});
+    return true;
 }
 bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason) {
     out.clear();

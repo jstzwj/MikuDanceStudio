@@ -655,6 +655,51 @@ int main(int argc, char** argv) try {
             frame(true);
             CHECK(image().pixels == graded);
         }
+        const auto hdrPath = (sourceRoot / L"assets/effects/portable/MrtHdr.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, hdrPath));
+        if (!CheckPortableMme(portableReason))
+            throw std::runtime_error(portableReason);
+        std::vector<MmePortableEffect> effects;
+        CHECK(MmePortableEffects(effects, portableReason));
+        const auto hdr = std::find_if(effects.begin(), effects.end(),
+                                      [](const auto& e) { return e.profile == "mrt-hdr-v1"; });
+        CHECK(hdr != effects.end() && hdr->passes.size() == 4 && hdr->targets.size() == 6);
+        CHECK(hdr->passes[0].colors.size() == 2 && hdr->passes[1].sampled.size() == 2);
+        frame(runtimeEffects);
+        auto* hdrFx = assignedEffect(&carrier);
+        const auto layer = hdrFx->GetParameterByName(nullptr, "LayerA");
+        const auto format = hdrFx->GetAnnotationByName(layer, "Format");
+        CHECK(format && SUCCEEDED(hdrFx->SetString(format, "A32B32G32R32F")));
+        CHECK(!CheckPortableMme(portableReason));
+        CHECK(portableReason == "MME_target_format_or_extent_not_supported");
+        const auto beforeUnsupported = app->ViewportRenderer().Statistics();
+        frame(false);
+        CHECK(app->ViewportRenderer().Statistics().uploads == beforeUnsupported.uploads);
+        CHECK(app->ViewportRenderer().Statistics().submissions == beforeUnsupported.submissions);
+        CHECK(SUCCEEDED(hdrFx->SetString(format, "A16B16G16R16F")));
+        CHECK(CheckPortableMme(portableReason));
+        frame(runtimeEffects);
+        if (runtimeEffects) {
+            const auto original = image().pixels;
+            CHECK(original[2] > 200 && original[3] == 32);
+            frame(true);
+            CHECK(image().pixels == original);
+            const float multiply[] = {.25f, .5f, .75f, .5f};
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloatArray("multiplyColor", multiply, 4)));
+            frame(true);
+            CHECK(image().pixels != original);
+            const auto width = app->ViewportRect().right;
+            app->ViewportRect().right += 8;
+            frame(true);
+            app->ViewportRect().right = width;
+            const float reset[] = {.5f, .75f, 1, .5f};
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloatArray("multiplyColor", reset, 4)));
+            frame(true);
+            CHECK(image().pixels == original);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == original);
+        }
         CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, ""));
         app->AccessorySlot(0) = nullptr;
         CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));

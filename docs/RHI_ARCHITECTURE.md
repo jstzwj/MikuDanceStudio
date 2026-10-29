@@ -13,6 +13,10 @@ all three new backends; shared fullscreen postprocessing uses that path.
 See [shader contracts](RHI_SHADERS.md). The first explicit material and two-pass
 MME profiles also enter the editor's shared frame after whole-frame validation;
 other effects retain same-frame DX9 fallback. See [portable MME](RHI_MME_PORTABLE.md).
+Ordered MRT attachments and raw RGBA16F intermediate targets now execute on all
+three backends. A bounded public MRT/HDR MME profile exports named targets and
+ordered input/output dependencies; unsupported effects still use same-frame DX9.
+See [MRT/HDR contracts and gates](RHI_MRT_HDR.md).
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.

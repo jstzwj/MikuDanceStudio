@@ -80,6 +80,30 @@ comparison. Original native anisotropic differences remain separately tracked;
 these profiles use explicit trilinear or point sampling.
 MME object/subset visibility overrides also retain DX9 fallback in this batch.
 
+## mrt-hdr-v1
+
+The CC0 `assets/effects/portable/MrtHdr.fx` adds a bounded four-pass scene profile:
+capture SceneColor, Split to RGBA16F LayerA/LayerB, sample both in Combine to an
+RGBA16F Hdr target, ToneMap into RGBA8 Tone, then Finish into FinalColor. All
+targets use the viewport extent. The final copy is exact. No sRGB conversion,
+history, independent blending or depth texture sampling is implicit.
+
+The CPU effect description exports named target formats and ordered per-pass
+`sampled`/`colors` vectors, corresponding to tN and SV_TargetN. The frontend builds
+ordinary generic shader passes from this graph, including current multiply/add
+parameters. The accepted script, pass order, parameter annotations, target
+formats and sampler states are checked against the versioned profile; this is
+not a general scene-script translator. Changes outside the profile make the
+whole frame use DX9 before RHI uploads/submission.
+
+`mme_mrt_hdr_*` executes the public FX on DX9 and each new backend using the
+same input bytes. It reads LayerA/LayerB/Hdr as raw binary16 and permits at most
+one binary16 ULP against DX9. Tone-mapped RGBA8 allows two channel steps for
+the accumulated arithmetic; Finish remains byte-exact on each backend.
+Hidden editor PMD/PMX fixtures check real effect assignment, exported graph,
+live parameters, resize/recreation, zero DX9 scene draws on supported frames,
+and same-frame DX9 fallback for an unsupported target format without RHI work.
+
 ## Gates
 
 - `rhi_shader_contract`: Null binding/layout/lifetime/dependency rejection.
@@ -113,5 +137,8 @@ Optional real RayMMD coverage, reproduction and the boundary between native
 DX9 execution and newer-backend fallback are tracked in
 [RayMMD regression](RHI_RAY_REGRESSION.md).
 
-Next extensions should follow actual effects: general parameter semantics and
-bindings, ordered scene scripts/targets, then MRT/float/depth capabilities.
+Next extensions should follow actual effects: shared parameters, CONTROLOBJECT,
+ScriptExternal scene semantics, DefaultEffect child effects and mip generation
+timing. Texture slots remain t0..t3; expand them using Ray's actual simultaneous
+bindings. Full Ray still uses the existing DX9 fallback. MRT/float targets alone
+do not establish general FX9 or Ray support. Depth sampling remains future work.

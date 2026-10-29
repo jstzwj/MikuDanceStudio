@@ -72,7 +72,7 @@ bool ValidateLegacy(const Source& source, const MmePortableEffect& effect,
         return false;
     }
     const std::regex pattern("\\bpass\\s+" + pass.name + "\\s*(?:<[^>]*>)?\\s*\\{([^{}]*)\\}");
-    const std::map<std::string, std::string> required = {
+    std::map<std::string, std::string> required = {
         {"cullmode", "none"},
         {"zenable", effect.post ? "false" : "true"},
         {"zwriteenable", effect.post ? "false" : "true"},
@@ -86,6 +86,8 @@ bool ValidateLegacy(const Source& source, const MmePortableEffect& effect,
         {"slopescaledepthbias", "0"},
         {"vertexshader", "compilevs_3_0" + Compact(pass.vertex) + "()"},
         {"pixelshader", "compileps_3_0" + Compact(pass.pixel) + "()"}};
+    if (pass.colors.size() == 2)
+        required["colorwriteenable1"] = "15";
     bool found = false;
     for (std::sregex_iterator it(source.legacy.begin(), source.legacy.end(), pattern), end;
          it != end; ++it) {
@@ -143,12 +145,15 @@ bool ValidateLegacy(const Source& source, const MmePortableEffect& effect,
     for (std::sregex_iterator it(source.legacy.begin(), source.legacy.end(), samplers), end;
          it != end; ++it) {
         const auto name = (*it)[1].str();
-        const auto expected = effect.post             ? (name == "SceneSampler"  ? "SceneColor"
-                                                         : name == "PingSampler" ? "Ping"
-                                                                                 : "")
-                              : name == "baseSampler" ? "baseTexture"
-                                                      : "";
-        if (!*expected) {
+        std::string expected = name == "baseSampler" && !effect.post ? "baseTexture" : "";
+        if (effect.post)
+            for (const auto& target : effect.targets) {
+                const auto sampler =
+                    target.name == "SceneColor" ? "SceneSampler" : target.name + "Sampler";
+                if (name == sampler && target.name != "FinalColor")
+                    expected = target.name;
+            }
+        if (expected.empty()) {
             reason = "MME_sampler_not_supported";
             return false;
         }
@@ -164,7 +169,7 @@ bool ValidateLegacy(const Source& source, const MmePortableEffect& effect,
         }
         ++count;
     }
-    if (count != (effect.post ? 2u : 1u)) {
+    if (count != (effect.post ? effect.targets.size() - 1 : 1u)) {
         reason = "MME_sampler_not_supported";
         return false;
     }
@@ -185,7 +190,8 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
     if (!source)
         return {};
     const auto key = std::string(effect.post ? "post:" : "material:") + pass.name + ":" +
-                     pass.vertex + ":" + pass.pixel;
+                     pass.vertex + ":" + pass.pixel + ":" + std::to_string(pass.colors.size()) +
+                     ":" + std::to_string(pass.sampled.size());
     auto cached = source->programs.find(key);
     if (cached != source->programs.end())
         return cached->second;
@@ -213,8 +219,12 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
                        {{"worldViewProjection", ShaderValueType::Matrix4x4, 0},
                         {"materialDiffuse", ShaderValueType::Float4, 64},
                         {"tint", ShaderValueType::Float4, 80}}}};
-    d.bindings.push_back({ShaderBindingKind::Texture, 0});
-    d.bindings.push_back({ShaderBindingKind::Sampler, 0});
+    if (effect.post)
+        d.colorOutputs.assign(pass.colors.size(), 4);
+    for (unsigned slot = 0; slot < (effect.post ? pass.sampled.size() : 1); ++slot) {
+        d.bindings.push_back({ShaderBindingKind::Texture, slot});
+        d.bindings.push_back({ShaderBindingKind::Sampler, slot});
+    }
     auto program = std::make_shared<const ShaderProgram>(std::move(d));
     source->programs.emplace(key, program);
     return program;
@@ -278,55 +288,94 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
 }
 bool AppendPortableMmePost(rhi::RenderFrame& frame, const MmePortableEffect& effect,
                            std::string& reason) {
-    if (!effect.post || effect.passes.size() != 2) {
+    if (!effect.post || effect.passes.empty() || effect.targets.empty()) {
         reason = "MME_post_pass_count";
         return false;
     }
     auto next = frame;
-    auto input = next.finalColor;
-    if (!input) {
+    const auto source = std::find_if(next.targets.begin(), next.targets.end(),
+                                     [&](const auto& t) { return t.id == next.finalColor; });
+    if (!next.finalColor || source == next.targets.end() ||
+        source->description.format != TextureFormat::Rgba8) {
         reason = "MME_post_missing_scene_color";
+        return false;
+    }
+    const unsigned width = source->description.width, height = source->description.height;
+    std::map<std::string, std::uint64_t> targets;
+    std::map<std::string, TextureFormat> formats;
+    std::uint64_t id = 16;
+    for (const auto& t : next.targets)
+        id = std::max(id, t.id + 1);
+    for (const auto& t : effect.targets) {
+        if (!targets.emplace(t.name, t.name == "SceneColor" ? next.finalColor : id++).second) {
+            reason = "MME_duplicate_target";
+            return false;
+        }
+        const auto format = t.format == MmePortableFormat::Rgba16Float ? TextureFormat::Rgba16Float
+                                                                       : TextureFormat::Rgba8;
+        formats.emplace(t.name, format);
+        if (t.name != "SceneColor")
+            next.targets.push_back({targets.at(t.name),
+                                    {width, height, format,
+                                     TextureAccess::ColorAttachment | TextureAccess::Sampled |
+                                         TextureAccess::CopySource}});
+    }
+    if (!targets.count("SceneColor") || !targets.count("FinalColor")) {
+        reason = "MME_post_missing_target";
         return false;
     }
     for (const auto& pass : effect.passes) {
         auto program = PortableMmeProgram(effect, pass, reason);
         if (!program)
             return false;
-        std::uint64_t id = 16;
-        for (const auto& t : next.targets)
-            id = std::max(id, t.id + 1);
-        const auto source = std::find_if(next.targets.begin(), next.targets.end(),
-                                         [&](const auto& t) { return t.id == input; });
-        if (source == next.targets.end()) {
-            reason = "MME_post_missing_scene_color";
+        FramePass output;
+        ModelReplayDraw draw;
+        if (!AttachFullscreenTriangle(next, draw)) {
+            reason = "MME_post_geometry_failed";
             return false;
         }
-        const unsigned width = source->description.width, height = source->description.height;
-        if (!AppendPostProcess(next, input, id, width, height)) {
-            reason = "MME_post_target_failed";
-            return false;
-        }
-        auto& draw = next.passes.back().draws.front();
         ReplayShader shader;
         shader.pipeline.program = program;
-        shader.pipeline.viewport = draw.pipeline.viewport;
-        shader.pipeline.raster = draw.pipeline.raster;
+        shader.pipeline.viewport = ModelViewport{0, 0, width, height, 0, 1};
+        shader.pipeline.raster.cull = BatchCull::None;
+        shader.pipeline.raster.depthTest = shader.pipeline.raster.depthWrite =
+            shader.pipeline.raster.alphaBlend = false;
+        shader.pipeline.colorFormats.clear();
+        for (const auto& name : pass.colors) {
+            if (!targets.count(name)) {
+                reason = "MME_post_missing_target";
+                return false;
+            }
+            output.colors.push_back(FrameAttachment{targets.at(name)});
+            shader.pipeline.colorFormats.push_back(formats.at(name));
+        }
         std::array<float, 8> constants;
         std::copy(effect.multiply.begin(), effect.multiply.end(), constants.begin());
         std::copy(effect.add.begin(), effect.add.end(), constants.begin() + 4);
         shader.constants.push_back({0, Bytes(constants.data(), sizeof(constants))});
-        shader.textures.push_back({0, {}, draw.targetTextures[0]});
-        shader.samplers.push_back(
-            {0,
-             {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point,
-              SamplerAddress::Clamp, SamplerAddress::Clamp, 1}});
+        for (unsigned slot = 0; slot < pass.sampled.size(); ++slot) {
+            const auto& name = pass.sampled[slot];
+            if (!targets.count(name)) {
+                reason = "MME_post_missing_target";
+                return false;
+            }
+            const auto input = targets.at(name);
+            output.sampled.push_back(input);
+            shader.textures.push_back({slot, {}, {input, width, height}});
+            shader.samplers.push_back(
+                {slot,
+                 {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point,
+                  SamplerAddress::Clamp, SamplerAddress::Clamp, 1}});
+        }
         draw.shader = std::move(shader);
         draw.targetTextures = {};
         draw.textures = {};
         draw.pipeline = {};
-        next.passes.back().name = "MME/" + pass.technique + "/" + pass.name;
-        input = id;
+        output.name = "MME/" + pass.technique + "/" + pass.name;
+        output.draws.push_back(std::move(draw));
+        next.passes.push_back(std::move(output));
     }
+    next.finalColor = targets.at("FinalColor");
     const auto valid = ValidateRenderFrame(next);
     if (!valid) {
         reason = valid.reason;

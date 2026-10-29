@@ -10,8 +10,12 @@ They contain no external model or texture assets.
 - `TwoStage.fx`: assign to one scene carrier, usually a small accessory. Its
   script captures the scene at `ScriptExternal`, grades it into Ping, then
   copies Ping to the final color target. Editor overlays follow this chain.
+- `MrtHdr.fx`: assign to one scene carrier. Split writes two RGBA16F layers,
+  Combine samples both into HDR, ToneMap writes RGBA8, then Finish copies it
+  exactly. Signed/highlight values and live multiply/add parameters are kept
+  until explicit tone mapping. It uses the bounded `mrt-hdr-v1` profile.
 
-Both files also run as ordinary DX9 effects. `MDS_RHI` selects their HLSL 5/6
+All files also run as ordinary DX9 effects. `MDS_RHI` selects their HLSL 5/6
 shader branch. Explicit profile and pass annotations opt into the initial
 portable ABI. Changing the shader functions within that ABI is supported;
 adding unrecognized parameters, pass state, resources or script commands

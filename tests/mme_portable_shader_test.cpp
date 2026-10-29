@@ -31,11 +31,14 @@ MmePortableEffect Effect(const wchar_t* name, bool post) {
     MmePortableEffect out;
     out.source = source;
     out.post = post;
+    out.profile = post ? "post-v1" : "material-v1";
     if (post) {
         out.passes = {{"Post", "Grade", "fullscreen_vs", "grade_ps"},
                       {"Post", "Finish", "fullscreen_vs", "finish_ps"}};
         out.multiply = {.5f, .75f, 1, .5f};
         out.add = {.125f, .0625f, 0, .125f};
+        std::string reason;
+        CHECK(MmePortablePostLayout(out, reason));
     } else {
         out.passes = {{"Main", "Tint", "material_vs", "material_ps"}};
         out.multiply = {.75f, 1, .5f, 1};
