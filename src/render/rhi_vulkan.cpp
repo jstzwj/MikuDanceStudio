@@ -47,6 +47,7 @@ constexpr VkDeviceSize UniformBytes = 2 * 1024 * 1024;
     X(DestroySemaphore) \
     X(GetSemaphoreCounterValue) \
     X(WaitSemaphores) \
+    X(SignalSemaphore) \
     X(QueueSubmit2) \
     X(CreateCommandPool) \
     X(DestroyCommandPool) \
@@ -108,6 +109,7 @@ struct Buffer {
 struct Resource {
     std::uint32_t generation = 1;
     bool alive = false, uploaded = false;
+    std::uint64_t lastUse = 0;
     BufferDesc description{};
     Buffer buffer;
     SnapshotBytes indices;
@@ -174,6 +176,9 @@ public:
     VkQueue queue = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
     VkSemaphore timeline = VK_NULL_HANDLE;
+    VkSemaphore testGate = VK_NULL_HANDLE;
+    std::uint64_t gateValue = 0;
+    bool gateBlocked = false;
     VkCommandPool transferPool = VK_NULL_HANDLE;
     VkCommandBuffer transfer = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
@@ -181,13 +186,15 @@ public:
     VkPhysicalDeviceProperties properties{};
     VkPhysicalDeviceMemoryProperties memoryProperties{};
     unsigned family = 0, frameIndex = FrameCount - 1, width = 0, height = 0;
-    std::uint64_t identity = detail::NextDeviceIdentity(), epoch = 1, issued = 0;
+    std::uint64_t identity = detail::NextDeviceIdentity(), epoch = 1, issued = 0,
+                  transferCompletion = 0;
     bool lost = false, pending = false, inFrame = false, rendering = false, modelReady = false,
          legacyInitialized = false, resetPrepared = false;
     std::atomic<unsigned> validationErrors{0};
     VulkanStats stats;
     std::array<Frame, FrameCount> frames;
     std::vector<Resource> resources;
+    std::vector<Resource> retiring;
     // Failed transfer waits do not make queued allocations safe to destroy.
     // Keep them until device teardown, which waits for native queue completion.
     std::vector<Buffer> failedTransfers;
@@ -262,10 +269,18 @@ public:
     bool Present() override;
     ~VulkanDevice() override {
         if (native) {
+            if (gateBlocked) {
+                VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+                signal.semaphore = testGate;
+                signal.value = gateValue;
+                vkSignalSemaphore(native, &signal);
+            }
             if (vkDeviceWaitIdle)
                 vkDeviceWaitIdle(native);
             ReleaseSurface();
             for (auto& r : resources)
+                Release(r);
+            for (auto& r : retiring)
                 Release(r);
             for (auto& r : failedUploads)
                 Release(r);
@@ -299,6 +314,8 @@ public:
                 vkDestroyCommandPool(native, transferPool, nullptr);
             if (timeline)
                 vkDestroySemaphore(native, timeline, nullptr);
+            if (testGate)
+                vkDestroySemaphore(native, testGate, nullptr);
             vkDestroyDevice(native, nullptr);
         }
         if (surface && vkDestroySurfaceKHR)
@@ -368,6 +385,7 @@ public:
             Release(out);
             return false;
         }
+        ++stats.bufferAllocations;
         return true;
     }
     bool AllocateImage(unsigned w, unsigned h, VkFormat format, unsigned mips,
@@ -431,6 +449,8 @@ public:
     }
     void Barrier(VkCommandBuffer cmd, Resource& r, VkImageLayout layout,
                  VkPipelineStageFlags2 stage, VkAccessFlags2 access) {
+        if (inFrame)
+            r.lastUse = issued + 1;
         VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
         b.srcStageMask = r.stage;
         b.srcAccessMask = r.access;
@@ -466,13 +486,38 @@ public:
     bool WaitCompletion(CompletionToken token, std::uint32_t timeout) override {
         if (token.device != identity || !token.value || token.value > issued || lost)
             return false;
+        const auto state = PollCompletion(token);
+        if (state != CompletionState::Pending)
+            return state == CompletionState::Complete && CollectResources();
         VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
         wait.semaphoreCount = 1;
         wait.pSemaphores = &timeline;
         wait.pValues = &token.value;
-        return Check(vkWaitSemaphores(native, &wait, std::uint64_t(timeout) * 1000000));
+        ++stats.timelineWaits;
+        return Check(vkWaitSemaphores(native, &wait, std::uint64_t(timeout) * 1000000)) &&
+               CollectResources();
     }
-    bool Idle() { return !issued || WaitCompletion({identity, issued}, 5000); }
+    bool CollectResources() {
+        std::uint64_t completed = 0;
+        if (!lost && !Check(vkGetSemaphoreCounterValue(native, timeline, &completed)))
+            return false;
+        stats.completed = completed;
+        for (auto i = retiring.begin(); i != retiring.end();)
+            if (lost || i->lastUse <= completed) {
+                Release(*i);
+                i = retiring.erase(i);
+            } else
+                ++i;
+        stats.retiringResources = retiring.size();
+        return true;
+    }
+    bool Idle() {
+        if (!issued)
+            return true;
+        if (PollCompletion({identity, issued}) == CompletionState::Pending)
+            ++stats.idleWaits;
+        return WaitCompletion({identity, issued}, 5000);
+    }
     bool Submit(VkCommandBuffer command, VkSemaphore waitBinary = VK_NULL_HANDLE,
                 VkSemaphore signalBinary = VK_NULL_HANDLE) {
         if (!Check(vkEndCommandBuffer(command))) {
@@ -510,15 +555,28 @@ public:
         return true;
     }
     bool BeginTransfer() {
-        if (!Live() || inFrame || !Idle() || !Check(vkResetCommandPool(native, transferPool, 0)))
+        if (!Live() || inFrame)
+            return false;
+        if (transferCompletion) {
+            if (PollCompletion({identity, transferCompletion}) == CompletionState::Pending)
+                ++stats.transferWaits;
+            if (!WaitCompletion({identity, transferCompletion}, 5000))
+                return false;
+        }
+        if (!Check(vkResetCommandPool(native, transferPool, 0)))
             return false;
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         return Check(vkBeginCommandBuffer(transfer, &begin));
     }
     bool FinishTransfer() {
-        if (Submit(transfer) && Idle())
-            return true;
+        if (Submit(transfer)) {
+            transferCompletion = issued;
+            if (PollCompletion({identity, issued}) == CompletionState::Pending)
+                ++stats.transferWaits;
+            if (WaitCompletion({identity, transferCompletion}, 5000))
+                return true;
+        }
         pending = true;
         return false;
     }
@@ -570,22 +628,32 @@ public:
                 std::memcpy(r.indices.data(), initial, d.size);
             r.indices.Seal();
         }
-        if (initial)
+        if (initial) {
             ++stats.resourceUploads;
+            stats.bufferUploadBytes += d.size;
+        }
         return Insert(std::move(r));
     }
     bool Upload(Handle h, std::size_t offset, const void* data, std::size_t size) override {
         auto* r = Find(h);
         if (!Live() || inFrame || !r || !r->buffer.native || !data || !size ||
             offset > r->description.size || size > r->description.size - offset ||
-            (!r->uploaded && (offset || size != r->description.size)) || !Idle())
+            (!r->uploaded && (offset || size != r->description.size)))
             return false;
+        // Host writes cannot race the GPU. Do not wait for unrelated latest
+        // submissions: SceneRenderer supplies completed slots, direct callers
+        // must retry a busy resource after its own completion boundary.
+        if (r->lastUse && PollCompletion({identity, r->lastUse}) != CompletionState::Complete) {
+            ++stats.uploadBusyRejects;
+            return false;
+        }
         std::memcpy(static_cast<char*>(r->buffer.mapped) + offset, data, size);
         if (!r->indices.empty())
             std::memcpy(r->indices.data() + offset, data, size);
         r->indices.Seal();
         r->uploaded = true;
         ++stats.resourceUploads;
+        stats.bufferUploadBytes += size;
         return true;
     }
     bool UploadImage(Resource& r, const ModelTextureData& data) {
@@ -712,10 +780,18 @@ public:
     }
     bool Destroy(Handle h) override {
         auto* r = Find(h);
-        if (!Live() || inFrame || !r || !Idle())
+        if (inFrame || !r || (!Live() && !lost) || !CollectResources())
             return false;
         passes.Erase(h);
-        Release(*r);
+        const auto generation = r->generation;
+        if (!lost && r->lastUse > stats.completed) {
+            retiring.push_back(std::move(*r));
+            *r = {};
+            r->generation = generation;
+            stats.retiringResources = retiring.size();
+            stats.peakRetiringResources = std::max(stats.peakRetiringResources, retiring.size());
+        } else
+            Release(*r);
         r->alive = false;
         if (++r->generation)
             freeSlots.push_back(h.index);
@@ -835,7 +911,11 @@ public:
             !std::isfinite(clear.green) || !std::isfinite(clear.blue) ||
             !std::isfinite(clear.alpha))
             return false;
+        if (!CollectResources())
+            return false;
         auto& f = frames[(frameIndex + 1) % FrameCount];
+        if (f.completion && PollCompletion({identity, f.completion}) == CompletionState::Pending)
+            ++stats.frameWaits;
         if (f.completion && !WaitCompletion({identity, f.completion}, 5000))
             return false;
         if (!Check(vkResetCommandPool(native, f.pool, 0)) ||
@@ -1904,6 +1984,7 @@ bool VulkanDevice::BindDraw() {
                 return false;
         }
         images[i].imageView = r->view;
+        r->lastUse = issued + 1;
         images[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         SamplerDesc a;
         a.min = a.mag = SamplerFilter::Linear;
@@ -1988,6 +2069,7 @@ bool VulkanDevice::Draw(NonIndexedDraw d) {
         return false;
     if (!BindDraw())
         return false;
+    v->lastUse = issued + 1;
     VkDeviceSize offset = 0;
     const auto cmd = frames[frameIndex].commands;
     vkCmdBindVertexBuffers(cmd, 0, 1, &v->buffer.native, &offset);
@@ -2013,6 +2095,7 @@ bool VulkanDevice::DrawIndexed(IndexedDraw d) {
         return false;
     if (!BindDraw())
         return false;
+    v->lastUse = i->lastUse = issued + 1;
     VkDeviceSize offset = 0;
     const auto cmd = frames[frameIndex].commands;
     vkCmdBindVertexBuffers(cmd, 0, 1, &v->buffer.native, &offset);
@@ -2043,6 +2126,39 @@ VulkanStats QueryVulkanStats(Device& device) {
     auto stats = native->stats;
     stats.validationErrors = native->validationErrors.load();
     return stats;
+}
+bool SetVulkanQueueBlockedForTest(Device& base, bool blocked) {
+    auto* d = dynamic_cast<VulkanDevice*>(&base);
+    if (!d || !d->Live() || d->chain || d->inFrame || blocked == d->gateBlocked)
+        return false;
+    if (!blocked) {
+        VkSemaphoreSignalInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+        signal.semaphore = d->testGate;
+        signal.value = d->gateValue;
+        if (!d->Check(d->vkSignalSemaphore(d->native, &signal)))
+            return false;
+        d->gateBlocked = false;
+        return true;
+    }
+    if (!d->testGate) {
+        VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        info.pNext = &type;
+        if (!d->Check(d->vkCreateSemaphore(d->native, &info, nullptr, &d->testGate)))
+            return false;
+    }
+    VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
+    wait.semaphore = d->testGate;
+    wait.value = ++d->gateValue;
+    wait.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+    submit.waitSemaphoreInfoCount = 1;
+    submit.pWaitSemaphoreInfos = &wait;
+    if (!d->Check(d->vkQueueSubmit2(d->queue, 1, &submit, VK_NULL_HANDLE)))
+        return false;
+    d->gateBlocked = true;
+    return true;
 }
 bool ReadVulkanPresentation(Device& device, RgbaImage& out) {
     auto* d = dynamic_cast<VulkanDevice*>(&device);

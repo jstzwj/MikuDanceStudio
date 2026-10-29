@@ -190,7 +190,36 @@ int main(int argc, char** argv) {
     pass.color->store = AttachmentStore::Discard;
     CHECK(d.BeginFrame({}) && d.BeginRenderPass(pass) && d.EndRenderPass() && d.EndFrame());
     CHECK(!d.ReadRenderTexture(color, image));
+    // Host-controlled queue delay makes resource completion deterministic. An
+    // unrelated pending submission must not turn Upload/Destroy into an idle wait.
+    const auto unused = d.CreateBuffer({BufferUsage::Vertex, sizeof(vertices), true}, vertices);
+    const auto overlay = d.CreateBuffer({BufferUsage::Vertex, sizeof(vertices), true}, vertices);
+    NonIndexedDraw overlayDraw{overlay, 0, 3};
+    overlayDraw.layout = VertexLayout::PositionColor;
+    CHECK(unused && overlay && SetVulkanQueueBlockedForTest(d, true));
+    pass.color->store = AttachmentStore::Store;
+    CHECK(d.BeginFrame({}) && d.BeginRenderPass(pass) && d.SetModelPipeline(p) &&
+          d.BindTexture(0, tex) && d.DrawIndexed(d.Record(draw)) && d.Draw(d.Record(overlayDraw)) &&
+          d.EndRenderPass() && d.EndFrame());
+    token = d.SignalCompletion();
+    CHECK(d.PollCompletion(token) == CompletionState::Pending);
+    const auto before = QueryVulkanStats(d);
+    CHECK(!d.Upload(vb, 0, vertices, sizeof(vertices)));
+    CHECK(!d.Upload(overlay, 0, vertices, sizeof(vertices)));
+    CHECK(d.Upload(unused, 0, vertices, sizeof(vertices)) && d.Destroy(unused));
+    CHECK(QueryVulkanStats(d).retiringResources == 0);
     CHECK(d.Destroy(color) && d.Destroy(depth) && d.Destroy(tex) && d.Destroy(vb) && d.Destroy(ib));
+    CHECK(d.Destroy(overlay) && QueryVulkanStats(d).retiringResources == 6);
+    CHECK(!d.Destroy(vb) && !d.Upload(vb, 0, vertices, sizeof(vertices)));
+    const auto replacement = d.CreateBuffer({BufferUsage::Vertex, sizeof(vertices)}, vertices);
+    CHECK(replacement &&
+          (replacement.index != vb.index || replacement.generation != vb.generation) &&
+          d.Destroy(replacement));
+    const auto pending = QueryVulkanStats(d);
+    CHECK(pending.idleWaits == before.idleWaits && pending.timelineWaits == before.timelineWaits &&
+          pending.uploadBusyRejects == before.uploadBusyRejects + 2);
+    CHECK(SetVulkanQueueBlockedForTest(d, false) && d.WaitCompletion(token, 5000));
+    CHECK(QueryVulkanStats(d).retiringResources == 0);
     CHECK(QueryVulkanStats(d).validationErrors == 0);
     std::puts(
         "Vulkan upload, explicit mips, indexed material draw, readback, invalid dependencies and reset passed");
