@@ -7,7 +7,7 @@ namespace {
 const char* pass = "unspecified";
 }
 bool CpuSceneFamilyRequested(render::SceneDrawFamily) {
-    return CpuScenePreviewRequested();
+    return CpuSceneFrameRecording();
 }
 bool CpuSceneHistoryRecording() {
     return CpuSceneFrameRecording();

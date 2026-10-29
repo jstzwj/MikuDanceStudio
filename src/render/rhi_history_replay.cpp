@@ -665,7 +665,7 @@ bool CopyPortableHistoryReplay(rhi::ModelReplayStream& output) {
     return true;
 }
 bool CpuSceneFamilyRequested(render::SceneDrawFamily family) {
-    if (CpuScenePreviewRequested())
+    if (CpuSceneFrameRecording())
         return true;
     char value[16]{};
     if (!GetEnvironmentVariableA("MDS_RHI_CPU_PREFIX", value, 16))
