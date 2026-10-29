@@ -1015,6 +1015,10 @@ if(BUILD_TESTING)
         add_executable(editor_scene_import_test tests/editor_scene_import_test.cpp)
         target_link_libraries(editor_scene_import_test PRIVATE mikudancestudio_core MMEffect dsound)
         target_link_options(editor_scene_import_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
+        add_executable(editor_frame_test tests/editor_frame_test.cpp)
+        target_include_directories(editor_frame_test PRIVATE src/app)
+        target_link_libraries(editor_frame_test PRIVATE mikudancestudio_core MMEffect dsound)
+        target_link_options(editor_frame_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
         foreach(api IN ITEMS dx11 dx12 vulkan)
             if((api STREQUAL "dx11" AND MIKUDANCESTUDIO_RHI_D3D11) OR
                (api STREQUAL "dx12" AND MIKUDANCESTUDIO_RHI_D3D12) OR
@@ -1022,6 +1026,9 @@ if(BUILD_TESTING)
                 add_test(NAME editor_viewport_${api} COMMAND editor_viewport_test ${api})
                 set_tests_properties(editor_viewport_${api} PROPERTIES TIMEOUT 120 LABELS "hidden-window;editor;rhi" RUN_SERIAL TRUE)
                 if(Python3_Interpreter_FOUND)
+                    add_test(NAME editor_frame_${api} COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_frame.py --test $<TARGET_FILE:editor_frame_test> --backend ${api})
+                    set_tests_properties(editor_frame_${api} PROPERTIES TIMEOUT 360 LABELS "hidden-window;editor;rhi;frame-owner" RUN_SERIAL TRUE)
                     add_test(NAME editor_scene_${api} COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_scene.py --test $<TARGET_FILE:editor_scene_import_test> --backend ${api})
                     set_tests_properties(editor_scene_${api} PROPERTIES TIMEOUT 180 LABELS "hidden-window;editor;rhi" RUN_SERIAL TRUE)

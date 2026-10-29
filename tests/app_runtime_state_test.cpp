@@ -123,6 +123,25 @@ void TestLightAndMatrices(MMDApp& app, MMDApp& other) {
               app.LightViewProjection()._11 == 2,
           "Default light matches the original complete 104-byte state and preserves neighbours");
 }
+
+void TestAccessoryPlaybackStorage(MMDApp& app, MMDApp& other) {
+    app.ViewportRect() = {7, 11, 640, 480};
+    for (int slot = 0; slot < mdl::kAccessorySlotCount; ++slot) {
+        Check(!app.AccessoryTrackActive(slot) && !app.AccessoryTrackCursor(slot),
+              "All accessory playback slots start empty");
+        app.AccessoryTrackCursor(slot) = 1000 + slot;
+        app.AccessoryTrackActive(slot) = 1;
+    }
+    for (int slot = 0; slot < mdl::kAccessorySlotCount; ++slot) {
+        Check(app.AccessoryTrackActive(slot) == 1 && app.AccessoryTrackCursor(slot) == 1000 + slot,
+              "All 255 playback cursors and flags have independent storage");
+        Check(!other.AccessoryTrackActive(slot) && !other.AccessoryTrackCursor(slot),
+              "Accessory playback state is isolated between applications");
+    }
+    Check(app.ViewportRect().left == 7 && app.ViewportRect().right == 640 &&
+              app.state.accessoryTrackCursor[0] == 0,
+          "Playback cursors cannot overwrite the recovered ABI or viewport state");
+}
 } // namespace
 
 int main() {
@@ -143,6 +162,7 @@ int main() {
     TestClipboardRelease(*app);
     TestSelection(*app, *other);
     TestLightAndMatrices(*app, *other);
+    TestAccessoryPlaybackStorage(*app, *other);
     if (!failures)
         std::puts("Application runtime state: initialization, isolation and cleanup pass");
     return failures ? 1 : 0;
