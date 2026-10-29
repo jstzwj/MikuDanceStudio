@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -43,6 +44,20 @@ using Microsoft::WRL::ComPtr;
         }                                                                                          \
     } while (false)
 
+namespace {
+unsigned blockedDialogs = 0;
+LRESULT CALLBACK BlockTestDialog(int code, WPARAM window, LPARAM data) {
+    wchar_t name[32]{};
+    if (code == HCBT_CREATEWND && GetClassNameW(reinterpret_cast<HWND>(window), name, 32) &&
+        !std::wcscmp(name, L"#32770")) {
+        ++blockedDialogs;
+        std::fputs("Unexpected dialog blocked before creation\n", stderr);
+        return 1;
+    }
+    return CallNextHookEx(nullptr, code, window, data);
+}
+}
+
 int main(int argc, char** argv) try {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     CHECK(argc >= 3);
@@ -53,6 +68,20 @@ int main(int argc, char** argv) try {
     const auto path = std::filesystem::absolute(std::filesystem::u8path(argv[2]));
     const bool benchmark = argc > 3 && std::string(argv[3]) == "--benchmark";
     const unsigned count = argc > 4 ? std::max(3, std::atoi(argv[4])) : 12;
+    std::filesystem::path rayEffect;
+    if (!benchmark && argc > 4) {
+        CHECK(argc == 6 && std::string(argv[4]) == "--ray-effect");
+        rayEffect = std::filesystem::absolute(std::filesystem::u8path(argv[5]));
+        CHECK(std::filesystem::is_regular_file(rayEffect));
+    }
+    struct DialogGuard {
+        HHOOK hook = SetWindowsHookExW(WH_CBT, BlockTestDialog, nullptr, GetCurrentThreadId());
+        ~DialogGuard() {
+            if (hook)
+                UnhookWindowsHookEx(hook);
+        }
+    } dialogGuard;
+    CHECK(dialogGuard.hook);
     auto app = std::make_unique<MMDApp>();
     std::memset(&app->state, 0, sizeof(app->state));
     g_Block = app.get();
@@ -230,10 +259,14 @@ int main(int argc, char** argv) try {
         else
             RenderFrameScene(app.get(), expectRhi ? &lastImage : nullptr);
         const auto after = app->FrameRenderingStats();
-        if (after.lastBackend != (expectRhi ? app->ViewportRenderer().Selected() : Backend::D3D9))
+        if (after.lastBackend != (expectRhi ? app->ViewportRenderer().Selected() : Backend::D3D9)) {
             std::fprintf(stderr, "frame %llu expectedRhi=%d reason=%s cpuReady=%d\n",
                          after.preparations, expectRhi, app->ViewportRenderer().Reason().c_str(),
                          app->CpuModelFrames().at(model.get())->ready);
+            std::string mmeReason;
+            CheckPortableMme(mmeReason);
+            std::fprintf(stderr, "MME portability: %s\n", mmeReason.c_str());
+        }
         CHECK(after.rendered && after.preparations == before.preparations + 1);
         if (driver)
             CHECK(app->state.recordedFrameCount == catchups + 1);
@@ -665,6 +698,89 @@ int main(int argc, char** argv) try {
                                      materialEffect));
         frame(true); // same device, no explicit recreation required
     }
+    if (!rayEffect.empty()) {
+        const auto rayRoot = rayEffect.parent_path();
+        const auto portablePixels = image().pixels;
+        const auto rayFallback = [&] {
+            const auto before = app->ViewportRenderer().Statistics();
+            CHECK(!CheckPortableMme(portableReason));
+            CHECK(portableReason == "MME_profile_not_supported");
+            frame(false);
+            CHECK(app->ViewportRenderer().Reason() == "MME");
+            CHECK(!app->ViewportRenderer().OwnsPresentation());
+            CHECK(app->ViewportRenderer().Statistics().uploads == before.uploads);
+            CHECK(app->ViewportRenderer().Statistics().submissions == before.submissions);
+        };
+        // Even one unsupported subset makes the entire frame use DX9.
+        for (const auto& relative : {L"Main/main.fx", L"Outline/Fixed Color/outline.fx"}) {
+            const auto effect = (rayRoot / relative).string();
+            CHECK(std::filesystem::is_regular_file(rayRoot / relative));
+            CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), 0, effect));
+            rayFallback();
+            CHECK(
+                ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, effect));
+            rayFallback();
+            CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                         materialEffect));
+            if (!CheckPortableMme(portableReason))
+                throw std::runtime_error("Ray material replacement: " + portableReason);
+            frame(runtimeEffects);
+            if (runtimeEffects)
+                CHECK(image().pixels == portablePixels);
+        }
+        {
+            mdl::AccessoryRecord carrier{};
+            CHECK(LoadAccessoryObject(app.get(), &carrier, (rayRoot / L"ray.x").c_str()));
+            carrier.parentModel = -1;
+            carrier.visible = 1;
+            carrier.opacity = carrier.scale = 1;
+            app->AccessorySlot(0) = &carrier;
+            struct RemoveRay {
+                MMDApp* app;
+                mdl::AccessoryRecord* carrier;
+                ~RemoveRay() {
+                    app->AccessorySlot(0) = nullptr;
+                    DisposeAccessory(carrier);
+                }
+            } removeRay{app.get(), &carrier};
+            CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));
+            CHECK(assignedEffect(&carrier)); // actual ray.x -> ray.fx auto assignment
+            rayFallback();                   // supported material mixed with Ray's scene script
+            rayFallback();                   // repeated frames still update only once
+            app->ViewportRect().right += 8;
+            rayFallback();
+            app->ViewportRect().right -= 8;
+            const auto other = api == Backend::D3D11 ? Backend::D3D12 : Backend::D3D11;
+            if (BackendAvailable(other)) {
+                CHECK(app->ViewportRenderer().Select(*app, other, false));
+                rayFallback();
+                CHECK(app->ViewportRenderer().Select(*app, api, false));
+            }
+            app->ViewportRenderer().UnloadScene();
+            rayFallback();
+            CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, ""));
+            app->AccessorySlot(0) = nullptr;
+            CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));
+        }
+        // DX9 retains derived child bindings in its cache. They must not
+        // prevent recovery after their owning scene effect is removed.
+        CHECK(std::any_of(::mme::g_ownerManager->bindings.begin(),
+                          ::mme::g_ownerManager->bindings.end(),
+                          [](const auto& entry) { return entry.first.turnId != 0; }));
+        CHECK(CheckPortableMme(portableReason));
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels == portablePixels);
+        else {
+            // A missing runtime shader compiler can still render ordinary
+            // frames after both Ray and the custom material are removed.
+            CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, ""));
+            frame(true);
+        }
+        std::printf(
+            "Ray material/subset/outline/scene fallback, repeat, resize, switch, unload and recovery passed\n");
+    }
+    CHECK(!blockedDialogs);
     std::printf(
         "PASS %s %s: real frame owner, zero DX9 draws on RHI frames, once-only geometry, same-frame fallback, history handover, device recovery, switching, resize, unload and driver; window never shown\n",
         mode.c_str(), path.extension().u8string().c_str());

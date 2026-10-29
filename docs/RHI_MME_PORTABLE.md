@@ -32,6 +32,10 @@ Host objects and automatic effect assignments are synchronized before frame
 selection, including startup with a saved RHI backend. This synchronization
 does not enter a DX9 scene or execute MME render scripts. Native DX9 retains
 its existing BeginScene initialization and object synchronization order.
+Eligibility examines current base assignments. Derived DX9 offscreen bindings
+may remain cached after removing a scene effect; those inactive nodes do not
+keep a supported frame in fallback. Active effects with offscreen child turns
+remain outside the supported profiles.
 
 ## material-v1
 
@@ -104,6 +108,10 @@ are covered separately.
 The local Sour Miku PMX also passed hidden import, live geometry/materials,
 both self-shadow modes, exact repeats and backend reconstruction on DX11,
 DX12 and Vulkan. Its model and textures remain outside the repository.
+
+Optional real RayMMD coverage, reproduction and the boundary between native
+DX9 execution and newer-backend fallback are tracked in
+[RayMMD regression](RHI_RAY_REGRESSION.md).
 
 Next extensions should follow actual effects: general parameter semantics and
 bindings, ordered scene scripts/targets, then MRT/float/depth capabilities.

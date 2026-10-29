@@ -8,7 +8,11 @@ import cpu_import_fixture
 parser = argparse.ArgumentParser()
 parser.add_argument('--test', required=True)
 parser.add_argument('--backend', required=True)
+parser.add_argument('--ray-effect', type=Path,
+                    help='Optional unmodified local ray.fx for whole-frame fallback regression')
 args = parser.parse_args()
+ray_options = (['--ray-effect', str(args.ray_effect.resolve(strict=True))]
+               if args.ray_effect else [])
 with tempfile.TemporaryDirectory(prefix='mds-editor-frame-') as directory:
     cpu_import_fixture.write(directory)
     root = Path(directory)
@@ -17,5 +21,6 @@ with tempfile.TemporaryDirectory(prefix='mds-editor-frame-') as directory:
         (root / 'bound.x').read_text(encoding='ascii').replace('checker.bmp', 'screen.bmp'),
         encoding='ascii')
     for name in ('triangle.pmd', 'triangle.pmx'):
-        subprocess.run([args.test, args.backend, str(root / name), str(root / 'screen.x')],
+        subprocess.run([args.test, args.backend, str(root / name), str(root / 'screen.x'),
+                        *ray_options],
                        check=True, timeout=150)

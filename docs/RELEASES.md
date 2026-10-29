@@ -59,6 +59,9 @@ before CTest and saves JUnit results plus CTest logs, including on failure. GPU
 tests may explicitly skip with code 77 when the required device is unavailable;
 a skip is not a GPU parity result. Optional local `ray.fx` tests are enabled only
 when `MIKUDANCESTUDIO_RAY_TEST_EFFECT` is configured; CI does not supply that asset.
+That option also enables hidden editor fallback/recovery tests for each enabled
+RHI backend. See [RayMMD regression](RHI_RAY_REGRESSION.md) for coverage and
+the separate native DX9 image comparisons.
 
 压缩包需完整解压，运行库未打包。CI 构建不依赖本机安装的 MMD 或任何模型。
 

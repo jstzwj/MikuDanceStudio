@@ -944,6 +944,8 @@ target_sources(MikuDanceStudio PRIVATE
 target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
 
 if(BUILD_TESTING)
+    set(MIKUDANCESTUDIO_RAY_TEST_EFFECT "" CACHE FILEPATH
+        "Optional local ray.fx for real-asset GPU regression tests")
     add_executable(vmd_save_adapter_test tests/vmd_save_adapter_test.cpp)
     target_link_libraries(vmd_save_adapter_test PRIVATE
         mikudancestudio_core MMEffect dsound)
@@ -1068,6 +1070,14 @@ if(BUILD_TESTING)
                     add_test(NAME editor_frame_${api} COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_frame.py --test $<TARGET_FILE:editor_frame_test> --backend ${api})
                     set_tests_properties(editor_frame_${api} PROPERTIES TIMEOUT 360 LABELS "hidden-window;editor;rhi;frame-owner" RUN_SERIAL TRUE)
+                    if(MIKUDANCESTUDIO_RAY_TEST_EFFECT)
+                        add_test(NAME editor_ray_fallback_${api} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_frame.py
+                            --test $<TARGET_FILE:editor_frame_test> --backend ${api}
+                            --ray-effect "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
+                        set_tests_properties(editor_ray_fallback_${api} PROPERTIES TIMEOUT 360
+                            LABELS "hidden-window;editor;rhi;frame-owner;MME;ray;external" RUN_SERIAL TRUE)
+                    endif()
                     add_test(NAME editor_scene_${api} COMMAND ${Python3_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_scene.py --test $<TARGET_FILE:editor_scene_import_test> --backend ${api})
                     set_tests_properties(editor_scene_${api} PROPERTIES TIMEOUT 180 LABELS "hidden-window;editor;rhi" RUN_SERIAL TRUE)
@@ -1767,13 +1777,11 @@ if(BUILD_TESTING)
     set_tests_properties(mme_snapshot_cache_gpu PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     target_include_directories(mme_offscreen_turn_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_offscreen_turn_test PRIVATE mikudancestudio_core MMEffect dsound)
-    set(MIKUDANCESTUDIO_RAY_TEST_EFFECT "" CACHE FILEPATH
-        "Optional local ray.fx for real-asset GPU regression tests")
     if(MIKUDANCESTUDIO_RAY_TEST_EFFECT)
         add_test(NAME mme_ray_script_gpu COMMAND mme_ray_smoke_test "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
         add_test(NAME mme_ray_offscreen_gpu COMMAND mme_offscreen_turn_test "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
         set_tests_properties(mme_ray_script_gpu mme_ray_offscreen_gpu PROPERTIES
-            SKIP_RETURN_CODE 77 TIMEOUT 90)
+            SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "offscreen;MME;ray;external" RUN_SERIAL TRUE)
     endif()
     add_executable(mesh_fallback_test tests/mesh_fallback_test.cpp)
     target_include_directories(mesh_fallback_test PRIVATE third_party/mmeffect/include)

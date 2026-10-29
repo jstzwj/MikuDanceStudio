@@ -158,6 +158,11 @@ bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason
                 }
     unsigned posts = 0;
     for (const auto& entry : mme::g_ownerManager->bindings) {
+        // Derived offscreen bindings are a DX9 cache and can survive removal
+        // of their scene owner. Eligibility follows live base assignments:
+        // each supported profile excludes offscreen child turns itself.
+        if (entry.first.turnId)
+            continue;
         const auto* b = entry.second;
         if (!b || !b->effect || b->effectPath.empty())
             continue;
@@ -173,8 +178,8 @@ bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason
     for (const auto& effect : out)
         if (effect.post)
             for (const auto& entry : mme::g_ownerManager->bindings)
-                if (entry.first.model && entry.first.model->objectId() == effect.object &&
-                    entry.first.subset >= 0) {
+                if (!entry.first.turnId && entry.first.model &&
+                    entry.first.model->objectId() == effect.object && entry.first.subset >= 0) {
                     reason = "MME_scene_subset_override_not_supported";
                     return false;
                 }
