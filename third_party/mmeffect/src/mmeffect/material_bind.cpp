@@ -1693,10 +1693,10 @@ void ClassifySemantic(ID3DXEffect* effect, D3DXHANDLE h,
     }
     bool inverse = false, transpose = false;
     std::string base = sem;
-    if (base.size() >= 15 &&
-        _stricmp(base.c_str() + base.size() - 15, "INVERSETRANSPOSE") == 0) {
+    if (base.size() >= 16 &&
+        _stricmp(base.c_str() + base.size() - 16, "INVERSETRANSPOSE") == 0) {
         inverse = transpose = true;
-        base.erase(base.size() - 15);
+        base.erase(base.size() - 16);
     } else if (base.size() >= 9 &&
                _stricmp(base.c_str() + base.size() - 9, "TRANSPOSE") == 0) {
         transpose = true;
