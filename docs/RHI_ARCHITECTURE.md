@@ -1,14 +1,24 @@
 # Rendering hardware interface: incremental migration
 
+Current status (2026-10-29): the live editor supports DX11, DX12 and Vulkan
+through the **Renderer** menu. The old **Renderer Preview** menu/window has been
+removed; shared controllers remain. See [editor integration](RHI_EDITOR_VIEWPORT.md),
+[shared controller](RHI_PREVIEW_CONTROLLER.md), and the
+[current code review and priorities](RHI_REVIEW_2026-10-29.md).
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.
 
-The independent CPU full-frame assembler and default-off resident DX11/DX12
-preview are described in [CPU frame and preview](RHI_CPU_FRAME_PREVIEW.md).
-[Preview controller and application entry](RHI_PREVIEW_CONTROLLER.md) records
-the shared backend factory, window/lifecycle ownership, menu entry and current
-x64/x86 audit-to-direct acceptance. The main application renderer remains DX9.
+The CPU full-frame diagnostic assembler remains available. Its earlier
+resident-window evidence is archived in [CPU frame and preview](RHI_CPU_FRAME_PREVIEW.md)
+and [controller history](RHI_PREVIEW_CONTROLLER_HISTORY.md). The live editor
+defaults to DX9 and can select the newer backends, subject to the compatibility
+fallbacks documented above.
+
+## Historical migration notes
+
+The notes below describe earlier milestones and their acceptance scope;
+statements of missing features apply to those milestones.
 
 The earlier accessory depth-history and alpha-discard measurements are recorded
 in [accessory depth measurement](RHI_ACCESSORY_DEPTH_MEASUREMENT.md). Later
