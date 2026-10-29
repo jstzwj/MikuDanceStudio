@@ -283,6 +283,11 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
         RuntimeCpuSceneProducer producer;
         if (!producer.Load(cpuScene, resolver, scenePasses, builtins, reason))
             throw std::runtime_error(reason);
+        const bool multipassMode = selfShadow || producer.RequiresFrame();
+        if (producer.RequiresFrame() && lifecycle)
+            throw std::runtime_error("--lifecycle is unavailable with screen history");
+        if (!selfShadow)
+            shadowSettings.mode = 0;
         HostWindow window;
         if (!window.Open(scenePasses ? L"MikuDanceStudio independent RHI - scene passes"
                          : selected >= 0
@@ -419,7 +424,7 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
             RECT client{};
             GetClientRect(window.handle, &client);
             RenderFrame multipass;
-            if (selfShadow && !IsIconic(window.handle) && client.right > 0 && client.bottom > 0) {
+            if (multipassMode && !IsIconic(window.handle) && client.right > 0 && client.bottom > 0) {
                 target.width = unsigned(client.right);
                 target.height = unsigned(client.bottom);
                 frame.view.aspect = float(target.width) / target.height;
@@ -427,15 +432,20 @@ int RunIndependentRhiPreview(int argc, wchar_t** argv) {
                 if (!producer.BuildFrame(cpuScene, frame, target, shadowSettings, multipass,
                                          reason))
                     throw std::runtime_error(reason);
-            } else if (!selfShadow && !producer.Build(cpuScene, frame, target, stream, reason))
+                if (multipass.finalColor == 1 &&
+                    !AppendPostProcess(multipass, 1, 5, target.width, target.height))
+                    throw std::runtime_error("postprocess_frame");
+            } else if (!multipassMode && !producer.Build(cpuScene, frame, target, stream, reason))
                 throw std::runtime_error(reason);
             if (!preview.Resize(IsIconic(window.handle) ? 0 : unsigned(client.right),
                                 IsIconic(window.handle) ? 0 : unsigned(client.bottom)))
                 throw std::runtime_error(preview.Reason());
             RgbaImage image;
-            if (!(selfShadow ? preview.Draw(multipass, frames ? &image : nullptr)
+            if (!(multipassMode ? preview.Draw(multipass, frames ? &image : nullptr)
                              : preview.Draw(stream, frames ? &image : nullptr)))
                 throw std::runtime_error(preview.Reason());
+            if (multipassMode && preview.State() == PreviewState::Ready)
+                producer.CommitFrame();
             if (frames) {
                 for (std::size_t p = 0; p < image.pixels.size(); p += 4)
                     covered += image.pixels[p] != 255 || image.pixels[p + 1] != 255 ||

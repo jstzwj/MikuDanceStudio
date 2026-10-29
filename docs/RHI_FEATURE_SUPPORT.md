@@ -17,7 +17,9 @@ test; an API's theoretical capabilities do not imply adapter support.
 | Multiple simultaneous color attachments (MRT) | Rejected | Native API only | Not exposed | Not exposed | Rejected |
 | Mips / layers / MSAA on explicit render textures | Rejected | Separate legacy paths | Rejected | Rejected | Rejected |
 | Native MME `.fx` execution | Unsupported | Implemented | Unsupported | Unsupported | Unsupported |
-| Dynamic screen texture / post-processing | Dependency foundation | Native | Not yet integrated | Not yet integrated | Not yet integrated |
+| Ordinary material sampling of Pass output | Dependency validation | Native | Implemented | Implemented | Implemented |
+| Shared fullscreen copy / RGBA transform / chaining | Pipeline validation | Native | Exact copy gate | Exact copy gate | Exact copy gate |
+| Explicit history / dynamic accessory `screen.bmp` | Initialization and dependency validation | Native | Generated + CPU PMM gate | Generated + CPU PMM gate | Generated + CPU PMM + synchronization gate |
 
 ## Explicit pass rules
 
@@ -88,9 +90,13 @@ coverage. Exact DX9 comparisons remain available as opt-in diagnostics.
 `RuntimeCpuSceneProducer::BuildFrame` produces the explicit shadow/main frame.
 It shares the native DX9 CPU shadow projection, preserves PMX caster/receiver
 flags and outline colors, and reuses geometry versions between passes. An empty
-caster pass clears and stores a white map. Unsupported self-shadow accessories,
+caster pass clears and stores a white map. Non-casting accessories use their
+native fixed material path; self-shadow accessories with shadow enabled,
 UV1 and material morph shading fail explicitly. The preview controller accepts
 both single-target streams and explicit frames.
+See [screen textures and postprocessing](RHI_SCREEN_POSTPROCESS.md) for ordinary
+target references, exact copies, explicit double-buffered history, native capture
+mode semantics, resize tolerances, and the remaining AVI/MME boundaries.
 `RenderFrame::finalColor` selects the shared RGBA8 output; native GPU copies
 connect it to readback or presentation without a CPU image round trip.
 

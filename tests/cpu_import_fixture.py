@@ -134,7 +134,7 @@ def articulated_pmx():
     return b
 
 
-def scene(version=2, model='triangle.pmd', articulated=False, model_count=1, bindings=False, passes=False, reverse_display=False):
+def scene(version=2, model='triangle.pmd', articulated=False, model_count=1, bindings=False, passes=False, reverse_display=False, capture_mode=0):
     b = Bytes(); b.fixed('Polygon Movie maker ' + ('0002' if version == 2 else '0001'), 30)
     b.u32(640); b.u32(480); b.u32(200); b.f(45)
     b.zero(7 if version == 2 else 6); b.u8(1); b.u8(model_count)
@@ -162,7 +162,7 @@ def scene(version=2, model='triangle.pmd', articulated=False, model_count=1, bin
             b.u8(1); b.u32(1); b.u32(1); b.f(.1, .2, -.1, .12, i * 2, 0, 0); b.u8(0)
             if version == 2: b.u8(i)
     b.zero(28); b.zero(257); b.zero(272); b.zero(269)
-    b.u8(0); b.u8(int(passes)); b.u8(int(passes)); b.f(60); b.u32(0)
+    b.u8(0); b.u8(int(passes)); b.u8(int(passes)); b.f(60); b.u32(capture_mode)
     if version == 1 and bindings:
         # Optional v1 gated tail through the camera-parent table (stage 9).
         b.u32(1); b.f(.5); b.zero(model_count); b.u8(0); b.u8(1)

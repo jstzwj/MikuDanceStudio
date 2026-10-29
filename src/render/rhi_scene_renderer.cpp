@@ -20,6 +20,10 @@ bool Equal(const ModelReplayResource& a, const ModelReplayResource& b) {
     }
     return true;
 }
+bool EqualHistory(const std::optional<ClearColor>& a, const std::optional<ClearColor>& b) {
+    return bool(a) == bool(b) && (!a || (a->red == b->red && a->green == b->green &&
+                                         a->blue == b->blue && a->alpha == b->alpha));
+}
 std::uint64_t Bytes(const ModelReplayResource& r) {
     std::uint64_t size = r.bytes.size();
     for (const auto& m : r.texture.levels)
@@ -65,6 +69,8 @@ struct SceneRenderer::Impl {
             RenderTextureDesc desc;
             Handle handle;
             CompletionToken lastUse;
+            std::optional<ClearColor> history;
+            std::uint64_t historyEpoch = 0;
         };
         std::map<std::uint64_t, Target> targets;
     };
@@ -240,7 +246,8 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
             if (existing != impl->scenes.end()) {
                 const auto old = existing->second.targets.find(t.id);
                 missing = old == existing->second.targets.end() || !old->second.handle ||
-                          !EqualRenderTextureDesc(old->second.desc, t.description);
+                          !EqualRenderTextureDesc(old->second.desc, t.description) ||
+                          !EqualHistory(old->second.history, t.history);
             }
             if (missing) {
                 const auto h = d.CreateRenderTexture(t.description);
@@ -259,7 +266,7 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
                 auto& old = scene.targets[t.id];
                 if (old.handle)
                     impl->retired.push_back({old.handle, old.lastUse});
-                old = {t.description, allocation->second, {}};
+                old = {t.description, allocation->second, {}, t.history, 0};
                 targetAllocations.erase(allocation);
             }
         }
@@ -377,6 +384,18 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
     if (!d.BeginFrame(f->clear))
         return {false, 0, 0, "begin_frame_failed"};
     ModelReplayResult result{true, 0, 0, "submitted"};
+    for (auto& entry : scene->second.targets) {
+        auto& t = entry.second;
+        if (t.history && t.historyEpoch != f->submission.epoch) {
+            RenderPassDesc initialize;
+            initialize.color = PassAttachment{t.handle};
+            initialize.color->clear = *t.history;
+            if (!d.BeginRenderPass(initialize) || !d.EndRenderPass()) {
+                result = {false, 0, 0, "history_initialization_failed"};
+                break;
+            }
+        }
+    }
     const auto submitDraw = [&](const Draw& draw) {
         result.sequence = draw.sequence;
         if (!d.SetModelPipeline(draw.pipeline)) {
@@ -406,7 +425,9 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
         ++result.draws;
         return true;
     };
-    if (f->passes.empty()) {
+    if (!result) {
+        // Still close and fence the frame; a failed frame cannot initialize history.
+    } else if (f->passes.empty()) {
         for (const auto& draw : f->draws)
             if (!submitDraw(draw))
                 break;
@@ -444,8 +465,11 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
     }
     for (auto& r : scene->second.resources)
         r.second.lastUse = completion;
-    for (auto& t : scene->second.targets)
+    for (auto& t : scene->second.targets) {
         t.second.lastUse = completion;
+        if (t.second.history)
+            t.second.historyEpoch = result ? f->submission.epoch : 0;
+    }
     ++impl->stats.submissions;
     return result;
 }

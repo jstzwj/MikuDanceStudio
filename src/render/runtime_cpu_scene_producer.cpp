@@ -47,6 +47,11 @@ bool RuntimeCpuSceneProducer::Load(const RuntimeCpuScene& scene,
     accessoryPaths_ = std::move(paths);
     helper_ = std::move(helper);
     scenePasses_ = passes;
+    hasScreenTextures_ =
+        std::any_of(accessories_.begin(), accessories_.end(),
+                    [](const auto& item) { return item.second->HasScreenTexture(); });
+    screenHistory_.Reset();
+    screenDraws_.clear();
     assembler_.Reset();
     reason.clear();
     return true;
@@ -54,7 +59,19 @@ bool RuntimeCpuSceneProducer::Load(const RuntimeCpuScene& scene,
 bool RuntimeCpuSceneProducer::Build(RuntimeCpuScene& scene, ModelFrameInputs frame,
                                     const rhi::HistoryDesc& target, rhi::ModelReplayStream& output,
                                     std::string& reason) {
-    return BuildScene(scene, frame, target, output, reason, nullptr);
+    if (hasScreenTextures_) {
+        reason = "screen_texture_requires_frame";
+        return false;
+    }
+    rhi::ModelReplayStream result;
+    if (!BuildScene(scene, frame, target, result, reason, nullptr))
+        return false;
+    if (!screenDraws_.empty()) {
+        reason = "screen_texture_requires_frame";
+        return false;
+    }
+    output = std::move(result);
+    return true;
 }
 bool RuntimeCpuSceneProducer::BuildScene(RuntimeCpuScene& scene, ModelFrameInputs frame,
                                          const rhi::HistoryDesc& target,
@@ -75,7 +92,14 @@ bool RuntimeCpuSceneProducer::BuildScene(RuntimeCpuScene& scene, ModelFrameInput
         assembler_.Block(reason.c_str());
         return false;
     };
-    const auto append = [&](SceneDrawReplacement draw) { assembler_.Append(std::move(draw)); };
+    std::vector<std::size_t> screens;
+    std::size_t ordinal = 0;
+    const auto append = [&](SceneDrawReplacement draw) {
+        if (draw.screenTexture)
+            screens.push_back(ordinal);
+        ++ordinal;
+        assembler_.Append(std::move(draw));
+    };
     if (doc)
         for (const auto& model : doc->models)
             if (model.postLoadFlag && scene.Visible(model.slot))
@@ -223,6 +247,7 @@ bool RuntimeCpuSceneProducer::BuildScene(RuntimeCpuScene& scene, ModelFrameInput
         reason = result.reason;
         return false;
     }
+    screenDraws_ = std::move(screens);
     reason.clear();
     return true;
 }
@@ -249,7 +274,7 @@ bool RuntimeCpuSceneProducer::BuildFrame(RuntimeCpuScene& scene, ModelFrameInput
                                                  : .01125f;
     if (mode && session)
         for (const auto& a : session->Pose().accessories)
-            if (scenePasses_ && a.visible)
+            if (scenePasses_ && a.visible && a.shadowEnabled)
                 return fail("cpu_self_shadow_accessories_not_migrated");
     rhi::BuiltinShadowState shadow;
     shadow.mode = mode ? rhi::BuiltinShadowMode::Material : rhi::BuiltinShadowMode::None;
@@ -317,8 +342,12 @@ bool RuntimeCpuSceneProducer::BuildFrame(RuntimeCpuScene& scene, ModelFrameInput
         generate.depthStencil = rhi::FrameAttachment{4};
         main.sampled = {3};
     }
+    std::vector<rhi::ScreenTextureConsumer> consumers;
+    std::size_t ordinal = 0;
     for (auto& e : sceneStream.events)
         if (e.op == rhi::ModelReplayOp::Draw) {
+            const bool screen = std::find(screenDraws_.begin(), screenDraws_.end(), ordinal++) !=
+                                screenDraws_.end();
             if (e.draw.pipeline.shadow.mode == rhi::BuiltinShadowMode::Depth) {
                 e.draw.pipeline.viewport =
                     rhi::ModelViewport{0, 0, settings.mapSize, settings.mapSize, 0, 1};
@@ -326,12 +355,22 @@ bool RuntimeCpuSceneProducer::BuildFrame(RuntimeCpuScene& scene, ModelFrameInput
             } else {
                 if (e.draw.pipeline.shadow.mode == rhi::BuiltinShadowMode::Material)
                     e.draw.shadowTarget = 3;
+                if (screen)
+                    consumers.push_back({mode ? 1u : 0u, main.draws.size()});
                 main.draws.push_back(std::move(e.draw));
             }
         }
     if (mode)
         result.passes.push_back(std::move(generate));
     result.passes.push_back(std::move(main));
+    const auto capture = session ? render::ScreenCaptureKind(session->Document().view.captureMode)
+                                 : render::ScreenCaptureKind::Disabled;
+    if (hasScreenTextures_ || capture == render::ScreenCaptureKind::FullFrame ||
+        capture == render::ScreenCaptureKind::CropFourByThree) {
+        if (!rhi::AppendPostProcess(result, 1, 5, target.width, target.height) ||
+            !screenHistory_.Apply(result, consumers, capture, 5))
+            return fail("cpu_screen_texture_frame");
+    }
     const auto valid = rhi::ValidateRenderFrame(result);
     if (!valid) {
         reason = valid.reason;

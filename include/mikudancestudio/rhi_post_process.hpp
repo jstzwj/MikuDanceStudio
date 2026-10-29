@@ -3,7 +3,8 @@
 #include <algorithm>
 #include <cstring>
 namespace mikudancestudio::rhi {
-// Append a full-coverage pass and select its output. A failed append is atomic.
+// Append a full-coverage pass and select its output. Existing output targets
+// must have the requested description. A failed append is atomic.
 inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint64_t output,
                               unsigned width, unsigned height,
                               PostProcessState effect = {PostProcessMode::Copy}) {
@@ -13,15 +14,17 @@ inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint
                                      [&](const auto& t) { return t.id == input; });
     if (source == frame.targets.end() || source->description.format != TextureFormat::Rgba8)
         return false;
-    for (const auto& t : frame.targets)
-        if (t.id == output)
-            return false;
-    std::uint64_t resource = 1;
-    for (const auto& r : frame.resources) {
-        if (r.key.id == UINT64_MAX)
-            return false;
-        resource = std::max(resource, r.key.id + 1);
-    }
+    const auto destination = std::find_if(frame.targets.begin(), frame.targets.end(),
+                                          [&](const auto& t) { return t.id == output; });
+    const RenderTextureDesc description{width, height, TextureFormat::Rgba8,
+                                        TextureAccess::ColorAttachment | TextureAccess::Sampled |
+                                            TextureAccess::CopySource};
+    if (destination != frame.targets.end() &&
+        !EqualRenderTextureDesc(destination->description, description))
+        return false;
+    // Reserved immutable fullscreen geometry, shared by every pass. It stays
+    // independent of changing model resource counts and capture modes.
+    constexpr std::uint64_t resource = UINT64_MAX;
     ModelReplayDraw draw;
     draw.indexed = false;
     draw.vertices = {resource, 1};
@@ -29,6 +32,7 @@ inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint
     draw.targetTextures[0] = {input, source->description.width, source->description.height};
     auto& p = draw.pipeline;
     p.postProcess = effect;
+    p.viewport = ModelViewport{0, 0, width, height, 0, 1};
     p.raster.cull = BatchCull::None;
     p.raster.depthTest = p.raster.depthWrite = p.raster.alphaBlend = false;
     constexpr std::array<float, 16> identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -55,11 +59,15 @@ inline bool AppendPostProcess(RenderFrame& frame, std::uint64_t input, std::uint
     pass.sampled = {input};
     pass.draws.push_back(draw);
     auto next = frame;
-    next.targets.push_back(
-        {output,
-         {width, height, TextureFormat::Rgba8,
-          TextureAccess::ColorAttachment | TextureAccess::Sampled | TextureAccess::CopySource}});
-    next.resources.push_back(std::move(vb));
+    if (destination == frame.targets.end())
+        next.targets.push_back({output, description});
+    const auto shared = std::find_if(next.resources.begin(), next.resources.end(),
+                                     [resource](const auto& r) { return r.key.id == resource; });
+    if (shared == next.resources.end())
+        next.resources.push_back(std::move(vb));
+    else if (shared->key.version != 1 || shared->kind != ReplayResourceKind::Vertices ||
+             shared->vertexLayout != VertexLayout::PositionNormalUv || shared->bytes != vb.bytes)
+        return false;
     next.passes.push_back(std::move(pass));
     next.finalColor = output;
     if (!ValidateRenderFrame(next))

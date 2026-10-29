@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "mikudancestudio/screen_vertex.hpp"
+#include "mikudancestudio/screen_capture.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model_cpu_preview.hpp"
@@ -1852,19 +1853,10 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
         RECT source = app->RecordingWindow() != nullptr
                           ? RECT{0, 0, app->RenderWidth(), app->RenderHeight()}
                           : app->ViewportRect();
-        const double width = static_cast<double>(source.right - source.left);
-        const double height = static_cast<double>(source.bottom - source.top);
-        const double targetWidth = height * 4.0 / 3.0;
-        if (targetWidth < width) {
-            const double center = static_cast<double>(source.left + source.right) * 0.5;
-            source.left = static_cast<LONG>(center - targetWidth * 0.5);
-            source.right = static_cast<LONG>(center + targetWidth * 0.5);
-        } else {
-            const double targetHeight = width * 3.0 / 4.0;
-            const double center = static_cast<double>(source.top + source.bottom) * 0.5;
-            source.top = static_cast<LONG>(center - targetHeight * 0.5);
-            source.bottom = static_cast<LONG>(center + targetHeight * 0.5);
-        }
+        const auto cropped = render::ScreenSourceRect(
+            {source.left, source.top, source.right, source.bottom},
+            render::ScreenCaptureKind::CropFourByThree);
+        source = {cropped.left, cropped.top, cropped.right, cropped.bottom};
         if (FAILED(
                 device->StretchRect(*backBuffer, &source, textureSurface, nullptr, D3DTEXF_LINEAR)))
             device->StretchRect(*backBuffer, &source, textureSurface, nullptr, D3DTEXF_NONE);

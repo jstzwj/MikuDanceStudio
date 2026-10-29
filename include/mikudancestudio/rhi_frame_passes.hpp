@@ -5,6 +5,9 @@ namespace mikudancestudio::rhi {
 struct FrameTarget {
     std::uint64_t id = 0;
     RenderTextureDesc description;
+    // Explicit cross-frame RGBA8 history. Initialized to this color after
+    // allocation/reset/replacement; ordinary targets remain frame-local.
+    std::optional<ClearColor> history;
 };
 struct FrameAttachment {
     std::uint64_t target = 0;

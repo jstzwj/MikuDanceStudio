@@ -1348,7 +1348,8 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     list->OMSetStencilRef(p.stencilReference);
     D3D12_VIEWPORT viewport{float(view.x),      float(view.y), float(view.width),
                             float(view.height), view.minDepth, view.maxDepth};
-    if (measured || p.shadow.mode != BuiltinShadowMode::None) {
+    if (p.postProcess.mode == PostProcessMode::None &&
+        (measured || p.shadow.mode != BuiltinShadowMode::None)) {
         viewport.TopLeftX += .5f;
         viewport.TopLeftY += .5f;
     }

@@ -457,6 +457,45 @@ void TestAccessoryEffectInputs() {
               f.app->ActiveRenderObject() == nullptr,
           "accessory submission restores its cursor and active identity");
 }
+void TestAccessoryScreenModes() {
+    Fixture f;
+    std::array<void*, 4> meshTable{};
+    meshTable[3] = reinterpret_cast<void*>(&Subset);
+    AccessoryMesh mesh{meshTable.data()};
+    mdl::AccessoryRecord accessory{};
+    InitAccessoryRecord(&accessory);
+    D3DMATERIAL9 material{};
+    material.Diffuse = {1, 1, 1, 1};
+    std::uint8_t type = 3;
+    accessory.mesh = &mesh;
+    accessory.materials = &material;
+    accessory.materialCount = 1;
+    accessory.textureTypes = &type;
+    accessory.visible = 1;
+    accessory.opacity = 1;
+    accessory.scale = 1;
+    f.app->AccessorySlot(0) = &accessory;
+    auto* captured = reinterpret_cast<IDirect3DTexture9*>(&f.buffer);
+    auto* background = reinterpret_cast<IDirect3DTexture9*>(&f.effect);
+    f.app->CaptureTexture() = captured;
+    f.app->AviBackgroundTexture() = background;
+    for (auto mode : {ScreenCaptureMode::Disabled, ScreenCaptureMode::FullFrame,
+                      ScreenCaptureMode::CropFourByThree, ScreenCaptureMode::BackgroundRefresh}) {
+        f.app->CaptureMode() = mode;
+        RenderAccessoriesFixedRange(f.app.get(), 0, 1);
+        Check(
+            f.device.textures[0] ==
+                (mode == ScreenCaptureMode::BackgroundRefresh ? background : captured),
+            "native screen modes select prior capture, disabled freezes it, background selects AVI");
+    }
+    f.app->CaptureTexture() = nullptr;
+    f.app->AviBackgroundTexture() = nullptr;
+    f.app->CaptureMode() = ScreenCaptureMode::Disabled;
+    RenderAccessoriesFixedRange(f.app.get(), 0, 1);
+    Check(f.device.textures[0] == nullptr,
+          "native screen initially unbound while capture is disabled");
+    f.app->AccessorySlot(0) = nullptr;
+}
 }
 int main() {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -465,5 +504,6 @@ int main() {
     TestEffectAndShadows();
     TestColorAndOrder();
     TestAccessoryEffectInputs();
+    TestAccessoryScreenModes();
     return failures ? 1 : 0;
 }

@@ -9,7 +9,11 @@ struct PostProcessConstants {
 };
 inline PostProcessConstants BuildPostProcessConstants(const ModelPipeline& p) {
     const auto& s = p.postProcess;
-    return {s.multiply, s.add, s.uvRect, {unsigned(s.mode), unsigned(s.linear), 0, 0}};
+    return {s.multiply,
+            s.add,
+            s.uvRect,
+            {unsigned(s.mode), unsigned(s.linear), p.viewport ? p.viewport->width : 0,
+             p.viewport ? p.viewport->height : 0}};
 }
 inline BuiltinShadowConstants BuildBuiltinShadowConstants(const ModelPipeline& p,
                                                           const ModelViewport& viewport) {

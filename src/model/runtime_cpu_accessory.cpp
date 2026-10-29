@@ -335,7 +335,8 @@ bool RuntimeCpuAccessory::Load(const std::filesystem::path& path, std::uint64_t 
                                 : primary.find(".sph") != std::string::npos     ? 1
                                 : primary.find(".spa") != std::string::npos     ? 2
                                                                                 : 0;
-            Require(m.textureType != 3, "x_dynamic_screen_texture_not_supported");
+            if (m.textureType == 3)
+                continue; // A dynamic screen name is never decoded as a disk asset.
             const std::string names[]{primary, sphere};
             for (unsigned s = 0; s < 2; ++s)
                 if (!names[s].empty()) {
@@ -386,6 +387,7 @@ bool RuntimeCpuAccessory::Build(const render::ModelFrameInputs& input,
         p.additive = additive;
         p.afterModelPass = after;
         p.textureType = m.textureType;
+        p.unboundScreen = m.textureType == 3;
         p.primaryTexture = m.textures[0].content.revision != 0;
         p.sphereTexture = m.textures[1].content.revision != 0;
         render::ModelMaterialPacket packet;
@@ -415,6 +417,7 @@ bool RuntimeCpuAccessory::Build(const render::ModelFrameInputs& input,
             draw.family = render::SceneDrawFamily::AccessoryMaterial;
             draw.model = pose.slot;
             draw.material = packet.material;
+            draw.screenTexture = impl->materials[packet.material].textureType == 3;
             draw.cpu = stream;
             draw.cpu.events = {{1, rhi::ModelReplayOp::Clear}};
             for (const auto& resource : stream.resources)
@@ -432,5 +435,9 @@ bool RuntimeCpuAccessory::Build(const render::ModelFrameInputs& input,
 }
 const render::ModelGeometrySnapshot* RuntimeCpuAccessory::Geometry() const {
     return impl ? &impl->geometry : nullptr;
+}
+bool RuntimeCpuAccessory::HasScreenTexture() const {
+    return impl && std::any_of(impl->materials.begin(), impl->materials.end(),
+                               [](const auto& m) { return m.textureType == 3; });
 }
 }

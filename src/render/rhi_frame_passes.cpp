@@ -76,6 +76,16 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         Handle h{std::uint32_t(handles.size()), 1, 1};
         if (!t.id || !handles.emplace(t.id, h).second || !state.Register(h, t.description))
             return fail("invalid_or_duplicate_frame_target");
+        if (t.history) {
+            if (t.description.format != TextureFormat::Rgba8 ||
+                !(t.description.access & unsigned(TextureAccess::Sampled)))
+                return fail("invalid_history_target");
+            RenderPassDesc initialize;
+            initialize.color = PassAttachment{h};
+            initialize.color->clear = *t.history;
+            if (!state.Begin(initialize) || !state.End())
+                return fail("invalid_history_clear");
+        }
     }
     std::set<std::uint64_t> resources;
     for (const auto& r : f.resources)
@@ -90,6 +100,8 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
                 return true;
             const auto i = handles.find(a->target);
             if (i == handles.end())
+                return false;
+            if (Target(f, a->target)->history && a->store != AttachmentStore::Store)
                 return false;
             out = PassAttachment{i->second, a->load,       a->store,
                                  a->clear,  a->clearDepth, a->clearStencil};

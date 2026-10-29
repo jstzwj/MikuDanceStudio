@@ -1227,8 +1227,9 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     context->PSSetShaderResources(0, 3, views.data());
     D3D11_VIEWPORT nativeViewport{float(viewport.x),      float(viewport.y), float(viewport.width),
                                   float(viewport.height), viewport.minDepth, viewport.maxDepth};
-    if (modelSupport.selected == D3D11ModelCompatibility::Dx9Measured ||
-        p.shadow.mode != BuiltinShadowMode::None) {
+    if (p.postProcess.mode == PostProcessMode::None &&
+        (modelSupport.selected == D3D11ModelCompatibility::Dx9Measured ||
+         p.shadow.mode != BuiltinShadowMode::None)) {
         nativeViewport.TopLeftX += .5f;
         nativeViewport.TopLeftY += .5f;
     }

@@ -98,8 +98,8 @@ int main(int argc,char** argv){
         for(auto slot:scene.Order())CHECK(scene.Model(slot)->PrepareMaterials(textures,reason));
         RuntimeCpuSceneProducer producer;CHECK(producer.Load(scene,resolver,true,assets,reason));
         SelfShadowSettings shadow;shadow.mode=1;RenderFrame unsupported;
-        CHECK(!producer.BuildFrame(scene,Frame(),target,shadow,unsupported,reason) &&
-              reason=="cpu_self_shadow_accessories_not_migrated" && unsupported.passes.empty());
+        CHECK(producer.BuildFrame(scene,Frame(),target,shadow,unsupported,reason) &&
+              ValidateRenderFrame(unsupported)); // Visible non-casting accessories are ordinary main draws.
         ModelReplayStream stream;CHECK(producer.Build(scene,Frame(),target,stream,reason));
         const bool ground=std::string(name)=="passes-v2.pmm";
         auto expected=std::vector<std::string>{"accessory_material","accessory_material","model_material","model_outline","accessory_material","accessory_material"};

@@ -8,6 +8,7 @@ class RuntimeCpuAccessory {
 public:
     RuntimeCpuAccessory();
     ~RuntimeCpuAccessory();
+    bool HasScreenTexture() const;
     bool Load(const std::filesystem::path&, std::uint64_t firstGeometryId, std::string& reason);
     bool Build(const render::ModelFrameInputs&, const render::ModelMatrix& placement,
                const format::PmmEvaluatedAccessory&, bool additive, bool afterModels,

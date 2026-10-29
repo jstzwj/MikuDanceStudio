@@ -122,6 +122,16 @@ int main() {
     CHECK(post.finalColor == 10 && post.passes.size() == f.passes.size() + 1);
     post.passes.back().draws[0].pipeline.raster.alphaBlend = true;
     CHECK(ValidateRenderFrame(post).reason == "invalid_postprocess_pipeline");
+    auto history = sampled;
+    history.passes.erase(history.passes.begin());
+    CHECK(ValidateRenderFrame(history).reason == "sample_before_write");
+    history.targets.back().history = ClearColor{0, 0, 0, 1};
+    CHECK(ValidateRenderFrame(history));
+    history.targets.back().history->red = -1;
+    CHECK(ValidateRenderFrame(history).reason == "invalid_history_clear");
+    history.targets.back().history = ClearColor{};
+    history.targets.back().description.format = TextureFormat::R32Float;
+    CHECK(ValidateRenderFrame(history).reason == "invalid_history_target");
     std::puts(
         "frame graph: ordered dependencies, attachments, discard and unsupported ranges passed");
 }

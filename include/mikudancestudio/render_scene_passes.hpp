@@ -28,8 +28,8 @@ struct AccessoryPassInputs {
     unsigned textureType = 0;
     bool primaryTexture = false, sphereTexture = false, additive = false;
     bool afterModelPass = false;
-    // Screen sampling is unsupported; an explicitly unbound screen source
-    // still has defined native semantics (terminate the texture cascade).
+    // An unbound screen source terminates the native texture cascade. The
+    // frame producer may resolve it to explicit screen history afterwards.
     bool unboundScreen = false;
 };
 bool BuildAccessoryPassInputs(const ModelFrameInputs&, const AccessoryPassInputs&,
@@ -56,6 +56,7 @@ struct SceneDrawReplacement {
     // keep one resident version across materials and objects. Empty identities
     // remain local to the producer; GPU addresses are never identities.
     std::array<std::string, 3> textureIdentities{};
+    bool screenTexture = false; // CPU frame producer resolves before submission.
 };
 // Audit uses active shader/pipeline fields and exact geometry/texture bytes.
 // It never copies a baseline field into generated input. Atomic on failure.

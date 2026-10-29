@@ -114,7 +114,8 @@ inline VertexLayout BuiltinShadowVertexLayout(BuiltinShadowMode mode) {
 enum class PostProcessMode {
     None,
     Copy,
-    ColorTransform
+    ColorTransform,
+    LegacyScreenCapture
 };
 struct PostProcessState {
     PostProcessMode mode = PostProcessMode::None;
@@ -148,7 +149,11 @@ inline bool ValidPostProcess(const ModelPipeline& p) {
     const auto& s = p.postProcess;
     if (s.mode == PostProcessMode::None)
         return true;
-    if (s.mode != PostProcessMode::Copy && s.mode != PostProcessMode::ColorTransform)
+    if (s.mode != PostProcessMode::Copy && s.mode != PostProcessMode::ColorTransform &&
+        s.mode != PostProcessMode::LegacyScreenCapture)
+        return false;
+    if (s.mode == PostProcessMode::LegacyScreenCapture &&
+        (!s.linear || !p.viewport || p.viewport->width < 2 || p.viewport->height < 2))
         return false;
     for (const auto* a : {&s.multiply, &s.add, &s.uvRect})
         for (float v : *a)

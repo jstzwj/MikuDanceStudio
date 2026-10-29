@@ -23,7 +23,8 @@ struct ModelReplayResource {
     std::vector<std::uint8_t> bytes;
     ModelTextureData texture;
 };
-// Mutable, frame-local RGBA8 product, distinct from immutable upload versions.
+// Mutable RGBA8 product, distinct from immutable upload versions. History
+// survives frames only when explicitly declared by the owning FrameTarget.
 // Dimensions are part of the reference: resizing requires rebuilding CPU draws.
 struct RenderTargetReference {
     std::uint64_t target = 0;

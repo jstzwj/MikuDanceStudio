@@ -19,6 +19,8 @@ int main(int argc, char** argv) try {
                       : api.find("dx12") == 0 ? Backend::D3D12
                                               : Backend::Vulkan;
     options.debugLayer = api.find("debug") != std::string::npos;
+    if (api.find("measured") != std::string::npos)
+        options.model.compatibility = ModelCompatibility::Dx9Measured;
     auto native = CreateOffscreenBackendDevice(96, 64, options);
     if (!native && options.debugLayer &&
         (native.reason == "validation_layer_unavailable" ||
@@ -80,6 +82,20 @@ int main(int argc, char** argv) try {
                     CHECK(small.bytes[(y * 17 + x) * 4 + c] ==
                           final.bytes[(sy * size + sx) * 4 + c]);
             }
+        PostProcessState graded{PostProcessMode::ColorTransform};
+        graded.multiply = {.5f, .75f, .25f, .5f};
+        graded.add = {.1f, .05f, .2f, .125f};
+        CHECK(AppendPostProcess(frame, 8, 9, 17, 13, graded));
+        CHECK(renderer.Prepare(1, frame, prepared) && renderer.Submit(prepared, token));
+        AttachmentReadback rgba;
+        CHECK(renderer.ReadTarget(1, 9, rgba));
+        for (std::size_t n = 0; n < rgba.bytes.size(); ++n) {
+            const auto c = n % 4;
+            const float value = small.bytes[n] / 255.f * graded.multiply[c] + graded.add[c];
+            const int expected = int(std::floor(std::clamp(value, 0.f, 1.f) * 255 + .5f));
+            CHECK(std::abs(int(rgba.bytes[n]) - expected) <= 1);
+        }
+        CHECK(native.device->ReadModelTarget(image) && image.pixels == rgba.bytes);
         CHECK(renderer.Unload(1));
     }
 #ifdef MIKUDANCESTUDIO_RHI_VULKAN
