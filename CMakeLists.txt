@@ -730,6 +730,7 @@ option(MIKUDANCESTUDIO_DIAG
 option(MIKUDANCESTUDIO_RHI_PREVIEW "Include optional CPU scene preview menu (runtime default off)" ON)
 if(MIKUDANCESTUDIO_DIAG OR (MIKUDANCESTUDIO_RHI_PREVIEW AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12 OR MIKUDANCESTUDIO_RHI_VULKAN)))
     target_compile_definitions(mikudancestudio_core PUBLIC MIKUDANCESTUDIO_CPU_RENDERING=1)
+    target_sources(mikudancestudio_core PRIVATE src/render/editor_scene.cpp)
     target_sources(mikudancestudio_core PRIVATE src/main/rhi_preview_host.cpp)
 endif()
 if (MIKUDANCESTUDIO_DIAG)

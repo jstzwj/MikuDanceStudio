@@ -1019,4 +1019,10 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
     SetAccessoryLight(app, device, false);
 }
 
+void BuildLiveAccessoryPlacement(MMDApp* app, mdl::AccessoryRecord* accessory, float* output) {
+    Matrix placement;
+    AccessoryPlacement(app, accessory, &placement);
+    std::memcpy(output, &placement, sizeof(placement));
+}
+
 } // namespace mikudancestudio

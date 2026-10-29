@@ -9,6 +9,8 @@ struct ModelRecord;
 void UpdateCpuRenderFrame(MMDApp*, const float* world, const float* lightRotation);
 void SetCpuRenderViewport(MMDApp*, const rhi::ModelViewport&);
 void SetCpuProjectionPolicy(MMDApp*, render::FovConversion);
+bool BuildBoneOperationAxisTransform(MMDApp*, const mdl::ModelRecord*, const float* frameWorld,
+                                     float* output);
 #ifdef MIKUDANCESTUDIO_CPU_RENDERING
 bool BuildLiveCpuModelInputs(MMDApp*, mdl::ModelRecord*, unsigned material, rhi::ModelPipeline&,
                              std::array<rhi::MaterialTextureAsset, 3>&, const char*& reason,

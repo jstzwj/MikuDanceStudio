@@ -390,25 +390,25 @@ void DrawAccessoryDebug(MMDApp* app) {
     }
 }
 
-void DrawBoneOperationAxis(MMDApp* app, const mdl::ModelRecord* model,
-                           const float frameMatrix[16]) {
+bool BuildBoneOperationAxisTransform(MMDApp* app, const mdl::ModelRecord* model,
+                                      const float frameMatrix[16], float* output) {
     if (!model || !model->boneTable)
-        return;
+        return false;
     const int selected = model->selectedBone;
-    if (selected < 0)
-        return;
+    if (selected < 0 || unsigned(selected) >= model->boneCount)
+        return false;
     auto* bones = model->boneTable;
     const mdl::BoneRecord* bone = &bones[selected];
     const mdl::BoneType type = bone->type;
     if (type == mdl::BoneType::FixedAxis ||
         (type == mdl::BoneType::UnderIk &&
          (bone->flags & mdl::kBoneFlagFixedAxis) == mdl::kBoneFlagFixedAxis))
-        return;
+        return false;
     const int operation = static_cast<int>(app->ViewportToolOperation());
     const int mode = static_cast<int>(app->InteractionDragMode());
     if (!((operation >= 9 && operation <= 14) || (mode >= 4 && mode <= 7) ||
           (mode >= 10 && mode <= 12)))
-        return;
+        return false;
 
     auto& api = d3dx::Get();
     Matrix world;
@@ -453,6 +453,15 @@ void DrawBoneOperationAxis(MMDApp* app, const mdl::ModelRecord* model,
     Matrix scaleMatrix;
     api.scaling(&scaleMatrix, scale, scale, scale);
     api.multiply(&world, &scaleMatrix, &world);
+    std::memcpy(output, &world, sizeof(world));
+    return true;
+}
+
+void DrawBoneOperationAxis(MMDApp* app, const mdl::ModelRecord* model,
+                           const float frameMatrix[16]) {
+    Matrix world;
+    if (!BuildBoneOperationAxisTransform(app, model, frameMatrix, &world.m[0][0]))
+        return;
     auto* device = DeviceFromScene(app->Physics());
     device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0x00FFFFFF, 1.0f, 0);
