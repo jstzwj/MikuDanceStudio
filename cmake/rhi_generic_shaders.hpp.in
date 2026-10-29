@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char genericPostSource[] = R"MDS(@MDS_GENERIC_POST@)MDS";

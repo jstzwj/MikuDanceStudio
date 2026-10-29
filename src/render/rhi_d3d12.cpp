@@ -10,6 +10,7 @@
 #include "mikudancestudio/rhi_render_pass.hpp"
 #include "rhi_model_constants.hpp"
 #include "rhi_model_shaders.hpp"
+#include "rhi_shader_d3d.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -112,6 +113,107 @@ public:
     DWORD debugCookie = 0;
     ComPtr<ID3D12DescriptorHeap> rtvs, dsvs, cpuViews;
     ComPtr<ID3D12RootSignature> root;
+    ComPtr<ID3D12RootSignature> genericRoot;
+    std::map<std::string, detail::D3DShaderProgram> genericPrograms;
+    ShaderPipeline genericPipeline;
+    ShaderResourceBindings genericBindings;
+    bool genericReady = false, genericBound = false;
+    std::string genericError;
+    ShaderCapabilities ShaderFeatures() const override {
+        return GraphicsShaderProfile(true, false);
+    }
+    const char* ShaderDiagnostic() const override { return genericError.c_str(); }
+    bool PrepareShaderPipeline(const ShaderPipeline&) override;
+    bool SetShaderPipeline(const ShaderPipeline&) override;
+    bool BindShaderResources(const ShaderResourceBindings& values) override {
+        genericBound = false;
+        if (!Live() || !inFrame || !modelReady || !genericReady)
+            return false;
+        const auto result = ValidateShaderBindings(genericPipeline, values, [&](Handle h) {
+            const auto* r = Find(h);
+            const auto* t = passes.Description(h);
+            return ShaderTextureInfo{r && r->texture, r && r->uploaded,
+                                     r && (t ? passes.CanSample(h) : r->uploaded), r && r->srgb,
+                                     t ? t->format : TextureFormat::Rgba8};
+        });
+        genericError = result.reason;
+        if (!result)
+            return false;
+        genericBindings = values;
+        genericBound = true;
+        return true;
+    }
+    bool BindGenericDescriptors() {
+        if (!genericBound || !BindShaderResources(genericBindings))
+            return false;
+        auto& f = frames[frameIndex];
+        if (f.drawCount >= MaxDraws)
+            return false;
+        const std::array<float, 4> zero{};
+        const auto empty = Constants(zero.data(), sizeof(zero));
+        if (!empty)
+            return false;
+        for (unsigned i = 0; i < 4; ++i)
+            f.commands->SetGraphicsRootConstantBufferView(i, empty);
+        for (const auto& c : genericBindings.constants) {
+            const auto address = Constants(c.bytes.data(), c.bytes.size());
+            if (!address)
+                return false;
+            f.commands->SetGraphicsRootConstantBufferView(c.slot, address);
+        }
+        auto views = f.views->GetCPUDescriptorHandleForHeapStart(),
+             samplers = f.samplers->GetCPUDescriptorHandleForHeapStart();
+        const auto offset = f.drawCount * 4;
+        views.ptr += SIZE_T(offset) * viewStride;
+        samplers.ptr += SIZE_T(offset) * samplerStride;
+        for (unsigned i = 0; i < 4; ++i) {
+            Handle h;
+            for (const auto& t : genericBindings.textures)
+                if (t.slot == i)
+                    h = t.texture;
+            if (h)
+                native->CopyDescriptorsSimple(1, views, CpuView(h.index),
+                                              D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            else {
+                D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+                v.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                v.Texture2D.MipLevels = 1;
+                native->CreateShaderResourceView(nullptr, &v, views);
+            }
+            SamplerDesc a;
+            a.min = a.mag = a.mip = SamplerFilter::Point;
+            for (const auto& s : genericBindings.samplers)
+                if (s.slot == i)
+                    a = s.sampler;
+            D3D12_SAMPLER_DESC s{};
+            s.Filter = a.min == SamplerFilter::Anisotropic || a.mag == SamplerFilter::Anisotropic
+                           ? D3D12_FILTER_ANISOTROPIC
+                           : D3D12_FILTER((a.min == SamplerFilter::Linear ? 16 : 0) |
+                                          (a.mag == SamplerFilter::Linear ? 4 : 0) |
+                                          (a.mip == SamplerFilter::Linear ? 1 : 0));
+            s.AddressU = a.u == SamplerAddress::Wrap ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                                     : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            s.AddressV = a.v == SamplerAddress::Wrap ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                                     : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            s.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            s.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+            s.MaxAnisotropy = a.maxAnisotropy;
+            s.MaxLOD = D3D12_FLOAT32_MAX;
+            native->CreateSampler(&s, samplers);
+            views.ptr += viewStride;
+            samplers.ptr += samplerStride;
+        }
+        auto gpuViews = f.views->GetGPUDescriptorHandleForHeapStart(),
+             gpuSamplers = f.samplers->GetGPUDescriptorHandleForHeapStart();
+        gpuViews.ptr += UINT64(offset) * viewStride;
+        gpuSamplers.ptr += UINT64(offset) * samplerStride;
+        f.commands->SetGraphicsRootDescriptorTable(4, gpuViews);
+        f.commands->SetGraphicsRootDescriptorTable(5, gpuSamplers);
+        ++f.drawCount;
+        return true;
+    }
     ComPtr<ID3DBlob> vertex, colorVertex, pixel;
     ComPtr<ID3DBlob> screenVertex, screenPixel, shadowVertex, shadowOutlineVertex, shadowPixel;
     ComPtr<ID3DBlob> postVertex, postPixel;
@@ -899,6 +1001,8 @@ public:
     }
     bool SetFixedPipeline(FixedPipelineState) override;
     bool BindTexture(std::uint32_t slot, Handle h) override {
+        if (genericReady)
+            return false;
         auto* r = Find(h);
         if (!inFrame || !modelReady || slot >= 3 || (screenReady && slot) || !r || !r->texture ||
             (passes.Description(h) ? !passes.CanSample(h) : !r->uploaded) ||
@@ -1020,8 +1124,11 @@ public:
         return true;
     }
     bool SetModelPipeline(const ModelPipeline& p) override;
-    bool UsePipeline(const ModelPipeline&, VertexLayout, ID3DBlob*, ID3DBlob*);
+    bool UsePipeline(const ModelPipeline&, VertexLayout, ID3DBlob*, ID3DBlob*,
+                     const ShaderProgram* = nullptr);
     bool BindDrawDescriptors() {
+        if (genericReady)
+            return BindGenericDescriptors();
         auto& f = frames[frameIndex];
         if (f.drawCount >= MaxDraws)
             return false;
@@ -1185,10 +1292,10 @@ public:
 };
 
 bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DBlob* vs,
-                              ID3DBlob* pixel) {
+                              ID3DBlob* pixel, const ShaderProgram* generic) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d;
     std::memset(&d, 0, sizeof(d));
-    d.pRootSignature = root.Get();
+    d.pRootSignature = generic ? genericRoot.Get() : root.Get();
     d.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
     d.PS = {pixel->GetBufferPointer(), pixel->GetBufferSize()};
     auto& b = d.BlendState.RenderTarget[0];
@@ -1260,12 +1367,27 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     append(layout);
     append(p.shadow.mode);
     append(p.postProcess.mode);
+    if (generic)
+        key.append(generic->key);
     auto state = pipelines.find(key);
     if (state == pipelines.end()) {
         d.InputLayout =
             layout == VertexLayout::ScreenPositionColorUv ? D3D12_INPUT_LAYOUT_DESC{screen, 3}
             : layout == VertexLayout::PositionColor       ? D3D12_INPUT_LAYOUT_DESC{colors, 2}
                                                           : D3D12_INPUT_LAYOUT_DESC{elements, 3};
+        std::vector<D3D12_INPUT_ELEMENT_DESC> genericInputs;
+        if (generic) {
+            for (const auto& i : generic->description.inputs) {
+                const auto format =
+                    i.format == ShaderVertexFormat::Float2   ? DXGI_FORMAT_R32G32_FLOAT
+                    : i.format == ShaderVertexFormat::Float3 ? DXGI_FORMAT_R32G32B32_FLOAT
+                    : i.format == ShaderVertexFormat::Float4 ? DXGI_FORMAT_R32G32B32A32_FLOAT
+                                                             : DXGI_FORMAT_R8G8B8A8_UNORM;
+                genericInputs.push_back({i.semantic.c_str(), i.semanticIndex, format, 0, i.offset,
+                                         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            }
+            d.InputLayout = {genericInputs.data(), UINT(genericInputs.size())};
+        }
         ComPtr<ID3D12PipelineState> created;
         lastError = native->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&created));
         if (FAILED(lastError))
@@ -1277,7 +1399,85 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     return true;
 }
 
+bool D3D12Device::PrepareShaderPipeline(const ShaderPipeline& p) {
+    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    genericError = result.reason;
+    if (!result || !Live())
+        return false;
+    if (!genericRoot) {
+        D3D12_ROOT_PARAMETER parameters[6]{};
+        D3D12_DESCRIPTOR_RANGE ranges[2]{};
+        for (unsigned i = 0; i < 4; ++i) {
+            parameters[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+            parameters[i].Descriptor.ShaderRegister = i;
+            parameters[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        }
+        ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0};
+        ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 4, 0, 0, 0};
+        for (unsigned i = 0; i < 2; ++i) {
+            parameters[i + 4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            parameters[i + 4].DescriptorTable = {1, &ranges[i]};
+            parameters[i + 4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        }
+        D3D12_ROOT_SIGNATURE_DESC signature{};
+        signature.NumParameters = 6;
+        signature.pParameters = parameters;
+        signature.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        ComPtr<ID3DBlob> blob, errors;
+        lastError =
+            D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors);
+        if (SUCCEEDED(lastError))
+            lastError = native->CreateRootSignature(
+                0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&genericRoot));
+        if (FAILED(lastError)) {
+            genericError = "shader_root_layout_failed";
+            return false;
+        }
+    }
+    auto compiled = genericPrograms.find(p.program->key);
+    if (compiled == genericPrograms.end()) {
+        detail::D3DShaderProgram binary;
+        if (!detail::CompileD3DProgram(*p.program, binary, genericError))
+            return false;
+        compiled = genericPrograms.emplace(p.program->key, std::move(binary)).first;
+    }
+    genericError.clear();
+    return true;
+}
+bool D3D12Device::SetShaderPipeline(const ShaderPipeline& p) {
+    genericReady = genericBound = modelReady = screenReady = false;
+    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    genericError = result.reason;
+    const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
+    if (!result || !Live() || !inFrame ||
+        !ValidModelViewport(view, RenderWidth(), RenderHeight()) ||
+        ((p.raster.depthTest || p.raster.depthWrite) && ActiveDepthFormat() == DXGI_FORMAT_UNKNOWN))
+        return false;
+    if (!PrepareShaderPipeline(p))
+        return false;
+    auto compiled = genericPrograms.find(p.program->key);
+    const auto adapter = ShaderRasterAdapter(p);
+    if (!UsePipeline(adapter, p.vertexLayout, compiled->second.vertex.Get(),
+                     compiled->second.pixel.Get(), p.program.get()))
+        return false;
+    auto* list = frames[frameIndex].commands.Get();
+    list->SetGraphicsRootSignature(genericRoot.Get());
+    list->IASetPrimitiveTopology(p.topology == PrimitiveTopology::LineList
+                                     ? D3D_PRIMITIVE_TOPOLOGY_LINELIST
+                                     : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D12_VIEWPORT viewport{float(view.x),      float(view.y), float(view.width),
+                            float(view.height), view.minDepth, view.maxDepth};
+    list->RSSetViewports(1, &viewport);
+    pipeline = adapter;
+    genericPipeline = p;
+    genericReady = modelReady = true;
+    genericError.clear();
+    return true;
+}
 bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
+    genericReady = genericBound = false;
+    if (inFrame)
+        frames[frameIndex].commands->SetGraphicsRootSignature(root.Get());
     modelReady = screenReady = false;
     textures = {};
     shadowTexture = {};
@@ -1396,6 +1596,9 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     return true;
 }
 bool D3D12Device::SetFixedPipeline(FixedPipelineState f) {
+    genericReady = genericBound = false;
+    if (inFrame)
+        frames[frameIndex].commands->SetGraphicsRootSignature(root.Get());
     if (passes.Active())
         return false;
     modelReady = screenReady = false;

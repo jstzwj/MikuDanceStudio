@@ -12,6 +12,7 @@
 #include "mikudancestudio/rhi_render_pass.hpp"
 #include "rhi_model_constants.hpp"
 #include "rhi_vulkan_spirv.hpp"
+#include "rhi_shader_spirv.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -182,6 +183,46 @@ public:
     VkCommandPool transferPool = VK_NULL_HANDLE;
     VkCommandBuffer transfer = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout genericDescriptorLayout = VK_NULL_HANDLE;
+    VkPipelineLayout genericPipelineLayout = VK_NULL_HANDLE;
+    struct GenericProgram {
+        VkShaderModule vertex = VK_NULL_HANDLE, pixel = VK_NULL_HANDLE;
+    };
+    std::map<std::string, GenericProgram> genericPrograms;
+    ShaderPipeline genericPipeline;
+    ShaderResourceBindings genericBindings;
+    bool genericReady = false, genericBound = false;
+    std::string genericError;
+    ShaderCapabilities ShaderFeatures() const override {
+        return GraphicsShaderProfile(detail::RuntimeSpirvCompilerAvailable(), true);
+    }
+    const char* ShaderDiagnostic() const override { return genericError.c_str(); }
+    bool PrepareShaderPipeline(const ShaderPipeline&) override;
+    bool SetShaderPipeline(const ShaderPipeline&) override;
+    bool BindShaderResources(const ShaderResourceBindings& values) override {
+        genericBound = false;
+        if (!Live() || !inFrame || !modelReady || !genericReady)
+            return false;
+        const auto result = ValidateShaderBindings(genericPipeline, values, [&](Handle h) {
+            const auto* r = Find(h);
+            const auto* t = passes.Description(h);
+            return ShaderTextureInfo{
+                r && bool(r->image), r && r->uploaded, r && (t ? passes.CanSample(h) : r->uploaded),
+                r && r->format == VK_FORMAT_R8G8B8A8_SRGB, t ? t->format : TextureFormat::Rgba8};
+        });
+        genericError = result.reason;
+        if (!result)
+            return false;
+        for (const auto& s : values.samplers)
+            if (s.sampler.maxAnisotropy > properties.limits.maxSamplerAnisotropy) {
+                genericError = "sampler_anisotropy_not_supported";
+                return false;
+            }
+        genericBindings = values;
+        genericBound = true;
+        return true;
+    }
+    bool BindGenericDescriptors();
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties{};
     VkPhysicalDeviceMemoryProperties memoryProperties{};
@@ -263,6 +304,7 @@ public:
         return {true, true, true, true, true, true, true, false, true, true, bool(chain), MaxDraws};
     }
     bool SetFixedPipeline(FixedPipelineState) override {
+        genericReady = genericBound = false;
         modelReady = false;
         return false;
     }
@@ -300,6 +342,10 @@ public:
             }
             for (auto p : pipelines)
                 vkDestroyPipeline(native, p.second, nullptr);
+            for (const auto& p : genericPrograms) {
+                vkDestroyShaderModule(native, p.second.vertex, nullptr);
+                vkDestroyShaderModule(native, p.second.pixel, nullptr);
+            }
             for (auto s : samplers)
                 vkDestroySampler(native, s.second, nullptr);
             for (auto module :
@@ -310,6 +356,10 @@ public:
                 vkDestroyPipelineLayout(native, pipelineLayout, nullptr);
             if (descriptorLayout)
                 vkDestroyDescriptorSetLayout(native, descriptorLayout, nullptr);
+            if (genericPipelineLayout)
+                vkDestroyPipelineLayout(native, genericPipelineLayout, nullptr);
+            if (genericDescriptorLayout)
+                vkDestroyDescriptorSetLayout(native, genericDescriptorLayout, nullptr);
             if (transferPool)
                 vkDestroyCommandPool(native, transferPool, nullptr);
             if (timeline)
@@ -1122,6 +1172,8 @@ public:
         return true;
     }
     bool BindTexture(std::uint32_t slot, Handle h) override {
+        if (genericReady)
+            return false;
         auto* r = Find(h);
         if (!Live() || !inFrame || !modelReady || slot >= 3 ||
             pipeline.shader.layout.stages[slot].role == MaterialTextureRole::None || !r ||
@@ -1143,7 +1195,8 @@ public:
     bool Draw(NonIndexedDraw) override;
     bool DrawIndexed(IndexedDraw) override;
     bool BindDraw();
-    bool MakePipeline(const ModelPipeline&, VkPipeline&);
+    bool MakePipeline(const ModelPipeline&, VkPipeline&, const ShaderProgram* = nullptr,
+                      const GenericProgram* = nullptr);
     VkSampler Sampler(const SamplerDesc&);
     bool Initialize(unsigned, unsigned, VulkanDriver, VulkanOptions,
                     const SwapchainDesc* = nullptr);
@@ -1715,7 +1768,8 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     return true;
 }
 
-bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
+bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out,
+                                const ShaderProgram* generic, const GenericProgram* binary) {
     auto* color = ActiveColor();
     auto* depth = ActiveDepth();
     const auto cf = color ? color->format : VK_FORMAT_UNDEFINED,
@@ -1748,6 +1802,8 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
                        unsigned(p.stencilPass),
                        unsigned(p.colorWriteMask)})
         key << value << ',';
+    if (generic)
+        key.write(generic->key.data(), generic->key.size());
     auto found = pipelines.find(key.str());
     if (found != pipelines.end()) {
         out = found->second;
@@ -1771,6 +1827,12 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
         stages[1].module = postPs;
         stages[1].pName = "post_ps";
     }
+    if (generic) {
+        stages[0].module = binary->vertex;
+        stages[0].pName = generic->description.vertex.entry.c_str();
+        stages[1].module = binary->pixel;
+        stages[1].pName = generic->description.pixel.entry.c_str();
+    }
     VkVertexInputBindingDescription binding{0, ModelVertexStride(p.vertexLayout),
                                             VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription attrs[] = {{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
@@ -1789,6 +1851,19 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
     if (p.postProcess.mode != PostProcessMode::None) {
         attrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, 24};
         vi.vertexAttributeDescriptionCount = 2;
+    }
+    std::vector<VkVertexInputAttributeDescription> genericInputs;
+    if (generic) {
+        for (const auto& i : generic->description.inputs) {
+            const auto format =
+                i.format == ShaderVertexFormat::Float2   ? VK_FORMAT_R32G32_SFLOAT
+                : i.format == ShaderVertexFormat::Float3 ? VK_FORMAT_R32G32B32_SFLOAT
+                : i.format == ShaderVertexFormat::Float4 ? VK_FORMAT_R32G32B32A32_SFLOAT
+                                                         : VK_FORMAT_R8G8B8A8_UNORM;
+            genericInputs.push_back({i.location, 0, format, i.offset});
+        }
+        vi.vertexAttributeDescriptionCount = unsigned(genericInputs.size());
+        vi.pVertexAttributeDescriptions = genericInputs.data();
     }
     VkPipelineInputAssemblyStateCreateInfo ia{
         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
@@ -1857,14 +1932,186 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out) {
     info.pDepthStencilState = &ds;
     info.pColorBlendState = &bs;
     info.pDynamicState = &dyn;
-    info.layout = pipelineLayout;
+    info.layout = generic ? genericPipelineLayout : pipelineLayout;
     if (!Check(vkCreateGraphicsPipelines(native, VK_NULL_HANDLE, 1, &info, nullptr, &out)))
         return false;
     pipelines.emplace(key.str(), out);
     ++stats.pipelineCreations;
     return true;
 }
+bool VulkanDevice::PrepareShaderPipeline(const ShaderPipeline& p) {
+    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    genericError = result.reason;
+    if (!result || !Live())
+        return false;
+    if (!genericDescriptorLayout) {
+        VkDescriptorSetLayoutBinding bindings[12]{};
+        for (unsigned i = 0; i < 12; ++i) {
+            bindings[i].binding = i;
+            bindings[i].descriptorCount = 1;
+            bindings[i].descriptorType = i < 4   ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                         : i < 8 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                                 : VK_DESCRIPTOR_TYPE_SAMPLER;
+            bindings[i].stageFlags = i < 4
+                                         ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                                         : VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        info.bindingCount = 12;
+        info.pBindings = bindings;
+        if (!Check(vkCreateDescriptorSetLayout(native, &info, nullptr, &genericDescriptorLayout)))
+            return false;
+    }
+    if (!genericPipelineLayout) {
+        VkPipelineLayoutCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        info.setLayoutCount = 1;
+        info.pSetLayouts = &genericDescriptorLayout;
+        if (!Check(vkCreatePipelineLayout(native, &info, nullptr, &genericPipelineLayout)))
+            return false;
+    }
+    auto compiled = genericPrograms.find(p.program->key);
+    if (compiled == genericPrograms.end()) {
+        GenericProgram program;
+        SnapshotBytes vs, ps;
+        const auto& desc = p.program->description;
+        if (!detail::CompileSpirv(desc.vertex, vs, genericError) ||
+            !detail::CompileSpirv(desc.pixel, ps, genericError) ||
+            !detail::ReflectSpirv(desc, desc.vertex, vs, genericError) ||
+            !detail::ReflectSpirv(desc, desc.pixel, ps, genericError))
+            return false;
+        const auto module = [&](const SnapshotBytes& bytes, VkShaderModule& output) {
+            std::vector<std::uint32_t> words(bytes.size() / 4);
+            std::memcpy(words.data(), bytes.data(), bytes.size());
+            VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            info.codeSize = bytes.size();
+            info.pCode = words.data();
+            return Check(vkCreateShaderModule(native, &info, nullptr, &output));
+        };
+        if (!module(vs, program.vertex) || !module(ps, program.pixel)) {
+            if (program.vertex)
+                vkDestroyShaderModule(native, program.vertex, nullptr);
+            if (program.pixel)
+                vkDestroyShaderModule(native, program.pixel, nullptr);
+            return false;
+        }
+        compiled = genericPrograms.emplace(p.program->key, program).first;
+    }
+    genericError.clear();
+    return true;
+}
+bool VulkanDevice::SetShaderPipeline(const ShaderPipeline& p) {
+    genericReady = genericBound = modelReady = false;
+    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    genericError = result.reason;
+    const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
+    if (!result || !Live() || !inFrame ||
+        !ValidModelViewport(view, RenderWidth(), RenderHeight()) ||
+        ((p.raster.depthTest || p.raster.depthWrite) && !ActiveDepth()))
+        return false;
+    if (!PrepareShaderPipeline(p))
+        return false;
+    auto compiled = genericPrograms.find(p.program->key);
+    VkPipeline selected;
+    const auto adapter = ShaderRasterAdapter(p);
+    if (!MakePipeline(adapter, selected, p.program.get(), &compiled->second))
+        return false;
+    if (!rendering) {
+        PassAttachment c, d;
+        c.load = d.load = AttachmentLoad::Load;
+        BeginNative(&legacyColor, &legacyDepth, &c, &d, width, height);
+    }
+    const auto cmd = frames[frameIndex].commands;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selected);
+    const VkViewport nativeView{float(view.x),     float(view.y + view.height),
+                                float(view.width), -float(view.height),
+                                view.minDepth,     view.maxDepth};
+    const VkRect2D scissor{{0, 0}, {RenderWidth(), RenderHeight()}};
+    vkCmdSetViewport(cmd, 0, 1, &nativeView);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_AND_BACK, 0);
+    pipeline = adapter;
+    viewport = view;
+    genericPipeline = p;
+    genericReady = modelReady = true;
+    genericError.clear();
+    return true;
+}
+bool VulkanDevice::BindGenericDescriptors() {
+    if (!genericBound || !BindShaderResources(genericBindings))
+        return false;
+    auto& f = frames[frameIndex];
+    if (f.draws >= MaxDraws)
+        return false;
+    const auto align =
+        (std::max)(VkDeviceSize(1), properties.limits.minUniformBufferOffsetAlignment);
+    VkDescriptorBufferInfo buffers[4]{};
+    VkDescriptorImageInfo images[4]{}, sampling[4]{};
+    const auto upload = [&](VkDescriptorBufferInfo& info, const void* data, std::size_t bytes) {
+        const auto offset = (f.offset + align - 1) / align * align;
+        if (offset + bytes > UniformBytes)
+            return false;
+        std::memcpy(static_cast<char*>(f.uniforms.mapped) + offset, data, bytes);
+        info = {f.uniforms.native, offset, bytes};
+        f.offset = offset + bytes;
+        return true;
+    };
+    const std::array<float, 4> zero{};
+    if (!upload(buffers[0], zero.data(), sizeof(zero)))
+        return false;
+    buffers[1] = buffers[2] = buffers[3] = buffers[0];
+    for (const auto& c : genericBindings.constants)
+        if (!upload(buffers[c.slot], c.bytes.data(), c.bytes.size()))
+            return false;
+    for (unsigned i = 0; i < 4; ++i) {
+        Resource* r = &white;
+        for (const auto& t : genericBindings.textures)
+            if (t.slot == i)
+                r = Find(t.texture);
+        if (!r || r->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            return false;
+        r->lastUse = issued + 1;
+        images[i].imageView = r->view;
+        images[i].imageLayout = r->layout;
+        SamplerDesc a;
+        a.min = a.mag = a.mip = SamplerFilter::Point;
+        a.u = a.v = SamplerAddress::Clamp;
+        for (const auto& s : genericBindings.samplers)
+            if (s.slot == i)
+                a = s.sampler;
+        sampling[i].sampler = Sampler(a);
+        if (!sampling[i].sampler)
+            return false;
+    }
+    VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    alloc.descriptorPool = f.descriptors;
+    alloc.descriptorSetCount = 1;
+    alloc.pSetLayouts = &genericDescriptorLayout;
+    VkDescriptorSet set;
+    if (!Check(vkAllocateDescriptorSets(native, &alloc, &set)))
+        return false;
+    VkWriteDescriptorSet writes[12]{};
+    for (unsigned i = 0; i < 12; ++i) {
+        auto& w = writes[i];
+        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet = set;
+        w.dstBinding = i;
+        w.descriptorCount = 1;
+        w.descriptorType = i < 4   ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                           : i < 8 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                   : VK_DESCRIPTOR_TYPE_SAMPLER;
+        if (i < 4)
+            w.pBufferInfo = &buffers[i];
+        else
+            w.pImageInfo = i < 8 ? &images[i - 4] : &sampling[i - 8];
+    }
+    vkUpdateDescriptorSets(native, 12, writes, 0, nullptr);
+    vkCmdBindDescriptorSets(f.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, genericPipelineLayout, 0,
+                            1, &set, 0, nullptr);
+    ++f.draws;
+    return true;
+}
 bool VulkanDevice::SetModelPipeline(const ModelPipeline& p) {
+    genericReady = genericBound = false;
     modelReady = false;
     textures = {};
     shadow = {};
@@ -1965,6 +2212,8 @@ VkSampler VulkanDevice::Sampler(const SamplerDesc& d) {
     return out;
 }
 bool VulkanDevice::BindDraw() {
+    if (genericReady)
+        return BindGenericDescriptors();
     auto& f = frames[frameIndex];
     if (f.draws >= MaxDraws)
         return false;

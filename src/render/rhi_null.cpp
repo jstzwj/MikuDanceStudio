@@ -22,6 +22,11 @@ public:
     Backend BackendType() const override { return Backend::Null; }
     Capabilities Features() const override { return {}; }
     ShaderCapabilities ShaderFeatures() const override { return GraphicsShaderProfile(true, true); }
+    bool PrepareShaderPipeline(const ShaderPipeline& p) override {
+        const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+        shaderError_ = result.reason;
+        return bool(result);
+    }
     const char* ShaderDiagnostic() const override { return shaderError_.c_str(); }
     bool SetShaderPipeline(const ShaderPipeline& p) override {
         shaderReady_ = bindingsReady_ = linePipelineReady_ = false;
@@ -30,10 +35,15 @@ public:
         if (!inFrame_ || resetPending_ || !result)
             return false;
         const auto& pass = passes_.Current();
-        const auto* target = passes_.Active() ? passes_.Description(pass.color ? pass.color->texture : pass.depthStencil->texture) : nullptr;
-        if (p.viewport && (!target || !ValidModelViewport(*p.viewport, target->width, target->height)))
+        const auto* target =
+            passes_.Active()
+                ? passes_.Description(pass.color ? pass.color->texture : pass.depthStencil->texture)
+                : nullptr;
+        if (p.viewport &&
+            (!target || !ValidModelViewport(*p.viewport, target->width, target->height)))
             return false;
-        if ((p.raster.depthTest || p.raster.depthWrite) && (!passes_.Active() || !pass.depthStencil))
+        if ((p.raster.depthTest || p.raster.depthWrite) &&
+            (!passes_.Active() || !pass.depthStencil))
             return false;
         shader_ = p;
         shaderReady_ = true;
@@ -46,12 +56,14 @@ public:
         const auto result = ValidateShaderBindings(shader_, bindings, [&](Handle h) {
             const auto* r = Find(h);
             const auto* target = passes_.Description(h);
-            return ShaderTextureInfo{r && r->texture, r && (r->uploaded || (target && passes_.CanSample(h))),
-                r && (target ? passes_.CanSample(h) : r->uploaded), false,
-                target ? target->format : TextureFormat::Rgba8};
+            return ShaderTextureInfo{r && r->texture,
+                                     r && (r->uploaded || (target && passes_.CanSample(h))),
+                                     r && (target ? passes_.CanSample(h) : r->uploaded), false,
+                                     target ? target->format : TextureFormat::Rgba8};
         });
         shaderError_ = result.reason;
-        if (!result) return false;
+        if (!result)
+            return false;
         shaderBindings_ = bindings;
         bindingsReady_ = true;
         return true;
@@ -242,12 +254,14 @@ public:
     bool Draw(NonIndexedDraw draw) override {
         if (shaderReady_) {
             auto* v = Find(draw.vertices);
-            const auto stride = ModelVertexStride(shader_.vertexLayout), arity = ModelPrimitiveArity(shader_.topology);
+            const auto stride = ModelVertexStride(shader_.vertexLayout),
+                       arity = ModelPrimitiveArity(shader_.topology);
             return inFrame_ && bindingsReady_ && BindShaderResources(shaderBindings_) &&
-                IsCurrentSubmission(Status(), draw.submission) && v && !v->texture &&
-                v->buffer.usage == BufferUsage::Vertex && (!draw.layout || *draw.layout == shader_.vertexLayout) &&
-                draw.vertexCount && draw.vertexCount % arity == 0 && draw.firstVertex <= v->bytes.size()/stride &&
-                draw.vertexCount <= v->bytes.size()/stride-draw.firstVertex;
+                   IsCurrentSubmission(Status(), draw.submission) && v && !v->texture &&
+                   v->buffer.usage == BufferUsage::Vertex &&
+                   (!draw.layout || *draw.layout == shader_.vertexLayout) && draw.vertexCount &&
+                   draw.vertexCount % arity == 0 && draw.firstVertex <= v->bytes.size() / stride &&
+                   draw.vertexCount <= v->bytes.size() / stride - draw.firstVertex;
         }
         if (!IsCurrentSubmission(Status(), draw.submission))
             return false;
@@ -266,17 +280,25 @@ public:
     }
     bool DrawIndexed(IndexedDraw draw) override {
         if (shaderReady_) {
-            auto* v=Find(draw.vertices); auto* i=Find(draw.indices);
-            const auto stride=ModelVertexStride(shader_.vertexLayout), arity=ModelPrimitiveArity(shader_.topology);
-            const auto step=i && i->buffer.indexFormat==IndexFormat::UInt32?4u:2u;
-            if (!inFrame_ || !bindingsReady_ || !BindShaderResources(shaderBindings_) || !IsCurrentSubmission(Status(),draw.submission) ||
-                !v || !i || v->texture || i->texture || v->buffer.usage!=BufferUsage::Vertex || i->buffer.usage!=BufferUsage::Index ||
-                draw.layout!=shader_.vertexLayout || !draw.vertexCount || !draw.indexCount || draw.indexCount%arity ||
-                draw.vertexCount>v->bytes.size()/stride || draw.firstIndex>i->bytes.size()/step || draw.indexCount>i->bytes.size()/step-draw.firstIndex)
+            auto* v = Find(draw.vertices);
+            auto* i = Find(draw.indices);
+            const auto stride = ModelVertexStride(shader_.vertexLayout),
+                       arity = ModelPrimitiveArity(shader_.topology);
+            const auto step = i && i->buffer.indexFormat == IndexFormat::UInt32 ? 4u : 2u;
+            if (!inFrame_ || !bindingsReady_ || !BindShaderResources(shaderBindings_) ||
+                !IsCurrentSubmission(Status(), draw.submission) || !v || !i || v->texture ||
+                i->texture || v->buffer.usage != BufferUsage::Vertex ||
+                i->buffer.usage != BufferUsage::Index || draw.layout != shader_.vertexLayout ||
+                !draw.vertexCount || !draw.indexCount || draw.indexCount % arity ||
+                draw.vertexCount > v->bytes.size() / stride ||
+                draw.firstIndex > i->bytes.size() / step ||
+                draw.indexCount > i->bytes.size() / step - draw.firstIndex)
                 return false;
-            for(unsigned n=0;n<draw.indexCount;++n) {
-                std::uint32_t index=0;std::memcpy(&index,i->bytes.data()+(draw.firstIndex+n)*step,step);
-                if(index>=draw.vertexCount)return false;
+            for (unsigned n = 0; n < draw.indexCount; ++n) {
+                std::uint32_t index = 0;
+                std::memcpy(&index, i->bytes.data() + (draw.firstIndex + n) * step, step);
+                if (index >= draw.vertexCount)
+                    return false;
             }
             return true;
         }

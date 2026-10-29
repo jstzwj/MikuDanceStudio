@@ -129,6 +129,9 @@ void CpuSceneFrameAssembler::Append(SceneDrawReplacement draw) {
         bool used = uses(command->vertices) || uses(command->indices);
         for (const auto& key : command->textures)
             used = used || uses(key);
+        if (command->shader)
+            for (const auto& texture : command->shader->textures)
+                used = used || uses(texture.texture);
         if (!used)
             continue;
         const auto identity = ResourceIdentity(draw, resource);
@@ -228,6 +231,9 @@ rhi::ModelReplayResult CpuSceneFrameAssembler::Finish(rhi::ModelReplayStream& ou
         e.draw.indices = mapped(e.draw.indices);
         for (auto& t : e.draw.textures)
             t = mapped(t);
+        if (e.draw.shader)
+            for (auto& t : e.draw.shader->textures)
+                t.texture = mapped(t.texture);
         result.events.push_back(std::move(e));
     }
     const auto valid = rhi::ValidateModelReplay(result);

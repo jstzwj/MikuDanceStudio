@@ -11,6 +11,7 @@
 #include "mikudancestudio/rhi_model_shader_constants.hpp"
 #include "rhi_model_shaders.hpp"
 #include "rhi_model_constants.hpp"
+#include "rhi_shader_d3d.hpp"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -50,6 +51,105 @@ public:
     bool modelReady = false, retired = false;
     std::array<Handle, 3> modelTextures{};
     ModelPipeline modelPipeline;
+    struct GenericProgram {
+        ComPtr<ID3D11VertexShader> vertex;
+        ComPtr<ID3D11PixelShader> pixel;
+        ComPtr<ID3D11InputLayout> input;
+    };
+    std::map<std::string, GenericProgram> genericPrograms;
+    std::array<ComPtr<ID3D11Buffer>, 4> genericConstants;
+    ShaderPipeline genericPipeline;
+    ShaderResourceBindings genericBindings;
+    bool genericReady = false, genericBound = false;
+    std::string genericError;
+    ShaderCapabilities ShaderFeatures() const override {
+        return GraphicsShaderProfile(true, false);
+    }
+    const char* ShaderDiagnostic() const override { return genericError.c_str(); }
+    bool PrepareShaderPipeline(const ShaderPipeline&) override;
+    bool SetShaderPipeline(const ShaderPipeline&) override;
+    bool BindShaderResources(const ShaderResourceBindings& values) override {
+        genericBound = false;
+        if (!Live() || !inFrame || !modelReady || !genericReady)
+            return false;
+        const auto result = ValidateShaderBindings(genericPipeline, values, [&](Handle h) {
+            auto* r = Find(h);
+            const auto* t = passes.Description(h);
+            return ShaderTextureInfo{r && bool(r->view), r && r->uploaded,
+                                     r && (t ? passes.CanSample(h) : r->uploaded), r && r->srgb,
+                                     t ? t->format : TextureFormat::Rgba8};
+        });
+        genericError = result.reason;
+        if (!result)
+            return false;
+        genericBindings = values;
+        genericBound = true;
+        return true;
+    }
+    bool ApplyGenericBindings() {
+        if (!genericBound || !BindShaderResources(genericBindings))
+            return false;
+        ID3D11Buffer* cb[4]{};
+        ID3D11ShaderResourceView* images[4]{};
+        ID3D11SamplerState* sampling[4]{};
+        for (const auto& c : genericBindings.constants) {
+            auto& buffer = genericConstants[c.slot];
+            D3D11_BUFFER_DESC old{};
+            if (buffer)
+                buffer->GetDesc(&old);
+            if (old.ByteWidth != c.bytes.size()) {
+                D3D11_BUFFER_DESC desc{};
+                desc.ByteWidth = UINT(c.bytes.size());
+                desc.Usage = D3D11_USAGE_DYNAMIC;
+                desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                buffer.Reset();
+                lastError = native->CreateBuffer(&desc, nullptr, &buffer);
+                if (FAILED(lastError))
+                    return false;
+            }
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            lastError = context->Map(buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+            if (FAILED(lastError))
+                return false;
+            std::memcpy(mapped.pData, c.bytes.data(), c.bytes.size());
+            context->Unmap(buffer.Get(), 0);
+            cb[c.slot] = buffer.Get();
+        }
+        for (const auto& t : genericBindings.textures)
+            images[t.slot] = Find(t.texture)->view.Get();
+        for (const auto& s : genericBindings.samplers) {
+            const auto& a = s.sampler;
+            D3D11_SAMPLER_DESC desc{};
+            desc.Filter = a.min == SamplerFilter::Anisotropic || a.mag == SamplerFilter::Anisotropic
+                              ? D3D11_FILTER_ANISOTROPIC
+                              : D3D11_FILTER((a.min == SamplerFilter::Linear ? 16 : 0) |
+                                             (a.mag == SamplerFilter::Linear ? 4 : 0) |
+                                             (a.mip == SamplerFilter::Linear ? 1 : 0));
+            desc.AddressU = a.u == SamplerAddress::Wrap ? D3D11_TEXTURE_ADDRESS_WRAP
+                                                        : D3D11_TEXTURE_ADDRESS_CLAMP;
+            desc.AddressV = a.v == SamplerAddress::Wrap ? D3D11_TEXTURE_ADDRESS_WRAP
+                                                        : D3D11_TEXTURE_ADDRESS_CLAMP;
+            desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+            desc.MaxAnisotropy = a.maxAnisotropy;
+            desc.MaxLOD = D3D11_FLOAT32_MAX;
+            const std::string key(reinterpret_cast<const char*>(&desc), sizeof(desc));
+            auto i = samplerCache.find(key);
+            if (i == samplerCache.end()) {
+                ComPtr<ID3D11SamplerState> state;
+                lastError = native->CreateSamplerState(&desc, &state);
+                if (FAILED(lastError))
+                    return false;
+                i = samplerCache.emplace(key, std::move(state)).first;
+            }
+            sampling[s.slot] = i->second.Get();
+        }
+        context->VSSetConstantBuffers(0, 4, cb);
+        context->PSSetConstantBuffers(0, 4, cb);
+        context->PSSetShaderResources(0, 4, images);
+        context->PSSetSamplers(0, 4, sampling);
+        return true;
+    }
     Handle shadowTexture;
     ComPtr<ID3D11VertexShader> shadowVs, shadowOutlineVs;
     ComPtr<ID3D11PixelShader> shadowPs;
@@ -506,6 +606,8 @@ public:
         return native->GetDeviceRemovedReason() == S_OK;
     }
     bool BindTexture(std::uint32_t slot, Handle h) override {
+        if (genericReady)
+            return false;
         auto* r = Find(h);
         if (!Live() || !inFrame || slot >= (modelReady ? 3u : 1u) || !r || !r->view ||
             (passes.Description(h) ? !passes.CanSample(h) : !r->uploaded))
@@ -656,6 +758,7 @@ public:
         return true;
     }
     bool SetFixedPipeline(FixedPipelineState p) override {
+        genericReady = genericBound = false;
         if (passes.Active())
             return false;
         pipelineReady = false;
@@ -742,6 +845,8 @@ public:
         return true;
     }
     bool Draw(NonIndexedDraw command) override {
+        if (genericReady && !ApplyGenericBindings())
+            return false;
         if (modelReady && modelPipeline.shadow.mode == BuiltinShadowMode::Material &&
             !shadowTexture)
             return false;
@@ -786,6 +891,8 @@ public:
         return native->GetDeviceRemovedReason() == S_OK;
     }
     bool DrawIndexed(IndexedDraw command) override {
+        if (genericReady && !ApplyGenericBindings())
+            return false;
         if (modelReady && modelPipeline.shadow.mode == BuiltinShadowMode::Material &&
             !shadowTexture)
             return false;
@@ -929,6 +1036,7 @@ D3D11_BLEND Blend(BlendFactor b) {
     return static_cast<D3D11_BLEND>(0);
 }
 bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
+    genericReady = genericBound = false;
     pipelineReady = modelReady = false;
     modelTextures = {};
     boundTexture = {};
@@ -1244,6 +1352,75 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
         return false;
     modelPipeline = p;
     modelReady = true;
+    return true;
+}
+bool D3D11Device::PrepareShaderPipeline(const ShaderPipeline& p) {
+    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    genericError = result.reason;
+    if (!result || !Live())
+        return false;
+    auto found = genericPrograms.find(p.program->key);
+    if (found == genericPrograms.end()) {
+        detail::D3DShaderProgram binaries;
+        if (!detail::CompileD3DProgram(*p.program, binaries, genericError))
+            return false;
+        GenericProgram compiled;
+        lastError =
+            native->CreateVertexShader(binaries.vertex->GetBufferPointer(),
+                                       binaries.vertex->GetBufferSize(), nullptr, &compiled.vertex);
+        if (SUCCEEDED(lastError))
+            lastError = native->CreatePixelShader(binaries.pixel->GetBufferPointer(),
+                                                  binaries.pixel->GetBufferSize(), nullptr,
+                                                  &compiled.pixel);
+        std::vector<D3D11_INPUT_ELEMENT_DESC> inputs;
+        for (const auto& i : p.program->description.inputs) {
+            const auto format =
+                i.format == ShaderVertexFormat::Float2   ? DXGI_FORMAT_R32G32_FLOAT
+                : i.format == ShaderVertexFormat::Float3 ? DXGI_FORMAT_R32G32B32_FLOAT
+                : i.format == ShaderVertexFormat::Float4 ? DXGI_FORMAT_R32G32B32A32_FLOAT
+                                                         : DXGI_FORMAT_R8G8B8A8_UNORM;
+            inputs.push_back({i.semantic.c_str(), i.semanticIndex, format, 0, i.offset,
+                              D3D11_INPUT_PER_VERTEX_DATA, 0});
+        }
+        if (SUCCEEDED(lastError))
+            lastError = native->CreateInputLayout(
+                inputs.data(), UINT(inputs.size()), binaries.vertex->GetBufferPointer(),
+                binaries.vertex->GetBufferSize(), &compiled.input);
+        if (FAILED(lastError)) {
+            genericError = "native_shader_creation_failed";
+            return false;
+        }
+        found = genericPrograms.emplace(p.program->key, std::move(compiled)).first;
+    }
+    genericError.clear();
+    return true;
+}
+bool D3D11Device::SetShaderPipeline(const ShaderPipeline& p) {
+    genericReady = genericBound = false;
+    modelReady = pipelineReady = false;
+    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    genericError = result.reason;
+    if (!result || !Live() || !inFrame)
+        return false;
+    if (!PrepareShaderPipeline(p))
+        return false;
+    auto found = genericPrograms.find(p.program->key);
+    if ((p.raster.depthTest || p.raster.depthWrite) && !ActiveDepth()) {
+        genericError = "draw_requires_depth_attachment";
+        return false;
+    }
+    if (!SetModelPipeline(ShaderRasterAdapter(p)))
+        return false;
+    const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
+    D3D11_VIEWPORT viewport{float(view.x),      float(view.y), float(view.width),
+                            float(view.height), view.minDepth, view.maxDepth};
+    context->RSSetViewports(1, &viewport);
+    context->VSSetShader(found->second.vertex.Get(), nullptr, 0);
+    context->PSSetShader(found->second.pixel.Get(), nullptr, 0);
+    context->IASetInputLayout(found->second.input.Get());
+    genericPipeline = p;
+    genericReady = true;
+    genericError.clear();
     return true;
 }
 class D3D11Swapchain final : public Swapchain {

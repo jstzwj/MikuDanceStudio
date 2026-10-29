@@ -57,6 +57,9 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
             if (!e.draw.pipeline.viewport)
                 e.draw.pipeline.viewport = ModelViewport{
                     0, 0, target->description.width, target->description.height, 0, 1};
+            if (e.draw.shader && !e.draw.shader->pipeline.viewport)
+                e.draw.shader->pipeline.viewport = ModelViewport{
+                    0, 0, target->description.width, target->description.height, 0, 1};
             s.events.push_back(e);
         }
     }
@@ -118,6 +121,24 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         if (!state.Begin(native))
             return {false, 0, draws, state.Reason()};
         for (const auto& d : p.draws) {
+            if (d.shader) {
+                const auto& raster = d.shader->pipeline.raster;
+                if ((raster.depthTest || raster.depthWrite) && !p.depthStencil)
+                    return fail("draw_requires_depth_attachment");
+                for (const auto& binding : d.shader->textures) {
+                    const auto& ref = binding.target;
+                    if (!ref.target)
+                        continue;
+                    const auto* t = Target(f, ref.target);
+                    if (!t ||
+                        (t->description.format != TextureFormat::Rgba8 &&
+                         t->description.format != TextureFormat::R32Float) ||
+                        t->description.width != ref.width || t->description.height != ref.height ||
+                        !state.CanSample(handles.at(t->id)))
+                        return fail("invalid_or_undeclared_target_texture");
+                }
+                continue;
+            }
             for (const auto& ref : d.targetTextures)
                 if (ref.target) {
                     const auto* t = Target(f, ref.target);

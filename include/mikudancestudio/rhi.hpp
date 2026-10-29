@@ -438,6 +438,8 @@ public:
     virtual Backend BackendType() const = 0;
     virtual Capabilities Features() const = 0;
     virtual ShaderCapabilities ShaderFeatures() const { return {}; }
+    // CPU/native shader creation and reflection before any frame is submitted.
+    virtual bool PrepareShaderPipeline(const ShaderPipeline&) { return false; }
     virtual bool SetShaderPipeline(const ShaderPipeline&) { return false; }
     virtual bool BindShaderResources(const ShaderResourceBindings&) { return false; }
     virtual const char* ShaderDiagnostic() const { return "shader_programs_not_supported"; }

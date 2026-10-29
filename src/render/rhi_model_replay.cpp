@@ -98,7 +98,47 @@ static ModelReplayResult ValidateReplay(const ModelReplayStream& stream, bool fr
         if (event.op != ModelReplayOp::Draw)
             return fail("unsupported_event");
         const auto& d = event.draw;
-        const auto& p = d.pipeline;
+        const auto p = d.shader ? ShaderRasterAdapter(d.shader->pipeline) : d.pipeline;
+        if (d.shader) {
+            const auto check =
+                ValidateShaderPipeline(d.shader->pipeline, GraphicsShaderProfile(true, true));
+            if (!check)
+                return fail(check.reason.c_str());
+            if (d.shadowTarget)
+                return fail("mixed_shader_bindings");
+            for (unsigned slot = 0; slot < 3; ++slot)
+                if (d.textures[slot].id || d.textures[slot].version ||
+                    d.targetTextures[slot].target || d.targetTextures[slot].width ||
+                    d.targetTextures[slot].height)
+                    return fail("mixed_shader_bindings");
+            ShaderResourceBindings bindings;
+            bindings.constants = d.shader->constants;
+            bindings.samplers = d.shader->samplers;
+            std::vector<ShaderTextureInfo> infos;
+            for (const auto& texture : d.shader->textures) {
+                const auto& ref = texture.target;
+                ShaderTextureInfo info;
+                if (ref.target || ref.width || ref.height) {
+                    if (!frameTargets)
+                        return fail("render_target_requires_frame");
+                    if (!ref.target || !ref.width || !ref.height || texture.texture.id ||
+                        texture.texture.version)
+                        return fail("invalid_target_texture_binding");
+                    info = {true, true, true, false, TextureFormat::Rgba8};
+                } else {
+                    const auto* r = get(texture.texture, ReplayResourceKind::Texture);
+                    if (r)
+                        info = {true, true, true, r->texture.srgb, TextureFormat::Rgba8};
+                }
+                bindings.textures.push_back({texture.slot, {unsigned(infos.size()), 1, 1}});
+                infos.push_back(info);
+            }
+            const auto bound = ValidateShaderBindings(d.shader->pipeline, bindings, [&](Handle h) {
+                return h.index < infos.size() ? infos[h.index] : ShaderTextureInfo{};
+            });
+            if (!bound)
+                return fail(bound.reason.c_str());
+        }
         if (!ValidPostProcess(p))
             return fail("invalid_postprocess_pipeline");
         if (!ValidBuiltinShadowState(p.shadow) ||
@@ -272,6 +312,9 @@ ModelReplayResult ComposeModelReplay(const ModelReplayStream& prefix,
             d.indices = remap(d.indices);
             for (auto& key : d.textures)
                 key = remap(key);
+            if (d.shader)
+                for (auto& texture : d.shader->textures)
+                    texture.texture = remap(texture.texture);
             // A suffix default viewport refers to the same target. The final
             // validator rejects any draw outside the prefix's known region.
         }

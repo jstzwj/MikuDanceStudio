@@ -1,5 +1,5 @@
 #pragma once
-#include "rhi_model_pipeline.hpp"
+#include "rhi_shader.hpp"
 #include <string>
 namespace mikudancestudio::rhi {
 // CPU-owned snapshots, never native handles. A version identifies immutable
@@ -30,8 +30,21 @@ struct RenderTargetReference {
     std::uint64_t target = 0;
     std::uint32_t width = 0, height = 0;
 };
+struct ReplayShaderTextureBinding {
+    unsigned slot = 0;
+    ReplayResourceKey texture;
+    RenderTargetReference target;
+};
+struct ReplayShader {
+    ShaderPipeline pipeline;
+    std::vector<ShaderConstantBinding> constants;
+    std::vector<ShaderSamplerBinding> samplers;
+    std::vector<ReplayShaderTextureBinding> textures;
+};
 struct ModelReplayDraw {
     ModelPipeline pipeline;
+    // Generic program replaces the legacy material pipeline and its bindings.
+    std::optional<ReplayShader> shader;
     ReplayResourceKey vertices, indices;
     std::array<ReplayResourceKey, 3> textures{};
     // Exactly one source per active stage. Only RenderFrame may resolve these;

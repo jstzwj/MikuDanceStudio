@@ -85,7 +85,7 @@ struct ShaderTextureBinding {
 };
 struct ShaderSamplerBinding {
     unsigned slot = 0;
-    SamplerDesc sampler;
+    SamplerDesc sampler{SamplerFilter::Linear, SamplerFilter::Linear, SamplerFilter::Linear};
 };
 struct ShaderResourceBindings {
     std::vector<ShaderConstantBinding> constants;

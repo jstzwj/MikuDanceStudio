@@ -1,4 +1,5 @@
 #include "mikudancestudio/rhi_scene_renderer.hpp"
+#include "mikudancestudio/rhi_builtin_programs.hpp"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -32,6 +33,8 @@ std::uint64_t Bytes(const ModelReplayResource& r) {
 }
 struct Draw {
     ModelPipeline pipeline;
+    std::optional<ShaderPipeline> shader;
+    ShaderResourceBindings bindings;
     std::array<Handle, 3> textures{};
     std::variant<IndexedDraw, NonIndexedDraw> command;
     std::uint64_t sequence;
@@ -255,11 +258,27 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
     for (const auto& e : stream.events)
         if (e.op == ModelReplayOp::Draw) {
             const auto& draw = e.draw;
+            if (draw.shader) {
+                const auto check =
+                    ValidateShaderPipeline(draw.shader->pipeline, d.ShaderFeatures());
+                if (!check)
+                    return {false, e.sequence, 0, check.reason};
+                if (!d.PrepareShaderPipeline(draw.shader->pipeline))
+                    return {false, e.sequence, 0, d.ShaderDiagnostic()};
+            } else if (draw.pipeline.postProcess.mode != PostProcessMode::None) {
+                const auto check =
+                    ValidateShaderPipeline(PostProcessPipeline(draw.pipeline), d.ShaderFeatures());
+                if (!check)
+                    return {false, e.sequence, 0, check.reason};
+                if (!d.PrepareShaderPipeline(PostProcessPipeline(draw.pipeline)))
+                    return {false, e.sequence, 0, d.ShaderDiagnostic()};
+            }
+            const auto state =
+                draw.shader ? ShaderRasterAdapter(draw.shader->pipeline) : draw.pipeline;
             if ((draw.indexed ? !caps.indexed : !caps.nonIndexed) ||
-                (draw.pipeline.topology == PrimitiveTopology::LineList && !caps.lines) ||
-                (draw.pipeline.vertexLayout == VertexLayout::PositionColor
-                     ? !caps.positionColor
-                     : !caps.positionNormalUv))
+                (state.topology == PrimitiveTopology::LineList && !caps.lines) ||
+                (state.vertexLayout == VertexLayout::PositionColor ? !caps.positionColor
+                                                                   : !caps.positionNormalUv))
                 return {false, e.sequence, 0, "unsupported_draw_contract"};
         }
     for (const auto& r : stream.resources)
@@ -412,24 +431,39 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
         if (e.op == ModelReplayOp::Draw) {
             const auto& draw = e.draw;
             Draw prepared;
-            prepared.pipeline = draw.pipeline;
+            prepared.pipeline =
+                draw.shader ? ShaderRasterAdapter(draw.shader->pipeline) : draw.pipeline;
+            if (draw.shader) {
+                prepared.shader = draw.shader->pipeline;
+                prepared.bindings.constants = draw.shader->constants;
+                prepared.bindings.samplers = draw.shader->samplers;
+                for (const auto& t : draw.shader->textures)
+                    prepared.bindings.textures.push_back(
+                        {t.slot, t.target.target ? scene.targets.at(t.target.target).handle
+                                                 : scene.resources.at(t.texture).handle});
+            }
             if (draw.shadowTarget)
                 prepared.shadow = scene.targets.at(draw.shadowTarget).handle;
             prepared.sequence = e.sequence;
             for (unsigned slot = 0; slot < 3; ++slot)
-                if (draw.pipeline.shader.layout.stages[slot].role != MaterialTextureRole::None)
+                if (!draw.shader &&
+                    draw.pipeline.shader.layout.stages[slot].role != MaterialTextureRole::None)
                     prepared.textures[slot] =
                         draw.targetTextures[slot].target
                             ? scene.targets.at(draw.targetTextures[slot].target).handle
                             : scene.resources.at(draw.textures[slot]).handle;
+            if (!draw.shader && draw.pipeline.postProcess.mode != PostProcessMode::None) {
+                prepared.shader = PostProcessPipeline(draw.pipeline);
+                prepared.bindings = PostProcessBindings(draw.pipeline, prepared.textures[0]);
+            }
             const auto vb = scene.resources.at(draw.vertices).handle;
             if (draw.indexed)
                 prepared.command = d.Record(
                     IndexedDraw{vb, scene.resources.at(draw.indices).handle, draw.firstIndex,
-                                draw.indexCount, draw.vertexCount, draw.pipeline.vertexLayout});
+                                draw.indexCount, draw.vertexCount, prepared.pipeline.vertexLayout});
             else {
                 NonIndexedDraw cmd{vb, draw.firstVertex, draw.drawVertexCount};
-                cmd.layout = draw.pipeline.vertexLayout;
+                cmd.layout = prepared.pipeline.vertexLayout;
                 prepared.command = d.Record(cmd);
             }
             data->draws.push_back(std::move(prepared));
@@ -495,14 +529,15 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
     }
     const auto submitDraw = [&](const Draw& draw) {
         result.sequence = draw.sequence;
-        if (!d.SetModelPipeline(draw.pipeline)) {
+        if (!(draw.shader ? d.SetShaderPipeline(*draw.shader)
+                          : d.SetModelPipeline(draw.pipeline))) {
             result.success = false;
-            result.reason = "pipeline_failed";
+            result.reason = draw.shader ? d.ShaderDiagnostic() : "pipeline_failed";
             return false;
         }
-        bool bound = true;
+        bool bound = !draw.shader || d.BindShaderResources(draw.bindings);
         for (unsigned slot = 0; slot < 3; ++slot)
-            if (draw.textures[slot])
+            if (!draw.shader && draw.textures[slot])
                 bound = d.BindTexture(slot, draw.textures[slot]) && bound;
         if (draw.shadow)
             bound = d.BindShadowTexture(draw.shadow) && bound;
