@@ -1,6 +1,6 @@
 # Rendering hardware interface: incremental migration
 
-Current status (2026-10-29): the live editor supports DX11, DX12 and Vulkan
+Current status (2026-10-30): the live editor supports DX11, DX12 and Vulkan
 through the **Renderer** menu. The old **Renderer Preview** menu/window has been
 removed; shared controllers remain. See [editor integration](RHI_EDITOR_VIEWPORT.md),
 [shared controller](RHI_PREVIEW_CONTROLLER.md), [per-frame renderer selection](RHI_FRAME_OWNERSHIP.md), and the
@@ -17,6 +17,15 @@ Ordered MRT attachments and raw RGBA16F intermediate targets now execute on all
 three backends. A bounded public MRT/HDR MME profile exports named targets and
 ordered input/output dependencies; unsupported effects still use same-frame DX9.
 See [MRT/HDR contracts and gates](RHI_MRT_HDR.md).
+Numeric shared parameters and the original ordered CONTROLOBJECT resolver now
+feed immutable per-draw constants. The scene-v2 profile lowers the existing SAS
+command table into capture/clear/draw steps, with bounded loops and successful-frame
+parameter writeback. Hidden editor tests switch live effects through DX9, DX11,
+DX12 and Vulkan without unloading the effects; supported RHI frames execute zero
+DX9 scene draws. This does not yet translate arbitrary FX9 shaders or execute
+Ray natively on the newer backends. Expanded include sources are now retained
+per loaded revision for stable device reconstruction. See
+[MME parameter and script scope](RHI_MME_SEMANTICS.md).
 The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.

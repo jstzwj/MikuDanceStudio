@@ -14,6 +14,15 @@ They contain no external model or texture assets.
   Combine samples both into HDR, ToneMap writes RGBA8, then Finish copies it
   exactly. Signed/highlight values and live multiply/add parameters are kept
   until explicit tone mapping. It uses the bounded `mrt-hdr-v1` profile.
+- `ControlMaterial.fx` / `ControlPost.fx`: live CONTROLOBJECT position/world,
+  a shared exposure parameter, float2 arrays and a bool. Assign them to a
+  model and a scene accessory to exercise pool sharing and controller updates.
+- `IncludedControlPost.fx`: includes ControlPost.fx; loading snapshots both
+  source variants so backend/device changes retain the loaded include revision.
+- `SceneScript.fx`: one scene accessory using the `scene-v2` profile. Its SAS
+  script captures after an explicit clear, grades, repeats Lift using live
+  LoopByCount/LoopGetIndex, and copies Pong exactly. Zero iterations preserve
+  Pong's clear color. Private loop-index writes persist after successful frames.
 
 All files also run as ordinary DX9 effects. `MDS_RHI` selects their HLSL 5/6
 shader branch. Explicit profile and pass annotations opt into the initial
@@ -22,3 +31,6 @@ adding unrecognized parameters, pass state, resources or script commands
 selects the editor's same-frame DX9 fallback.
 
 See [the supported profile and validation](../../../docs/RHI_MME_PORTABLE.md).
+See [parameter and script limits](../../../docs/RHI_MME_SEMANTICS.md) before
+porting an existing effect. These examples do not provide general FX9 or Ray
+translation.

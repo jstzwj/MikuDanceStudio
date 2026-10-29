@@ -6,8 +6,9 @@ effects without the profile continue through same-frame DX9 fallback.
 
 ## Transport and selection
 
-The embedded MME loader retains immutable source bytes per loaded revision;
-assignment clones share them. A read-only CPU bridge exports parameter values,
+The embedded MME loader retains immutable root bytes and expanded legacy/modern
+include variants per loaded revision; assignment clones share them. A read-only
+CPU bridge exports parameter values,
 technique/pass annotations and the selected program entries. Its draw query
 uses the existing `SasSelectTechnique` implementation, including actual subset,
 UseTexture/UseSpheremap/UseToon and object/object_ss selection. Explicit subset
@@ -73,8 +74,9 @@ history or feedback alias is introduced. Native MME's expanded Draw=Buffer
 quad and UV correction are preserved by the DX9 branch of the example.
 
 This profile rejects multiple scene effects, offscreen-owner turns, resource
-extent/format overrides, extra semantics/annotations, includes, loops, MRT,
-floating-point color products and depth sampling. Combining this first scene
+extent/format overrides, unsupported semantics/annotations, loops, MRT,
+floating-point color products and depth sampling. Numeric live parameters and
+CONTROLOBJECT are now accepted as described below. Combining this first scene
 effect with screen.bmp history is explicitly rejected pending a capture-order
 comparison. Original native anisotropic differences remain separately tracked;
 these profiles use explicit trilinear or point sampling.
@@ -114,6 +116,13 @@ and same-frame DX9 fallback for an unsupported target format without RHI work.
   including the native MME fullscreen quad. Material allows one UNORM step;
   the combined material/grade comparison allows two accumulated steps. Finish
   must equal Ping byte-for-byte on each backend, including DX9.
+- `mme_portable_controls_*`: shared numeric values, CONTROLOBJECT position/world,
+  reflected arrays and scalar bools; missing, mistyped or incorrectly sized
+  snapshots fail before mutating the draw. The same DX9 comparison limits apply.
+- `mme_scene_plan`: pure CPU SAS command lowering, per-iteration snapshots,
+  delayed private writes, initialization/feedback checks and expansion bounds.
+- `mme_scene_script_*`: the actual native SAS parser, step/resume executor and
+  production Draw=Buffer against the lowered scene-v2 graph on each backend.
 - `editor_frame_*`: generated PMD/PMX, actual MME assignments and SAS selection,
   material plus scene effect, zero DX9 scene draws on successful RHI frames,
   startup assignment discovery, live parameters, subset overrides, resize,
@@ -137,8 +146,15 @@ Optional real RayMMD coverage, reproduction and the boundary between native
 DX9 execution and newer-backend fallback are tracked in
 [RayMMD regression](RHI_RAY_REGRESSION.md).
 
-Next extensions should follow actual effects: shared parameters, CONTROLOBJECT,
-ScriptExternal scene semantics, DefaultEffect child effects and mip generation
-timing. Texture slots remain t0..t3; expand them using Ray's actual simultaneous
-bindings. Full Ray still uses the existing DX9 fallback. MRT/float targets alone
-do not establish general FX9 or Ray support. Depth sampling remains future work.
+## Live parameters and scene-v2
+
+[MME parameter and script scope](RHI_MME_SEMANTICS.md) describes numeric shared
+parameters, CONTROLOBJECT, the reflected b1..b3 constant layout and the scene-v2
+SAS command subset. Public CC0 examples are ControlMaterial.fx, ControlPost.fx
+and SceneScript.fx. The older profiles keep their versioned script restrictions.
+
+The next compatibility work remains automatic legacy shader import,
+per-draw standard parameter semantics, shared target identity, DefaultEffect
+child effects and mip generation timing. Texture slots remain t0..t3; expand
+them using Ray's actual simultaneous bindings. Full Ray still uses same-frame
+DX9 fallback. Passing portable examples does not establish native Ray support.
