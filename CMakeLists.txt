@@ -579,6 +579,7 @@ add_library(mikudancestudio_core STATIC
     src/render/model_renderers.cpp
     src/render/model_batch_bridge.cpp
     src/render/model_cpu_preview.cpp
+    src/render/editor_viewport.cpp
     src/render/scene_cpu_preview.cpp
     src/render/scene_cpu_submission.cpp
     src/render/model_input_bridge.cpp
@@ -727,7 +728,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(MIKUDANCESTUDIO_DIAG
        "Compile the porting-era diagnostics probes (MIKUDANCESTUDIO_* env dumps/traces)" OFF)
-option(MIKUDANCESTUDIO_RHI_PREVIEW "Include optional CPU scene preview menu (runtime default off)" ON)
+option(MIKUDANCESTUDIO_RHI_PREVIEW "Include RHI editor viewport and CPU preview menus (runtime default DX9)" ON)
 if(MIKUDANCESTUDIO_DIAG OR (MIKUDANCESTUDIO_RHI_PREVIEW AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12 OR MIKUDANCESTUDIO_RHI_VULKAN)))
     target_compile_definitions(mikudancestudio_core PUBLIC MIKUDANCESTUDIO_CPU_RENDERING=1)
     target_sources(mikudancestudio_core PRIVATE src/render/editor_scene.cpp)
@@ -1008,6 +1009,33 @@ if(BUILD_TESTING)
     add_executable(runtime_cpu_model_test tests/runtime_cpu_model_test.cpp)
     target_link_libraries(runtime_cpu_model_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME runtime_cpu_model COMMAND runtime_cpu_model_test)
+    if(MIKUDANCESTUDIO_RHI_PREVIEW AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12 OR MIKUDANCESTUDIO_RHI_VULKAN))
+        add_executable(editor_viewport_test tests/editor_viewport_test.cpp)
+        target_link_libraries(editor_viewport_test PRIVATE mikudancestudio_core MMEffect dsound dbghelp)
+        target_link_options(editor_viewport_test PRIVATE /DEBUG)
+        target_link_options(editor_viewport_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
+        add_executable(editor_scene_import_test tests/editor_scene_import_test.cpp)
+        target_link_libraries(editor_scene_import_test PRIVATE mikudancestudio_core MMEffect dsound)
+        target_link_options(editor_scene_import_test PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
+        foreach(api IN ITEMS dx11 dx12 vulkan)
+            if((api STREQUAL "dx11" AND MIKUDANCESTUDIO_RHI_D3D11) OR
+               (api STREQUAL "dx12" AND MIKUDANCESTUDIO_RHI_D3D12) OR
+               (api STREQUAL "vulkan" AND MIKUDANCESTUDIO_RHI_VULKAN))
+                add_test(NAME editor_viewport_${api} COMMAND editor_viewport_test ${api})
+                set_tests_properties(editor_viewport_${api} PROPERTIES TIMEOUT 120 LABELS "hidden-window;editor;rhi" RUN_SERIAL TRUE)
+                if(Python3_Interpreter_FOUND)
+                    add_test(NAME editor_scene_${api} COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_scene.py --test $<TARGET_FILE:editor_scene_import_test> --backend ${api})
+                    set_tests_properties(editor_scene_${api} PROPERTIES TIMEOUT 180 LABELS "hidden-window;editor;rhi" RUN_SERIAL TRUE)
+                    foreach(format IN ITEMS pmd pmx)
+                        add_test(NAME editor_scene_${format}_${api} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_editor_scene.py --test $<TARGET_FILE:editor_scene_import_test> --backend ${api} --external ${format})
+                        set_tests_properties(editor_scene_${format}_${api} PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77 LABELS "hidden-window;editor;rhi;external" RUN_SERIAL TRUE)
+                    endforeach()
+                endif()
+            endif()
+        endforeach()
+    endif()
     add_executable(runtime_cpu_scene_test tests/runtime_cpu_scene_test.cpp)
     target_link_libraries(runtime_cpu_scene_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_executable(runtime_cpu_bindings_test tests/runtime_cpu_bindings_test.cpp)

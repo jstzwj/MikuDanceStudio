@@ -397,6 +397,8 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
     const std::uint16_t id = LOWORD(wParam);
     const std::uint16_t notification = HIWORD(wParam);
 
+    if (app->ViewportRenderer().HandleCommand(*app, id))
+        return;
     if (HandleScenePreviewCommand(app, id))
         return;
     switch (id) {

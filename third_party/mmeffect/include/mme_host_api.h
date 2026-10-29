@@ -130,6 +130,8 @@ int __cdecl MmeHostEffectsActive(void);
 // CPU policy query: bridge initialization and the user's effect toggle are
 // different states. No device state or resource is read.
 int __cdecl MmeHostEffectsEnabled(void);
+// CPU assignment policy, excluding the built-in standard effect.
+int __cdecl MmeHostHasAssignedEffects(void);
 
 #ifdef __cplusplus
 }

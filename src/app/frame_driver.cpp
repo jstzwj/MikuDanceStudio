@@ -585,7 +585,15 @@ void FrameDriver(MMDApp* app) {
     if (device != nullptr) {
         if (s.state.messageSeen != 0 && s.AviStereoOutput() == 0) {
             presented = true;
-            if (s.FullscreenMode() != 0) {
+            if (s.ViewportRenderer().OwnsPresentation() && !s.RecordingWindow() &&
+                !s.FullscreenMode()) {
+                // Legacy editing still needs DX9 resources even when its
+                // backbuffer is not presented. Poll recovery without blocking
+                // the RHI view on a temporarily unavailable DX9 device.
+                if (device->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+                    PostDeviceReset(app);
+                hr = D3D_OK;
+            } else if (s.FullscreenMode() != 0) {
                 hr = mme::Present(app, device, nullptr, nullptr, nullptr, nullptr);
             } else if (s.RecordingWindow() != nullptr) { // 0xA0D24
                 RECT r;

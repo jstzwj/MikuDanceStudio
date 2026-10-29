@@ -1980,6 +1980,7 @@ void RenderFrameScene(MMDApp* app) {
         mme::EndScene(app, device);
         ReportModelBatchComparison(device);
         DumpAccessoryScreenTexture(app, device);
+        app->ViewportRenderer().Render(*app); // hides the child during legacy recording
         return;
     }
 
@@ -2018,6 +2019,7 @@ void RenderFrameScene(MMDApp* app) {
     ReportSpriteSameFrame(device);
 #endif
     DumpAccessoryScreenTexture(app, device);
+    app->ViewportRenderer().Render(*app);
 }
 
 } // namespace mikudancestudio

@@ -66,6 +66,7 @@ static void ReplaceEditText(HWND parent, int id, const char* text) {
 }
 
 void ResetAppState(MMDApp* app) {
+    app->ViewportRenderer().UnloadScene();
     ReleaseCpuSceneFrame();
     app->ClearPortableSceneSession();
     HWND hwnd = app->MainWindow();

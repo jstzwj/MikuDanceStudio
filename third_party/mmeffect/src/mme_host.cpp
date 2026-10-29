@@ -23,6 +23,7 @@
 #include "mmeffect/mme_context.h"
 #include "mmeffect/mme_globals.h"
 #include "mmeffect/model_data.h"
+#include "mmeffect/material_bind.h"
 #include "mmeffect/device_initialization.h"
 #include "mmeffect/host_object_cache.h"
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -362,6 +363,14 @@ void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device, IDirect3DSurfa
 }
 int __cdecl MmeHostEffectsEnabled(void) {
     return MmeHostEffectsActive() && mme::g_context && mme::g_context->effectEnabled != 0;
+}
+int __cdecl MmeHostHasAssignedEffects(void) {
+    if (!MmeHostEffectsEnabled() || !mme::g_ownerManager)
+        return 0;
+    for (const auto& entry : mme::g_ownerManager->bindings)
+        if (entry.second && entry.second->effect && !entry.second->effectPath.empty())
+            return 1;
+    return 0;
 }
 
 // [0x180003cb0] Device EndScene slot 42.

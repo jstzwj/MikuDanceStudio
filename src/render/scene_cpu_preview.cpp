@@ -298,7 +298,7 @@ void EnsurePreviews(MMDApp* app) {
 }
 }
 bool CpuScenePreviewRequested() {
-    return PreviewBackends() != 0;
+    return PreviewBackends() != 0 || EditorRhiRequested();
 }
 bool CpuSceneFrameRecording() {
     return assembler.Recording();
@@ -306,6 +306,8 @@ bool CpuSceneFrameRecording() {
 void BeginCpuSceneFrame(MMDApp* app, unsigned flags, unsigned color) {
     frameReady = false;
     expectedDraw = expectedEmptyMesh = false;
+    if (!PreviewBackends() && EditorRhiRequested())
+        return;
     if (!CpuScenePreviewRequested() && !Flag("MDS_RHI_CPU_FULL_SCENE"))
         return;
     if (!CpuScenePreviewRequested() && Flag("MDS_RHI_CPU_LIVE_HISTORY")) {
@@ -394,7 +396,7 @@ bool CopyAssembledCpuSceneFrame(rhi::ModelReplayStream& output) {
     return true;
 }
 void PresentCpuSceneFrame(MMDApp* app) {
-    if (!CpuScenePreviewRequested())
+    if (!PreviewBackends())
         return;
     if (menuSelection || (frameReady && !Flag("MDS_RHI_CPU_INPUTS_AUDIT")))
         EnsurePreviews(app);
@@ -494,7 +496,7 @@ bool HandleScenePreviewCommand(MMDApp* app, unsigned command) {
         assembler.Reset();
         frame = {};
         frameReady = expectedDraw = expectedEmptyMesh = previewGate = false;
-        if (!Flag("MDS_RHI_CPU_GEOMETRY"))
+        if (!Flag("MDS_RHI_CPU_GEOMETRY") && !EditorRhiRequested())
             app->CpuModelFrames().clear();
     }
     if (next) {

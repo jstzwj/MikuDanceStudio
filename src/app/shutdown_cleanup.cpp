@@ -310,6 +310,7 @@ void ShutdownCleanup(MMDApp* app) {
     ForgetHudSpriteRgba(app);
     ResetHistoryReplay();
     InvalidateModelBatchComparison();
+    app->ViewportRenderer().Close();
 #ifdef MIKUDANCESTUDIO_DIAG
     ReleaseCpuModelPreview();
 #else

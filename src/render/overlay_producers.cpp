@@ -53,6 +53,7 @@ float OverlayScale(MMDApp* app) {
 } // namespace
 
 void PrepareFrameTextOverlay(MMDApp* app) { // 0x423420
+    app->ViewportRenderer().ClearOverlay(EditorOverlay::Text);
     auto* vb = app->OverlayVertices();
     app->TextOverlayPrimitiveCount() = 0;
     if (vb == nullptr)
@@ -173,11 +174,14 @@ void PrepareFrameTextOverlay(MMDApp* app) { // 0x423420
                319.0f / 512.0f, 159.0f / 512.0f, 0xFFFFFFFFu);
     }
 
+    app->ViewportRenderer().CaptureOverlay(EditorOverlay::Text, begin,
+                                           app->TextOverlayPrimitiveCount() * 3u, sizeof(TextVertex));
     DumpVertexBatch("text", begin, app->TextOverlayPrimitiveCount(), 84);
     vb->Unlock();
 }
 
 void PrepareFrameLineOverlay(MMDApp* app) { // 0x4757C3..0x4759D8
+    app->ViewportRenderer().ClearOverlay(EditorOverlay::Lines);
     app->LineOverlayPrimitiveCount() = 0;
     if (!app->LeftMouseButtonHeld() || app->state.viewportInputActive == 0 ||
         app->BoneBoxSelectionActive() == 0)
@@ -208,6 +212,7 @@ void PrepareFrameLineOverlay(MMDApp* app) { // 0x4757C3..0x4759D8
     };
     std::copy(std::begin(vertices), std::end(vertices), out);
     app->LineOverlayPrimitiveCount() = 4;
+    app->ViewportRenderer().CaptureOverlay(EditorOverlay::Lines, out, 8, sizeof(LineVertex));
     if (right - left >= 20.0f && bottom - top >= 20.0f)
         DumpVertexBatch("line_selection", out, 4, 40);
     vb->Unlock();

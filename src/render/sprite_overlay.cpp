@@ -176,6 +176,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
     if (app->RecordingWindow() != nullptr)
         return;
 
+    app->ViewportRenderer().ClearOverlay(EditorOverlay::Sprites);
     auto* vb = app->SpriteOverlayVertices();
     if (vb == nullptr)
         return;
@@ -375,6 +376,9 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
                         }
                     }
                     LineVertex* const lineBegin = lines - 2 * boneResult.linePrimitiveCount;
+                    app->ViewportRenderer().CaptureOverlay(EditorOverlay::Lines, lineBegin,
+                                                           boneResult.linePrimitiveCount * 2u,
+                                                           sizeof(LineVertex));
                     DumpVertexBatch("line", lineBegin, boneResult.linePrimitiveCount, 40);
                     lineVb->Unlock();
                     // 0x46BF4D adds the returned absolute line counter to
@@ -647,6 +651,9 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
         }
     }
 
+    app->ViewportRenderer().CaptureOverlay(EditorOverlay::Sprites, spriteBegin,
+                                           app->SpriteOverlayPrimitiveCount() * 3u,
+                                           sizeof(SpriteVertex));
     DumpVertexBatch("sprite", spriteBegin, app->SpriteOverlayPrimitiveCount(), 84);
     vb->Unlock();
 }

@@ -150,6 +150,7 @@ const wchar_t* JpControlText(int id) {
 } // namespace
 
 void LocalizeUI(MMDApp* app) {
+    app->ViewportRenderer().InstallMenu(*app);
     InstallScenePreviewMenu(app);
     auto& s = *app;
     const bool english = s.EnglishUI() != 0;     // 658252

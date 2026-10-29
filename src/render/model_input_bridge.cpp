@@ -24,13 +24,29 @@ void SetCpuProjectionPolicy(MMDApp* app, render::FovConversion policy) {
 void UpdateCpuRenderFrame(MMDApp* app, const float* world, const float* lightRotation) {
     app->CpuRenderFrameReady() = false;
     const auto* session = app->PortableSceneSession();
-    if (!session || !session->Loaded())
+    if ((!session || !session->Loaded()) && !EditorRhiRequested())
         return;
     auto& frame = app->CpuRenderFrame();
-    const auto& pose = session->Pose();
-    frame.scene.frame = pose.frame;
-    frame.scene.camera = session->RuntimeAppliedCamera().value_or(pose.camera);
-    frame.scene.lightState = session->RuntimeAppliedLight().value_or(pose.lightState);
+    if (session && session->Loaded()) {
+        const auto& pose = session->Pose();
+        frame.scene.frame = pose.frame;
+        frame.scene.camera = session->RuntimeAppliedCamera().value_or(pose.camera);
+        frame.scene.lightState = session->RuntimeAppliedLight().value_or(pose.lightState);
+    }
+    if (EditorRhiRequested()) {
+        frame.scene.frame = app->CurrentFrame();
+        auto& camera = frame.scene.camera;
+        std::copy_n(app->CameraPosition(), 3, camera.position.begin());
+        std::copy_n(app->CameraRotation(), 3, camera.rotation.begin());
+        camera.distance = app->CameraDistance();
+        camera.fov = app->CameraFov();
+        camera.perspective = app->CameraPerspective();
+        camera.parentModel = app->CameraParentModel();
+        camera.parentBone = app->CameraParentBone();
+        frame.scene.lightState = {app->LightColor()[0], app->LightColor()[1], app->LightColor()[2],
+                                  app->LightDirection()[0], app->LightDirection()[1],
+                                  app->LightDirection()[2]};
+    }
     std::copy_n(world, 16, frame.world.begin());
     std::copy_n(lightRotation, 16, frame.lightRotation.begin());
     frame.view.aspect = app->Renderer()->aspectRatio;

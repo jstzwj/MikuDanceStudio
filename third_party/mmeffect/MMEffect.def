@@ -10,6 +10,7 @@ EXPORTS
     MmeHostDrawIndexedPrimitive
     MmeHostDrawPrimitive
     MmeHostEffectsActive
+    MmeHostHasAssignedEffects
     MmeHostEndScene
     MmeHostNotifyPmmLoaded
     MmeHostNotifyPmmSaved

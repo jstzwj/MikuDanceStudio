@@ -127,6 +127,7 @@ void LoadSceneFile() {
     app->ClearPortableSceneSession();
     ResetHistoryReplay();
     InvalidateModelBatchComparison();
+    app->ViewportRenderer().UnloadScene();
 #ifdef MIKUDANCESTUDIO_DIAG
     ReleaseCpuModelPreview();
 #else

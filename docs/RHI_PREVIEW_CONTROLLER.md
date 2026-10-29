@@ -1,5 +1,9 @@
 # CPU 预览入口与控制器
 
+主编辑器现已另有 **Renderer** 菜单，可在实际编辑视口使用 DX11／DX12／Vulkan。
+其实时数据、资源切换与兼容回退范围见 [编辑器 RHI 视口](RHI_EDITOR_VIEWPORT.md)。
+本文以下内容描述独立的旧 **Renderer Preview** 窗口。
+
 另有在旧编辑器初始化之前分流的可选启动入口，支持 CPU-only PMD/PMX
 模型材质导入；它与本文的主编辑器菜单预览范围不同。使用及验收见
 [无 DX9 设备的启动与模型导入](RHI_DX9_INDEPENDENT_STARTUP.md)。
