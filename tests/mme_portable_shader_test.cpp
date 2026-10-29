@@ -6,6 +6,8 @@
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/mme_portable.hpp"
 #include "mme_portable_api.h"
+#include "mme_legacy_api.h"
+#include <d3dcompiler.h>
 #include "sas_exec.h"
 #include "pass_planner.h"
 #include <filesystem>
@@ -85,6 +87,8 @@ int main(int argc, char** argv) try {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const std::string api = argc > 1 ? argv[1] : "dx11";
     const bool sceneScript = argc > 2 && std::string(argv[2]) == "scene";
+    const bool legacyMulti = argc > 2 && std::string(argv[2]) == "legacy-multi";
+    const bool legacy = legacyMulti || (argc > 2 && std::string(argv[2]) == "legacy");
     const bool controls = sceneScript || (argc > 2 && std::string(argv[2]) == "controls");
     BackendOptions options;
     options.backend = api.find("dx11") == 0   ? Backend::D3D11
@@ -106,6 +110,24 @@ int main(int argc, char** argv) try {
         ~Window() { DestroyWindow(h); }
     } window;
     CHECK(window.h && !IsWindowVisible(window.h));
+    struct FxRuntime {
+#ifdef _WIN64
+        HMODULE handle = LoadLibraryW(L"d3dx9_43.dll");
+#else
+        HMODULE handle = LoadLibraryW(L"d3dx9_32.dll");
+#endif
+        ~FxRuntime() {
+            if (handle)
+                FreeLibrary(handle);
+        }
+    } runtime;
+    CHECK(runtime.handle);
+    using CreateEffect =
+        HRESULT(WINAPI*)(IDirect3DDevice9*, LPCVOID, UINT, const D3DXMACRO*, ID3DXInclude*, DWORD,
+                         ID3DXEffectPool*, ID3DXEffect**, ID3DXBuffer**);
+    const auto createEffect =
+        reinterpret_cast<CreateEffect>(GetProcAddress(runtime.handle, "D3DXCreateEffect"));
+    CHECK(createEffect);
     ComPtr<IDirect3D9> d3d;
     d3d.Attach(Direct3DCreate9(D3D_SDK_VERSION));
     CHECK(d3d);
@@ -128,11 +150,27 @@ int main(int argc, char** argv) try {
                       static_cast<unsigned long>(deviceResult));
         throw std::runtime_error(diagnostic);
     }
-    auto material = Effect(controls ? L"ControlMaterial.fx" : L"MaterialTint.fx", false),
+    auto material = Effect(legacy     ? L"LegacyMaterial.fx"
+                           : controls ? L"ControlMaterial.fx"
+                                      : L"MaterialTint.fx",
+                           false),
          post = Effect(sceneScript ? L"SceneScript.fx"
                        : controls  ? L"ControlPost.fx"
                                    : L"TwoStage.fx",
                        true);
+    if (legacyMulti) {
+        auto source = *material.source;
+        source.insert(source.find("sampler2D ColorSampler"),
+                      "texture Lookup : MATERIALTOONTEXTURE;\n"
+                      "sampler2D LookupSampler = sampler_state { Texture=<Lookup>;"
+                      " MinFilter=POINT; MagFilter=POINT; MipFilter=POINT;"
+                      " AddressU=CLAMP; AddressV=CLAMP; };\n");
+        const std::string original = "tex2D(ColorSampler,f.uv)";
+        source.replace(source.find(original), original.size(),
+                       "(.75*tex2D(ColorSampler,f.uv*2-.5)+"
+                       ".25*tex2D(LookupSampler,f.uv*2-.5))");
+        material.source = std::make_shared<const std::string>(std::move(source));
+    }
     if (controls)
         for (auto* effect : {&material, &post}) {
             const auto value = [&](const char* name, unsigned rows, unsigned columns,
@@ -208,9 +246,15 @@ int main(int argc, char** argv) try {
                           (source.post ? (sceneScript ? L"SceneScript.fx"
                                           : controls  ? L"ControlPost.fx"
                                                       : L"TwoStage.fx")
-                                       : (controls ? L"ControlMaterial.fx" : L"MaterialTint.fx"));
-        const auto result = D3DXCreateEffectFromFileW(dx9.Get(), path.c_str(), nullptr, nullptr, 0,
-                                                      nullptr, &fx, &errors);
+                                       : (legacy     ? L"LegacyMaterial.fx"
+                                          : controls ? L"ControlMaterial.fx"
+                                                     : L"MaterialTint.fx"));
+        const auto result =
+            legacy && !source.post
+                ? createEffect(dx9.Get(), source.source->data(), UINT(source.source->size()),
+                               nullptr, nullptr, 0, nullptr, &fx, &errors)
+                : D3DXCreateEffectFromFileW(dx9.Get(), path.c_str(), nullptr, nullptr, 0, nullptr,
+                                            &fx, &errors);
         if (FAILED(result))
             throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer())
                                             : "DX9 FX compile failed");
@@ -233,33 +277,81 @@ int main(int argc, char** argv) try {
     };
     auto materialFx = compile(material), postFx = compile(post);
     std::string reason;
+    if (legacy) {
+        material.profile = "legacy-material-v1";
+        auto imported = std::make_shared<MmeLegacyProgram>();
+        CHECK(MmeLegacyImport(*material.source, *imported, reason));
+        material.legacy = imported;
+        material.passes = {{"Main", "Tint", "VertexMain", "PixelMain"}};
+        for (const auto& v : imported->variables) {
+            MmePortableParameter p;
+            p.name = v.name;
+            p.semantic = v.semantic;
+            p.rows = v.rows;
+            p.columns = v.columns;
+            p.elements = v.elements;
+            p.value.resize(v.rows * v.columns * v.elements * 4);
+            if (v.type == "bool") {
+                p.type = MmePortableParameter::Type::Bool;
+                BOOL value = FALSE;
+                CHECK(SUCCEEDED(materialFx->GetBool(v.name.c_str(), &value)));
+                std::memcpy(p.value.data(), &value, 4);
+            } else {
+                std::vector<float> values(p.value.size() / 4);
+                CHECK(SUCCEEDED(materialFx->GetFloatArray(v.name.c_str(), values.data(),
+                                                          unsigned(values.size()))));
+                std::memcpy(p.value.data(), values.data(), p.value.size());
+            }
+            material.parameters.push_back(std::move(p));
+        }
+    }
     CHECK(PortableMmeProgram(material, material.passes[0], reason));
+    if (legacy) {
+        auto frozen = material;
+        frozen.source = std::make_shared<const std::string>(
+            "#ifdef MDS_RHI\n#error No modern variant\n#endif\n#include \"Frozen.fxsub\"\n");
+        frozen.legacySource = material.source;
+        frozen.modernSource.reset();
+        CHECK(PortableMmeProgram(frozen, frozen.passes[0], reason));
+    }
     for (const auto& p : post.passes)
         CHECK(PortableMmeProgram(post, p, reason));
     // Opt-in metadata cannot hide an unsupported legacy pass state.
     auto bad = material;
     auto text = *bad.source;
     const auto offset = text.find("ZEnable=true");
-    text.replace(offset, 12, "ZEnable=false");
+    text.replace(offset, 12, legacy ? "ZEnable=42" : "ZEnable=false");
     bad.source = std::make_shared<const std::string>(text);
+    if (legacy) {
+        auto imported = std::make_shared<MmeLegacyProgram>();
+        CHECK(MmeLegacyImport(text, *imported, reason));
+        bad.legacy = imported;
+    }
     CHECK(!PortableMmeProgram(bad, bad.passes[0], reason));
-    ComPtr<IDirect3DTexture9> base, scene, ping;
-    CHECK(SUCCEEDED(
-        dx9->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &base, nullptr)));
+    ComPtr<IDirect3DTexture9> base, lookup, scene, ping;
     const std::uint8_t pixels[] = {255, 0, 0,   64,  0,   255, 0,   128,
                                    0,   0, 255, 192, 255, 255, 255, 254};
-    D3DLOCKED_RECT lock{};
-    CHECK(SUCCEEDED(base->LockRect(0, &lock, nullptr, 0)));
-    for (unsigned y = 0; y < 2; ++y)
-        for (unsigned x = 0; x < 2; ++x) {
-            const auto* p = pixels + (y * 2 + x) * 4;
-            auto* b = static_cast<std::uint8_t*>(lock.pBits) + y * lock.Pitch + x * 4;
-            b[0] = p[2];
-            b[1] = p[1];
-            b[2] = p[0];
-            b[3] = p[3];
-        }
-    CHECK(SUCCEEDED(base->UnlockRect(0)));
+    const std::uint8_t lookupPixels[] = {32,  64, 96, 255, 128, 160, 192, 255,
+                                         192, 64, 32, 255, 96,  32,  160, 255};
+    const auto upload = [&](const std::uint8_t* rgba, ComPtr<IDirect3DTexture9>& texture) {
+        CHECK(SUCCEEDED(
+            dx9->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &texture, nullptr)));
+        D3DLOCKED_RECT lock{};
+        CHECK(SUCCEEDED(texture->LockRect(0, &lock, nullptr, 0)));
+        for (unsigned y = 0; y < 2; ++y)
+            for (unsigned x = 0; x < 2; ++x) {
+                const auto* p = rgba + (y * 2 + x) * 4;
+                auto* b = static_cast<std::uint8_t*>(lock.pBits) + y * lock.Pitch + x * 4;
+                b[0] = p[2];
+                b[1] = p[1];
+                b[2] = p[0];
+                b[3] = p[3];
+            }
+        CHECK(SUCCEEDED(texture->UnlockRect(0)));
+    };
+    upload(pixels, base);
+    if (legacyMulti)
+        upload(lookupPixels, lookup);
     CHECK(SUCCEEDED(dx9->CreateTexture(Width, Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8,
                                        D3DPOOL_DEFAULT, &scene, nullptr)));
     CHECK(SUCCEEDED(dx9->CreateTexture(Width, Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8,
@@ -269,14 +361,40 @@ int main(int argc, char** argv) try {
     ping->GetSurfaceLevel(0, &pingSurface);
     CHECK(SUCCEEDED(dx9->CreateRenderTarget(Width, Height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0,
                                             FALSE, &finalSurface, nullptr)));
-    const float vertices[][8] = {
-        {-1, 1, .25f, 0, 0, 0, 0, 0}, {3, 1, .25f, 0, 0, 0, 2, 0}, {-1, -3, .25f, 0, 0, 0, 0, 2}};
+    const float vertices[][8] = {{-1, 1, .25f, .25f, .5f, 1, 0, 0},
+                                 {3, 1, .25f, .25f, .5f, 1, 2, 0},
+                                 {-1, -3, .25f, .25f, .5f, 1, 0, 2}};
     const std::array<float, 16> identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    auto legacyWorld = identity, legacyView = identity, legacyProjection = identity;
+    D3DXMATRIX legacyWvp{};
+    if (legacy) {
+        legacyWorld[0] = .75f;
+        legacyWorld[5] = .75f;
+        legacyWorld[12] = .125f;
+        legacyWorld[13] = -.125f;
+        legacyView[4] = .125f;
+        legacyView[12] = -.0625f;
+        legacyProjection[0] = .875f;
+        legacyProjection[5] = .9375f;
+        legacyProjection[11] = .125f;
+        D3DXMATRIX worldView{};
+        D3DXMatrixMultiply(&worldView, reinterpret_cast<const D3DXMATRIX*>(legacyWorld.data()),
+                           reinterpret_cast<const D3DXMATRIX*>(legacyView.data()));
+        D3DXMatrixMultiply(&legacyWvp, &worldView,
+                           reinterpret_cast<const D3DXMATRIX*>(legacyProjection.data()));
+        CHECK(SUCCEEDED(materialFx->SetValue("ObjectWorld", legacyWorld.data(), 64)));
+        CHECK(SUCCEEDED(materialFx->SetValue("CameraView", legacyView.data(), 64)));
+        CHECK(SUCCEEDED(materialFx->SetValue("CameraProjection", legacyProjection.data(), 64)));
+    }
     const float size[] = {float(Width), float(Height)}, diffuse[] = {1, 1, 1, 1};
-    CHECK(SUCCEEDED(materialFx->SetValue("worldViewProjection", identity.data(), 64)));
-    materialFx->SetFloatArray("viewportSize", size, 2);
-    materialFx->SetFloatArray("materialDiffuse", diffuse, 4);
-    materialFx->SetTexture("baseTexture", base.Get());
+    CHECK(SUCCEEDED(
+        materialFx->SetValue(legacy ? "Transform" : "worldViewProjection",
+                             legacy ? static_cast<const void*>(&legacyWvp) : identity.data(), 64)));
+    materialFx->SetFloatArray(legacy ? "SurfaceSize" : "viewportSize", size, 2);
+    materialFx->SetFloatArray(legacy ? "GeometryColor" : "materialDiffuse", diffuse, 4);
+    materialFx->SetTexture(legacy ? "Albedo" : "baseTexture", base.Get());
+    if (legacyMulti)
+        CHECK(SUCCEEDED(materialFx->SetTexture("Lookup", lookup.Get())));
     CHECK(SUCCEEDED(dx9->SetRenderTarget(0, sceneSurface.Get())));
     CHECK(SUCCEEDED(
         dx9->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1, 0)));
@@ -308,15 +426,49 @@ int main(int argc, char** argv) try {
     texture.kind = ReplayResourceKind::Texture;
     texture.texture.levels.push_back({2, 2, {pixels, pixels + sizeof(pixels)}});
     frame.resources = {geometry, texture};
+    if (legacyMulti) {
+        auto resource = texture;
+        resource.key = {3, 1};
+        resource.texture.levels[0].pixels =
+            SnapshotBytes(lookupPixels, lookupPixels + sizeof(lookupPixels));
+        frame.resources.push_back(std::move(resource));
+    }
     ModelReplayDraw draw;
     draw.indexed = false;
     draw.vertices = geometry.key;
     draw.drawVertexCount = 3;
     draw.textures[0] = texture.key;
     draw.pipeline.shader.layout.stages[0].role = MaterialTextureRole::Base;
+    if (legacyMulti) {
+        draw.textures[1] = frame.resources.back().key;
+        draw.pipeline.shader.layout.stages[1].role = MaterialTextureRole::Toon;
+    }
     draw.pipeline.shader.world = draw.pipeline.shader.view = draw.pipeline.shader.projection =
         identity;
+    if (legacy) {
+        draw.pipeline.shader.world = legacyWorld;
+        draw.pipeline.shader.view = legacyView;
+        draw.pipeline.shader.projection = legacyProjection;
+    }
     draw.pipeline.shader.nativeDiffuse = {1, 1, 1, 1};
+    draw.pipeline.viewport = ModelViewport{0, 0, Width, Height};
+    if (legacy) {
+        auto invalid = draw;
+        invalid.pipeline.viewport.reset();
+        CHECK(!ApplyPortableMmeMaterial(invalid, material, reason));
+        CHECK(reason == "MME_legacy_viewport_missing" && !invalid.shader);
+        invalid = draw;
+        invalid.pipeline.shader.layout = {};
+        CHECK(!ApplyPortableMmeMaterial(invalid, material, reason));
+        CHECK(reason == "MME_legacy_material_texture_unavailable" && !invalid.shader);
+        auto missingPass = material;
+        auto metadata = std::make_shared<MmeLegacyProgram>(*material.legacy);
+        metadata->passes.clear();
+        missingPass.legacy = metadata;
+        invalid = draw;
+        CHECK(!ApplyPortableMmeMaterial(invalid, missingPass, reason));
+        CHECK(reason == "MME_legacy_pass_source" && !invalid.shader);
+    }
     if (controls) {
         const auto reject = [&](MmePortableEffect bad, const char* expected) {
             auto invalid = draw;

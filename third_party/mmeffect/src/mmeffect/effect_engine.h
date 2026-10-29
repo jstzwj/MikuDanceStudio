@@ -33,6 +33,7 @@
 #include <memory>
 #include <map>
 #include <string>
+#include "../../include/mme_legacy_api.h"
 #include <utility>
 
 #include <d3d9.h>
@@ -52,6 +53,9 @@ struct LoadedEffect {
     // Expanded with this revision's _INDEX/MME_MIPMAP defines and includes.
     // The modern variant additionally defines MDS_RHI; native FX9 is unchanged.
     std::shared_ptr<const std::string> legacySource, modernSource;
+    bool legacyImportChecked = false;
+    std::shared_ptr<const MmeLegacyProgram> legacyImport;
+    std::string legacyImportReason;
     bool assigned = false;  // first assignment uses the freshly compiled instance
     ID3DXEffect*  effect = nullptr;   // created by D3DXCreateEffectFromFileW
     std::string   path;               // narrow (CP 0) path as requested

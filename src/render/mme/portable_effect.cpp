@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "mikudancestudio/mme_portable.hpp"
 #include "mme_portable_api.h"
+#include "mme_legacy_api.h"
 #include "mikudancestudio/rhi_post_process.hpp"
 #include "../rhi_model_constants.hpp"
 #include <d3dcompiler.h>
@@ -41,6 +42,14 @@ Source* LoadSource(const MmePortableEffect& effect, std::string& reason) {
     for (auto& source : sources)
         if (source.owner.lock() == effect.source)
             return &source;
+    if (effect.legacy && effect.source) {
+        // Import already consumed the loaded FX9 expansion. It must not depend
+        // on a second, unrelated MDS_RHI branch or reopen includes from disk.
+        Source next;
+        next.owner = effect.source;
+        sources.push_back(std::move(next));
+        return &sources.back();
+    }
     if (!effect.source || (effect.source->find("#include") != std::string::npos &&
                            (!effect.legacySource || !effect.modernSource))) {
         reason = "MME_includes_not_supported";
@@ -345,6 +354,160 @@ bool BindParameters(ReplayShader& shader, const MmePortableEffect& effect, std::
     }
     return true;
 }
+const MmeLegacyPass* LegacyPass(const MmePortableEffect& effect, const MmePortablePass& pass) {
+    if (!effect.legacy)
+        return nullptr;
+    const auto found = std::find_if(
+        effect.legacy->passes.begin(), effect.legacy->passes.end(), [&](const auto& p) {
+            return p.technique == pass.technique && p.name == pass.name &&
+                   p.vertex == pass.vertex && p.pixel == pass.pixel;
+        });
+    return found == effect.legacy->passes.end() ? nullptr : &*found;
+}
+bool LegacyRaster(const MmeLegacyPass& pass, BatchRasterState& raster, std::string& reason) {
+    auto states = pass.states;
+    const auto fail = [&] {
+        reason = "MME_legacy_render_state";
+        return false;
+    };
+    // These host-dependent features have no implicit native approximation.
+    static const std::map<std::string, std::string> fixed = {{"ALPHATESTENABLE", "FALSE"},
+                                                             {"STENCILENABLE", "FALSE"},
+                                                             {"FILLMODE", "SOLID"},
+                                                             {"DEPTHBIAS", "0"},
+                                                             {"SLOPESCALEDEPTHBIAS", "0"},
+                                                             {"SRGBWRITEENABLE", "FALSE"},
+                                                             {"COLORWRITEENABLE", "15"},
+                                                             {"SEPARATEALPHABLENDENABLE", "FALSE"},
+                                                             {"BLENDOP", "ADD"}};
+    for (const auto& [key, value] : fixed) {
+        if (states[key] != value)
+            return fail();
+        states.erase(key);
+    }
+    for (const auto* key : {"ZENABLE", "ZWRITEENABLE", "ALPHABLENDENABLE"}) {
+        const auto found = states.find(key);
+        if (found == states.end())
+            continue; // Inherit this draw's explicit CPU state.
+        if (found->second != "TRUE" && found->second != "FALSE")
+            return fail();
+        (std::string(key) == "ZENABLE"        ? raster.depthTest
+         : std::string(key) == "ZWRITEENABLE" ? raster.depthWrite
+                                              : raster.alphaBlend) = found->second == "TRUE";
+        states.erase(found);
+    }
+    if (states.count("CULLMODE")) {
+        const auto& value = states.at("CULLMODE");
+        if (value != "NONE" && value != "CW" && value != "CCW")
+            return fail();
+        raster.cull = value == "NONE" ? BatchCull::None
+                      : value == "CW" ? BatchCull::Clockwise
+                                      : BatchCull::CounterClockwise;
+        states.erase("CULLMODE");
+    }
+    static const std::map<std::string, DepthComparison> comparisons = {
+        {"NEVER", DepthComparison::Never},
+        {"LESS", DepthComparison::Less},
+        {"EQUAL", DepthComparison::Equal},
+        {"LESSEQUAL", DepthComparison::LessEqual},
+        {"GREATER", DepthComparison::Greater},
+        {"NOTEQUAL", DepthComparison::NotEqual},
+        {"GREATEREQUAL", DepthComparison::GreaterEqual},
+        {"ALWAYS", DepthComparison::Always}};
+    if (states.count("ZFUNC")) {
+        if (!comparisons.count(states.at("ZFUNC")))
+            return fail();
+        raster.depthCompare = comparisons.at(states.at("ZFUNC"));
+        states.erase("ZFUNC");
+    }
+    static const std::map<std::string, BlendFactor> factors = {
+        {"ZERO", BlendFactor::Zero},
+        {"ONE", BlendFactor::One},
+        {"SRCALPHA", BlendFactor::SourceAlpha},
+        {"INVSRCALPHA", BlendFactor::InvSourceAlpha},
+        {"DESTALPHA", BlendFactor::DestinationAlpha},
+        {"INVDESTALPHA", BlendFactor::InvDestinationAlpha}};
+    for (const auto* key : {"SRCBLEND", "DESTBLEND"}) {
+        if (!states.count(key))
+            continue;
+        if (!factors.count(states.at(key)))
+            return fail();
+        (std::string(key) == "SRCBLEND" ? raster.sourceBlend : raster.destinationBlend) =
+            factors.at(states.at(key));
+        states.erase(key);
+    }
+    return states.empty() || fail();
+}
+bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
+                        const MmePortableEffect& effect, std::string& reason) {
+    auto values = effect;
+    const auto& s = draw.pipeline.shader;
+    if (!draw.pipeline.viewport || !draw.pipeline.viewport->width ||
+        !draw.pipeline.viewport->height) {
+        reason = "MME_legacy_viewport_missing";
+        return false;
+    }
+    const auto& viewport = *draw.pipeline.viewport;
+    const std::array<float, 4> dimensions{1.f / viewport.width, 1.f / viewport.height,
+                                          float(viewport.width), float(viewport.height)};
+    shader.constants.push_back({0, Bytes(dimensions.data(), sizeof(dimensions))});
+    const auto wv = detail::Dx9MatrixMultiply(s.world, s.view),
+               vp = detail::Dx9MatrixMultiply(s.view, s.projection),
+               wvp = detail::Dx9MatrixMultiply(wv, s.projection);
+    const float specularPower = s.shininess == 0.f ? .1f : s.shininess;
+    for (auto& p : values.parameters) {
+        const auto definition =
+            std::find_if(effect.legacy->variables.begin(), effect.legacy->variables.end(),
+                         [&](const auto& v) { return v.name == p.name; });
+        if (definition == effect.legacy->variables.end()) {
+            reason = "MME_legacy_parameter_missing";
+            return false;
+        }
+        const auto& semantic = definition->semantic;
+        const float* data = semantic == "WORLD"                 ? s.world.data()
+                            : semantic == "VIEW"                ? s.view.data()
+                            : semantic == "PROJECTION"          ? s.projection.data()
+                            : semantic == "WORLDVIEW"           ? wv.data()
+                            : semantic == "VIEWPROJECTION"      ? vp.data()
+                            : semantic == "WORLDVIEWPROJECTION" ? wvp.data()
+                            : semantic == "DIFFUSE"             ? s.nativeDiffuse.data()
+                            : semantic == "AMBIENT"             ? s.materialAmbient.data()
+                            : semantic == "SPECULAR"            ? s.materialSpecular.data()
+                            : semantic == "EMISSIVE"            ? s.emissive.data()
+                            : semantic == "SPECULARPOWER"       ? &specularPower
+                            : semantic == "VIEWPORTPIXELSIZE"   ? dimensions.data() + 2
+                                                                : nullptr;
+        if (data) {
+            p.value.resize(p.rows * p.columns * p.elements * sizeof(float));
+            std::memcpy(p.value.data(), data, p.value.size());
+        }
+    }
+    if (!BindParameters(shader, values, reason))
+        return false;
+    for (unsigned slot = 0; slot < effect.legacy->samplers.size(); ++slot) {
+        const auto& sampler = effect.legacy->samplers[slot];
+        const auto role = sampler.semantic == "MATERIALTEXTURE"     ? MaterialTextureRole::Base
+                          : sampler.semantic == "MATERIALSPHEREMAP" ? MaterialTextureRole::Sphere
+                                                                    : MaterialTextureRole::Toon;
+        unsigned input = 3;
+        for (unsigned n = 0; n < 3; ++n)
+            if (s.layout.stages[n].role == role)
+                input = n;
+        if (input == 3 || s.srgbSample[input]) {
+            reason = "MME_legacy_material_texture_unavailable";
+            return false;
+        }
+        shader.textures.push_back({slot, draw.textures[input], draw.targetTextures[input]});
+        shader.samplers.push_back(
+            {slot,
+             {sampler.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
+              sampler.linearMag ? SamplerFilter::Linear : SamplerFilter::Point,
+              sampler.linearMip ? SamplerFilter::Linear : SamplerFilter::Point,
+              sampler.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
+              sampler.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap, 1}});
+    }
+    return true;
+}
 }
 std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEffect& effect,
                                                              const MmePortablePass& pass,
@@ -352,12 +515,53 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
     auto* source = LoadSource(effect, reason);
     if (!source)
         return {};
-    const auto key = std::string(effect.post ? "post:" : "material:") + pass.name + ":" +
-                     pass.vertex + ":" + pass.pixel + ":" + std::to_string(pass.colors.size()) +
-                     ":" + std::to_string(pass.sampled.size());
+    const auto key = std::string(effect.post ? "post:" : "material:") + pass.technique + ":" +
+                     pass.name + ":" + pass.vertex + ":" + pass.pixel + ":" +
+                     std::to_string(pass.colors.size()) + ":" + std::to_string(pass.sampled.size());
     auto cached = source->programs.find(key);
     if (cached != source->programs.end())
         return cached->second;
+    if (effect.legacy) {
+        const auto* imported = LegacyPass(effect, pass);
+        BatchRasterState raster;
+        if (!imported || !LegacyRaster(*imported, raster, reason))
+            return {};
+        ShaderProgramDesc d;
+        std::string hlsl;
+        std::vector<MmeLegacyInput> inputs;
+        if (!MmeLegacyShader(*effect.legacy, *imported, hlsl, inputs, reason))
+            return {};
+        d.name = pass.technique + "/" + pass.name;
+        d.vertex.entry = "mdsLegacyVS";
+        d.pixel.entry = "mdsLegacyPS";
+        d.vertex.hlsl = d.pixel.hlsl = std::move(hlsl);
+        for (const auto& i : inputs) {
+            const bool uv = i.semantic == "TEXCOORD0",
+                       normal = i.semantic == "NORMAL" || i.semantic == "NORMAL0";
+            d.inputs.push_back({uv       ? "TEXCOORD"
+                                : normal ? "NORMAL"
+                                         : "POSITION",
+                                0, unsigned(d.inputs.size()),
+                                uv       ? 24u
+                                : normal ? 12u
+                                         : 0u,
+                                uv ? ShaderVertexFormat::Float2 : ShaderVertexFormat::Float3});
+        }
+        d.bindings.push_back({ShaderBindingKind::Constants,
+                              0,
+                              1,
+                              16,
+                              {{"mdsLegacyViewport", ShaderValueType::Float4, 0}}});
+        for (unsigned slot = 0; slot < effect.legacy->samplers.size(); ++slot) {
+            d.bindings.push_back({ShaderBindingKind::Texture, slot});
+            d.bindings.push_back({ShaderBindingKind::Sampler, slot});
+        }
+        if (!ReflectParameters(d, effect, reason))
+            return {};
+        auto program = std::make_shared<const ShaderProgram>(std::move(d));
+        source->programs.emplace(key, program);
+        return program;
+    }
     if (!ValidateLegacy(*source, effect, pass, reason))
         return {};
     ShaderProgramDesc d;
@@ -415,6 +619,25 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
     auto program = PortableMmeProgram(effect, effect.passes[0], reason);
     if (!program)
         return false;
+    if (effect.legacy) {
+        const auto* imported = LegacyPass(effect, effect.passes[0]);
+        if (!imported) {
+            reason = "MME_legacy_pass_source";
+            return false;
+        }
+        ReplayShader shader;
+        shader.pipeline.program = program;
+        shader.pipeline.viewport = draw.pipeline.viewport;
+        shader.pipeline.raster = draw.pipeline.raster;
+        if (!LegacyRaster(*imported, shader.pipeline.raster, reason) ||
+            !BindLegacyMaterial(shader, draw, effect, reason))
+            return false;
+        draw.shader = std::move(shader);
+        draw.textures = {};
+        draw.targetTextures = {};
+        draw.shadowTarget = 0;
+        return true;
+    }
     unsigned base = 3;
     for (unsigned n = 0; n < 3; ++n)
         if (draw.pipeline.shader.layout.stages[n].role == MaterialTextureRole::Base)

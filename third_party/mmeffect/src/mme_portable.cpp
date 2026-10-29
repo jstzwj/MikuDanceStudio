@@ -156,6 +156,101 @@ bool ExportScript(mme::SasEffect& sas, MmePortableEffect& out, std::string& reas
     }
     return MmePortableSceneLayout(out, reason);
 }
+bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBinding& binding,
+                    MmePortableEffect& out, std::string& reason) {
+    const auto fail = [&](const char* why) {
+        reason = why;
+        return false;
+    };
+    if (mme::SasGetScriptClass(binding.sas) != mme::kSasClassObject ||
+        mme::SasGetScriptOrder(binding.sas) != mme::kSasOrderStandard)
+        return fail("MME_legacy_scene_not_supported");
+    if (key.model->kind() != 1)
+        return fail("MME_legacy_geometry_not_supported");
+    auto owner = binding.owner ? binding.owner : binding.instance;
+    if (!owner->legacyImportChecked) {
+        owner->legacyImportChecked = true;
+        auto program = std::make_shared<MmeLegacyProgram>();
+        if (owner->legacySource &&
+            MmeLegacyImport(*owner->legacySource, *program, owner->legacyImportReason))
+            owner->legacyImport = std::move(program);
+        else if (!owner->legacySource)
+            owner->legacyImportReason = "MME_legacy_expanded_source_missing";
+    }
+    if (!owner->legacyImport) {
+        reason = owner->legacyImportReason;
+        return false;
+    }
+    out.object = key.model->objectId();
+    out.subset = key.subset;
+    out.profile = "legacy-material-v1";
+    out.source = binding.instance->originalSource;
+    out.legacySource = binding.instance->legacySource;
+    out.modernSource = binding.instance->modernSource;
+    out.legacy = owner->legacyImport;
+    static const std::set<std::string> matrices = {
+        "WORLD", "VIEW", "PROJECTION", "WORLDVIEW", "VIEWPROJECTION", "WORLDVIEWPROJECTION"};
+    // The native bridge also updates these unannotated names per draw. Plain
+    // snapshots would retain a previous DX9 draw's values, so reject them until
+    // their providers are represented by the CPU draw contract.
+    static const std::set<std::string> namedDrawParameters = {
+        "MATWORLD", "MATWORLDVIEWPROJ", "MATLIGHTVIEWPROJ", "MATROTATE",
+        "EGCOLOR",  "TOONCOLOR",        "LIGHTDIR",         "SPCCOLOR",
+        "PLACE",    "DIFCOLOR",         "PARTHF",           "SPADD",
+        "TRANSP",   "USE_TEXTURE",      "USE_SPHEREMAP",    "USE_SUBTEXTURE",
+        "USE_TOON", "VERTEXCOUNT",      "SUBSETCOUNT",      "OPADD",
+        "TEXCADD",  "TEXCMUL",          "SPHCADD",          "SPHCMUL"};
+    for (const auto& v : out.legacy->variables) {
+        const auto& s = v.semantic;
+        auto name = v.name;
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char c) { return char(std::toupper(c)); });
+        if (s.empty() && namedDrawParameters.count(name))
+            return fail("MME_legacy_named_draw_parameter");
+        if (!s.empty() && s != "CONTROLOBJECT" && s != "VIEWPORTPIXELSIZE" && s != "DIFFUSE" &&
+            s != "AMBIENT" && s != "SPECULAR" && s != "EMISSIVE" && s != "SPECULARPOWER" &&
+            !matrices.count(s))
+            return fail("MME_legacy_parameter_semantic");
+        if ((matrices.count(s) && (v.rows != 4 || v.columns != 4 || v.elements != 1)) ||
+            (!s.empty() && s != "CONTROLOBJECT" && v.type.rfind("float", 0) != 0) ||
+            (s == "VIEWPORTPIXELSIZE" && (v.rows != 1 || v.columns != 2 || v.elements != 1)) ||
+            ((s == "DIFFUSE" || s == "AMBIENT" || s == "SPECULAR" || s == "EMISSIVE") &&
+             (v.rows != 1 || v.columns != 4 || v.elements != 1 || v.object != "GEOMETRY")) ||
+            (s == "SPECULARPOWER" &&
+             (v.rows != 1 || v.columns != 1 || v.elements != 1 || v.object != "GEOMETRY")))
+            return fail("MME_legacy_semantic_shape");
+        MmePortableParameter p;
+        D3DXPARAMETER_DESC d{};
+        auto h = binding.effect->GetParameterByName(nullptr, v.name.c_str());
+        if (!h || FAILED(binding.effect->GetParameterDesc(h, &d)) ||
+            !ReadParameter(binding.effect, h, d, p) || p.rows != v.rows || p.columns != v.columns ||
+            p.elements != v.elements)
+            return fail("MME_legacy_parameter_layout");
+        if (p.shared && !s.empty() && s != "CONTROLOBJECT")
+            return fail("MME_legacy_shared_draw_semantic");
+        out.parameters.push_back(std::move(p));
+    }
+    const int count = mme::SasGetTechniqueCount(binding.sas);
+    for (int n = 0; n < count; ++n) {
+        mme::SasTechniqueInfo tech{};
+        if (!mme::SasGetTechniqueInfo(binding.sas, n, &tech) || !tech.hardwareOk ||
+            !tech.shaderMixOk || tech.hasScript || tech.passCount != 1 ||
+            (tech.mmdPass != 0 && tech.mmdPass != 1))
+            return fail("MME_legacy_material_technique");
+        D3DXPASS_DESC pass{};
+        const auto h = binding.effect->GetPass(tech.handle, 0);
+        if (FAILED(binding.effect->GetPassDesc(h, &pass)) || !pass.Name)
+            return fail("MME_pass_description");
+        const auto source =
+            std::find_if(out.legacy->passes.begin(), out.legacy->passes.end(), [&](const auto& p) {
+                return p.technique == tech.name && p.name == pass.Name;
+            });
+        if (source == out.legacy->passes.end())
+            return fail("MME_legacy_pass_source");
+        out.passes.push_back({tech.name, pass.Name, source->vertex, source->pixel});
+    }
+    return !out.passes.empty() || fail("MME_empty_effect");
+}
 bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBinding& binding,
               MmePortableEffect& out, std::string& reason) {
     const auto fail = [&](const char* r) {
@@ -166,6 +261,8 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
     if (!binding.instance || !binding.instance->originalSource || !binding.sas || key.turnId)
         return fail("MME_portable_source_or_turn");
     const auto profile = Text(fx, fx->GetParameterByName(nullptr, "MDSRhiProfile"));
+    if (profile.empty())
+        return DescribeLegacy(key, binding, out, reason);
     const bool hdr = profile == "mrt-hdr-v1";
     const bool scene = profile == "scene-v2";
     if (profile != "material-v1" && profile != "post-v1" && !hdr && !scene)

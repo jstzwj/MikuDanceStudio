@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <stdexcept>
 #include <vector>
 
@@ -523,12 +524,16 @@ int main(int argc, char** argv) try {
     CHECK(app->FrameRenderingStats().legacyScenes == beforeUploadFailure.legacyScenes);
     CHECK(app->CpuModelFrames().at(model.get())->frames == beforeFailedUpdates + 1);
     frame(true);
+    std::map<Backend, bool> runtimeShaderSupport;
     for (const auto selected :
          {Backend::D3D11, Backend::D3D12, Backend::Vulkan, Backend::D3D9, api}) {
         if (selected != Backend::D3D9 && !BackendAvailable(selected))
             continue;
         CHECK(app->ViewportRenderer().Select(*app, selected, false));
         frame(selected != Backend::D3D9);
+        if (selected != Backend::D3D9)
+            runtimeShaderSupport[selected] =
+                app->ViewportRenderer().GetDevice()->ShaderFeatures().hlsl;
     }
     app->ViewportRect().right += 24;
     frame(true);
@@ -609,6 +614,59 @@ int main(int argc, char** argv) try {
         frame(true);
         CHECK(image().pixels == portableImage.pixels);
     }
+    // Unannotated FX9 is imported from its frozen source, with arbitrary names,
+    // reflected constants and native SAS technique selection.
+    const auto legacyMaterial =
+        (sourceRoot / L"assets/effects/portable/LegacyMaterial.fx").string();
+    CHECK(
+        ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, legacyMaterial));
+    if (!CheckPortableMme(portableReason))
+        throw std::runtime_error(portableReason);
+    std::vector<MmePortableEffect> legacyEffects;
+    CHECK(MmePortableEffects(legacyEffects, portableReason));
+    CHECK(std::any_of(legacyEffects.begin(), legacyEffects.end(),
+                      [](const auto& e) { return e.legacy && e.profile == "legacy-material-v1"; }));
+    frame(runtimeEffects);
+    const auto importedImage = image().pixels;
+    CHECK(SUCCEEDED(assignedEffect(model.get())->SetFloat("Exposure", .25f)));
+    frame(runtimeEffects);
+    if (runtimeEffects)
+        CHECK(image().pixels != importedImage);
+    CHECK(SUCCEEDED(assignedEffect(model.get())->SetFloat("Exposure", 1)));
+    frame(runtimeEffects);
+    if (runtimeEffects) {
+        CHECK(image().pixels == importedImage);
+        CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+        frame(true);
+        CHECK(image().pixels == importedImage);
+        app->ViewportRect().right += 8;
+        frame(true);
+        CHECK(image().width == 192);
+        app->ViewportRect().right -= 8;
+        frame(true);
+        CHECK(image().pixels == importedImage);
+    }
+    auto importBaseline = runtimeEffects ? importedImage : SnapshotBytes{};
+    for (const auto selected :
+         {Backend::D3D9, Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+        if (selected != Backend::D3D9 && !BackendAvailable(selected))
+            continue;
+        CHECK(app->ViewportRenderer().Select(*app, selected, false));
+        if (selected == Backend::D3D9) {
+            frame(false);
+            continue;
+        }
+        const bool supported = runtimeShaderSupport.at(selected);
+        frame(supported);
+        if (supported) {
+            if (importBaseline.empty())
+                importBaseline = image().pixels;
+            CHECK(image().pixels == importBaseline);
+        }
+    }
+    CHECK(
+        ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, materialEffect));
+    frame(runtimeEffects);
     if (std::filesystem::exists(path.parent_path() / L"bound.x")) {
         mdl::AccessoryRecord carrier{};
         CHECK(LoadAccessoryObject(app.get(), &carrier, (path.parent_path() / L"bound.x").c_str()));
@@ -901,7 +959,7 @@ int main(int argc, char** argv) try {
         const auto rayFallback = [&] {
             const auto before = app->ViewportRenderer().Statistics();
             CHECK(!CheckPortableMme(portableReason));
-            CHECK(portableReason == "MME_profile_not_supported");
+            CHECK(portableReason.rfind("MME_legacy_", 0) == 0);
             frame(false);
             CHECK(app->ViewportRenderer().Reason() == "MME");
             CHECK(!app->ViewportRenderer().OwnsPresentation());

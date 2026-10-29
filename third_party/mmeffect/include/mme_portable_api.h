@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+struct MmeLegacyProgram;
 // Read-only CPU bridge. No native handles escape into an RHI frame.
 struct MmePortablePass {
     std::string technique, name, vertex, pixel;
@@ -68,6 +69,7 @@ struct MmePortableEffect {
     bool post = false;
     std::shared_ptr<const std::string> source;
     std::shared_ptr<const std::string> legacySource, modernSource;
+    std::shared_ptr<const MmeLegacyProgram> legacy;
     std::vector<MmePortablePass> passes;
     std::array<float, 4> multiply{1, 1, 1, 1}, add{};
     std::string profile;
