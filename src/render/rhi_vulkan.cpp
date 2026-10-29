@@ -135,6 +135,8 @@ struct Frame {
     unsigned draws = 0;
 };
 VkFormat Format(TextureFormat f) {
+    if (f == TextureFormat::Rgba16Float)
+        return VK_FORMAT_R16G16B16A16_SFLOAT;
     return f == TextureFormat::Rgba8      ? VK_FORMAT_R8G8B8A8_UNORM
            : f == TextureFormat::R32Float ? VK_FORMAT_R32_SFLOAT
                                           : VK_FORMAT_D24_UNORM_S8_UINT;
@@ -207,7 +209,22 @@ public:
             aligned(sizeof(ModelVertexConstants)) + aligned(sizeof(detail::ModelPixelConstants)) +
             aligned(sizeof(BuiltinShadowConstants)) + aligned(sizeof(detail::PostProcessConstants));
         caps.maxFrameConstantBytes = UniformBytes;
+        caps.maxColorAttachments = (std::min)(4u, properties.limits.maxColorAttachments);
         return caps;
+    }
+    TextureFormatCapabilities FormatFeatures(TextureFormat f) const override {
+        if (!physical || !TexturePixelBytes(f))
+            return {};
+        VkFormatProperties data{};
+        vkGetPhysicalDeviceFormatProperties(physical, Format(f), &data);
+        const auto flags = data.optimalTilingFeatures;
+        const bool depth = f == TextureFormat::Depth24Stencil8;
+        return {bool(flags & (depth ? VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+                                    : VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)),
+                !depth && bool(flags & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
+                    bool(flags & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
+                !depth && bool(flags & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT),
+                !depth && bool(flags & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)};
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;
@@ -818,7 +835,7 @@ public:
         return UploadImage(*r, image);
     }
     Handle CreateRenderTexture(const RenderTextureDesc& d) override {
-        if (!Live() || inFrame || !ValidRenderTextureDesc(d))
+        if (!Live() || inFrame || !QueryShaderTextureSupport(*this, d))
             return {};
         const bool depth = d.format == TextureFormat::Depth24Stencil8;
         VkImageUsageFlags usage = depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
@@ -904,18 +921,19 @@ public:
         if (!passes.Active())
             return width;
         const auto& p = passes.Current();
-        return passes.Description(p.color ? p.color->texture : p.depthStencil->texture)->width;
+        return passes.Description(PrimaryAttachment(p)->texture)->width;
     }
     unsigned RenderHeight() const {
         if (!passes.Active())
             return height;
         const auto& p = passes.Current();
-        return passes.Description(p.color ? p.color->texture : p.depthStencil->texture)->height;
+        return passes.Description(PrimaryAttachment(p)->texture)->height;
     }
     Resource* ActiveColor() {
-        return passes.Active()
-                   ? (passes.Current().color ? Find(passes.Current().color->texture) : nullptr)
-                   : &legacyColor;
+        return passes.Active() ? (ColorAttachments(passes.Current()).empty()
+                                      ? nullptr
+                                      : Find(ColorAttachments(passes.Current())[0].texture))
+                               : &legacyColor;
     }
     Resource* ActiveDepth() {
         return passes.Active()
@@ -926,8 +944,8 @@ public:
     void BeginNative(Resource* color, Resource* depth, const PassAttachment* c,
                      const PassAttachment* d, unsigned w, unsigned h) {
         const auto cmd = frames[frameIndex].commands;
-        VkRenderingAttachmentInfo colorInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO},
-            depthInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        VkRenderingAttachmentInfo depthInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        std::vector<VkRenderingAttachmentInfo> colorInfos;
         const auto load = [](AttachmentLoad l) {
             return l == AttachmentLoad::Clear  ? VK_ATTACHMENT_LOAD_OP_CLEAR
                    : l == AttachmentLoad::Load ? VK_ATTACHMENT_LOAD_OP_LOAD
@@ -937,17 +955,24 @@ public:
             return s == AttachmentStore::Store ? VK_ATTACHMENT_STORE_OP_STORE
                                                : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         };
-        if (color) {
-            Barrier(cmd, *color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        const auto addColor = [&](Resource* resource, const PassAttachment& attachment) {
+            Barrier(cmd, *resource, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-            colorInfo.imageView = color->view;
-            colorInfo.imageLayout = color->layout;
-            colorInfo.loadOp = load(c->load);
-            colorInfo.storeOp = store(c->store);
-            colorInfo.clearValue.color = {
-                {c->clear.red, c->clear.green, c->clear.blue, c->clear.alpha}};
-        }
+            VkRenderingAttachmentInfo info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            info.imageView = resource->view;
+            info.imageLayout = resource->layout;
+            info.loadOp = load(attachment.load);
+            info.storeOp = store(attachment.store);
+            info.clearValue.color = {{attachment.clear.red, attachment.clear.green,
+                                      attachment.clear.blue, attachment.clear.alpha}};
+            colorInfos.push_back(info);
+        };
+        if (passes.Active()) {
+            for (const auto& attachment : ColorAttachments(passes.Current()))
+                addColor(Find(attachment.texture), attachment);
+        } else if (color)
+            addColor(color, *c);
         if (depth) {
             Barrier(cmd, *depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
@@ -963,8 +988,8 @@ public:
         VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
         info.renderArea.extent = {w, h};
         info.layerCount = 1;
-        info.colorAttachmentCount = color ? 1 : 0;
-        info.pColorAttachments = color ? &colorInfo : nullptr;
+        info.colorAttachmentCount = unsigned(colorInfos.size());
+        info.pColorAttachments = colorInfos.data();
         info.pDepthAttachment = info.pStencilAttachment = depth ? &depthInfo : nullptr;
         vkCmdBeginRendering(cmd, &info);
         rendering = true;
@@ -1020,7 +1045,9 @@ public:
         return true;
     }
     bool BeginRenderPass(const RenderPassDesc& pass) override {
-        if (!Live() || !inFrame || !passes.Begin(pass))
+        if (!Live() || !inFrame ||
+            ColorAttachments(pass).size() > ShaderFeatures().maxColorAttachments ||
+            !passes.Begin(pass))
             return false;
         const auto cmd = frames[frameIndex].commands;
         if (rendering)
@@ -1124,7 +1151,8 @@ public:
         if (!BeginTransfer())
             return false;
         Buffer staging;
-        if (!AllocateBuffer(VkDeviceSize(r.texture.width) * r.texture.height * 4,
+        if (!AllocateBuffer(VkDeviceSize(r.texture.width) * r.texture.height *
+                                TexturePixelBytes(r.texture.format),
                             VK_BUFFER_USAGE_TRANSFER_DST_BIT, staging))
             return false;
         const auto layout = r.layout;
@@ -1151,7 +1179,8 @@ public:
         Barrier(transfer, r, layout, stage, access);
         const bool ok = FinishTransfer();
         if (ok) {
-            bytes.resize(std::size_t(r.texture.width) * r.texture.height * 4);
+            bytes.resize(std::size_t(r.texture.width) * r.texture.height *
+                         TexturePixelBytes(r.texture.format));
             std::memcpy(bytes.data(), staging.mapped, bytes.size());
         }
         if (!ok && pending)
@@ -1785,6 +1814,12 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out,
                                 const ShaderProgram* generic, const GenericProgram* binary) {
     auto* color = ActiveColor();
     auto* depth = ActiveDepth();
+    std::vector<VkFormat> colorFormats;
+    if (passes.Active()) {
+        for (auto f : passes.ColorFormats())
+            colorFormats.push_back(Format(f));
+    } else if (color)
+        colorFormats.push_back(color->format);
     const auto cf = color ? color->format : VK_FORMAT_UNDEFINED,
                df = depth ? depth->format : VK_FORMAT_UNDEFINED;
     std::ostringstream key;
@@ -1815,6 +1850,8 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out,
                        unsigned(p.stencilPass),
                        unsigned(p.colorWriteMask)})
         key << value << ',';
+    for (auto format : colorFormats)
+        key << ":rt" << unsigned(format);
     if (generic)
         key.write(generic->key.data(), generic->key.size());
     auto found = pipelines.find(key.str());
@@ -1922,16 +1959,17 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out,
     ba.colorWriteMask = p.colorWriteMask;
     VkPipelineColorBlendStateCreateInfo bs{
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    bs.attachmentCount = color ? 1 : 0;
-    bs.pAttachments = &ba;
+    std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorFormats.size(), ba);
+    bs.attachmentCount = unsigned(colorFormats.size());
+    bs.pAttachments = blendAttachments.data();
     VkDynamicState dynamic[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                                 VK_DYNAMIC_STATE_STENCIL_REFERENCE};
     VkPipelineDynamicStateCreateInfo dyn{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
     dyn.dynamicStateCount = 3;
     dyn.pDynamicStates = dynamic;
     VkPipelineRenderingCreateInfo renderingInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    renderingInfo.colorAttachmentCount = color ? 1 : 0;
-    renderingInfo.pColorAttachmentFormats = &cf;
+    renderingInfo.colorAttachmentCount = unsigned(colorFormats.size());
+    renderingInfo.pColorAttachmentFormats = colorFormats.data();
     renderingInfo.depthAttachmentFormat = renderingInfo.stencilAttachmentFormat = df;
     VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     info.pNext = &renderingInfo;
@@ -1953,7 +1991,7 @@ bool VulkanDevice::MakePipeline(const ModelPipeline& p, VkPipeline& out,
     return true;
 }
 bool VulkanDevice::PrepareShaderPipeline(const ShaderPipeline& p) {
-    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    const auto result = ValidateShaderTargetSupport(*this, p);
     genericError = result.reason;
     if (!result || !Live())
         return false;
@@ -2022,13 +2060,20 @@ bool VulkanDevice::PrepareShaderPipeline(const ShaderPipeline& p) {
 }
 bool VulkanDevice::SetShaderPipeline(const ShaderPipeline& p) {
     genericReady = genericBound = modelReady = false;
-    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    const auto result = ValidateShaderTargetSupport(*this, p);
     genericError = result.reason;
     const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
     if (!result || !Live() || !inFrame ||
         !ValidModelViewport(view, RenderWidth(), RenderHeight()) ||
         ((p.raster.depthTest || p.raster.depthWrite) && !ActiveDepth()))
         return false;
+    const auto layout = ValidateShaderAttachments(
+        p,
+        passes.Active() ? passes.ColorFormats() : std::vector<TextureFormat>{TextureFormat::Rgba8});
+    if (!layout) {
+        genericError = layout.reason;
+        return false;
+    }
     if (!PrepareShaderPipeline(p))
         return false;
     auto compiled = genericPrograms.find(p.program->key);

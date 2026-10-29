@@ -23,3 +23,18 @@ Null verifies attachment/layout/lifetime contracts and clear/readback values,
 without executing shaders. Its regression exhaustively round-trips finite
 binary16 values and checks ties-to-even conversion. Native execution and the
 minimal MME scene profile are introduced in the following implementation steps.
+
+DX11, DX12 and Vulkan now query native format features, bind all ordered
+attachments, include every color format in pipeline keys and copy raw texels
+on readback. Compiled HLSL/SPIR-V reflection checks the output count, locations
+and float component counts before a program can execute.
+
+`rhi_mrt_hdr_test` runs the same generated two-output scene, two-texture HDR
+combine, half-float copy, tone mapping and RGBA8 copy on all three backends.
+Exactly representable MRT constants and both copy passes require exact values.
+HDR arithmetic allows one binary16 ULP (native target conversion can truncate);
+tone mapping allows one UNORM8 step. Negative values, values above one, alpha,
+raw eight-byte texels, repeated submissions, resize and device replacement
+are checked. A mixed RGBA16F/RGBA8 pass checks additive blending, signed clears
+and PSO format changes, including UNORM source clamping before blending.
+DX12 debug and Vulkan validation variants also check native errors.

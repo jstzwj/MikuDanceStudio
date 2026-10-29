@@ -161,14 +161,13 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
                         return fail("invalid_or_undeclared_target_texture");
                 }
             if (d.pipeline.postProcess.mode != PostProcessMode::None &&
-                (!p.color ||
-                 Target(f, p.color->target)->description.format != TextureFormat::Rgba8))
+                Target(f, PrimaryAttachment(p)->target)->description.format != TextureFormat::Rgba8)
                 return fail("postprocess_requires_rgba8");
             if ((d.pipeline.raster.depthTest || d.pipeline.stencil) && !p.depthStencil)
                 return fail("draw_requires_depth_attachment");
             if (d.pipeline.shadow.mode == BuiltinShadowMode::Depth &&
-                (!p.color ||
-                 Target(f, p.color->target)->description.format != TextureFormat::R32Float))
+                Target(f, PrimaryAttachment(p)->target)->description.format !=
+                    TextureFormat::R32Float)
                 return fail("shadow_depth_requires_r32_target");
             if (d.pipeline.shadow.mode == BuiltinShadowMode::Material) {
                 const auto* t = Target(f, d.shadowTarget);

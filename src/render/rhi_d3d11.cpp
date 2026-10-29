@@ -12,6 +12,7 @@
 #include "rhi_model_shaders.hpp"
 #include "rhi_model_constants.hpp"
 #include "rhi_shader_d3d.hpp"
+#include "rhi_format_d3d.hpp"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -63,7 +64,20 @@ public:
     bool genericReady = false, genericBound = false;
     std::string genericError;
     ShaderCapabilities ShaderFeatures() const override {
-        return GraphicsShaderProfile(true, false);
+        auto c = GraphicsShaderProfile(true, false);
+        c.maxColorAttachments = 4;
+        return c;
+    }
+    TextureFormatCapabilities FormatFeatures(TextureFormat f) const override {
+        UINT flags = 0;
+        if (!native || FAILED(native->CheckFormatSupport(detail::DxgiFormat(f), &flags)))
+            return {};
+        const bool depth = f == TextureFormat::Depth24Stencil8;
+        return {bool(flags & (depth ? D3D11_FORMAT_SUPPORT_DEPTH_STENCIL
+                                    : D3D11_FORMAT_SUPPORT_RENDER_TARGET)),
+                !depth && bool(flags & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE),
+                !depth && bool(flags & D3D11_FORMAT_SUPPORT_BLENDABLE),
+                bool(flags & D3D11_FORMAT_SUPPORT_TEXTURE2D)};
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;
@@ -322,16 +336,14 @@ public:
     RenderPassState passes;
     unsigned RenderWidth() const {
         const auto& p = passes.Current();
-        const auto* d = passes.Description(p.color          ? p.color->texture
-                                           : p.depthStencil ? p.depthStencil->texture
-                                                            : Handle{});
+        const auto* d =
+            passes.Description(PrimaryAttachment(p) ? PrimaryAttachment(p)->texture : Handle{});
         return d ? d->width : desc.width;
     }
     unsigned RenderHeight() const {
         const auto& p = passes.Current();
-        const auto* d = passes.Description(p.color          ? p.color->texture
-                                           : p.depthStencil ? p.depthStencil->texture
-                                                            : Handle{});
+        const auto* d =
+            passes.Description(PrimaryAttachment(p) ? PrimaryAttachment(p)->texture : Handle{});
         return d ? d->height : desc.height;
     }
     ID3D11DepthStencilView* ActiveDepth() {
@@ -341,15 +353,13 @@ public:
         return p.depthStencil ? Find(p.depthStencil->texture)->depthView.Get() : nullptr;
     }
     Handle CreateRenderTexture(const RenderTextureDesc& d) override {
-        if (!Live() || inFrame || !ValidRenderTextureDesc(d))
+        if (!Live() || inFrame || !QueryShaderTextureSupport(*this, d))
             return {};
         D3D11_TEXTURE2D_DESC t{};
         t.Width = d.width;
         t.Height = d.height;
         t.ArraySize = t.MipLevels = t.SampleDesc.Count = 1;
-        t.Format = d.format == TextureFormat::Rgba8      ? DXGI_FORMAT_R8G8B8A8_UNORM
-                   : d.format == TextureFormat::R32Float ? DXGI_FORMAT_R32_FLOAT
-                                                         : DXGI_FORMAT_D24_UNORM_S8_UINT;
+        t.Format = detail::DxgiFormat(d.format);
         t.BindFlags = d.format == TextureFormat::Depth24Stencil8 ? D3D11_BIND_DEPTH_STENCIL
                                                                  : D3D11_BIND_RENDER_TARGET;
         if (d.access & std::uint32_t(TextureAccess::Sampled))
@@ -374,14 +384,18 @@ public:
             return false;
         ID3D11ShaderResourceView* empty[4]{};
         context->PSSetShaderResources(0, 4, empty);
-        ID3D11RenderTargetView* rt = p.color ? Find(p.color->texture)->renderView.Get() : nullptr;
+        const auto colors = ColorAttachments(p);
+        std::vector<ID3D11RenderTargetView*> rt;
+        for (const auto& a : colors)
+            rt.push_back(Find(a.texture)->renderView.Get());
         auto* ds = ActiveDepth();
-        context->OMSetRenderTargets(rt ? 1 : 0, rt ? &rt : nullptr, ds);
-        if (p.color && p.color->load == AttachmentLoad::Clear) {
-            const auto& c = p.color->clear;
-            const float clear[] = {c.red, c.green, c.blue, c.alpha};
-            context->ClearRenderTargetView(rt, clear);
-        }
+        context->OMSetRenderTargets(UINT(rt.size()), rt.data(), ds);
+        for (std::size_t i = 0; i < colors.size(); ++i)
+            if (colors[i].load == AttachmentLoad::Clear) {
+                const auto& c = colors[i].clear;
+                const float clear[] = {c.red, c.green, c.blue, c.alpha};
+                context->ClearRenderTargetView(rt[i], clear);
+            }
         if (p.depthStencil && p.depthStencil->load == AttachmentLoad::Clear)
             context->ClearDepthStencilView(ds, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL,
                                            p.depthStencil->clearDepth,
@@ -423,12 +437,13 @@ public:
         lastError = context->Map(cpu.Get(), 0, D3D11_MAP_READ, 0, &mapped);
         if (FAILED(lastError))
             return false;
-        AttachmentReadback data{d, std::vector<std::uint8_t>(std::size_t(d.width) * d.height * 4)};
+        AttachmentReadback data{d, std::vector<std::uint8_t>(std::size_t(d.width) * d.height *
+                                                             TexturePixelBytes(d.format))};
         for (unsigned y = 0; y < d.height; ++y)
-            std::memcpy(data.bytes.data() + std::size_t(y) * d.width * 4,
+            std::memcpy(data.bytes.data() + std::size_t(y) * d.width * TexturePixelBytes(d.format),
                         static_cast<const std::uint8_t*>(mapped.pData) +
                             std::size_t(y) * mapped.RowPitch,
-                        std::size_t(d.width) * 4);
+                        std::size_t(d.width) * TexturePixelBytes(d.format));
         context->Unmap(cpu.Get(), 0);
         out = std::move(data);
         return true;
@@ -1355,7 +1370,7 @@ bool D3D11Device::SetModelPipeline(const ModelPipeline& p) {
     return true;
 }
 bool D3D11Device::PrepareShaderPipeline(const ShaderPipeline& p) {
-    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    const auto result = ValidateShaderTargetSupport(*this, p);
     genericError = result.reason;
     if (!result || !Live())
         return false;
@@ -1398,10 +1413,17 @@ bool D3D11Device::PrepareShaderPipeline(const ShaderPipeline& p) {
 bool D3D11Device::SetShaderPipeline(const ShaderPipeline& p) {
     genericReady = genericBound = false;
     modelReady = pipelineReady = false;
-    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    const auto result = ValidateShaderTargetSupport(*this, p);
     genericError = result.reason;
     if (!result || !Live() || !inFrame)
         return false;
+    const auto layout = ValidateShaderAttachments(
+        p,
+        passes.Active() ? passes.ColorFormats() : std::vector<TextureFormat>{TextureFormat::Rgba8});
+    if (!layout) {
+        genericError = layout.reason;
+        return false;
+    }
     if (!PrepareShaderPipeline(p))
         return false;
     auto found = genericPrograms.find(p.program->key);

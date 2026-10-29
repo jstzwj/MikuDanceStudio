@@ -149,6 +149,7 @@ ShaderResult ValidateShaderPipeline(const ShaderPipeline& p, ShaderCapabilities 
         return Fail("shader_output_layout_mismatch");
     for (std::size_t i = 0; i < d.colorOutputs.size(); ++i)
         if (!d.colorOutputs[i] || d.colorOutputs[i] > 4 ||
+            (p.colorFormats[i] != TextureFormat::R32Float && d.colorOutputs[i] != 4) ||
             (p.colorFormats[i] != TextureFormat::Rgba8 &&
              p.colorFormats[i] != TextureFormat::R32Float &&
              p.colorFormats[i] != TextureFormat::Rgba16Float))

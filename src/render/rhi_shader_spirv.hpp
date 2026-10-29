@@ -2,6 +2,7 @@
 #include "mikudancestudio/rhi_shader.hpp"
 #include <cstring>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #ifdef _WIN32
@@ -230,6 +231,7 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
         return 0;
     };
     bool vertexPosition = false;
+    std::set<unsigned> pixelOutputs;
     for (const auto& v : variables) {
         const auto pointer = types.find(v.second.type);
         if (pointer == types.end() || pointer->second.op != 32 || pointer->second.data.size() != 2)
@@ -359,10 +361,22 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
                 return fail("shader_reflection_vertex_input_mismatch");
         } else if (v.second.storage == 3 && source.stage == ShaderStage::Pixel) {
             const auto location = decorations.find({v.first, 30});
-            if (location == decorations.end() || location->second)
-                return fail("shader_output_not_supported");
+            if (location == decorations.end() || location->second >= desc.colorOutputs.size() ||
+                !pixelOutputs.insert(location->second).second)
+                return fail("shader_output_layout_mismatch");
+            auto t = type->second;
+            unsigned components = 1;
+            if (t.op == 23 && t.data.size() == 2) {
+                components = t.data[1];
+                t = types.at(t.data[0]);
+            }
+            if (t.op != 22 || t.data != std::vector<unsigned>{32} ||
+                components != desc.colorOutputs[location->second])
+                return fail("shader_output_layout_mismatch");
         }
     }
+    if (source.stage == ShaderStage::Pixel && pixelOutputs.size() != desc.colorOutputs.size())
+        return fail("shader_output_layout_mismatch");
     if (source.stage == ShaderStage::Vertex && !vertexPosition)
         return fail("shader_vertex_position_missing");
     return true;

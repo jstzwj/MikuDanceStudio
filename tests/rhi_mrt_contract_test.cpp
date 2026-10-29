@@ -59,6 +59,10 @@ int main() {
     CHECK(!d->SetShaderPipeline(p));
     p.colorFormats.resize(1);
     CHECK(!d->PrepareShaderPipeline(p));
+    p.colorFormats = {TextureFormat::Rgba16Float, TextureFormat::Rgba16Float};
+    program.colorOutputs = {4, 3};
+    p.program = std::make_shared<ShaderProgram>(program);
+    CHECK(!d->PrepareShaderPipeline(p)); // alpha must not be an undefined native output
     CHECK(d->EndRenderPass() && d->EndFrame() && d->Present());
     AttachmentReadback read;
     CHECK(d->ReadRenderTexture(a, read) && read.bytes.size() == 8 * 4 * 8);

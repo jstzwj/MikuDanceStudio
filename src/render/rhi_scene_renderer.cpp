@@ -291,6 +291,14 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
                                                                    : !caps.positionNormalUv))
                 return {false, e.sequence, 0, "unsupported_draw_contract"};
         }
+    if (frame)
+        for (const auto& t : frame->targets) {
+            const auto c = d.FormatFeatures(t.description.format);
+            if (!c.render ||
+                ((t.description.access & unsigned(TextureAccess::Sampled)) && !c.sampled) ||
+                ((t.description.access & unsigned(TextureAccess::CopySource)) && !c.readback))
+                return {false, 0, 0, "render_texture_format_not_supported"};
+        }
     for (const auto& r : stream.resources)
         if (r.kind == ReplayResourceKind::Texture &&
             ((r.texture.generateMips && !caps.generateMips) ||

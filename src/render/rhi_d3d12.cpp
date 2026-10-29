@@ -11,6 +11,7 @@
 #include "rhi_model_constants.hpp"
 #include "rhi_model_shaders.hpp"
 #include "rhi_shader_d3d.hpp"
+#include "rhi_format_d3d.hpp"
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -121,10 +122,23 @@ public:
     std::string genericError;
     ShaderCapabilities ShaderFeatures() const override {
         auto caps = GraphicsShaderProfile(true, false);
+        caps.maxColorAttachments = 4;
         caps.constantAlignment = 256;
         caps.legacyDrawConstantBytes = 4096;
         caps.maxFrameConstantBytes = ConstantBytes;
         return caps;
+    }
+    TextureFormatCapabilities FormatFeatures(TextureFormat f) const override {
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT data{detail::DxgiFormat(f)};
+        if (!native ||
+            FAILED(native->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &data, sizeof(data))))
+            return {};
+        const bool depth = f == TextureFormat::Depth24Stencil8;
+        return {bool(data.Support1 & (depth ? D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL
+                                            : D3D12_FORMAT_SUPPORT1_RENDER_TARGET)),
+                !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE),
+                !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_BLENDABLE),
+                !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_TEXTURE2D)};
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;
@@ -230,16 +244,14 @@ public:
     RenderPassState passes;
     unsigned RenderWidth() const {
         const auto& p = passes.Current();
-        const auto* d = passes.Description(p.color          ? p.color->texture
-                                           : p.depthStencil ? p.depthStencil->texture
-                                                            : Handle{});
+        const auto* d =
+            passes.Description(PrimaryAttachment(p) ? PrimaryAttachment(p)->texture : Handle{});
         return d ? d->width : targetWidth;
     }
     unsigned RenderHeight() const {
         const auto& p = passes.Current();
-        const auto* d = passes.Description(p.color          ? p.color->texture
-                                           : p.depthStencil ? p.depthStencil->texture
-                                                            : Handle{});
+        const auto* d =
+            passes.Description(PrimaryAttachment(p) ? PrimaryAttachment(p)->texture : Handle{});
         return d ? d->height : targetHeight;
     }
     DXGI_FORMAT ActiveDepthFormat() const {
@@ -248,15 +260,17 @@ public:
                                                  : DXGI_FORMAT_UNKNOWN;
         return depth ? depth->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
     }
-    DXGI_FORMAT ActiveColorFormat() const {
+    std::vector<DXGI_FORMAT> ActiveColorFormats() const {
         if (!passes.Active())
-            return DXGI_FORMAT_R8G8B8A8_UNORM;
-        if (!passes.Current().color)
-            return DXGI_FORMAT_UNKNOWN;
-        return passes.Description(passes.Current().color->texture)->format ==
-                       TextureFormat::R32Float
-                   ? DXGI_FORMAT_R32_FLOAT
-                   : DXGI_FORMAT_R8G8B8A8_UNORM;
+            return {DXGI_FORMAT_R8G8B8A8_UNORM};
+        std::vector<DXGI_FORMAT> result;
+        for (auto f : passes.ColorFormats())
+            result.push_back(detail::DxgiFormat(f));
+        return result;
+    }
+    DXGI_FORMAT ActiveColorFormat() const {
+        const auto f = ActiveColorFormats();
+        return f.empty() ? DXGI_FORMAT_UNKNOWN : f[0];
     }
     std::vector<unsigned> freeSlots;
     std::vector<UploadJob> pendingUploads;
@@ -320,12 +334,10 @@ public:
         return h;
     }
     Handle CreateRenderTexture(const RenderTextureDesc& d) override {
-        if (!Live() || inFrame || !ValidRenderTextureDesc(d))
+        if (!Live() || inFrame || !QueryShaderTextureSupport(*this, d))
             return {};
         const bool isDepth = d.format == TextureFormat::Depth24Stencil8;
-        const auto format = isDepth                               ? DXGI_FORMAT_D24_UNORM_S8_UINT
-                            : d.format == TextureFormat::R32Float ? DXGI_FORMAT_R32_FLOAT
-                                                                  : DXGI_FORMAT_R8G8B8A8_UNORM;
+        const auto format = detail::DxgiFormat(d.format);
         auto desc = Texture(d.width, d.height, format);
         desc.Flags = isDepth ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
                              : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -361,23 +373,24 @@ public:
             Barrier(list, r.native.Get(), r.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             r.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         }
-        D3D12_CPU_DESCRIPTOR_HANDLE rt{}, ds{};
-        if (p.color) {
-            auto h = p.color->texture;
-            auto& r = *Find(h);
+        D3D12_CPU_DESCRIPTOR_HANDLE ds{};
+        const auto colors = ColorAttachments(p);
+        std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> rt;
+        for (const auto& a : colors) {
+            auto& r = *Find(a.texture);
             Barrier(list, r.native.Get(), r.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
             r.state = D3D12_RESOURCE_STATE_RENDER_TARGET;
-            rt = Rtv(BackbufferCount + 1 + h.index);
+            rt.push_back(Rtv(BackbufferCount + 1 + a.texture.index));
         }
         if (p.depthStencil)
             ds = Dsv(p.depthStencil->texture.index + 1);
-        list->OMSetRenderTargets(p.color ? 1 : 0, p.color ? &rt : nullptr, FALSE,
-                                 p.depthStencil ? &ds : nullptr);
-        if (p.color && p.color->load == AttachmentLoad::Clear) {
-            const auto& c = p.color->clear;
-            const float clear[] = {c.red, c.green, c.blue, c.alpha};
-            list->ClearRenderTargetView(rt, clear, 0, nullptr);
-        }
+        list->OMSetRenderTargets(UINT(rt.size()), rt.data(), FALSE, p.depthStencil ? &ds : nullptr);
+        for (std::size_t i = 0; i < colors.size(); ++i)
+            if (colors[i].load == AttachmentLoad::Clear) {
+                const auto& c = colors[i].clear;
+                const float clear[] = {c.red, c.green, c.blue, c.alpha};
+                list->ClearRenderTargetView(rt[i], clear, 0, nullptr);
+            }
         if (p.depthStencil && p.depthStencil->load == AttachmentLoad::Clear)
             list->ClearDepthStencilView(
                 ds,
@@ -400,14 +413,14 @@ public:
     bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
         if (!Live() || inFrame || !passes.CanRead(h))
             return false;
-        // Read() copies four bytes per texel, without color conversion. Native
+        // Read() copies format-sized texels without color conversion. Native
         // D24S8 is planar in DX12 and deliberately not exposed by this path.
         const auto d = *passes.Description(h);
         if (d.format == TextureFormat::Depth24Stencil8)
             return false;
         RgbaImage bytes;
         auto& r = *Find(h);
-        if (!Read(r.native.Get(), r.state, bytes))
+        if (!Read(r.native.Get(), r.state, bytes, TexturePixelBytes(d.format)))
             return false;
         out = {d, std::move(bytes.pixels)};
         return true;
@@ -598,9 +611,7 @@ public:
     void MakeView(Handle h, unsigned levels) {
         auto* r = Find(h);
         D3D12_SHADER_RESOURCE_VIEW_DESC v{};
-        v.Format = r->image.format == TextureFormat::R32Float ? DXGI_FORMAT_R32_FLOAT
-                   : r->srgb                                  ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-                                                              : DXGI_FORMAT_R8G8B8A8_UNORM;
+        v.Format = r->srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : detail::DxgiFormat(r->image.format);
         v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         v.Texture2D.MipLevels = levels;
@@ -1225,7 +1236,8 @@ public:
         list->DrawIndexedInstanced(d.indexCount, 1, d.firstIndex, 0, 0);
         return true;
     }
-    bool Read(ID3D12Resource* image, D3D12_RESOURCE_STATES state, RgbaImage& out) {
+    bool Read(ID3D12Resource* image, D3D12_RESOURCE_STATES state, RgbaImage& out,
+              unsigned pixelBytes = 4) {
         out = {};
         if (!Live() || inFrame || !image)
             return false;
@@ -1280,12 +1292,12 @@ public:
             return false;
         out.width = static_cast<unsigned>(d.Width);
         out.height = d.Height;
-        out.pixels.resize(SIZE_T(out.width) * out.height * 4);
+        out.pixels.resize(SIZE_T(out.width) * out.height * pixelBytes);
         for (unsigned y = 0; y < out.height; ++y)
-            std::memcpy(out.pixels.data() + SIZE_T(y) * out.width * 4,
+            std::memcpy(out.pixels.data() + SIZE_T(y) * out.width * pixelBytes,
                         static_cast<const std::uint8_t*>(mapped) + footprint.Offset +
                             SIZE_T(y) * footprint.Footprint.RowPitch,
-                        SIZE_T(out.width) * 4);
+                        SIZE_T(out.width) * pixelBytes);
         D3D12_RANGE written{0, 0};
         cpu->Unmap(0, &written);
         return true;
@@ -1337,8 +1349,10 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     d.PrimitiveTopologyType = p.topology == PrimitiveTopology::LineList
                                   ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
                                   : D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    d.NumRenderTargets = ActiveColorFormat() == DXGI_FORMAT_UNKNOWN ? 0 : 1;
-    d.RTVFormats[0] = ActiveColorFormat();
+    const auto formats = ActiveColorFormats();
+    d.NumRenderTargets = UINT(formats.size());
+    for (std::size_t i = 0; i < formats.size(); ++i)
+        d.RTVFormats[i] = formats[i];
     d.DSVFormat = ActiveDepthFormat();
     d.SampleDesc.Count = 1;
     const D3D12_INPUT_ELEMENT_DESC elements[] = {{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
@@ -1366,7 +1380,8 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
     append(d.DepthStencilState);
     append(d.PrimitiveTopologyType);
     append(d.DSVFormat);
-    append(d.RTVFormats[0]);
+    for (auto format : d.RTVFormats)
+        append(format);
     append(d.NumRenderTargets);
     append(layout);
     append(p.shadow.mode);
@@ -1404,7 +1419,7 @@ bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DB
 }
 
 bool D3D12Device::PrepareShaderPipeline(const ShaderPipeline& p) {
-    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    const auto result = ValidateShaderTargetSupport(*this, p);
     genericError = result.reason;
     if (!result || !Live())
         return false;
@@ -1450,13 +1465,20 @@ bool D3D12Device::PrepareShaderPipeline(const ShaderPipeline& p) {
 }
 bool D3D12Device::SetShaderPipeline(const ShaderPipeline& p) {
     genericReady = genericBound = modelReady = screenReady = false;
-    const auto result = ValidateShaderPipeline(p, ShaderFeatures());
+    const auto result = ValidateShaderTargetSupport(*this, p);
     genericError = result.reason;
     const auto view = p.viewport.value_or(ModelViewport{0, 0, RenderWidth(), RenderHeight(), 0, 1});
     if (!result || !Live() || !inFrame ||
         !ValidModelViewport(view, RenderWidth(), RenderHeight()) ||
         ((p.raster.depthTest || p.raster.depthWrite) && ActiveDepthFormat() == DXGI_FORMAT_UNKNOWN))
         return false;
+    const auto layout = ValidateShaderAttachments(
+        p,
+        passes.Active() ? passes.ColorFormats() : std::vector<TextureFormat>{TextureFormat::Rgba8});
+    if (!layout) {
+        genericError = layout.reason;
+        return false;
+    }
     if (!PrepareShaderPipeline(p))
         return false;
     auto compiled = genericPrograms.find(p.program->key);
@@ -1480,6 +1502,8 @@ bool D3D12Device::SetShaderPipeline(const ShaderPipeline& p) {
 }
 bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
     genericReady = genericBound = false;
+    if (ActiveColorFormats().size() > 1)
+        return false;
     if (inFrame)
         frames[frameIndex].commands->SetGraphicsRootSignature(root.Get());
     modelReady = screenReady = false;
@@ -1601,6 +1625,8 @@ bool D3D12Device::SetModelPipeline(const ModelPipeline& p) {
 }
 bool D3D12Device::SetFixedPipeline(FixedPipelineState f) {
     genericReady = genericBound = false;
+    if (ActiveColorFormats().size() > 1)
+        return false;
     if (inFrame)
         frames[frameIndex].commands->SetGraphicsRootSignature(root.Get());
     if (passes.Active())

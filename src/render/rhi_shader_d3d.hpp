@@ -140,11 +140,18 @@ inline bool CompileD3DProgram(const ShaderProgram& program, D3DShaderProgram& ou
                 }
             }
         }
+        if (stage == 2 && shader.OutputParameters != desc.colorOutputs.size()) {
+            error = "shader_output_layout_mismatch";
+            return false;
+        }
         if (stage == 2)
             for (unsigned n = 0; n < shader.OutputParameters; ++n) {
                 D3D11_SIGNATURE_PARAMETER_DESC output{};
                 reflection->GetOutputParameterDesc(n, &output);
-                if (output.SystemValueType != D3D_NAME_TARGET || output.SemanticIndex != 0) {
+                if (output.SystemValueType != D3D_NAME_TARGET ||
+                    output.SemanticIndex >= desc.colorOutputs.size() ||
+                    output.ComponentType != D3D_REGISTER_COMPONENT_FLOAT32 ||
+                    output.Mask != ((1u << desc.colorOutputs[output.SemanticIndex]) - 1)) {
                     error = "shader_output_not_supported";
                     return false;
                 }

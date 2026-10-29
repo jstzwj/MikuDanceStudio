@@ -113,6 +113,13 @@ int main() {
     auto post = f;
     CHECK(AppendPostProcess(post, 2, 10, 17, 13));
     CHECK(post.finalColor == 10 && ValidateRenderFrame(post));
+    auto ordered = post;
+    for (auto& pass : ordered.passes)
+        if (pass.color) {
+            pass.colors.push_back(*pass.color);
+            pass.color.reset();
+        }
+    CHECK(ValidateRenderFrame(ordered)); // identical single-output spelling, including shadow/copy
     CHECK(!AppendPostProcess(post, 10, 10, 17, 13));
     CHECK(!AppendPostProcess(post, 1, 11, 17, 13)); // R32 is not an RGBA color input
     CHECK(!AppendPostProcess(post, 10, 11, 0, 13));
