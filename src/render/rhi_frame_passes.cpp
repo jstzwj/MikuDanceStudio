@@ -42,6 +42,8 @@ ModelReplayStream Stream(const RenderFrame& f, const FramePass* pass) {
         s.events.push_back(e);
     }
     for (const auto& p : f.passes) {
+        if (p.generateMips)
+            continue;
         if (pass && &p != pass)
             continue;
         if (!PrimaryAttachment(p))
@@ -80,7 +82,7 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
         if (!t.id || !handles.emplace(t.id, h).second || !state.Register(h, t.description))
             return fail("invalid_or_duplicate_frame_target");
         if (t.history) {
-            if (t.description.format != TextureFormat::Rgba8 ||
+            if (t.description.mips != 1 || t.description.format != TextureFormat::Rgba8 ||
                 !(t.description.access & unsigned(TextureAccess::Sampled)))
                 return fail("invalid_history_target");
             RenderPassDesc initialize;
@@ -96,6 +98,14 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
             return fail("multiple_frame_resource_versions");
     std::size_t draws = 0;
     for (const auto& p : f.passes) {
+        if (p.generateMips) {
+            const auto target = handles.find(p.generateMips);
+            if (p.color || p.depthStencil || !p.colors.empty() || !p.draws.empty() ||
+                !p.sampled.empty() || target == handles.end() ||
+                !state.GenerateMips(target->second))
+                return fail("invalid_frame_mip_generation");
+            continue;
+        }
         RenderPassDesc native;
         const auto attachment = [&](const std::optional<FrameAttachment>& a,
                                     std::optional<PassAttachment>& out) {
@@ -185,7 +195,7 @@ ModelReplayResult ValidateRenderFrame(const RenderFrame& f) {
     }
     if (f.finalColor) {
         const auto* t = Target(f, f.finalColor);
-        if (!t || t->description.format != TextureFormat::Rgba8 ||
+        if (!t || t->description.mips != 1 || t->description.format != TextureFormat::Rgba8 ||
             !state.CanRead(handles.at(t->id)))
             return fail("invalid_final_color");
     }

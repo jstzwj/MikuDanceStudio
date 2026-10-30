@@ -1,4 +1,5 @@
 #include "mikudancestudio/rhi_render_pass.hpp"
+#include <algorithm>
 #include <cmath>
 #include <set>
 
@@ -27,8 +28,14 @@ unsigned TexturePixelBytes(TextureFormat f) {
     return 0;
 }
 bool ValidRenderTextureDesc(const RenderTextureDesc& d) {
-    if (!d.width || !d.height || d.width > 4096 || d.height > 4096 || d.mips != 1 ||
+    unsigned levels = 1;
+    for (auto extent = std::max(d.width, d.height); extent > 1; extent >>= 1)
+        ++levels;
+    if (!d.width || !d.height || d.width > 4096 || d.height > 4096 || !d.mips || d.mips > levels ||
         d.layers != 1 || d.samples != 1 || !d.access || (d.access & ~15u))
+        return false;
+    if (d.mips > 1 &&
+        (d.mips != levels || d.format != TextureFormat::Rgba8 || !Has(d, TextureAccess::Sampled)))
         return false;
     const bool depth = d.format == TextureFormat::Depth24Stencil8;
     if (!depth && d.format != TextureFormat::Rgba8 && d.format != TextureFormat::R32Float &&
@@ -114,6 +121,8 @@ bool RenderPassState::Begin(const RenderPassDesc& p) {
             return fail("sample_usage_mismatch");
         if (!i->second.initialized)
             return fail("sample_before_write");
+        if (i->second.desc.mips > 1 && !i->second.mipsReady)
+            return fail("sample_before_mip_generation");
     }
     current_ = p;
     active_ = true;
@@ -128,8 +137,10 @@ bool RenderPassState::End() {
     auto attachments = ColorAttachments(current_);
     if (current_.depthStencil)
         attachments.push_back(*current_.depthStencil);
-    for (const auto& a : attachments)
+    for (const auto& a : attachments) {
         entries_.at(key(a.texture)).initialized = a.store == AttachmentStore::Store;
+        entries_.at(key(a.texture)).mipsReady = false;
+    }
     active_ = false;
     current_ = {};
     return true;
@@ -153,9 +164,25 @@ bool RenderPassState::CanRead(Handle h) const {
     return !active_ && i != entries_.end() && i->second.initialized &&
            Has(i->second.desc, TextureAccess::CopySource);
 }
+bool RenderPassState::CanGenerateMips(Handle h) const {
+    const auto i = entries_.find(key(h));
+    return !active_ && i != entries_.end() && i->second.initialized && i->second.desc.mips > 1 &&
+           Has(i->second.desc, TextureAccess::Sampled);
+}
+bool RenderPassState::GenerateMips(Handle h) {
+    if (!CanGenerateMips(h)) {
+        reason_ = "invalid_mip_generation";
+        return false;
+    }
+    entries_.at(key(h)).mipsReady = true;
+    reason_.clear();
+    return true;
+}
 void RenderPassState::InvalidateContents() {
-    for (auto& i : entries_)
+    for (auto& i : entries_) {
         i.second.initialized = false;
+        i.second.mipsReady = false;
+    }
     active_ = false;
     current_ = {};
 }

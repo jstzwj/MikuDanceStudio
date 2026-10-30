@@ -99,6 +99,7 @@ enum class TextureFormat {
 unsigned TexturePixelBytes(TextureFormat);
 struct TextureFormatCapabilities {
     bool render = false, sampled = false, blend = false, readback = false;
+    bool renderMips = false;
 };
 
 enum class HistoryRepresentation {
@@ -506,6 +507,9 @@ public:
     virtual Handle CreateRenderTexture(const RenderTextureDesc&) { return {}; }
     virtual bool BeginRenderPass(const RenderPassDesc&) { return false; }
     virtual bool EndRenderPass() { return false; }
+    // Explicit operation between passes. Writing level zero invalidates lower
+    // levels until this operation completes in submission order.
+    virtual bool GenerateRenderMips(Handle) { return false; }
     virtual bool ReadRenderTexture(Handle, AttachmentReadback&) { return false; }
     // Built-in shadow input occupies a separate binding from material stages.
     virtual bool BindShadowTexture(Handle) { return false; }

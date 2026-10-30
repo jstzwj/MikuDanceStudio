@@ -115,7 +115,9 @@ public:
     DWORD debugCookie = 0;
     ComPtr<ID3D12DescriptorHeap> rtvs, dsvs, cpuViews;
     ComPtr<ID3D12RootSignature> root;
-    ComPtr<ID3D12RootSignature> genericRoot;
+    ComPtr<ID3D12RootSignature> genericRoot, mipRoot;
+    ComPtr<ID3D12PipelineState> mipPipeline;
+    bool PrepareMipPipeline();
     std::map<std::string, detail::D3DShaderProgram> genericPrograms;
     ShaderPipeline genericPipeline;
     ShaderResourceBindings genericBindings;
@@ -139,7 +141,8 @@ public:
                                             : D3D12_FORMAT_SUPPORT1_RENDER_TARGET)),
                 !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE),
                 !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_BLENDABLE),
-                !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_TEXTURE2D)};
+                !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_TEXTURE2D),
+                f == TextureFormat::Rgba8 && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_MIP)};
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;
@@ -360,7 +363,9 @@ public:
             return {};
         const bool isDepth = d.format == TextureFormat::Depth24Stencil8;
         const auto format = detail::DxgiFormat(d.format);
-        auto desc = Texture(d.width, d.height, format);
+        if (d.mips > 1 && !PrepareMipPipeline())
+            return {};
+        auto desc = Texture(d.width, d.height, format, d.mips);
         desc.Flags = isDepth ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
                              : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
         D3D12_CLEAR_VALUE clear{};
@@ -383,7 +388,7 @@ public:
             native->CreateRenderTargetView(Find(h)->native.Get(), nullptr,
                                            Rtv(BackbufferCount + 1 + h.index));
         if (d.access & std::uint32_t(TextureAccess::Sampled))
-            MakeView(h, 1);
+            MakeView(h, d.mips);
         return passes.Register(h, d) ? h : Handle{};
     }
     bool BeginRenderPass(const RenderPassDesc& p) override {
@@ -431,6 +436,58 @@ public:
         modelReady = screenReady = false;
         textures = {};
         return true;
+    }
+    bool GenerateRenderMips(Handle h) override {
+        if (!Live() || !inFrame || !passes.CanGenerateMips(h) || !mipPipeline)
+            return false;
+        const auto& d = *passes.Description(h);
+        auto& f = frames[frameIndex];
+        if (f.drawCount + d.mips - 1 > MaxDraws)
+            return false;
+        auto& r = *Find(h);
+        auto* list = f.commands.Get();
+        Barrier(list, r.native.Get(), r.state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        r.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        list->SetPipelineState(mipPipeline.Get());
+        list->SetGraphicsRootSignature(mipRoot.Get());
+        ID3D12DescriptorHeap* heaps[] = {f.views.Get(), f.samplers.Get()};
+        list->SetDescriptorHeaps(2, heaps);
+        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        const auto target = Rtv(BackbufferCount + 1 + h.index);
+        for (unsigned mip = 1; mip < d.mips; ++mip) {
+            Barrier(list, r.native.Get(), r.state, D3D12_RESOURCE_STATE_RENDER_TARGET, mip);
+            const auto offset = f.drawCount++ * GraphicsTextureSlots;
+            auto cpu = f.views->GetCPUDescriptorHandleForHeapStart();
+            cpu.ptr += SIZE_T(offset) * viewStride;
+            auto gpu = f.views->GetGPUDescriptorHandleForHeapStart();
+            gpu.ptr += UINT64(offset) * viewStride;
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+            srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srv.Texture2D.MostDetailedMip = mip - 1;
+            srv.Texture2D.MipLevels = 1;
+            native->CreateShaderResourceView(r.native.Get(), &srv, cpu);
+            D3D12_RENDER_TARGET_VIEW_DESC rtv{};
+            rtv.Format = srv.Format;
+            rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+            rtv.Texture2D.MipSlice = mip;
+            native->CreateRenderTargetView(r.native.Get(), &rtv, target);
+            list->OMSetRenderTargets(1, &target, FALSE, nullptr);
+            const auto w = (std::max)(1u, d.width >> mip), ht = (std::max)(1u, d.height >> mip);
+            const D3D12_VIEWPORT viewport{0, 0, FLOAT(w), FLOAT(ht), 0, 1};
+            const D3D12_RECT scissor{0, 0, LONG(w), LONG(ht)};
+            list->RSSetViewports(1, &viewport);
+            list->RSSetScissorRects(1, &scissor);
+            list->SetGraphicsRootDescriptorTable(0, gpu);
+            list->DrawInstanced(3, 1, 0, 0);
+            Barrier(list, r.native.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, r.state, mip);
+        }
+        list->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+        native->CreateRenderTargetView(r.native.Get(), nullptr, target);
+        modelReady = screenReady = genericReady = genericBound = false;
+        textures = {};
+        return passes.GenerateMips(h);
     }
     bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
         if (!Live() || inFrame || !passes.CanRead(h))
@@ -488,12 +545,13 @@ public:
         return SUCCEEDED(lastError);
     }
     void Barrier(ID3D12GraphicsCommandList* list, ID3D12Resource* r, D3D12_RESOURCE_STATES before,
-                 D3D12_RESOURCE_STATES after) {
+                 D3D12_RESOURCE_STATES after,
+                 UINT subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
         if (before == after)
             return;
         D3D12_RESOURCE_BARRIER b{};
         b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition = {r, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, before, after};
+        b.Transition = {r, subresource, before, after};
         list->ResourceBarrier(1, &b);
     }
     void Defer(ComPtr<IUnknown> object, UINT64 point) {
@@ -1330,6 +1388,64 @@ public:
         return Read(offscreen.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, out);
     }
 };
+
+bool D3D12Device::PrepareMipPipeline() {
+    if (mipPipeline)
+        return true;
+    static constexpr char source[] = R"(
+Texture2D image : register(t0); SamplerState linearClamp : register(s0);
+struct V { float4 position : SV_Position; float2 uv : TEXCOORD0; };
+V VS(uint id : SV_VertexID) {
+    V v; v.uv = float2((id << 1) & 2, id & 2);
+    v.position = float4(v.uv * float2(2,-2) + float2(-1,1), 0, 1); return v;
+}
+float4 PS(V v) : SV_Target { return image.SampleLevel(linearClamp, v.uv, 0); }
+)";
+    ComPtr<ID3DBlob> vs, ps, blob, errors;
+    if (FAILED(D3DCompile(source, sizeof(source) - 1, nullptr, nullptr, nullptr, "VS", "vs_5_0", 0,
+                          0, &vs, &errors)) ||
+        FAILED(D3DCompile(source, sizeof(source) - 1, nullptr, nullptr, nullptr, "PS", "ps_5_0", 0,
+                          0, &ps, &errors)))
+        return false;
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
+    D3D12_ROOT_PARAMETER parameter{};
+    parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    parameter.DescriptorTable = {1, &range};
+    parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_STATIC_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC signature{
+        1, &parameter, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT};
+    if (FAILED(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1, &blob,
+                                           &errors)) ||
+        FAILED(native->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(),
+                                           IID_PPV_ARGS(&mipRoot))))
+        return false;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};
+    p.pRootSignature = mipRoot.Get();
+    p.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+    p.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+    auto& blend = p.BlendState.RenderTarget[0];
+    blend.SrcBlend = blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+    blend.DestBlend = blend.DestBlendAlpha = D3D12_BLEND_ZERO;
+    blend.BlendOp = blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    p.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    p.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    p.RasterizerState.DepthClipEnable = TRUE;
+    p.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    p.SampleMask = UINT_MAX;
+    p.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    p.NumRenderTargets = 1;
+    p.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    p.SampleDesc.Count = 1;
+    lastError = native->CreateGraphicsPipelineState(&p, IID_PPV_ARGS(&mipPipeline));
+    return SUCCEEDED(lastError);
+}
 
 bool D3D12Device::UsePipeline(const ModelPipeline& p, VertexLayout layout, ID3DBlob* vs,
                               ID3DBlob* pixel, const ShaderProgram* generic) {

@@ -115,6 +115,7 @@ struct Resource {
     Buffer buffer;
     SnapshotBytes indices;
     TextureDesc texture{};
+    VkImageView attachmentView = VK_NULL_HANDLE;
     unsigned mips = 1;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -224,7 +225,12 @@ public:
                 !depth && bool(flags & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
                     bool(flags & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
                 !depth && bool(flags & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT),
-                !depth && bool(flags & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)};
+                !depth && bool(flags & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT),
+                f == TextureFormat::Rgba8 &&
+                    (flags & (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) ==
+                        (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                         VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)};
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
     bool PrepareShaderPipeline(const ShaderPipeline&) override;
@@ -423,6 +429,8 @@ public:
     }
     void Release(Resource& r) {
         Release(r.buffer);
+        if (r.attachmentView)
+            vkDestroyImageView(native, r.attachmentView, nullptr);
         if (r.view)
             vkDestroyImageView(native, r.view, nullptr);
         if (r.image)
@@ -847,8 +855,21 @@ public:
         Resource r;
         r.texture = {d.width, d.height, d.format};
         r.uploaded = true;
-        if (!AllocateImage(d.width, d.height, Format(d.format), 1, usage, r))
+        if (d.mips > 1)
+            usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (!AllocateImage(d.width, d.height, Format(d.format), d.mips, usage, r))
             return {};
+        if (d.mips > 1) {
+            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            view.image = r.image;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format = Format(d.format);
+            view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            if (!Check(vkCreateImageView(native, &view, nullptr, &r.attachmentView))) {
+                Release(r);
+                return {};
+            }
+        }
         const auto h = Insert(std::move(r));
         if (!h)
             return {};
@@ -960,7 +981,7 @@ public:
                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
             VkRenderingAttachmentInfo info{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-            info.imageView = resource->view;
+            info.imageView = resource->attachmentView ? resource->attachmentView : resource->view;
             info.imageLayout = resource->layout;
             info.loadOp = load(attachment.load);
             info.storeOp = store(attachment.store);
@@ -1188,6 +1209,57 @@ public:
         else
             Release(staging);
         return ok;
+    }
+    bool GenerateRenderMips(Handle h) override {
+        if (!Live() || !inFrame || rendering || !passes.CanGenerateMips(h))
+            return false;
+        auto& r = *Find(h);
+        auto cmd = frames[frameIndex].commands;
+        Barrier(cmd, r, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        auto transition = [&](unsigned level, VkImageLayout from, VkImageLayout to,
+                              VkAccessFlags2 source, VkAccessFlags2 dest) {
+            VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            b.srcAccessMask = source;
+            b.dstAccessMask = dest;
+            b.oldLayout = from;
+            b.newLayout = to;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = r.image;
+            b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1};
+            VkDependencyInfo info{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            info.imageMemoryBarrierCount = 1;
+            info.pImageMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &info);
+        };
+        unsigned w = r.texture.width, hgt = r.texture.height;
+        for (unsigned level = 1; level < r.mips; ++level) {
+            transition(level - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                       VK_ACCESS_2_TRANSFER_READ_BIT);
+            const unsigned nw = std::max(1u, w / 2), nh = std::max(1u, hgt / 2);
+            VkImageBlit region{};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+            region.srcOffsets[1] = {int(w), int(hgt), 1};
+            region.dstOffsets[1] = {int(nw), int(nh), 1};
+            vkCmdBlitImage(cmd, r.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, r.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR);
+            transition(level - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT,
+                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            w = nw;
+            hgt = nh;
+        }
+        transition(r.mips - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        r.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        r.stage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        r.access = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        modelReady = false;
+        return passes.GenerateMips(h);
     }
     bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
         auto* r = Find(h);

@@ -42,6 +42,7 @@ struct Draw {
 };
 struct PreparedPass {
     RenderPassDesc description;
+    Handle generateMips;
     std::size_t firstDraw = 0, draws = 0;
 };
 }
@@ -253,7 +254,16 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
     if (!caps.supported ||
         (output == FrameOutput::Offscreen ? !caps.offscreen : !caps.presentation))
         return {false, 0, 0, "unsupported_frame_output"};
-    if (result.draws > caps.maxDraws)
+    auto drawWork = result.draws;
+    // Reserve a draw per downsample level, including on backends that implement
+    // the chain with a native autogen/blit command instead of a graphics draw.
+    if (frame)
+        for (const auto& pass : frame->passes)
+            if (pass.generateMips)
+                for (const auto& target : frame->targets)
+                    if (target.id == pass.generateMips)
+                        drawWork += target.description.mips - 1;
+    if (drawWork > caps.maxDraws)
         return {false, 0, 0, "backend_draw_limit"};
     const auto shaderCaps = d.ShaderFeatures();
     std::uint64_t constantBytes = 0;
@@ -294,7 +304,7 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
     if (frame)
         for (const auto& t : frame->targets) {
             const auto c = d.FormatFeatures(t.description.format);
-            if (!c.render ||
+            if ((t.description.mips > 1 && !c.renderMips) || !c.render ||
                 ((t.description.access & unsigned(TextureAccess::Sampled)) && !c.sampled) ||
                 ((t.description.access & unsigned(TextureAccess::CopySource)) && !c.readback))
                 return {false, 0, 0, "render_texture_format_not_supported"};
@@ -493,6 +503,8 @@ ModelReplayResult SceneRenderer::PrepareImpl(std::uint64_t id, const ModelReplay
                                  ? 0
                                  : data->passes.back().firstDraw + data->passes.back().draws;
             pass.draws = p.draws.size();
+            if (p.generateMips)
+                pass.generateMips = scene.targets.at(p.generateMips).handle;
             const auto attachment = [&](const std::optional<FrameAttachment>& a,
                                         std::optional<PassAttachment>& out) {
                 if (a)
@@ -588,6 +600,13 @@ ModelReplayResult SceneRenderer::Submit(const PreparedModelFrame& frame,
                 break;
     } else
         for (const auto& pass : f->passes) {
+            if (pass.generateMips) {
+                if (!d.GenerateRenderMips(pass.generateMips)) {
+                    result = {false, 0, result.draws, "mip_generation_failed"};
+                    break;
+                }
+                continue;
+            }
             if (!d.BeginRenderPass(pass.description)) {
                 result.success = false;
                 result.reason = "begin_render_pass_failed";

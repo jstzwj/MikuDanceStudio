@@ -31,7 +31,7 @@ public:
         if (!TexturePixelBytes(f))
             return {};
         const bool color = f != TextureFormat::Depth24Stencil8;
-        return {true, color, color, true};
+        return {true, color, color, true, f == TextureFormat::Rgba8};
     }
     bool PrepareShaderPipeline(const ShaderPipeline& p) override {
         const auto result = ValidateShaderTargetSupport(*this, p);
@@ -146,6 +146,9 @@ public:
         shaderReady_ = bindingsReady_ = false;
         boundTexture_ = {};
         return true;
+    }
+    bool GenerateRenderMips(Handle h) override {
+        return inFrame_ && !resetPending_ && passes_.GenerateMips(h);
     }
     bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
         if (inFrame_ || resetPending_ || !passes_.CanRead(h))

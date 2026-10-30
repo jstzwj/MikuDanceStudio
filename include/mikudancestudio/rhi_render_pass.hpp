@@ -21,7 +21,7 @@ struct RenderTextureDesc {
     std::uint32_t width = 0, height = 0;
     TextureFormat format = TextureFormat::Rgba8;
     std::uint32_t access = std::uint32_t(TextureAccess::ColorAttachment);
-    // The first implementation exposes one mip, one layer and one sample.
+    // Single layer/sample. Color targets may expose a complete mip chain.
     // Unsupported ranges are rejected, never silently narrowed.
     std::uint32_t mips = 1, layers = 1, samples = 1;
 };
@@ -81,6 +81,8 @@ public:
     bool Erase(Handle);
     bool Begin(const RenderPassDesc&);
     bool End();
+    bool CanGenerateMips(Handle) const;
+    bool GenerateMips(Handle);
     bool Active() const { return active_; }
     bool CanSample(Handle) const;
     bool CanRead(Handle) const;
@@ -95,6 +97,7 @@ private:
     struct Entry {
         RenderTextureDesc desc;
         bool initialized = false;
+        bool mipsReady = false;
     };
     static Key key(Handle h) { return {h.device, h.index, h.generation}; }
     std::map<Key, Entry> entries_;

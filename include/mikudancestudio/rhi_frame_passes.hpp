@@ -23,6 +23,8 @@ struct FramePass {
     std::vector<std::uint64_t> sampled;
     std::vector<ModelReplayDraw> draws;
     std::vector<FrameAttachment> colors;
+    // A separate operation with no attachments, samples or draws.
+    std::uint64_t generateMips = 0;
 };
 // One CPU snapshot per immutable resource ID. Target IDs are a separate scene
 // namespace and name mutable render products, never immutable upload versions.

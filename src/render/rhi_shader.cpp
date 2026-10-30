@@ -290,7 +290,8 @@ ShaderResult QueryShaderTextureSupport(const Device& d, const RenderTextureDesc&
     if (!ValidRenderTextureDesc(desc))
         return Fail("invalid_render_texture_description");
     const auto c = d.FormatFeatures(desc.format);
-    if (!c.render || ((desc.access & unsigned(TextureAccess::Sampled)) && !c.sampled) ||
+    if ((desc.mips > 1 && !c.renderMips) || !c.render ||
+        ((desc.access & unsigned(TextureAccess::Sampled)) && !c.sampled) ||
         ((desc.access & unsigned(TextureAccess::CopySource)) && !c.readback))
         return Fail("render_texture_format_not_supported");
     return {true, "supported"};
