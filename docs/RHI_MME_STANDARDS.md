@@ -102,33 +102,42 @@ build omission that dropped ordinary material specular highlights. The shared
 SPIR-V build now enables the same lit pixel variant as DX11/DX12; see the public
 [specular regression](RHI_MATERIAL_SAMPLING.md#lit-material-specular-regression).
 
-The final x64 56-gate MME/material/editor run passed 37 gates. These include the
-720-case sampling matrix, the four exact specular cases, DX11/DX12 effect image
-oracles and the following hidden-editor entries:
+The x64 56-gate MME/material/editor scope is now accepted: the initial run passed
+37 gates, and all 19 previously blocked gates passed after DX9 recovered. No
+implementation or comparison bounds changed between those runs. These include
+the 720-case sampling matrix, the four exact specular cases, effect image
+oracles on all three APIs and the following hidden-editor entries:
 
-- `editor_frame_dx11`: generated PMD/PMX, resize, unload, frame driver, switching,
-  same-frame fallback and device recovery.
-- `editor_mme_standard_pmd_dx11` and `editor_mme_standard_pmx_dx11`: local original
+- `editor_frame_{dx11,dx12,vulkan}`: generated PMD/PMX, resize, unload, frame
+  driver, switching, same-frame fallback and device recovery.
+- `editor_mme_standard_{pmd,pmx}_{dx11,dx12,vulkan}`: local original
   Miku PMD and Sour Miku PMX. Each entry switches the retained effect through
   DX9/DX11/DX12/Vulkan, requires exact output equality between supported RHI
   backends, tests recreation and seek, and counts once-only geometry/clock
   updates and zero DX9 scene draws on RHI frames.
-- `editor_ray_fallback_dx11`: generated PMD/PMX with the local Ray effect,
-  retaining same-frame DX9 fallback across backend switches.
+- `editor_ray_fallback_{dx11,dx12,vulkan}`: generated PMD/PMX with the local Ray
+  effect, retaining same-frame DX9 fallback across backend switches.
 
-DX9 HAL initialization became unavailable again midway through
-`editor_frame_dx12`: its PMD subprocess passed, but PMX did not create a device.
-That gate and the remaining 18 DX12/Vulkan entries failed at native DX9
-initialization (CheckDeviceType=0x8876086A; CreateDevice also returned 0x8876086C).
-They remain **unaccepted**, including duplicate real-model/Ray entries starting
-from DX12/Vulkan. A later native probe still failed. The earlier Vulkan image
-results and real-model switches above do not substitute for this final rerun.
+The initial interruption was a native DX9 initialization failure
+(CheckDeviceType=0x8876086A; CreateDevice also returned 0x8876086C). The resumed
+19-gate run executed the full image/frame checks, including real-model and Ray
+entries starting from DX12/Vulkan, and passed with zero failures or skips.
 
 Independent final checks passed another 22 x64 gates covering CPU/Null contracts,
-generic shaders and MRT/multipass, including Vulkan validation. The x86
-independent suite passed 27 gates with eight explicit runtime-DXC/validation
-capability skips; its 720-case sampling and four specular cases ran on all three
-APIs. x64/x86 applications and the diagnostics-off product built successfully;
-the newer-backends-disabled product had already passed in the preceding batch.
-The x86 DX9-dependent acceptance remains pending. No device-availability skip,
-tolerance relaxation or desktop action was added. All test windows stayed hidden.
+generic shaders and MRT/multipass, including Vulkan validation. This makes 78
+distinct passing x64 cases across the completed runs, with zero skips.
+
+The resumed x86 DX9-dependent scope passed 32 gates with 11 explicit Vulkan
+runtime-DXC/validation capability skips. All 12 hidden editor entries passed,
+including generated PMD/PMX, both real models and Ray fallback starting from each
+backend. These tests exercise same-frame DX9 fallback where native Vulkan effect
+compilation is unavailable; they do not establish native x86 Vulkan MME support.
+The independent x86 suite passed 27 gates with eight capability skips; its
+720-case sampling and four specular cases ran on all three APIs. Together these
+are 78 distinct x86 cases: 59 passed, 19 capability skips, zero failures.
+
+x64/x86 applications and the diagnostics-off product built successfully; the
+newer-backends-disabled product had already passed in the preceding batch. No
+device-availability skip, tolerance relaxation or desktop action was added.
+All test windows stayed hidden. Ray still uses same-frame DX9 fallback on both
+architectures; these results cover the documented supported effect scope.
