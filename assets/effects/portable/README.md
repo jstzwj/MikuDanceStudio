@@ -23,6 +23,13 @@ They contain no external model or texture assets.
   an exact final copy. Both files import directly, without a custom profile.
   Supported material editing uses the shared renderer; captured builtin outline
   draws retain DX9 fallback. See [sizing and scope](../../../docs/RHI_MME_LEGACY_MRT.md).
+- `LegacyMaterialMap.fx` / `LegacyMaterialMapScene.fx`: two ordered geometry
+  passes write two groups of four MRT outputs. The scene explicitly clears
+  seven shared attachments, captures the material, and combines the groups.
+  Assign the material to a model and the scene to one accessory. Missing
+  initialization and unsupported host states retain DX9 fallback. These CC0
+  examples exercise constant arrays, helper overloads and portable filtering.
+  See [script and Ray material scope](../../../docs/RHI_MME_RAY_MATERIAL.md).
 - `DefaultEffectScene.fx` / `LegacyChildMaterial.fx` / `LegacyLeafMaterial.fx`:
   assign the first to a scene accessory and the leaf to a model. The scene's
   ordered `DefaultEffect` rows select a child material for PMD/PMX filenames;

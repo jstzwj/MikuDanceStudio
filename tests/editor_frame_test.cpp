@@ -1395,6 +1395,47 @@ int main(int argc, char** argv) try {
         frame(runtimeEffects);
         if (runtimeEffects)
             CHECK(image().pixels == mrtBaseline);
+        const auto scriptedMaterial =
+            (sourceRoot / L"assets/effects/portable/LegacyMaterialMap.fx").string();
+        const auto scriptedScene =
+            (sourceRoot / L"assets/effects/portable/LegacyMaterialMapScene.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     scriptedMaterial));
+        CHECK(
+            ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, scriptedScene));
+        oracle("scripted material two MRT groups");
+        const auto scriptedBaseline = image().pixels;
+        app->ViewportRect() = {0, 0, 163, 123};
+        oracle("scripted material odd viewport resize");
+        app->ViewportRect() = {0, 0, 160, 120};
+        oracle("scripted material viewport restore");
+        if (runtimeEffects) {
+            CHECK(image().pixels == scriptedBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == scriptedBaseline);
+        }
+        for (const auto selected : {Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+            if (!BackendAvailable(selected))
+                continue;
+            CHECK(app->ViewportRenderer().Select(*app, selected, false));
+            const bool supported = runtimeShaderSupport.at(selected);
+            frame(supported);
+            if (supported && runtimeEffects)
+                CHECK(image().pixels == scriptedBaseline);
+        }
+        // Removing the scene publisher removes the only initialization of the
+        // shared MRT targets. Preparation must reject before RHI submission.
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, ""));
+        const auto beforeUninitialized = app->ViewportRenderer().Statistics();
+        frame(false);
+        CHECK(app->ViewportRenderer().Statistics().uploads == beforeUninitialized.uploads &&
+              app->ViewportRenderer().Statistics().submissions == beforeUninitialized.submissions);
+        CHECK(
+            ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, scriptedScene));
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels == scriptedBaseline);
         app->EditMode() = mrtEditMode;
         CHECK(SUCCEEDED(device->SetRenderTarget(0, savedColor.Get())) &&
               SUCCEEDED(device->SetDepthStencilSurface(savedDepth.Get())) &&

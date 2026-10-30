@@ -1,5 +1,9 @@
 # Ordinary FX9 MRT/HDR and relative targets
 
+Later extension: [ordered material scripts and Ray MaterialMap import](RHI_MME_RAY_MATERIAL.md)
+adds two geometry MRT groups and source diagnostics. The validation below
+records this earlier batch; it is not evidence for the later material chain.
+
 Unannotated FX9 material and scene shaders now describe their actual ordered
 pixel outputs to the shared RHI. `COLOR` means slot zero; `COLOR0` through
 `COLOR3` map to `SV_Target0` through `SV_Target3`. Struct results and `out`

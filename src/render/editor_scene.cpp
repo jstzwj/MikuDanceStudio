@@ -596,6 +596,14 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
             }
             if (e.draw.pipeline.shadow.mode == BuiltinShadowMode::Material)
                 e.draw.shadowTarget = 3;
+            if (effect.first == 1 && !effect.second.steps.empty()) {
+                if (!screens.empty())
+                    return fail("MME_material_script_screen_history_not_supported");
+                if (!AppendPortableMmeMaterial(result, main, e.draw, effect.second, reason))
+                    return false;
+                ++ordinal;
+                continue;
+            }
             if (effect.first == 1 && !ApplyPortableMmeMaterial(e.draw, effect.second, reason))
                 return false;
             if (std::find(screens.begin(), screens.end(), ordinal++) != screens.end())
@@ -609,7 +617,7 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
             main.draws.push_back(std::move(e.draw));
         }
     if (mode)
-        result.passes.push_back(std::move(generate));
+        result.passes.insert(result.passes.begin(), std::move(generate));
     result.passes.push_back(std::move(main));
     if (hasPost) {
         if (!screens.empty())

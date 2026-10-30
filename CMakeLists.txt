@@ -1098,6 +1098,16 @@ if(BUILD_TESTING)
         target_include_directories(mme_legacy_mrt_test PRIVATE third_party/mmeffect/src/mmeffect)
         target_compile_definitions(mme_legacy_mrt_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(mme_legacy_mrt_test PRIVATE mikudancestudio_core MMEffect dsound)
+        add_executable(mme_material_script_test tests/mme_material_script_test.cpp)
+        target_include_directories(mme_material_script_test PRIVATE third_party/mmeffect/src/mmeffect)
+        target_compile_definitions(mme_material_script_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(mme_material_script_test PRIVATE mikudancestudio_core MMEffect dsound)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME mme_material_script_contract COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mme_material_script.py
+                --test $<TARGET_FILE:mme_material_script_test> --backend null)
+            set_tests_properties(mme_material_script_contract PROPERTIES TIMEOUT 90 LABELS "MME;rhi;legacy;MRT;material;contract")
+        endif()
         foreach(api IN ITEMS dx11 dx12 vulkan)
             if((api STREQUAL "dx11" AND MIKUDANCESTUDIO_RHI_D3D11) OR
                (api STREQUAL "dx12" AND MIKUDANCESTUDIO_RHI_D3D12) OR
@@ -1134,6 +1144,42 @@ if(BUILD_TESTING)
                 endif()
                 add_test(NAME mme_mrt_hdr_${api} COMMAND mme_mrt_hdr_test ${api})
                 add_test(NAME mme_legacy_mrt_${api} COMMAND mme_legacy_mrt_test ${api})
+                if(Python3_Interpreter_FOUND)
+                    set(material_script_variants ${api})
+                    if(NOT api STREQUAL "dx11")
+                        list(APPEND material_script_variants ${api}-debug)
+                    endif()
+                    foreach(variant IN LISTS material_script_variants)
+                        add_test(NAME mme_material_pipeline_${variant} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mme_material_script.py
+                            --test $<TARGET_FILE:mme_material_script_test> --backend ${variant}-compile)
+                        set_tests_properties(mme_material_pipeline_${variant} PROPERTIES TIMEOUT 150
+                            SKIP_RETURN_CODE 77 LABELS "MME;rhi;legacy;material;compilation;MRT;offscreen" RUN_SERIAL TRUE)
+                        if(MIKUDANCESTUDIO_RAY_TEST_EFFECT)
+                            add_test(NAME mme_ray_material_pipeline_${variant} COMMAND ${Python3_EXECUTABLE}
+                                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mme_material_script.py
+                                --test $<TARGET_FILE:mme_material_script_test> --backend ${variant}-compile
+                                --ray-effect "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
+                            set_tests_properties(mme_ray_material_pipeline_${variant} PROPERTIES TIMEOUT 150
+                                SKIP_RETURN_CODE 77 LABELS "MME;rhi;legacy;material;compilation;MRT;offscreen;ray;external" RUN_SERIAL TRUE)
+                        endif()
+                    endforeach()
+                    foreach(variant IN LISTS material_script_variants)
+                        add_test(NAME mme_material_script_${variant} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mme_material_script.py
+                            --test $<TARGET_FILE:mme_material_script_test> --backend ${variant})
+                        set_tests_properties(mme_material_script_${variant} PROPERTIES TIMEOUT 320
+                            SKIP_RETURN_CODE 77 LABELS "MME;rhi;legacy;MRT;material;offscreen" RUN_SERIAL TRUE)
+                        if(MIKUDANCESTUDIO_RAY_TEST_EFFECT)
+                            add_test(NAME mme_ray_material_${variant} COMMAND ${Python3_EXECUTABLE}
+                                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mme_material_script.py
+                                --test $<TARGET_FILE:mme_material_script_test> --backend ${variant}
+                                --ray-effect "${MIKUDANCESTUDIO_RAY_TEST_EFFECT}")
+                            set_tests_properties(mme_ray_material_${variant} PROPERTIES TIMEOUT 320
+                                SKIP_RETURN_CODE 77 LABELS "MME;rhi;legacy;MRT;material;offscreen;ray;external" RUN_SERIAL TRUE)
+                        endif()
+                    endforeach()
+                endif()
                 set_tests_properties(mme_legacy_mrt_${api} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "offscreen;MME;rhi;legacy;MRT;HDR;relative" RUN_SERIAL TRUE)
                 if(NOT api STREQUAL "dx11")
                     add_test(NAME mme_legacy_mrt_${api}_debug COMMAND mme_legacy_mrt_test ${api}-debug)

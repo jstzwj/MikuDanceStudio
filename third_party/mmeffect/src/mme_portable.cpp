@@ -448,20 +448,27 @@ bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::Materia
     for (int n = 0; n < count; ++n) {
         mme::SasTechniqueInfo tech{};
         if (!mme::SasGetTechniqueInfo(binding.sas, n, &tech) || !tech.hardwareOk ||
-            !tech.shaderMixOk || tech.hasScript || tech.passCount != 1 ||
-            (tech.mmdPass != 0 && tech.mmdPass != 1))
+            !tech.shaderMixOk || tech.passCount > 8 ||
+            (!tech.empty && tech.mmdPass != 0 && tech.mmdPass != 1) ||
+            (!tech.hasScript && !tech.empty && tech.passCount != 1))
             return fail("MME_legacy_material_technique");
-        D3DXPASS_DESC pass{};
-        const auto h = binding.effect->GetPass(tech.handle, 0);
-        if (FAILED(binding.effect->GetPassDesc(h, &pass)) || !pass.Name)
-            return fail("MME_pass_description");
-        const auto source =
-            std::find_if(out.legacy->passes.begin(), out.legacy->passes.end(), [&](const auto& p) {
-                return p.technique == tech.name && p.name == pass.Name;
-            });
-        if (source == out.legacy->passes.end())
-            return fail("MME_legacy_pass_source");
-        out.passes.push_back({tech.name, pass.Name, source->vertex, source->pixel});
+        for (int i = 0; i < tech.passCount; ++i) {
+            D3DXPASS_DESC pass{};
+            const auto h = binding.effect->GetPass(tech.handle, i);
+            if (FAILED(binding.effect->GetPassDesc(h, &pass)) || !pass.Name)
+                return fail("MME_pass_description");
+            const auto source = std::find_if(
+                out.legacy->passes.begin(), out.legacy->passes.end(),
+                [&](const auto& p) { return p.technique == tech.name && p.name == pass.Name; });
+            if (source == out.legacy->passes.end())
+                return fail("MME_legacy_pass_source");
+            out.passes.push_back({tech.name, pass.Name, source->vertex, source->pixel});
+            auto& exported = out.passes.back();
+            for (auto slot : MmeLegacySamplers(*out.legacy, *source)) {
+                exported.sampled.push_back(out.legacy->samplers[slot].texture);
+                exported.sampleSlots.push_back(slot);
+            }
+        }
     }
     return !out.passes.empty() || fail("MME_empty_effect");
 }
@@ -901,6 +908,14 @@ int MmePortableDraw(unsigned long long id, int subset, int mode, unsigned flags,
         out.passes.erase(std::remove_if(out.passes.begin(), out.passes.end(),
                                         [&](const auto& p) { return p.technique != t.Name; }),
                          out.passes.end());
+        if (out.passes.empty())
+            return 2; // Native empty technique suppresses this object draw.
+        const auto index = mme::SasFindTechniqueIndex(found->second->sas, selected);
+        if (out.legacy && index >= 0 && found->second->sas->techniques[index].hasScript) {
+            return MmePortableExportMaterial(*found->second->sas, unsigned(index), out, reason)
+                       ? 1
+                       : -1;
+        }
         return out.passes.size() == 1 ? 1 : -1;
     }
     return 0;
@@ -908,4 +923,44 @@ int MmePortableDraw(unsigned long long id, int subset, int mode, unsigned flags,
 
 bool MmePortableExportScene(mme::SasEffect& sas, MmePortableEffect& out, std::string& reason) {
     return ExportScript(sas, out, reason);
+}
+
+bool MmePortableExportMaterial(mme::SasEffect& sas, unsigned technique, MmePortableEffect& out,
+                               std::string& reason) {
+    if (technique >= sas.techniques.size() || !sas.techniques[technique].hasScript ||
+        sas.hasErrors) {
+        reason = "MME_material_script_selection";
+        return false;
+    }
+    auto next = out;
+    next.script.clear();
+    for (const auto& command : sas.techniques[technique].cmds) {
+        MmePortableCommand c{MmePortableCommand::Kind::Pass};
+        c.value = command.value;
+        if (command.id >= mme::kSasCmdRenderColorTarget0 &&
+            command.id <= mme::kSasCmdRenderColorTarget3) {
+            if (command.param && command.value >= 0) {
+                reason = "MME_material_script_subresource";
+                return false;
+            }
+            c.kind = MmePortableCommand::Kind::ColorTarget;
+            c.value = command.id - mme::kSasCmdRenderColorTarget0;
+            if (command.param) {
+                D3DXPARAMETER_DESC d{};
+                if (FAILED(sas.effect->GetParameterDesc(command.param, &d)) || !d.Name) {
+                    reason = "MME_material_script_parameter";
+                    return false;
+                }
+                c.parameter = d.Name;
+            }
+        } else if (command.id != mme::kSasCmdPass) {
+            reason = "MME_material_script_command";
+            return false;
+        }
+        next.script.push_back(std::move(c));
+    }
+    if (!MmePortableMaterialLayout(next, reason))
+        return false;
+    out = std::move(next);
+    return true;
 }

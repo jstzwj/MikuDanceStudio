@@ -368,7 +368,8 @@ const MmeLegacyPass* LegacyPass(const MmePortableEffect& effect, const MmePortab
         });
     return found == effect.legacy->passes.end() ? nullptr : &*found;
 }
-bool LegacyRaster(const MmeLegacyPass& pass, BatchRasterState& raster, std::string& reason) {
+bool LegacyRaster(const MmeLegacyPass& pass, BatchRasterState& raster, std::string& reason,
+                  bool material = false) {
     auto states = pass.states;
     const auto fail = [&] {
         reason = "MME_legacy_render_state";
@@ -385,6 +386,8 @@ bool LegacyRaster(const MmeLegacyPass& pass, BatchRasterState& raster, std::stri
                                                              {"SEPARATEALPHABLENDENABLE", "FALSE"},
                                                              {"BLENDOP", "ADD"}};
     for (const auto& [key, value] : fixed) {
+        if (material && !states.count(key))
+            continue; // Validated against the explicit CPU draw before binding.
         if (states[key] != value)
             return fail();
         states.erase(key);
@@ -441,6 +444,36 @@ bool LegacyRaster(const MmeLegacyPass& pass, BatchRasterState& raster, std::stri
         states.erase(key);
     }
     return states.empty() || fail();
+}
+bool LegacyInheritedMaterialState(const MmeLegacyPass& pass, const ModelPipeline& host,
+                                  const BatchRasterState& raster, std::string& reason) {
+    // The CPU geometry contract already rejects wireframe, bias and sRGB.
+    // Generic shaders cannot inherit native alpha test/stencil or arbitrary
+    // color writes. Separate alpha and blend operations matter only when the
+    // effect leaves blending enabled.
+    const auto missing = [&](const char* key) { return !pass.states.count(key); };
+    if ((missing("ALPHATESTENABLE") && host.shader.alphaTest) ||
+        (missing("STENCILENABLE") && host.stencil) ||
+        (missing("COLORWRITEENABLE") && host.colorWriteMask != 15) ||
+        (raster.alphaBlend && ((missing("SEPARATEALPHABLENDENABLE") && host.separateAlpha) ||
+                               (missing("BLENDOP") && host.colorOperation != ModelBlendOp::Add)))) {
+        reason = "MME_legacy_inherited_material_state";
+        return false;
+    }
+    return true;
+}
+SamplerDesc LegacySampler(const MmeLegacySampler& s) {
+    const auto filter = [](bool linear, bool anisotropic) {
+        return anisotropic ? SamplerFilter::Anisotropic
+               : linear    ? SamplerFilter::Linear
+                           : SamplerFilter::Point;
+    };
+    return {filter(s.linearMin, s.anisotropicMin),
+            filter(s.linearMag, s.anisotropicMag),
+            filter(s.linearMip, s.anisotropicMip),
+            s.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
+            s.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap,
+            s.maxAnisotropy};
 }
 bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
                         const MmePortableEffect& effect, std::string& reason) {
@@ -529,13 +562,7 @@ bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
                 return false;
             shader.textures.push_back(
                 {slot, {}, {SharedFrameTargetId(target->identity), targetWidth, targetHeight}});
-            shader.samplers.push_back(
-                {slot,
-                 {sampler.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
-                  sampler.linearMag ? SamplerFilter::Linear : SamplerFilter::Point,
-                  sampler.linearMip ? SamplerFilter::Linear : SamplerFilter::Point,
-                  sampler.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
-                  sampler.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap, 1}});
+            shader.samplers.push_back({slot, LegacySampler(sampler)});
             continue;
         }
         const auto role = sampler.semantic == "MATERIALTEXTURE"     ? MaterialTextureRole::Base
@@ -550,13 +577,7 @@ bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
             return false;
         }
         shader.textures.push_back({slot, draw.textures[input], draw.targetTextures[input]});
-        shader.samplers.push_back(
-            {slot,
-             {sampler.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
-              sampler.linearMag ? SamplerFilter::Linear : SamplerFilter::Point,
-              sampler.linearMip ? SamplerFilter::Linear : SamplerFilter::Point,
-              sampler.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
-              sampler.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap, 1}});
+        shader.samplers.push_back({slot, LegacySampler(sampler)});
     }
     return true;
 }
@@ -576,7 +597,7 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
     if (effect.legacy) {
         const auto* imported = LegacyPass(effect, pass);
         BatchRasterState raster;
-        if (!imported || !LegacyRaster(*imported, raster, reason))
+        if (!imported || !LegacyRaster(*imported, raster, reason, !effect.post))
             return {};
         if (effect.post &&
             (!imported->states.count("CULLMODE") || !imported->states.count("ALPHABLENDENABLE") ||
@@ -738,7 +759,9 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
                                             TextureFormat::Rgba8);
         shader.pipeline.viewport = draw.pipeline.viewport;
         shader.pipeline.raster = draw.pipeline.raster;
-        if (!LegacyRaster(*imported, shader.pipeline.raster, reason) ||
+        if (!LegacyRaster(*imported, shader.pipeline.raster, reason, true) ||
+            !LegacyInheritedMaterialState(*imported, draw.pipeline, shader.pipeline.raster,
+                                          reason) ||
             !BindLegacyMaterial(shader, draw, effect, reason))
             return false;
         draw.shader = std::move(shader);
@@ -785,6 +808,96 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
     draw.targetTextures = {};
     draw.shadowTarget = 0;
     draw.pipeline.shadow = {};
+    return true;
+}
+bool AppendPortableMmeMaterial(RenderFrame& frame, FramePass& pending,
+                               const ModelReplayDraw& original, const MmePortableEffect& effect,
+                               std::string& reason) {
+    const auto fail = [&](const char* text) {
+        reason = text;
+        return false;
+    };
+    auto next = frame;
+    auto host = pending;
+    const auto sampled = [](FramePass& pass, const ModelReplayDraw& draw) {
+        if (draw.shader)
+            for (const auto& binding : draw.shader->textures)
+                if (binding.target.target && std::find(pass.sampled.begin(), pass.sampled.end(),
+                                                       binding.target.target) == pass.sampled.end())
+                    pass.sampled.push_back(binding.target.target);
+    };
+    if (effect.steps.empty()) {
+        auto draw = original;
+        if (!ApplyPortableMmeMaterial(draw, effect, reason))
+            return false;
+        sampled(host, draw);
+        host.draws.push_back(std::move(draw));
+    } else {
+        if (!effect.legacy || effect.post || ColorAttachments(host).size() != 1)
+            return fail("MME_material_script_host_layout");
+        if (!RegisterPortableMmeTargets(next, {effect}, reason))
+            return false;
+        next.passes.push_back(host);
+        const auto primary = ColorAttachments(host).front().target;
+        for (const auto& step : effect.steps) {
+            if (step.kind != MmePortableStep::Kind::Draw || step.pass >= effect.passes.size())
+                return fail("MME_material_script_pass");
+            FramePass pass;
+            pass.name = "MME/material/" + effect.passes[step.pass].name;
+            pass.depthStencil = host.depthStencil;
+            if (pass.depthStencil)
+                pass.depthStencil->load = AttachmentLoad::Load;
+            std::vector<TextureFormat> formats;
+            unsigned width = 0, height = 0;
+            for (const auto& name : step.colors) {
+                auto id = primary;
+                if (name != "DrawColor") {
+                    const auto target = std::find_if(effect.targets.begin(), effect.targets.end(),
+                                                     [&](const auto& t) { return t.name == name; });
+                    if (target == effect.targets.end() || !target->identity || target->depth)
+                        return fail("MME_material_script_target");
+                    id = SharedFrameTargetId(target->identity);
+                }
+                const auto target = std::find_if(next.targets.begin(), next.targets.end(),
+                                                 [&](const auto& t) { return t.id == id; });
+                if (target == next.targets.end() ||
+                    (width &&
+                     (target->description.width != width || target->description.height != height)))
+                    return fail("MME_material_script_extent");
+                width = target->description.width;
+                height = target->description.height;
+                FrameAttachment attachment{id};
+                attachment.load = AttachmentLoad::Load;
+                pass.colors.push_back(attachment);
+                formats.push_back(target->description.format);
+            }
+            auto instance = effect;
+            instance.steps.clear();
+            instance.passes = {effect.passes[step.pass]};
+            auto draw = original;
+            draw.pipeline.viewport = ModelViewport{0, 0, width, height};
+            if (!ApplyPortableMmeMaterial(draw, instance, reason))
+                return false;
+            if (!draw.shader ||
+                draw.shader->pipeline.program->description.colorOutputs.size() != formats.size())
+                return fail("MME_material_script_output_layout");
+            draw.shader->pipeline.colorFormats = std::move(formats);
+            sampled(pass, draw);
+            pass.draws.push_back(std::move(draw));
+            next.passes.push_back(std::move(pass));
+        }
+        host.draws.clear();
+        host.sampled.clear();
+        if (host.color)
+            host.color->load = AttachmentLoad::Load;
+        for (auto& a : host.colors)
+            a.load = AttachmentLoad::Load;
+        if (host.depthStencil)
+            host.depthStencil->load = AttachmentLoad::Load;
+    }
+    frame = std::move(next);
+    pending = std::move(host);
+    reason.clear();
     return true;
 }
 // Preserve the native Buffer quad's vertex inputs and diagonal. A large triangle
@@ -919,25 +1032,40 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
                 const auto colors = ColorAttachments(pass);
                 if (std::any_of(colors.begin(), colors.end(),
                                 [&](const auto& a) { return a.target == frame.finalColor; })) {
-                    if (colors.size() != 1)
-                        return fail("MME_nested_capture_layout");
-                    pass.color.reset();
-                    pass.colors.clear();
-                    for (const auto& name : capture->colors) {
-                        auto attachment = colors[0];
-                        attachment.target = ids.at(name);
-                        pass.colors.push_back(attachment);
-                    }
-                    for (auto& draw : pass.draws) {
-                        if (draw.shader) {
-                            if (!draw.shader->pipeline.program ||
-                                draw.shader->pipeline.program->description.colorOutputs.size() !=
-                                    captureFormats.size())
-                                return fail("MME_capture_shader_output_layout");
-                            draw.shader->pipeline.colorFormats = captureFormats;
-                        } else if (captureFormats !=
-                                   std::vector<TextureFormat>{TextureFormat::Rgba8})
-                            return fail("MME_capture_host_pipeline_not_supported");
+                    if (colors.size() > 1) {
+                        if (captureFormats.size() != 1)
+                            return fail("MME_nested_capture_layout");
+                        pass.color.reset();
+                        pass.colors = colors;
+                        for (unsigned slot = 0; slot < pass.colors.size(); ++slot)
+                            if (pass.colors[slot].target == frame.finalColor) {
+                                pass.colors[slot].target = ids.at(capture->colors[0]);
+                                for (auto& draw : pass.draws) {
+                                    if (!draw.shader ||
+                                        draw.shader->pipeline.colorFormats.size() != colors.size())
+                                        return fail("MME_capture_shader_output_layout");
+                                    draw.shader->pipeline.colorFormats[slot] = captureFormats[0];
+                                }
+                            }
+                    } else {
+                        pass.color.reset();
+                        pass.colors.clear();
+                        for (const auto& name : capture->colors) {
+                            auto attachment = colors[0];
+                            attachment.target = ids.at(name);
+                            pass.colors.push_back(attachment);
+                        }
+                        for (auto& draw : pass.draws) {
+                            if (draw.shader) {
+                                if (!draw.shader->pipeline.program ||
+                                    draw.shader->pipeline.program->description.colorOutputs
+                                            .size() != captureFormats.size())
+                                    return fail("MME_capture_shader_output_layout");
+                                draw.shader->pipeline.colorFormats = captureFormats;
+                            } else if (captureFormats !=
+                                       std::vector<TextureFormat>{TextureFormat::Rgba8})
+                                return fail("MME_capture_host_pipeline_not_supported");
+                        }
                     }
                 }
                 if (pass.depthStencil && incomingDepth &&
@@ -1048,13 +1176,7 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
                     const auto& s = effect.legacy->samplers.at(nativeSlot);
                     if (inputTarget->description.mips > 1 && s.mipNone)
                         return fail("MME_mipped_sampler_none_not_supported");
-                    shader.samplers.push_back(
-                        {nativeSlot,
-                         {s.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
-                          s.linearMag ? SamplerFilter::Linear : SamplerFilter::Point,
-                          s.linearMip ? SamplerFilter::Linear : SamplerFilter::Point,
-                          s.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
-                          s.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap, 1}});
+                    shader.samplers.push_back({nativeSlot, LegacySampler(s)});
                     continue;
                 }
                 shader.samplers.push_back(
@@ -1243,6 +1365,9 @@ bool PrependPortableMmeTurns(RenderFrame& frame, const std::vector<MmePortableTu
                              turn.clearColor[3]};
         pass.depthStencil = FrameAttachment{depth};
         pass.depthStencil->clearDepth = turn.clearDepth;
+        auto turnFrame = next;
+        turnFrame.finalColor = color;
+        turnFrame.passes.clear();
         for (const auto& source : sources) {
             // Native queued grid/axis/background draws replay only in the
             // base scene, never inside an offscreen object turn.
@@ -1278,11 +1403,12 @@ bool PrependPortableMmeTurns(RenderFrame& frame, const std::vector<MmePortableTu
                     }
                 effect.counts[0] = source.vertexCount;
                 effect.transparent = source.transparent;
-                if (!ApplyPortableMmeMaterial(draw, effect, reason))
+                if (effect.steps.empty() && !ApplyPortableMmeMaterial(draw, effect, reason))
                     return false;
             }
-            if (!draw.shader && (draw.pipeline.shadow.mode == BuiltinShadowMode::Material ||
-                                 draw.pipeline.shadow.mode == BuiltinShadowMode::Depth)) {
+            if (!draw.shader && effect.steps.empty() &&
+                (draw.pipeline.shadow.mode == BuiltinShadowMode::Material ||
+                 draw.pipeline.shadow.mode == BuiltinShadowMode::Depth)) {
                 reason = "MME_offscreen_self_shadow_not_supported";
                 return false;
             }
@@ -1294,11 +1420,13 @@ bool PrependPortableMmeTurns(RenderFrame& frame, const std::vector<MmePortableTu
                                                      b.target.target) == pass.sampled.end())
                         pass.sampled.push_back(b.target.target);
             }
-            pass.draws.push_back(std::move(draw));
+            if (!effect.steps.empty()) {
+                if (!AppendPortableMmeMaterial(turnFrame, pass, draw, effect, reason))
+                    return false;
+            } else
+                pass.draws.push_back(std::move(draw));
         }
-        auto turnFrame = next;
-        turnFrame.finalColor = color;
-        turnFrame.passes = {std::move(pass)};
+        turnFrame.passes.push_back(std::move(pass));
         auto turnEffects = turn.effects;
         // SAS resources are allocated against the discovery viewport. A turn
         // changes VIEWPORTPIXELSIZE, not the publisher's allocation ratio.

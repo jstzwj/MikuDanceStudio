@@ -42,6 +42,10 @@ Ordinary FX9 shaders now lower ordered MRT outputs, float scene captures and
 viewport-relative intermediate targets without custom profiles; see
 [FX9 MRT/HDR and relative sizing](RHI_MME_LEGACY_MRT.md) for supported geometry,
 native viewport semantics, comparison gates and remaining Ray blockers.
+Source import now covers the unmodified Ray MaterialMap child and bounded
+ordered material MRT scripts. The public material chain and isolated Ray
+child use eight-target offscreen gates; full Ray still retains DX9 fallback.
+See [Ray material scope and diagnostics](RHI_MME_RAY_MATERIAL.md).
 Unmodified Ray still uses same-frame DX9 fallback. Camera/geometry matrix
 variants, camera/light vectors, native draw names and once-per-frame MME clocks
 now have CPU providers; see [standard parameters](RHI_MME_STANDARDS.md).
