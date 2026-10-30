@@ -15,6 +15,7 @@
 #include "../include/MMDExport.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <set>
 #include <cstring>
 #include <sstream>
@@ -248,7 +249,8 @@ bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePorta
     // Viewport-relative targets follow the current RHI extent; explicit paired
     // Width/Height annotations retain their native fixed extent.
     if (resource.hasViewportRatio &&
-        (resource.viewportRatio[0] != 1 || resource.viewportRatio[1] != 1)) {
+        (!std::isfinite(resource.viewportRatio[0]) || !std::isfinite(resource.viewportRatio[1]) ||
+         resource.viewportRatio[0] <= 0 || resource.viewportRatio[1] <= 0)) {
         reason = "MME_target_ratio_not_supported";
         return false;
     }
@@ -277,7 +279,7 @@ bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePorta
         query.publisher->GetAnnotationByName(resource.param, "Width") != nullptr;
     const bool fixedHeight =
         query.publisher->GetAnnotationByName(resource.param, "Height") != nullptr;
-    if (fixedWidth || fixedHeight) {
+    if (!resource.hasViewportRatio && (fixedWidth || fixedHeight)) {
         if (!fixedWidth || !fixedHeight || resource.reqWidth <= 0 || resource.reqHeight <= 0 ||
             query.publisher->GetAnnotationByName(resource.param, "ViewPortRatio")) {
             reason = "MME_target_partial_extent";
@@ -288,6 +290,8 @@ bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePorta
     }
     out.mipmapped = mipmapped;
     out.offscreen = resource.semanticId == 0x2E;
+    out.relative = resource.hasViewportRatio;
+    out.viewportRatio = {resource.viewportRatio[0], resource.viewportRatio[1]};
     return true;
 }
 bool DescribeLegacyScene(const mme::EffectOwnerManager::BindingKey& key,

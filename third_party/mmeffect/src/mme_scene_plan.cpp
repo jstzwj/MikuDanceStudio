@@ -4,6 +4,29 @@
 #include <cstring>
 #include <map>
 #include <set>
+bool MmePortableExtent(const MmePortableTarget& target, unsigned viewportWidth,
+                       unsigned viewportHeight, unsigned& width, unsigned& height,
+                       std::string& reason) {
+    if (!viewportWidth || !viewportHeight || (bool(target.width) != bool(target.height)) ||
+        (target.relative && (target.width || target.height))) {
+        reason = "MME_target_extent_layout";
+        return false;
+    }
+    const float w = target.relative ? float(viewportWidth) * target.viewportRatio[0]
+                                    : float(target.width ? target.width : viewportWidth);
+    const float h = target.relative ? float(viewportHeight) * target.viewportRatio[1]
+                                    : float(target.height ? target.height : viewportHeight);
+    // Native SAS truncates positive products. Zero/default-size requests have
+    // creation/refresh-dependent legacy rules and retain whole-frame fallback.
+    if (!std::isfinite(w) || !std::isfinite(h) || w < 1 || h < 1 || w >= 4097 || h >= 4097) {
+        reason = "MME_target_extent_not_supported";
+        return false;
+    }
+    width = unsigned(w);
+    height = unsigned(h);
+    reason.clear();
+    return true;
+}
 bool MmePortableSceneLayout(MmePortableEffect& effect, std::string& reason) {
     const auto fail = [&](const char* r) {
         reason = r;
@@ -91,11 +114,12 @@ bool MmePortableSceneLayout(MmePortableEffect& effect, std::string& reason) {
             step.parameters = parameters;
         }
         if (step.kind == MmePortableStep::Kind::Capture) {
-            if (++captures != 1 || step.colors.size() != 1 || step.colors[0] == "FinalColor")
+            if (++captures != 1 || unique.count("FinalColor"))
                 return fail("MME_scene_capture_layout");
-            if (targets.at(step.colors[0]).format != MmePortableFormat::Rgba8)
-                return fail("MME_scene_capture_format");
-            if (!initialized.count(step.colors[0]) || (!depth.empty() && !initialized.count(depth)))
+            for (const auto& name : step.colors)
+                if (!initialized.count(name))
+                    return fail("MME_scene_capture_requires_clear");
+            if (!depth.empty() && !initialized.count(depth))
                 return fail("MME_scene_capture_requires_clear");
         }
         if (step.clearDepth && !step.depth.empty())

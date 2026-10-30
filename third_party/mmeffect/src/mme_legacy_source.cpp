@@ -542,7 +542,8 @@ bool MmeLegacyImport(const std::string& source, MmeLegacyProgram& out, std::stri
     }
 }
 bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass, std::string& hlsl,
-                     std::vector<MmeLegacyInput>& inputs, std::string& reason) {
+                     std::vector<MmeLegacyInput>& inputs, std::string& reason,
+                     std::vector<unsigned>* colorOutputs) {
     const auto fail = [&](const char* s) {
         reason = std::string("MME_legacy_") + s;
         return false;
@@ -696,14 +697,41 @@ bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
         const auto values = fields({ps->second.result, "", ps->second.semantic}, "original");
         pixelOutputs.insert(pixelOutputs.end(), values.begin(), values.end());
     }
-    if (pixelOutputs.size() != 1 || pixelOutputs[0].field.type != "float4" ||
-        (pixelOutputs[0].field.semantic != "COLOR" && pixelOutputs[0].field.semantic != "COLOR0"))
+    if (pixelOutputs.empty() || pixelOutputs.size() > 4)
         return fail("stage_signature");
-    wrappers += "float4 mdsLegacyPS(mdsLegacyVaryings input):SV_Target0{" + declarations +
+    std::map<unsigned, Value> targets;
+    std::vector<unsigned> components;
+    for (const auto& output : pixelOutputs) {
+        const auto& semantic = output.field.semantic;
+        const auto& type = output.field.type;
+        if ((semantic != "COLOR" && (semantic.size() != 6 || semantic.substr(0, 5) != "COLOR" ||
+                                     semantic[5] < '0' || semantic[5] > '3')) ||
+            (type != "float" && type != "float2" && type != "float3" && type != "float4"))
+            return fail("pixel_output_layout");
+        const auto slot = semantic == "COLOR" ? 0u : unsigned(semantic[5] - '0');
+        if (!targets.emplace(slot, output).second)
+            return fail("pixel_output_layout");
+    }
+    std::string resultStruct = "struct mdsLegacyPixelOutput{", assignments;
+    for (unsigned slot = 0; slot < targets.size(); ++slot) {
+        const auto found = targets.find(slot);
+        if (found == targets.end())
+            return fail("pixel_output_layout");
+        const auto& output = found->second;
+        const auto name = "target" + std::to_string(slot);
+        components.push_back(
+            output.field.type == "float" ? 1u : unsigned(output.field.type.back() - '0'));
+        resultStruct += output.field.type + " " + name + ":SV_Target" + std::to_string(slot) + ";";
+        assignments += "output." + name + "=" + output.expression + ";";
+    }
+    wrappers += resultStruct + "};\nmdsLegacyPixelOutput mdsLegacyPS(mdsLegacyVaryings input){" +
+                declarations +
                 (ps->second.result == "void" ? "" : ps->second.result + " original=") + pass.pixel +
-                "(" + call + ");return " + pixelOutputs[0].expression + ";}\n";
+                "(" + call + ");mdsLegacyPixelOutput output;" + assignments + "return output;}\n";
     hlsl = program.hlsl + wrappers;
     inputs = std::move(nextInputs);
+    if (colorOutputs)
+        *colorOutputs = std::move(components);
     reason.clear();
     return true;
 }

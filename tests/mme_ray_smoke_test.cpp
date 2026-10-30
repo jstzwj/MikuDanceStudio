@@ -114,6 +114,7 @@ int main(int argc, char** argv) try {
     MmeRequirementsReport report;
     if (argc == 3) {
         report.Effect(*sas);
+        report.Portable(*loaded, "root");
         stats.report = &report;
     }
     mme::SasHostCallbacks callbacks = {};

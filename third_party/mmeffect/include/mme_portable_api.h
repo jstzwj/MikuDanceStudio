@@ -29,6 +29,10 @@ struct MmePortableTarget {
     unsigned width = 0, height = 0;
     // Native offscreen autogen chain (resolved from the current RHI extent).
     bool mipmapped = false, offscreen = false;
+    // Viewport-relative dimensions are resolved at frame preparation, not from
+    // the possibly stale DX9 allocation. Do not combine with fixed width/height.
+    bool relative = false;
+    std::array<float, 2> viewportRatio{1, 1};
 };
 struct MmePortableParameter {
     std::string name, semantic;
@@ -121,6 +125,8 @@ bool MmePortablePostLayout(MmePortableEffect&, std::string& reason);
 // Pure CPU execution of the exported SAS command table. No native state or
 // pool is mutated. Bounds are checked before any graphics work is submitted.
 bool MmePortableSceneLayout(MmePortableEffect&, std::string& reason);
+bool MmePortableExtent(const MmePortableTarget&, unsigned viewportWidth, unsigned viewportHeight,
+                       unsigned& width, unsigned& height, std::string& reason);
 bool MmePortableEffects(std::vector<MmePortableEffect>&, std::string& reason, unsigned turn = 0);
 // 0: native technique selection forwards the ordinary draw, 1: portable
 // material/pass, 2: scene carrier (no object draw), -1: unsupported assignment.

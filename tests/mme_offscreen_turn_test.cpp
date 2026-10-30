@@ -144,6 +144,8 @@ int main(int argc, char** argv) try {
     if (argc == 3) {
         report.Effect(*sas);
         report.Effect(*skyBinding->sas);
+        report.Portable(*loaded, "root");
+        report.Portable(*skyBinding->instance, "MaterialMap-child");
     }
     auto* namedSkybox = new mme::ModelData(device.p, 3, "Sky with box.pmx", 0, 0, nullptr);
     ctx->models.push_back(namedSkybox);

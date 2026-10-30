@@ -1,5 +1,7 @@
 #pragma once
 #include "sas_exec.h"
+#include "effect_engine.h"
+#include <d3dcompiler.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
@@ -52,9 +54,10 @@ public:
             sas.effect->GetTexture(resource.param, &texture);
             rows << "resource " << resource.name << " semantic=" << resource.semanticId
                  << " shared=" << bool(parameter.Flags & D3DX_PARAMETER_SHARED)
-                 << " identity=" << Identity(texture) << " requested=" << resource.reqWidth
-                 << 'x' << resource.reqHeight << " format=" << unsigned(resource.format)
-                 << " levels=" << resource.texMips << " ratio=" << resource.hasViewportRatio;
+                 << " identity=" << Identity(texture) << " requested=" << resource.reqWidth << 'x'
+                 << resource.reqHeight << " format=" << unsigned(resource.format)
+                 << " levels=" << resource.texMips << " ratio=" << resource.hasViewportRatio
+                 << " scale=" << resource.viewportRatio[0] << ',' << resource.viewportRatio[1];
             if (texture && texture->GetType() == D3DRTYPE_TEXTURE) {
                 D3DSURFACE_DESC desc{};
                 static_cast<IDirect3DTexture9*>(texture)->GetLevelDesc(0, &desc);
@@ -140,12 +143,83 @@ public:
             }
         }
     }
+    // Diagnose the immutable expanded FX9 source without executing or changing
+    // its native state. A blocked stage is not counted as a supported stage.
+    void Portable(const mme::LoadedEffect& loaded, const char* label) {
+        Portable(loaded.legacySource, loaded.sas, label);
+    }
+    void Portable(const std::shared_ptr<const std::string>& source, mme::SasEffect* sas,
+                  const char* label) {
+        MmeLegacyProgram program;
+        std::string reason;
+        const bool scene = sas && sas->scriptClass == mme::kSasClassScene;
+        const bool imported = source && (scene ? MmeLegacyImportScene(*source, program, reason)
+                                               : MmeLegacyImport(*source, program, reason));
+        if (!source)
+            reason = "MME_legacy_source_unavailable";
+        rows << "portable " << label << " source=" << (imported ? "ok" : reason)
+             << " parameters=unassessed resources=unassessed states=unassessed\n";
+        if (!sas)
+            return;
+        for (auto handle : sas->techniqueOrder) {
+            const auto index = mme::SasFindTechniqueIndex(sas, handle);
+            if (index < 0)
+                throw std::runtime_error("portable inventory selection");
+            const auto& technique = sas->techniques[index];
+            for (const auto& pass : technique.passes) {
+                rows << "portable-pass " << label << ':' << technique.name << '/' << pass.name;
+                if (!imported) {
+                    rows << " shader=blocked-by-source\n";
+                    continue;
+                }
+                const auto match =
+                    std::find_if(program.passes.begin(), program.passes.end(), [&](const auto& p) {
+                        return p.technique == technique.name && p.name == pass.name;
+                    });
+                std::string hlsl;
+                std::vector<MmeLegacyInput> inputs;
+                std::vector<unsigned> outputs;
+                if (match == program.passes.end()) {
+                    rows << " shader=MME_legacy_pass_source\n";
+                    continue;
+                }
+                if (!MmeLegacyShader(program, *match, hlsl, inputs, reason, &outputs)) {
+                    rows << " shader=" << reason << '\n';
+                    continue;
+                }
+                rows << " outputs=" << outputs.size();
+                for (bool pixel : {false, true}) {
+                    ID3DBlob *code = nullptr, *errors = nullptr;
+                    const auto hr = D3DCompile(hlsl.data(), hlsl.size(), nullptr, nullptr, nullptr,
+                                               pixel ? "mdsLegacyPS" : "mdsLegacyVS",
+                                               pixel ? "ps_5_0" : "vs_5_0",
+                                               D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
+                    rows << (pixel ? " ps=" : " vs=") << (SUCCEEDED(hr) ? "ok" : "compile-failed");
+                    if (FAILED(hr) && errors) {
+                        std::string diagnostic(static_cast<const char*>(errors->GetBufferPointer()),
+                                               errors->GetBufferSize());
+                        diagnostic.resize((std::min)(diagnostic.size(), std::size_t(240)));
+                        for (auto& c : diagnostic)
+                            if (c == '\r' || c == '\n' || !c)
+                                c = ' ';
+                        rows << " diagnostic=[" << diagnostic << ']';
+                    }
+                    if (code)
+                        code->Release();
+                    if (errors)
+                        errors->Release();
+                }
+                rows << '\n';
+            }
+        }
+    }
+    std::string Rows() const { return rows.str(); }
     void Executed(const mme::SasEffect& sas, int pass) {
         rows << "executed pass=" << pass << " resources=" << sas.resources.size() << '\n';
     }
     void Write(const char* path) {
         std::ofstream file(path, std::ios::binary);
-        file << "MME native requirements v1\nmaxPixelSamplerSlots=" << maxSamplers << '\n'
+        file << "MME native requirements v2\nmaxPixelSamplerSlots=" << maxSamplers << '\n'
              << rows.str();
         if (!file) throw std::runtime_error("native inventory write");
     }

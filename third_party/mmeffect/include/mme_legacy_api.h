@@ -50,7 +50,8 @@ struct MmeLegacyProgram {
 };
 bool MmeLegacyImport(const std::string& expandedSource, MmeLegacyProgram&, std::string& reason);
 bool MmeLegacyShader(const MmeLegacyProgram&, const MmeLegacyPass&, std::string& hlsl,
-                     std::vector<MmeLegacyInput>&, std::string& reason);
+                     std::vector<MmeLegacyInput>&, std::string& reason,
+                     std::vector<unsigned>* colorOutputs = nullptr);
 
 bool MmeLegacyImportScene(const std::string&, MmeLegacyProgram&, std::string& reason);
 std::vector<unsigned> MmeLegacySamplers(const MmeLegacyProgram&, const MmeLegacyPass&,

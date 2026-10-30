@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <limits>
 #define CHECK(x)                                                                                   \
     do {                                                                                           \
         if (!(x))                                                                                  \
@@ -81,7 +82,7 @@ int main() try {
     rejects(bad, "MME_scene_capture_requires_clear");
     bad = Fixture();
     bad.targets[0].format = MmePortableFormat::Rgba16Float;
-    rejects(bad, "MME_scene_capture_format");
+    CHECK(MmePortableSceneLayout(bad, reason));
     bad = Fixture();
     bad.passes[0].sampled = {"Ping"};
     rejects(bad, "MME_scene_feedback");
@@ -144,6 +145,21 @@ int main() try {
     std::memcpy(bad.parameters[0].value.data(), &many, 4);
     bad.script.erase(bad.script.begin() + 10); // Empty draws still consume CPU commands.
     rejects(bad, "MME_scene_script_budget");
+    MmePortableTarget relative{"Half"};
+    relative.relative = true;
+    relative.viewportRatio = {.5f, .25f};
+    unsigned width, height;
+    CHECK(MmePortableExtent(relative, 55, 37, width, height, reason) && width == 27 && height == 9);
+    CHECK(MmePortableExtent(relative, 3, 4, width, height, reason) && width == 1 && height == 1);
+    CHECK(!MmePortableExtent(relative, 1, 1, width, height, reason));
+    relative.viewportRatio[0] = std::numeric_limits<float>::quiet_NaN();
+    CHECK(!MmePortableExtent(relative, 55, 37, width, height, reason));
+    relative.viewportRatio[0] = -1;
+    CHECK(!MmePortableExtent(relative, 55, 37, width, height, reason));
+    relative.viewportRatio[0] = 1;
+    relative.width = 64;
+    relative.height = 32;
+    CHECK(!MmePortableExtent(relative, 55, 37, width, height, reason));
     std::puts(
         "PASS pure SAS scene lowering: capture/clear, loops/snapshots, dependency rejection and budgets");
 } catch (const std::exception& e) {

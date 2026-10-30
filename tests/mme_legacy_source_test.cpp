@@ -74,7 +74,7 @@ int main() try {
     CHECK(MmeLegacyImport(source, program, reason));
     program.functions["PixelMain"].semantic = "COLOR1";
     CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
-    CHECK(reason == "MME_legacy_stage_signature");
+    CHECK(reason == "MME_legacy_pixel_output_layout");
     std::ifstream sceneFile(std::string(MDS_TEST_SOURCE_DIR) +
                             "/assets/effects/portable/LegacyScene.fx");
     const std::string scene{std::istreambuf_iterator<char>(sceneFile),
@@ -95,8 +95,9 @@ int main() try {
                              std::istreambuf_iterator<char>()};
     CHECK(MmeLegacyImport(shared, program, reason));
     CHECK(program.samplers.size() == 2 && program.samplers[0].semantic == "RENDERCOLORTARGET");
-    for (const auto* name : {"DefaultEffectScene.fx", "NestedScene.fx", "LegacyChildMaterial.fx",
-                             "LegacyLeafMaterial.fx"}) {
+    for (const auto* name :
+         {"DefaultEffectScene.fx", "NestedScene.fx", "LegacyChildMaterial.fx",
+          "LegacyLeafMaterial.fx", "LegacyMrtMaterial.fx", "LegacyMrtScene.fx"}) {
         std::ifstream fixture(std::string(MDS_TEST_SOURCE_DIR) + "/assets/effects/portable/" +
                               name);
         const std::string text{std::istreambuf_iterator<char>(fixture),
@@ -105,8 +106,40 @@ int main() try {
         if (!(scene ? MmeLegacyImportScene(text, program, reason)
                     : MmeLegacyImport(text, program, reason)))
             throw std::runtime_error(std::string(name) + ": " + reason);
-        CHECK(MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
+        for (const auto& pass : program.passes) {
+            std::vector<unsigned> outputs;
+            CHECK(MmeLegacyShader(program, pass, hlsl, inputs, reason, &outputs));
+            const bool mrt = std::string(name) == "LegacyMrtMaterial.fx" ||
+                             (std::string(name) == "LegacyMrtScene.fx" && pass.name == "Split");
+            CHECK(outputs == (mrt ? std::vector<unsigned>{4, 4} : std::vector<unsigned>{4}));
+            if (mrt) {
+                auto invalid = program;
+                if (invalid.structures.count("Gbuffer"))
+                    invalid.structures["Gbuffer"][0].semantic = "COLOR0";
+                else
+                    invalid.functions["split"].parameters[1].semantic = "COLOR0";
+                CHECK(!MmeLegacyShader(invalid, pass, hlsl, inputs, reason, &outputs));
+                CHECK(reason == "MME_legacy_pixel_output_layout");
+            }
+        }
     }
+    const std::string fourOutputs = R"(
+struct V { float4 p:POSITION; float2 uv:TEXCOORD0; };
+V vs(float4 p:POSITION,float2 uv:TEXCOORD0) { V v;v.p=p;v.uv=uv;return v; }
+float4 ps(V v,out float2 c:COLOR2,out float a:COLOR,out float3 b:COLOR1):COLOR3 {
+    a=v.uv.x;b=float3(1,2,3);c=v.uv;return float4(1,2,3,4);
+}
+technique Main { pass P { VertexShader=compile vs_3_0 vs();PixelShader=compile ps_3_0 ps(); } }
+)";
+    CHECK(MmeLegacyImport(fourOutputs, program, reason));
+    std::vector<unsigned> outputs;
+    CHECK(MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason, &outputs));
+    CHECK(outputs == (std::vector<unsigned>{1, 3, 2, 4}));
+    program.functions["ps"].semantic = "COLOR4";
+    CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason, &outputs));
+    CHECK(reason == "MME_legacy_pixel_output_layout");
+    CHECK(outputs ==
+          (std::vector<unsigned>{1, 3, 2, 4})); // Failed export leaves the last result intact.
     std::puts(
         "PASS FX9 source import: entries, declarations, samplers, stage wrappers and unsupported syntax");
 } catch (const std::exception& e) {
