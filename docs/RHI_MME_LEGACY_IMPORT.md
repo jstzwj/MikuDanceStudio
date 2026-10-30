@@ -61,9 +61,11 @@ Other native names and light-family matrices still select fallback. See
 [standard parameter providers and frame clock](RHI_MME_STANDARDS.md).
 
 Material base, sphere and toon texture semantics resolve through the draw's
-actual resource roles. At most four declared samplers get independent slots,
+actual resource roles. At most sixteen declared samplers get independent slots,
 including multiple samplers of one texture. Each sampler explicitly specifies
-point/linear min, mag and mip filtering and Wrap/Clamp U/V. Missing resources, sRGB sampling, MipFilter=None, anisotropy and unrepresented sampler state
+point/linear min, mag and mip filtering and Wrap/Clamp U/V. MipFilter=None is
+also accepted for single-level render targets. Missing resources, sRGB sampling,
+MipFilter=None on uploaded material textures, anisotropy and unrepresented sampler state
 select fallback. The normal model pipeline's portable trilinear default is
 unchanged; imported effects retain their supported explicit sampler settings.
 
@@ -71,7 +73,9 @@ unchanged; imported effects retain their supported explicit sampler settings.
 
 The first importer accepts PMD/PMX object-class, standard-order effects with
 one pass per object/object_ss technique. Native SAS still chooses techniques
-using the current subset and texture conditions. Scene scripts, accessories,
+using the current subset and texture conditions. Single-carrier scene scripts and
+cross-effect render targets now have a bounded automatic importer, described in
+[shared scenes](RHI_MME_SHARED_SCENES.md). Accessories,
 offscreen child turns, multiple material passes and other output families
 remain outside automatic import. Explicit portable scene/MRT profiles remain
 available alongside an imported model effect.
@@ -85,7 +89,7 @@ programs must succeed before RHI submission; otherwise the editor performs
 same-frame DX9 fallback with no second animation/geometry update.
 
 The source budget is 16 MiB, one million tokens, 256 numeric declarations,
-64 passes and four samplers. Unsupported syntax is rejected, not skipped.
+64 passes and sixteen samplers. Unsupported syntax is rejected, not skipped.
 
 ## Regression gates
 
@@ -127,5 +131,5 @@ x64/x86 application builds, the diagnostics-off product build and the build
 with newer backends disabled all succeeded. These measurements cover generated
 models/textures and Ray fallback, not native Ray rendering or arbitrary assets.
 
-Next work is automatic scene-effect import, shared render-target identity, DefaultEffect
-child turns and mip timing, following actual Ray bindings and script order.
+Next work is DefaultEffect child turns, nested scene carriers and mip timing,
+following actual Ray bindings and script order.

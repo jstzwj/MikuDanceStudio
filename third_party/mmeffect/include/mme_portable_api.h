@@ -10,6 +10,9 @@ struct MmePortablePass {
     std::string technique, name, vertex, pixel;
     // Ordered tN inputs and SV_TargetN outputs; names reference targets below.
     std::vector<std::string> sampled, colors;
+    // Imported Pass inputs can refer to sparse global sampler slots. Explicit
+    // profiles leave this empty and use the ordered contiguous convention.
+    std::vector<unsigned> sampleSlots;
 };
 enum class MmePortableFormat {
     Rgba8,
@@ -19,6 +22,11 @@ struct MmePortableTarget {
     std::string name;
     MmePortableFormat format = MmePortableFormat::Rgba8;
     bool depth = false;
+    // CPU resource revision identity. Shared aliases carry the publisher's
+    // identity; unrelated effects with the same name never alias.
+    std::uint64_t identity = 0;
+    // Zero means the current frame viewport extent.
+    unsigned width = 0, height = 0;
 };
 struct MmePortableParameter {
     std::string name, semantic;
@@ -106,3 +114,9 @@ bool MmePortableEffects(std::vector<MmePortableEffect>&, std::string& reason);
 // material/pass, 2: scene carrier (no object draw), -1: unsupported assignment.
 int MmePortableDraw(unsigned long long object, int subset, int mode, unsigned useFlags,
                     MmePortableEffect&, std::string& reason);
+
+namespace mme {
+struct SasEffect;
+}
+// Export the original parsed command table without executing or mutating it.
+bool MmePortableExportScene(mme::SasEffect&, MmePortableEffect&, std::string& reason);

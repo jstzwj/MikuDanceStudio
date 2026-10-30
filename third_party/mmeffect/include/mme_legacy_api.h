@@ -12,7 +12,7 @@ struct MmeLegacyVariable {
 struct MmeLegacySampler {
     std::string name, texture, semantic;
     bool linearMin = true, linearMag = true, linearMip = true;
-    bool clampU = false, clampV = false;
+    bool clampU = false, clampV = false, mipNone = false;
 };
 struct MmeLegacyPass {
     std::string technique, name, vertex, pixel;
@@ -22,7 +22,14 @@ struct MmeLegacyInput {
     std::string semantic;
     unsigned columns = 0;
 };
+struct MmeLegacyTexture {
+    std::string name, semantic;
+    bool shared = false;
+    std::map<std::string, std::string> annotations;
+};
 struct MmeLegacyProgram {
+    bool scene = false;
+    std::vector<MmeLegacyTexture> textures;
     std::vector<MmeLegacyVariable> variables;
     std::vector<MmeLegacySampler> samplers;
     std::vector<MmeLegacyPass> passes;
@@ -44,3 +51,7 @@ struct MmeLegacyProgram {
 bool MmeLegacyImport(const std::string& expandedSource, MmeLegacyProgram&, std::string& reason);
 bool MmeLegacyShader(const MmeLegacyProgram&, const MmeLegacyPass&, std::string& hlsl,
                      std::vector<MmeLegacyInput>&, std::string& reason);
+
+bool MmeLegacyImportScene(const std::string&, MmeLegacyProgram&, std::string& reason);
+std::vector<unsigned> MmeLegacySamplers(const MmeLegacyProgram&, const MmeLegacyPass&,
+                                        bool vertex = false);

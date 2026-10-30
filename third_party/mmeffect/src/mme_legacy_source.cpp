@@ -98,7 +98,9 @@ public:
     std::map<std::string, std::string> textures;
     std::set<std::string> names;
     std::string constants, code;
-    explicit Parser(const std::string& source) : t(Lex(source)) {}
+    explicit Parser(const std::string& source, bool scene = false) : t(Lex(source)) {
+        result.scene = scene;
+    }
     std::string Peek() const { return p < t.size() ? t[p] : ""; }
     bool Eat(const char* s) {
         if (Peek() != s)
@@ -139,6 +141,12 @@ public:
                 if (value.size() < 2 || value.front() != '"' || value.back() != '"')
                     Fail("annotation");
                 value = value.substr(1, value.size() - 2);
+                while (!Peek().empty() && Peek().front() == '"') {
+                    auto next = Take();
+                    if (next.size() < 2 || next.back() != '"')
+                        Fail("annotation");
+                    value += next.substr(1, next.size() - 2);
+                }
             } else if (type != "bool" && type != "int" && type != "float")
                 Fail("annotation");
             Need(";");
@@ -213,7 +221,7 @@ public:
         Unique(technique);
         std::map<std::string, std::string> annotations;
         Annotations(annotations);
-        if (annotations.count("SCRIPT"))
+        if (!result.scene && annotations.count("SCRIPT"))
             Fail("material_technique_script");
         Need("{");
         while (!Eat("}")) {
@@ -223,7 +231,8 @@ public:
             pass.name = Name();
             annotations.clear();
             Annotations(annotations);
-            if (!annotations.empty())
+            if (!annotations.empty() && (!result.scene || annotations.size() != 1 ||
+                                         annotations["SCRIPT"] != "Draw=Buffer;"))
                 Fail("pass_annotations");
             Need("{");
             while (!Eat("}")) {
@@ -260,12 +269,13 @@ public:
     }
     void Declaration() {
         const auto begin = p;
-        bool isStatic = false, isConst = false;
+        bool isStatic = false, isConst = false, shared = false;
         while (Peek() == "shared" || Peek() == "uniform" || Peek() == "extern" ||
                Peek() == "row_major" || Peek() == "column_major" || Peek() == "static" ||
                Peek() == "const") {
             const auto q = Take();
             isStatic |= q == "static";
+            shared |= q == "shared";
             isConst |= q == "const";
         }
         const auto type = Name(), name = Name();
@@ -312,12 +322,31 @@ public:
         const auto semantic = Semantic();
         std::map<std::string, std::string> annotations;
         Annotations(annotations);
+        if (result.scene && semantic == "STANDARDSGLOBAL") {
+            if (type != "float" || elements != 1 || shared || annotations.size() != 3 ||
+                annotations["SCRIPTCLASS"] != "scene" ||
+                annotations["SCRIPTORDER"] != "postprocess" ||
+                annotations["SCRIPTOUTPUT"] != "color")
+                Fail("scene_global");
+            Initializer();
+            return;
+        }
         if (type == "texture" || type == "texture2D") {
-            if (elements != 1 || !annotations.empty() ||
-                (semantic != "MATERIALTEXTURE" && semantic != "MATERIALSPHEREMAP" &&
-                 semantic != "MATERIALTOONTEXTURE"))
+            const bool target =
+                semantic == "RENDERCOLORTARGET" || semantic == "RENDERDEPTHSTENCILTARGET";
+            const bool sharedReference =
+                shared && annotations.empty() && (target || semantic.empty());
+            const bool upload = annotations.empty() &&
+                                (semantic == "MATERIALTEXTURE" || semantic == "MATERIALSPHEREMAP" ||
+                                 semantic == "MATERIALTOONTEXTURE");
+            if (elements != 1 ||
+                !(result.scene ? (target || sharedReference) : (upload || sharedReference)))
                 Fail("texture_semantic");
+            if (result.scene && target && !(shared && annotations.empty()) &&
+                (annotations.size() != 1 || !annotations.count("FORMAT")))
+                Fail("scene_target_annotations");
             textures.emplace(name, semantic);
+            result.textures.push_back({name, semantic, shared, annotations});
             Need(";");
             return;
         }
@@ -350,11 +379,14 @@ public:
             states.erase("TEXTURE");
             for (auto field : {"MINFILTER", "MAGFILTER", "MIPFILTER"}) {
                 auto v = states[field];
-                if (v != "LINEAR" && v != "POINT")
+                if (v != "LINEAR" && v != "POINT" &&
+                    !(std::string(field) == "MIPFILTER" && v == "NONE"))
                     Fail("sampler_filter");
                 (std::string(field) == "MINFILTER"   ? s.linearMin
                  : std::string(field) == "MAGFILTER" ? s.linearMag
                                                      : s.linearMip) = v == "LINEAR";
+                if (std::string(field) == "MIPFILTER")
+                    s.mipNone = v == "NONE";
                 states.erase(field);
             }
             for (auto field : {"ADDRESSU", "ADDRESSV"}) {
@@ -372,7 +404,7 @@ public:
             if (!states.empty() || s.texture.empty())
                 Fail("sampler_state");
             result.samplers.push_back(s);
-            if (result.samplers.size() > 4)
+            if (result.samplers.size() > 16)
                 Fail("sampler_budget");
             return;
         }
@@ -421,6 +453,9 @@ public:
             if (!textures.count(s.texture))
                 Fail("sampler_texture");
             s.semantic = textures.at(s.texture);
+            if (s.mipNone && !result.scene && !s.semantic.empty() &&
+                s.semantic != "RENDERCOLORTARGET")
+                Fail("sampler_filter");
         }
         const auto tokens = Lex(code);
         code.clear();
@@ -655,4 +690,51 @@ bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
     inputs = std::move(nextInputs);
     reason.clear();
     return true;
+}
+
+bool MmeLegacyImportScene(const std::string& source, MmeLegacyProgram& out, std::string& reason) {
+    try {
+        if (source.size() > 16 * 1024 * 1024)
+            throw std::runtime_error("MME_legacy_source_budget");
+        Parser parser(source, true);
+        while (!parser.Peek().empty()) {
+            if (parser.Peek() == "struct")
+                parser.Structure();
+            else if (parser.Peek() == "technique")
+                parser.Technique();
+            else
+                parser.Declaration();
+        }
+        parser.Finish();
+        out = std::move(parser.result);
+        reason.clear();
+        return true;
+    } catch (const std::exception& e) {
+        reason = e.what();
+        return false;
+    }
+}
+std::vector<unsigned> MmeLegacySamplers(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
+                                        bool vertex) {
+    std::set<std::string> visited, identifiers;
+    std::vector<std::string> pending{vertex ? pass.vertex : pass.pixel};
+    while (!pending.empty()) {
+        auto name = pending.back();
+        pending.pop_back();
+        if (!visited.insert(name).second)
+            continue;
+        const auto function = program.functions.find(name);
+        if (function == program.functions.end())
+            continue;
+        for (const auto& token : Lex(function->second.body)) {
+            identifiers.insert(token);
+            if (program.functions.count(token))
+                pending.push_back(token);
+        }
+    }
+    std::vector<unsigned> slots;
+    for (unsigned slot = 0; slot < program.samplers.size(); ++slot)
+        if (identifiers.count(program.samplers[slot].name))
+            slots.push_back(slot);
+    return slots;
 }

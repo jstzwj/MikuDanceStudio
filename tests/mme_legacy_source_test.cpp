@@ -75,6 +75,26 @@ int main() try {
     program.functions["PixelMain"].semantic = "COLOR1";
     CHECK(!MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
     CHECK(reason == "MME_legacy_stage_signature");
+    std::ifstream sceneFile(std::string(MDS_TEST_SOURCE_DIR) +
+                            "/assets/effects/portable/LegacyScene.fx");
+    const std::string scene{std::istreambuf_iterator<char>(sceneFile),
+                            std::istreambuf_iterator<char>()};
+    CHECK(MmeLegacyImportScene(scene, program, reason));
+    CHECK(program.scene && program.passes.size() == 2 && program.textures.size() == 4);
+    CHECK(MmeLegacySamplers(program, program.passes[0]) == std::vector<unsigned>{0});
+    CHECK(MmeLegacySamplers(program, program.passes[1]) == std::vector<unsigned>{1});
+    CHECK(MmeLegacySamplers(program, program.passes[0], true).empty());
+    CHECK(MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
+    auto badScene = scene;
+    const auto draw = badScene.find("Draw=Buffer;");
+    badScene.replace(draw, 12, "Draw=Geometry;");
+    CHECK(!MmeLegacyImportScene(badScene, program, reason));
+    std::ifstream sharedFile(std::string(MDS_TEST_SOURCE_DIR) +
+                             "/assets/effects/portable/LegacySharedMaterial.fx");
+    const std::string shared{std::istreambuf_iterator<char>(sharedFile),
+                             std::istreambuf_iterator<char>()};
+    CHECK(MmeLegacyImport(shared, program, reason));
+    CHECK(program.samplers.size() == 2 && program.samplers[0].semantic == "RENDERCOLORTARGET");
     std::puts(
         "PASS FX9 source import: entries, declarations, samplers, stage wrappers and unsupported syntax");
 } catch (const std::exception& e) {

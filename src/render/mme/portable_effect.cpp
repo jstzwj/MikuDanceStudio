@@ -6,10 +6,12 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/rhi_post_process.hpp"
 #include "../rhi_model_constants.hpp"
+#include "mikudancestudio/rhi_shared_targets.hpp"
 #include <d3dcompiler.h>
 #include <d3d11shader.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <regex>
 #include <map>
@@ -508,6 +510,27 @@ bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
         return false;
     for (unsigned slot = 0; slot < effect.legacy->samplers.size(); ++slot) {
         const auto& sampler = effect.legacy->samplers[slot];
+        if (sampler.semantic.empty() || sampler.semantic == "RENDERCOLORTARGET") {
+            const auto target =
+                std::find_if(effect.targets.begin(), effect.targets.end(),
+                             [&](const auto& t) { return t.name == sampler.texture; });
+            if (target == effect.targets.end() || target->depth || !target->identity) {
+                reason = "MME_shared_material_target_missing";
+                return false;
+            }
+            shader.textures.push_back(
+                {slot,
+                 {},
+                 {SharedFrameTargetId(target->identity), viewport.width, viewport.height}});
+            shader.samplers.push_back(
+                {slot,
+                 {sampler.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
+                  sampler.linearMag ? SamplerFilter::Linear : SamplerFilter::Point,
+                  sampler.linearMip ? SamplerFilter::Linear : SamplerFilter::Point,
+                  sampler.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
+                  sampler.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap, 1}});
+            continue;
+        }
         const auto role = sampler.semantic == "MATERIALTEXTURE"     ? MaterialTextureRole::Base
                           : sampler.semantic == "MATERIALSPHEREMAP" ? MaterialTextureRole::Sphere
                                                                     : MaterialTextureRole::Toon;
@@ -548,6 +571,15 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
         BatchRasterState raster;
         if (!imported || !LegacyRaster(*imported, raster, reason))
             return {};
+        if (effect.post &&
+            (!imported->states.count("CULLMODE") || !imported->states.count("ALPHABLENDENABLE") ||
+             (raster.alphaBlend &&
+              (!imported->states.count("SRCBLEND") || !imported->states.count("DESTBLEND"))) ||
+             (imported->states.count("ZENABLE") && raster.depthTest &&
+              (!imported->states.count("ZWRITEENABLE") || !imported->states.count("ZFUNC"))))) {
+            reason = "MME_legacy_scene_inherited_state";
+            return {};
+        }
         ShaderProgramDesc d;
         std::string hlsl;
         std::vector<MmeLegacyInput> inputs;
@@ -574,7 +606,12 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
                               1,
                               16,
                               {{"mdsLegacyViewport", ShaderValueType::Float4, 0}}});
+        if (effect.post)
+            d.colorOutputs.assign(pass.colors.size(), 4);
+        const auto active = effect.post ? pass.sampleSlots : std::vector<unsigned>{};
         for (unsigned slot = 0; slot < effect.legacy->samplers.size(); ++slot) {
+            if (effect.post && std::find(active.begin(), active.end(), slot) == active.end())
+                continue;
             d.bindings.push_back({ShaderBindingKind::Texture, slot});
             d.bindings.push_back({ShaderBindingKind::Sampler, slot});
         }
@@ -619,6 +656,37 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
     auto program = std::make_shared<const ShaderProgram>(std::move(d));
     source->programs.emplace(key, program);
     return program;
+}
+bool RegisterPortableMmeTargets(RenderFrame& frame, const std::vector<MmePortableEffect>& effects,
+                                std::string& reason) {
+    const auto output = std::find_if(frame.targets.begin(), frame.targets.end(),
+                                     [&](const auto& t) { return t.id == frame.finalColor; });
+    if (output == frame.targets.end()) {
+        reason = "MME_post_missing_scene_color";
+        return false;
+    }
+    const auto width = output->description.width, height = output->description.height;
+    auto next = frame;
+    SharedFrameTargets registry(next);
+    for (const auto& effect : effects)
+        for (const auto& target : effect.targets) {
+            if (!target.identity)
+                continue;
+            const auto format = target.depth ? TextureFormat::Depth24Stencil8
+                                : target.format == MmePortableFormat::Rgba16Float
+                                    ? TextureFormat::Rgba16Float
+                                    : TextureFormat::Rgba8;
+            const RenderTextureDesc desc{
+                target.width ? target.width : width, target.height ? target.height : height, format,
+                target.depth ? unsigned(TextureAccess::DepthStencilAttachment)
+                             : TextureAccess::ColorAttachment | TextureAccess::Sampled |
+                                   TextureAccess::CopySource};
+            SharedTargetLease lease;
+            if (!registry.Declare(target.identity, desc, lease, reason))
+                return false;
+        }
+    frame = std::move(next);
+    return true;
 }
 bool CheckPortableMme(std::string& reason) {
     std::vector<MmePortableEffect> effects;
@@ -698,6 +766,38 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
     draw.shadowTarget = 0;
     return true;
 }
+// Preserve the native Buffer quad's vertex inputs and diagonal. A large triangle
+// is equivalent only for affine vertex shaders, not arbitrary imported FX9 VS.
+bool AttachLegacyBufferQuad(RenderFrame& frame, ModelReplayDraw& draw, unsigned width,
+                            unsigned height) {
+    const float left = -1 - (1.f / width) * 2, top = 1 + (1.f / height) * 2, u = -1.f / width,
+                v = -1.f / height;
+    const float vertices[][8] = {{1, -1, 0, 0, 0, 0, 1, 1},     {left, -1, 0, 0, 0, 0, u, 1},
+                                 {left, top, 0, 0, 0, 0, u, v}, {1, -1, 0, 0, 0, 0, 1, 1},
+                                 {left, top, 0, 0, 0, 0, u, v}, {1, top, 0, 0, 0, 0, 1, v}};
+    ModelReplayResource resource;
+    // Each assembled frame publishes a new revision, including after an effect
+    // disappears/reappears or a resize returns to an old extent. Native dynamic
+    // buffers reuse the completion-protected allocation for this tiny stream.
+    resource.key.id = UINT64_MAX - 1;
+    resource.bytes.resize(sizeof(vertices));
+    std::memcpy(resource.bytes.data(), vertices, sizeof(vertices));
+    const auto found = std::find_if(frame.resources.begin(), frame.resources.end(),
+                                    [&](const auto& r) { return r.key.id == resource.key.id; });
+    if (found == frame.resources.end()) {
+        static std::atomic<std::uint64_t> nextRevision{1};
+        resource.key.version = nextRevision++;
+        frame.resources.push_back(resource);
+    } else if (found->kind != resource.kind || found->vertexLayout != resource.vertexLayout ||
+               found->bytes != resource.bytes)
+        return false;
+    else
+        resource.key = found->key;
+    draw.indexed = false;
+    draw.vertices = resource.key;
+    draw.drawVertexCount = 6;
+    return true;
+}
 bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, std::string& reason) {
     const auto fail = [&](const char* r) {
         reason = r;
@@ -714,10 +814,17 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
     if (capture == effect.steps.end() || capture->colors.size() != 1)
         return fail("MME_scene_capture_layout");
     auto next = frame;
+    if (!RegisterPortableMmeTargets(next, {effect}, reason))
+        return false;
     next.passes.clear();
     std::map<std::string, std::uint64_t> ids;
     std::map<std::string, TextureFormat> formats;
-    ids[capture->colors[0]] = frame.finalColor;
+    const auto captureTarget =
+        std::find_if(effect.targets.begin(), effect.targets.end(),
+                     [&](const auto& t) { return t.name == capture->colors[0]; });
+    ids[capture->colors[0]] = captureTarget != effect.targets.end() && captureTarget->identity
+                                  ? SharedFrameTargetId(captureTarget->identity)
+                                  : frame.finalColor;
     formats[capture->colors[0]] = TextureFormat::Rgba8;
     if (!capture->depth.empty())
         for (const auto& pass : frame.passes)
@@ -729,7 +836,8 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
     descriptions.push_back({"FinalDepth", MmePortableFormat::Rgba8, true});
     std::uint64_t id = 16;
     for (const auto& t : frame.targets)
-        id = std::max(id, t.id + 1);
+        if (t.id < (std::uint64_t(1) << 62))
+            id = std::max(id, t.id + 1);
     for (const auto& t : descriptions) {
         const auto format = t.depth ? TextureFormat::Depth24Stencil8
                             : t.format == MmePortableFormat::Rgba16Float
@@ -738,6 +846,10 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
         formats[t.name] = format;
         if (ids.count(t.name))
             continue;
+        if (t.identity) {
+            ids[t.name] = SharedFrameTargetId(t.identity);
+            continue;
+        }
         ids[t.name] = id++;
         next.targets.push_back({ids[t.name],
                                 {width, height, format,
@@ -749,6 +861,14 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
     for (const auto& step : effect.steps) {
         if (step.kind == MmePortableStep::Kind::Capture) {
             for (auto pass : frame.passes) {
+                const auto remap = [&](FrameAttachment& a) {
+                    if (a.target == frame.finalColor)
+                        a.target = ids.at(capture->colors[0]);
+                };
+                if (pass.color)
+                    remap(*pass.color);
+                for (auto& a : pass.colors)
+                    remap(a);
                 const auto preserve = [&](FrameAttachment& a) {
                     if (initialized.count(a.target))
                         a.load = AttachmentLoad::Load;
@@ -788,7 +908,8 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
             auto instance = effect;
             instance.parameters = step.parameters;
             ModelReplayDraw draw;
-            if (!AttachFullscreenTriangle(next, draw))
+            if (!(effect.legacy ? AttachLegacyBufferQuad(next, draw, width, height)
+                                : AttachFullscreenTriangle(next, draw)))
                 return fail("MME_post_geometry_failed");
             ReplayShader shader;
             shader.pipeline.program = PortableMmeProgram(effect, pass, reason);
@@ -801,16 +922,47 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
             shader.pipeline.colorFormats.clear();
             for (const auto& name : step.colors)
                 shader.pipeline.colorFormats.push_back(formats.at(name));
-            std::array<float, 8> constants;
-            std::copy(effect.multiply.begin(), effect.multiply.end(), constants.begin());
-            std::copy(effect.add.begin(), effect.add.end(), constants.begin() + 4);
-            shader.constants.push_back({0, Bytes(constants.data(), sizeof(constants))});
+            if (effect.legacy) {
+                const auto* imported = LegacyPass(effect, pass);
+                if (!imported || !LegacyRaster(*imported, shader.pipeline.raster, reason))
+                    return false;
+                const std::array<float, 4> dimensions{1.f / width, 1.f / height, float(width),
+                                                      float(height)};
+                shader.constants.push_back({0, Bytes(dimensions.data(), sizeof(dimensions))});
+                for (auto& p : instance.parameters)
+                    if (p.semantic == "VIEWPORTPIXELSIZE") {
+                        const float dimensions[] = {float(width), float(height)};
+                        if (p.rows != 1 || p.columns != 2 || p.elements != 1 ||
+                            p.value.size() != 8) {
+                            reason = "MME_scene_viewport_layout";
+                            return false;
+                        }
+                        std::memcpy(p.value.data(), dimensions, 8);
+                    }
+            } else {
+                std::array<float, 8> constants;
+                std::copy(effect.multiply.begin(), effect.multiply.end(), constants.begin());
+                std::copy(effect.add.begin(), effect.add.end(), constants.begin() + 4);
+                shader.constants.push_back({0, Bytes(constants.data(), sizeof(constants))});
+            }
             if (!BindParameters(shader, instance, reason))
                 return false;
             for (unsigned slot = 0; slot < pass.sampled.size(); ++slot) {
                 const auto input = ids.at(pass.sampled[slot]);
                 output.sampled.push_back(input);
-                shader.textures.push_back({slot, {}, {input, width, height}});
+                const auto nativeSlot = effect.legacy ? pass.sampleSlots.at(slot) : slot;
+                shader.textures.push_back({nativeSlot, {}, {input, width, height}});
+                if (effect.legacy) {
+                    const auto& s = effect.legacy->samplers.at(nativeSlot);
+                    shader.samplers.push_back(
+                        {nativeSlot,
+                         {s.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
+                          s.linearMag ? SamplerFilter::Linear : SamplerFilter::Point,
+                          s.linearMip ? SamplerFilter::Linear : SamplerFilter::Point,
+                          s.clampU ? SamplerAddress::Clamp : SamplerAddress::Wrap,
+                          s.clampV ? SamplerAddress::Clamp : SamplerAddress::Wrap, 1}});
+                    continue;
+                }
                 shader.samplers.push_back(
                     {slot,
                      {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point,
@@ -833,7 +985,7 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
 }
 bool AppendPortableMmePost(rhi::RenderFrame& frame, const MmePortableEffect& effect,
                            std::string& reason) {
-    if (effect.profile == "scene-v2")
+    if (effect.profile == "scene-v2" || effect.profile == "legacy-scene-v1")
         return AppendPortableScene(frame, effect, reason);
     if (!effect.post || effect.passes.empty() || effect.targets.empty()) {
         reason = "MME_post_pass_count";
@@ -852,7 +1004,8 @@ bool AppendPortableMmePost(rhi::RenderFrame& frame, const MmePortableEffect& eff
     std::map<std::string, TextureFormat> formats;
     std::uint64_t id = 16;
     for (const auto& t : next.targets)
-        id = std::max(id, t.id + 1);
+        if (t.id < (std::uint64_t(1) << 62))
+            id = std::max(id, t.id + 1);
     for (const auto& t : effect.targets) {
         if (!targets.emplace(t.name, t.name == "SceneColor" ? next.finalColor : id++).second) {
             reason = "MME_duplicate_target";

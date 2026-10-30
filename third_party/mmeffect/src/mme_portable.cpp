@@ -158,12 +158,188 @@ bool ExportScript(mme::SasEffect& sas, MmePortableEffect& out, std::string& reas
     }
     return MmePortableSceneLayout(out, reason);
 }
+// Resolve the live pool texture to the SAS resource that actually published it.
+// Resource revision IDs are CPU tokens; COM addresses stay inside this bridge.
+bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePortableTarget& out,
+                  std::string& reason) {
+    auto handle = fx->GetParameterByName(nullptr, declaration.name.c_str());
+    D3DXPARAMETER_DESC parameter{};
+    IDirect3DBaseTexture9* texture = nullptr;
+    if (!handle || FAILED(fx->GetParameterDesc(handle, &parameter))) {
+        reason = "MME_shared_target_parameter_missing:" + declaration.name;
+        return false;
+    }
+    if (bool(parameter.Flags & D3DX_PARAMETER_SHARED) != declaration.shared) {
+        reason = "MME_shared_target_shared_flag:" + declaration.name;
+        return false;
+    }
+    if (FAILED(fx->GetTexture(handle, &texture)) || !texture) {
+        reason = "MME_shared_target_unbound:" + declaration.name;
+        return false;
+    }
+    struct Find {
+        IDirect3DBaseTexture9* texture;
+        mme::SasResource* resource = nullptr;
+        ID3DXEffect* publisher = nullptr;
+    } query{texture};
+    mme::MmeEngineForEachSas(
+        [](void* data, mme::SasEffect* sas) {
+            auto& query = *static_cast<Find*>(data);
+            for (auto& resource : sas->resources)
+                if (resource.texture == query.texture && resource.portableIdentity &&
+                    (resource.semanticId == 0x26 || resource.semanticId == 0x27)) {
+                    query.resource = &resource;
+                    query.publisher = sas->effect;
+                    return false;
+                }
+            return true;
+        },
+        &query);
+    texture->Release();
+    if (!query.resource) {
+        reason = "MME_shared_target_publisher_missing";
+        return false;
+    }
+    const auto& resource = *query.resource;
+    D3DXPARAMETER_DESC publication{};
+    if (FAILED(query.publisher->GetParameterDesc(resource.param, &publication)) ||
+        publication.Annotations != 1 ||
+        !query.publisher->GetAnnotationByName(resource.param, "Format")) {
+        reason = "MME_shared_target_publisher_extent_or_annotations";
+        return false;
+    }
+    const bool depth = resource.semanticId == 0x27;
+    if (resource.textureType != D3DXPT_TEXTURE && resource.textureType != D3DXPT_TEXTURE2D) {
+        reason = "MME_target_dimension_not_supported";
+        return false;
+    }
+    if (resource.texMips != 1 || resource.reqWidth <= 0 || resource.reqHeight <= 0 ||
+        (depth ? resource.format != D3DFMT_D24S8
+               : resource.format != D3DFMT_A8R8G8B8 && resource.format != D3DFMT_A16B16G16R16F)) {
+        reason = "MME_target_format_or_mips_not_supported";
+        return false;
+    }
+    // First imported profile is viewport-sized. Native dimensions are observed,
+    // but rebuilt against the current RHI viewport by the frame assembler.
+    if (resource.hasViewportRatio &&
+        (resource.viewportRatio[0] != 1 || resource.viewportRatio[1] != 1)) {
+        reason = "MME_target_ratio_not_supported";
+        return false;
+    }
+    if (!declaration.semantic.empty() &&
+        declaration.semantic != (depth ? "RENDERDEPTHSTENCILTARGET" : "RENDERCOLORTARGET")) {
+        reason = "MME_shared_target_semantic_mismatch";
+        return false;
+    }
+    if (!declaration.annotations.empty()) {
+        const auto format = declaration.annotations.find("FORMAT");
+        if (declaration.annotations.size() != 1 || format == declaration.annotations.end() ||
+            format->second != (depth                                     ? "D24S8"
+                               : resource.format == D3DFMT_A16B16G16R16F ? "A16B16G16R16F"
+                                                                         : "A8R8G8B8")) {
+            reason = "MME_shared_target_declaration_conflict";
+            return false;
+        }
+    }
+    out = {declaration.name,
+           resource.format == D3DFMT_A16B16G16R16F ? MmePortableFormat::Rgba16Float
+                                                   : MmePortableFormat::Rgba8,
+           depth, resource.portableIdentity};
+    return true;
+}
+bool DescribeLegacyScene(const mme::EffectOwnerManager::BindingKey& key,
+                         mme::MaterialBinding& binding, MmePortableEffect& out,
+                         std::string& reason) {
+    if (key.subset != -1 || mme::SasGetScriptClass(binding.sas) != mme::kSasClassScene ||
+        mme::SasGetScriptOrder(binding.sas) != mme::kSasOrderPostprocess ||
+        binding.sas->techniqueOrder.size() != 1 || binding.sas->techniques.size() != 1) {
+        reason = "MME_legacy_scene_selection";
+        return false;
+    }
+    auto owner = binding.owner ? binding.owner : binding.instance;
+    if (!owner->legacyImportChecked) {
+        owner->legacyImportChecked = true;
+        auto program = std::make_shared<MmeLegacyProgram>();
+        if (owner->legacySource &&
+            MmeLegacyImportScene(*owner->legacySource, *program, owner->legacyImportReason))
+            owner->legacyImport = std::move(program);
+        else if (!owner->legacySource)
+            owner->legacyImportReason = "MME_legacy_expanded_source_missing";
+    }
+    if (!owner->legacyImport) {
+        reason = owner->legacyImportReason;
+        return false;
+    }
+    out.object = key.model->objectId();
+    out.subset = -1;
+    out.post = true;
+    out.profile = "legacy-scene-v1";
+    out.source = binding.instance->originalSource;
+    out.legacySource = binding.instance->legacySource;
+    out.legacy = owner->legacyImport;
+    for (const auto& declaration : out.legacy->textures) {
+        MmePortableTarget target;
+        if (!ExportTarget(binding.effect, declaration, target, reason)) {
+            reason += ":scene";
+            return false;
+        }
+        out.targets.push_back(std::move(target));
+    }
+    for (const auto& v : out.legacy->variables) {
+        D3DXPARAMETER_DESC desc{};
+        MmePortableParameter parameter;
+        auto handle = binding.effect->GetParameterByName(nullptr, v.name.c_str());
+        // Scene standard setters beyond viewport/control/numeric values need
+        // their own pass-time provider and are deliberately not inherited.
+        if (!v.semantic.empty() && v.semantic != "VIEWPORTPIXELSIZE" &&
+            v.semantic != "CONTROLOBJECT") {
+            reason = "MME_legacy_scene_parameter_semantic";
+            return false;
+        }
+        if (!handle || FAILED(binding.effect->GetParameterDesc(handle, &desc)) ||
+            !ReadParameter(binding.effect, handle, desc, parameter)) {
+            reason = "MME_legacy_scene_parameter_layout";
+            return false;
+        }
+        out.parameters.push_back(std::move(parameter));
+    }
+    const auto& technique = binding.sas->techniques[0];
+    if (!technique.hardwareOk || !technique.shaderMixOk || !technique.hasScript ||
+        technique.passes.empty()) {
+        reason = "MME_legacy_scene_technique";
+        return false;
+    }
+    for (const auto& pass : technique.passes) {
+        if (!pass.hasScript || pass.cmds.size() != 1 || pass.cmds[0].id != mme::kSasCmdDrawBuffer) {
+            reason = "MME_legacy_scene_pass_script";
+            return false;
+        }
+        const auto source =
+            std::find_if(out.legacy->passes.begin(), out.legacy->passes.end(), [&](const auto& p) {
+                return p.technique == technique.name && p.name == pass.name;
+            });
+        if (source == out.legacy->passes.end() ||
+            !MmeLegacySamplers(*out.legacy, *source, true).empty()) {
+            reason = "MME_legacy_scene_pass_source";
+            return false;
+        }
+        MmePortablePass value{technique.name, pass.name, source->vertex, source->pixel};
+        for (auto slot : MmeLegacySamplers(*out.legacy, *source)) {
+            value.sampled.push_back(out.legacy->samplers[slot].texture);
+            value.sampleSlots.push_back(slot);
+        }
+        out.passes.push_back(std::move(value));
+    }
+    return ExportScript(*binding.sas, out, reason);
+}
 bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBinding& binding,
                     MmePortableEffect& out, std::string& reason) {
     const auto fail = [&](const char* why) {
         reason = why;
         return false;
     };
+    if (mme::SasGetScriptClass(binding.sas) == mme::kSasClassScene)
+        return DescribeLegacyScene(key, binding, out, reason);
     if (mme::SasGetScriptClass(binding.sas) != mme::kSasClassObject ||
         mme::SasGetScriptOrder(binding.sas) != mme::kSasOrderStandard)
         return fail("MME_legacy_scene_not_supported");
@@ -208,6 +384,17 @@ bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::Materia
         if (p.shared && standard.kind != MmeStandardBinding::Kind::Value)
             return fail("MME_legacy_shared_draw_semantic");
         out.parameters.push_back(std::move(p));
+    }
+    for (const auto& declaration : out.legacy->textures) {
+        if (!declaration.shared ||
+            (declaration.semantic != "RENDERCOLORTARGET" && !declaration.semantic.empty()))
+            continue;
+        MmePortableTarget target;
+        if (!ExportTarget(binding.effect, declaration, target, reason)) {
+            reason += ":material";
+            return false;
+        }
+        out.targets.push_back(std::move(target));
     }
     const int count = mme::SasGetTechniqueCount(binding.sas);
     for (int n = 0; n < count; ++n) {
@@ -577,4 +764,8 @@ int MmePortableDraw(unsigned long long id, int subset, int mode, unsigned flags,
         return out.passes.size() == 1 ? 1 : -1;
     }
     return 0;
+}
+
+bool MmePortableExportScene(mme::SasEffect& sas, MmePortableEffect& out, std::string& reason) {
+    return ExportScript(sas, out, reason);
 }

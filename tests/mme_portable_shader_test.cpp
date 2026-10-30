@@ -7,6 +7,9 @@
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/mme_portable.hpp"
 #include "mme_portable_api.h"
+#include "mikudancestudio/rhi_shared_targets.hpp"
+#include "mikudancestudio/rhi_d3d12.hpp"
+#include "mikudancestudio/rhi_vulkan.hpp"
 #include "mme_legacy_api.h"
 #include "mme_standard_api.h"
 #include "model_data.h"
@@ -92,12 +95,15 @@ void Compare(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>
 int main(int argc, char** argv) try {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const std::string api = argc > 1 ? argv[1] : "dx11";
-    const bool sceneScript = argc > 2 && std::string(argv[2]) == "scene";
+    const bool legacyScene = argc > 2 && std::string(argv[2]) == "legacy-scene";
+    const bool sceneScript = legacyScene || (argc > 2 && std::string(argv[2]) == "scene");
     const std::string signature = argc > 2 ? argv[2] : "";
     const bool standard = signature.find("standard") == 0;
     const bool legacyMulti = argc > 2 && std::string(argv[2]) == "legacy-multi";
-    const bool legacy = standard || legacyMulti || (argc > 2 && std::string(argv[2]) == "legacy");
-    const bool controls = sceneScript || (argc > 2 && std::string(argv[2]) == "controls");
+    const bool legacy =
+        legacyScene || standard || legacyMulti || (argc > 2 && std::string(argv[2]) == "legacy");
+    const bool controls =
+        (sceneScript && !legacyScene) || (argc > 2 && std::string(argv[2]) == "controls");
     BackendOptions options;
     options.backend = api.find("dx11") == 0   ? Backend::D3D11
                       : api.find("dx12") == 0 ? Backend::D3D12
@@ -111,14 +117,16 @@ int main(int argc, char** argv) try {
     CHECK(native);
     if (!native.device->ShaderFeatures().hlsl)
         return 77;
-    auto material = Effect(standard   ? L"LegacyStandard.fx"
-                           : legacy   ? L"LegacyMaterial.fx"
-                           : controls ? L"ControlMaterial.fx"
-                                      : L"MaterialTint.fx",
+    auto material = Effect(legacyScene ? L"LegacySharedMaterial.fx"
+                           : standard  ? L"LegacyStandard.fx"
+                           : legacy    ? L"LegacyMaterial.fx"
+                           : controls  ? L"ControlMaterial.fx"
+                                       : L"MaterialTint.fx",
                            false),
-         post = Effect(sceneScript ? L"SceneScript.fx"
-                       : controls  ? L"ControlPost.fx"
-                                   : L"TwoStage.fx",
+         post = Effect(legacyScene   ? L"LegacyScene.fx"
+                       : sceneScript ? L"SceneScript.fx"
+                       : controls    ? L"ControlPost.fx"
+                                     : L"TwoStage.fx",
                        true);
     std::string vertexEntry = "VertexMain", pixelEntry = "PixelMain";
     if (standard && signature != "standard") {
@@ -277,7 +285,7 @@ PixelOutput WrappedPixel(in PixelInput input) {
             const std::uint32_t enabled = 1;
             std::memcpy(effect->parameters.back().value.data(), &enabled, 4);
         }
-    if (sceneScript) {
+    if (sceneScript && !legacyScene) {
         post.profile = "scene-v2";
         post.passes = {{"Post", "Grade", "fullscreen_vs", "grade_ps", {"SceneColor"}},
                        {"Post", "Lift", "fullscreen_vs", "lift_ps", {"Ping"}},
@@ -322,22 +330,26 @@ PixelOutput WrappedPixel(in PixelInput input) {
         std::string reason;
         CHECK(MmePortableSceneLayout(post, reason));
     }
+    ComPtr<ID3DXEffectPool> sharedPool;
+    if (legacyScene)
+        CHECK(SUCCEEDED(D3DXCreateEffectPool(&sharedPool)));
     auto compile = [&](const MmePortableEffect& source) {
         ComPtr<ID3DXEffect> fx;
         ComPtr<ID3DXBuffer> errors;
         const auto path = std::filesystem::path(MDS_TEST_SOURCE_DIR) / L"assets/effects/portable" /
-                          (source.post ? (sceneScript ? L"SceneScript.fx"
-                                          : controls  ? L"ControlPost.fx"
-                                                      : L"TwoStage.fx")
+                          (source.post ? (legacyScene   ? L"LegacyScene.fx"
+                                          : sceneScript ? L"SceneScript.fx"
+                                          : controls    ? L"ControlPost.fx"
+                                                        : L"TwoStage.fx")
                                        : (legacy     ? L"LegacyMaterial.fx"
                                           : controls ? L"ControlMaterial.fx"
                                                      : L"MaterialTint.fx"));
         const auto result =
             legacy && !source.post
                 ? createEffect(dx9.Get(), source.source->data(), UINT(source.source->size()),
-                               nullptr, nullptr, 0, nullptr, &fx, &errors)
-                : D3DXCreateEffectFromFileW(dx9.Get(), path.c_str(), nullptr, nullptr, 0, nullptr,
-                                            &fx, &errors);
+                               nullptr, nullptr, 0, sharedPool.Get(), &fx, &errors)
+                : D3DXCreateEffectFromFileW(dx9.Get(), path.c_str(), nullptr, nullptr, 0,
+                                            sharedPool.Get(), &fx, &errors);
         if (FAILED(result))
             throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer())
                                             : "DX9 FX compile failed");
@@ -360,6 +372,56 @@ PixelOutput WrappedPixel(in PixelInput input) {
     };
     auto materialFx = compile(material), postFx = compile(post);
     std::string reason;
+    std::unique_ptr<mme::SasEffect, decltype(&mme::SasUnload)> importedScene(nullptr,
+                                                                             mme::SasUnload);
+    if (legacyScene) {
+        post.profile = "legacy-scene-v1";
+        auto imported = std::make_shared<MmeLegacyProgram>();
+        CHECK(MmeLegacyImportScene(*post.source, *imported, reason));
+        post.legacy = imported;
+        post.passes.clear();
+        post.targets.clear();
+        post.parameters.clear();
+        std::uint64_t identity = 100;
+        for (const auto& t : imported->textures)
+            post.targets.push_back({t.name, MmePortableFormat::Rgba8,
+                                    t.semantic == "RENDERDEPTHSTENCILTARGET", identity++});
+        for (const auto& pass : imported->passes) {
+            MmePortablePass value{pass.technique, pass.name, pass.vertex, pass.pixel};
+            for (auto slot : MmeLegacySamplers(*imported, pass)) {
+                value.sampleSlots.push_back(slot);
+                value.sampled.push_back(imported->samplers[slot].texture);
+            }
+            post.passes.push_back(std::move(value));
+        }
+        for (const auto& v : imported->variables) {
+            MmePortableParameter parameter;
+            parameter.name = v.name;
+            parameter.semantic = v.semantic;
+            parameter.rows = v.rows;
+            parameter.columns = v.columns;
+            parameter.elements = v.elements;
+            parameter.value.resize(v.rows * v.columns * v.elements * 4);
+            std::vector<float> values(parameter.value.size() / 4);
+            CHECK(SUCCEEDED(
+                postFx->GetFloatArray(v.name.c_str(), values.data(), UINT(values.size()))));
+            std::memcpy(parameter.value.data(), values.data(), parameter.value.size());
+            post.parameters.push_back(std::move(parameter));
+        }
+        importedScene.reset(mme::SasParse(postFx.Get(), "LegacyScene.fx", dx9.Get()));
+        CHECK(importedScene && !mme::SasHadErrors(importedScene.get()));
+        CHECK(MmePortableExportScene(*importedScene, post, reason));
+        material.targets = {{"SharedMask", MmePortableFormat::Rgba8, false, 100}};
+        ComPtr<IDirect3DBaseTexture9> sharedBase;
+        ComPtr<IDirect3DTexture9> sharedTexture;
+        ComPtr<IDirect3DSurface9> sharedSurface;
+        CHECK(SUCCEEDED(materialFx->GetTexture("SharedMask", &sharedBase)) && sharedBase);
+        CHECK(SUCCEEDED(sharedBase.As(&sharedTexture)));
+        CHECK(SUCCEEDED(sharedTexture->GetSurfaceLevel(0, &sharedSurface)));
+        CHECK(SUCCEEDED(dx9->SetRenderTarget(0, sharedSurface.Get())));
+        CHECK(SUCCEEDED(
+            dx9->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_ARGB(255, 127, 191, 255), 1, 0)));
+    }
     if (legacy) {
         material.profile = "legacy-material-v1";
         auto imported = std::make_shared<MmeLegacyProgram>();
@@ -682,7 +744,16 @@ PixelOutput WrappedPixel(in PixelInput input) {
     pass.color->clear = {0, 0, 0, 0};
     pass.depthStencil = FrameAttachment{2};
     pass.draws = {draw};
+    if (legacyScene)
+        pass.sampled = {SharedFrameTargetId(100)};
     frame.passes = {pass};
+    if (legacyScene) {
+        CHECK(RegisterPortableMmeTargets(frame, {material, post}, reason));
+        FramePass initialize;
+        initialize.color = FrameAttachment{SharedFrameTargetId(100)};
+        initialize.color->clear = {127.f / 255, 191.f / 255, 1, 1};
+        frame.passes.insert(frame.passes.begin(), initialize);
+    }
     SceneRenderer renderer(*native.device);
     PreparedModelFrame prepared;
     CompletionToken token;
@@ -711,7 +782,8 @@ PixelOutput WrappedPixel(in PixelInput input) {
             }
         } oracle{nullptr, nullptr, dx9.Get()};
         CHECK(SUCCEEDED(dx9->SetRenderTarget(0, finalSurface.Get())));
-        oracle.sas = mme::SasParse(postFx.Get(), "SceneScript.fx", dx9.Get());
+        oracle.sas = legacyScene ? importedScene.release()
+                                 : mme::SasParse(postFx.Get(), "SceneScript.fx", dx9.Get());
         CHECK(oracle.sas && !mme::SasHadErrors(oracle.sas));
         mme::SasHostCallbacks callbacks{};
         callbacks.ctx = dx9.Get();
@@ -740,7 +812,7 @@ PixelOutput WrappedPixel(in PixelInput input) {
         CHECK(SUCCEEDED(dx9->EndScene()));
         ComPtr<IDirect3DBaseTexture9> pongBase;
         ComPtr<IDirect3DTexture9> pong;
-        CHECK(SUCCEEDED(postFx->GetTexture("Pong", &pongBase)));
+        CHECK(SUCCEEDED(postFx->GetTexture(legacyScene ? "Graded" : "Pong", &pongBase)));
         CHECK(SUCCEEDED(pongBase.As(&pong)));
         pingSurface.Reset();
         CHECK(SUCCEEDED(pong->GetSurfaceLevel(0, &pingSurface)));
@@ -773,6 +845,14 @@ PixelOutput WrappedPixel(in PixelInput input) {
     CHECK(!AppendPortableMmePost(missingTarget, post, reason));
     CHECK(reason == "MME_post_missing_scene_color" && missingTarget.targets.empty());
     CHECK(AppendPortableMmePost(frame, post, reason));
+    if (legacyScene)
+        for (const auto& target : frame.targets)
+            CHECK(target.id < (std::uint64_t(1) << 62) ||
+                  std::any_of(
+                      post.targets.begin(), post.targets.end(),
+                      [&](const auto& t) {
+                          return t.identity && SharedFrameTargetId(t.identity) == target.id;
+                      }));
     ready = renderer.Prepare(1, frame, prepared);
     if (!ready)
         throw std::runtime_error(ready.reason);
@@ -780,13 +860,25 @@ PixelOutput WrappedPixel(in PixelInput input) {
     CHECK(renderer.ReadTarget(1, frame.finalColor, actual));
     Compare(actual.bytes, legacyFinal, 2, "two-stage post");
     AttachmentReadback intermediate;
-    CHECK(renderer.ReadTarget(1, sceneScript ? 17 : 16, intermediate));
+    CHECK(renderer.ReadTarget(1,
+                              legacyScene   ? SharedFrameTargetId(102)
+                              : sceneScript ? 17
+                                            : 16,
+                              intermediate));
     CHECK(actual.bytes == intermediate.bytes);
     for (unsigned n = 0; n < 12; ++n)
         CHECK(renderer.Submit(prepared, token));
     CHECK(renderer.ReadTarget(1, frame.finalColor, intermediate));
     CHECK(actual.bytes == intermediate.bytes);
     CHECK(renderer.Detach());
+#ifdef MIKUDANCESTUDIO_RHI_D3D12
+    if (options.backend == Backend::D3D12)
+        CHECK(QueryD3D12Stats(*native.device).debugErrors == 0);
+#endif
+#ifdef MIKUDANCESTUDIO_RHI_VULKAN
+    if (options.backend == Backend::Vulkan)
+        CHECK(QueryVulkanStats(*native.device).validationErrors == 0);
+#endif
     CHECK(!IsWindowVisible(window.h));
     std::printf("%s public FX: DX9 comparison, strict final copy and repeat passed\n", api.c_str());
     return 0;

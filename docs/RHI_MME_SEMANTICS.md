@@ -88,10 +88,11 @@ explicit fallback boundaries, not silent truncation of the native script.
 | Bounded legacy model-material FX9 source | Automatically imported without profile annotations |
 | General legacy FX9 shader syntax | Outside the bounded importer |
 | Per-draw standard semantics | 24 camera/geometry matrix variants, camera/light vectors and colors, geometry colors/power, viewport, native draw names and shared frame clocks; light matrices and remaining native names retain fallback |
-| Shared render-target identity across effects | Not migrated |
+| Single-carrier automatic scene FX9 import | Existing SAS commands, ScriptExternal capture and Draw=Buffer; see [shared scenes](RHI_MME_SHARED_SCENES.md) |
+| Shared render-target identity across effects | Live native pool aliases map to CPU resource revisions; frame-local initialization and dependency checks |
 | Multiple nested scene carriers and DefaultEffect child turns | Not migrated |
 | Render-target mip generation and viewport-ratio targets | Not migrated |
-| Depth/cube/volume sampling and more than four textures | Not in the generic profile |
+| Pixel textures/samplers | Sixteen independent slots; depth/cube/volume sampling remain unsupported |
 | Unmodified Ray | DX9 fallback, including with another backend selected |
 
 Normal native switching for arbitrary MME requires completing those missing

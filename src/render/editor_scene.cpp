@@ -528,6 +528,8 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                        {width, height, TextureFormat::Depth24Stencil8,
                         std::uint32_t(TextureAccess::DepthStencilAttachment)}}};
     result.finalColor = 1;
+    if (!RegisterPortableMmeTargets(result, assigned, reason))
+        return false;
     FramePass main;
     main.name = "editor_scene";
     main.color = FrameAttachment{1};
@@ -584,6 +586,12 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                 return false;
             if (std::find(screens.begin(), screens.end(), ordinal++) != screens.end())
                 consumers.push_back({mode ? 1u : 0u, main.draws.size()});
+            if (e.draw.shader)
+                for (const auto& binding : e.draw.shader->textures)
+                    if (binding.target.target &&
+                        std::find(main.sampled.begin(), main.sampled.end(),
+                                  binding.target.target) == main.sampled.end())
+                        main.sampled.push_back(binding.target.target);
             main.draws.push_back(std::move(e.draw));
         }
     if (mode)

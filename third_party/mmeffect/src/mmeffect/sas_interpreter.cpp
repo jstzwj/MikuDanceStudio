@@ -26,6 +26,7 @@
 
 #include <cctype>
 #include <set>
+#include <atomic>
 
 namespace mme {
 
@@ -1586,6 +1587,8 @@ static bool SasEnsureResourceTexture(SasEffect* sas, SasResource* res) {
     if (sas->device == nullptr) {
         return false;
     }
+    static std::atomic<std::uint64_t> nextPortableIdentity{1};
+    res->portableIdentity = nextPortableIdentity++;
     IDirect3DDevice9* device = sas->device;
     D3DCAPS9 caps;
     device->GetDeviceCaps(&caps);

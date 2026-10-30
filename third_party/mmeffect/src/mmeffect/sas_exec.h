@@ -40,6 +40,7 @@
 #include <d3dx9.h>
 
 #include <map>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -138,6 +139,8 @@ struct SasScriptCmd {
 // OFFSCREENRENDERTARGET / ANIMATEDTEXTURE / plain textures (semantic id 0x2c)
 // and TEXTUREVALUE holders (Phase 3b fills the texel arrays).
 struct SasResource {
+    // CPU-only revision token, renewed whenever native storage is recreated.
+    std::uint64_t portableIdentity = 0;
     D3DXHANDLE  param = 0;
     std::string name;
     int         semanticId = 0;      // 0x26/0x27/0x2c/0x2d/0x2e/0x33

@@ -1031,6 +1031,82 @@ int main(int argc, char** argv) try {
                 CHECK(image().pixels == switchBaseline);
             }
         }
+        // Ordinary FX9 scene + a separate material sharing the same live pool
+        // render product. No MDSRhiProfile, shader entries or input annotations.
+        const auto automaticScene =
+            (sourceRoot / L"assets/effects/portable/LegacyScene.fx").string();
+        const auto sharedMaterial =
+            (sourceRoot / L"assets/effects/portable/LegacySharedMaterial.fx").string();
+        CHECK(
+            ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, automaticScene));
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     sharedMaterial));
+        if (!CheckPortableMme(portableReason))
+            throw std::runtime_error(portableReason);
+        std::vector<MmePortableEffect> automaticEffects;
+        CHECK(MmePortableEffects(automaticEffects, portableReason));
+        std::uint64_t sharedIdentity = 0;
+        unsigned aliases = 0;
+        for (const auto& effect : automaticEffects)
+            for (const auto& target : effect.targets)
+                if (target.name == "SharedMask") {
+                    CHECK(target.identity);
+                    if (sharedIdentity)
+                        CHECK(target.identity == sharedIdentity);
+                    sharedIdentity = target.identity;
+                    ++aliases;
+                }
+        CHECK(aliases >= 2);
+        frame(runtimeEffects);
+        const auto automaticBaseline = image().pixels;
+        if (runtimeEffects) {
+            const float changed[] = {.25f, .5f, .5f, 1}, original[] = {.5f, .75f, 1, 1};
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloatArray("maskColor", changed, 4)));
+            frame(true);
+            CHECK(image().pixels != automaticBaseline);
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetFloatArray("maskColor", original, 4)));
+            frame(true);
+            CHECK(image().pixels == automaticBaseline);
+            ComPtr<IDirect3DBaseTexture9> sharedTexture;
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->GetTexture("SharedMask", &sharedTexture)) &&
+                  sharedTexture);
+            CHECK(SUCCEEDED(assignedEffect(&carrier)->SetTexture("SharedMask", nullptr)));
+            CHECK(!CheckPortableMme(portableReason));
+            CHECK(portableReason.rfind("MME_shared_target_unbound:", 0) == 0);
+            const auto beforeUnbound = app->ViewportRenderer().Statistics();
+            frame(false);
+            CHECK(app->ViewportRenderer().Statistics().uploads == beforeUnbound.uploads);
+            CHECK(app->ViewportRenderer().Statistics().submissions == beforeUnbound.submissions);
+            CHECK(
+                SUCCEEDED(assignedEffect(&carrier)->SetTexture("SharedMask", sharedTexture.Get())));
+            frame(true);
+            CHECK(image().pixels == automaticBaseline);
+            const auto oldWidth = app->ViewportRect().right;
+            app->ViewportRect().right += 8;
+            frame(true);
+            app->ViewportRect().right = oldWidth;
+            frame(true);
+            CHECK(image().pixels == automaticBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == automaticBaseline);
+        }
+        auto automaticSwitchBaseline = runtimeEffects ? automaticBaseline : SnapshotBytes{};
+        for (const auto selected :
+             {Backend::D3D9, Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+            if (selected != Backend::D3D9 && !BackendAvailable(selected))
+                continue;
+            CHECK(app->ViewportRenderer().Select(*app, selected, false));
+            const bool supported = selected != Backend::D3D9 && runtimeShaderSupport.at(selected);
+            frame(supported);
+            if (supported) {
+                if (automaticSwitchBaseline.empty())
+                    automaticSwitchBaseline = image().pixels;
+                CHECK(image().pixels == automaticSwitchBaseline);
+            }
+        }
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     materialEffect));
         const auto hdrPath = (sourceRoot / L"assets/effects/portable/MrtHdr.fx").string();
         CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, hdrPath));
         if (!CheckPortableMme(portableReason))
