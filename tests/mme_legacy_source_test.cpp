@@ -23,6 +23,17 @@ int main() try {
           program.samplers[0].semantic == "MATERIALTEXTURE");
     CHECK(program.hlsl.find("tex2D (") == std::string::npos);
     CHECK(program.hlsl.find("uint TintEnabled") != std::string::npos);
+    MmeLegacyDiagnostic diagnostic;
+    CHECK(!MmeLegacyImport(
+        "#line 42 \"fixture.fxsub\"\nfloat4 broken = ;\ntechnique T { pass P { Bad 0; } }", program,
+        reason, &diagnostic));
+    CHECK(reason == "MME_legacy_syntax" && diagnostic.file == "fixture.fxsub" &&
+          diagnostic.line == 43 && diagnostic.token == "0" && diagnostic.technique == "T" &&
+          diagnostic.pass == "P" && diagnostic.message == "expected =");
+    CHECK(!MmeLegacyImport("#line 9 \"comment.fx\"\n/*", program, reason, &diagnostic));
+    CHECK(reason == "MME_legacy_unclosed_comment" && diagnostic.line == 9 &&
+          diagnostic.file == "comment.fx" && diagnostic.column == 1);
+    CHECK(MmeLegacyImport(source, program, reason, &diagnostic) && diagnostic.stage.empty());
     std::vector<MmeLegacyInput> inputs;
     CHECK(MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
     CHECK(inputs.size() == 3 && inputs[1].semantic == "NORMAL");

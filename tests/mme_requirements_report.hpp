@@ -152,13 +152,23 @@ public:
                   const char* label) {
         MmeLegacyProgram program;
         std::string reason;
+        MmeLegacyDiagnostic diagnostic;
         const bool scene = sas && sas->scriptClass == mme::kSasClassScene;
-        const bool imported = source && (scene ? MmeLegacyImportScene(*source, program, reason)
-                                               : MmeLegacyImport(*source, program, reason));
+        const bool imported =
+            source && (scene ? MmeLegacyImportScene(*source, program, reason, &diagnostic)
+                             : MmeLegacyImport(*source, program, reason, &diagnostic));
         if (!source)
             reason = "MME_legacy_source_unavailable";
         rows << "portable " << label << " source=" << (imported ? "ok" : reason)
              << " parameters=unassessed resources=unassessed states=unassessed\n";
+        if (source && !imported) {
+            rows << "source-location " << label << " file=" << diagnostic.file
+                 << " line=" << diagnostic.line << " column=" << diagnostic.column
+                 << " expandedOffset=" << diagnostic.offset
+                 << " declaration=" << diagnostic.declaration
+                 << " technique=" << diagnostic.technique << " pass=" << diagnostic.pass
+                 << " token=[" << diagnostic.token << "] message=[" << diagnostic.message << "]\n";
+        }
         if (!sas)
             return;
         for (auto handle : sas->techniqueOrder) {
@@ -219,7 +229,7 @@ public:
     }
     void Write(const char* path) {
         std::ofstream file(path, std::ios::binary);
-        file << "MME native requirements v2\nmaxPixelSamplerSlots=" << maxSamplers << '\n'
+        file << "MME native requirements v3\nmaxPixelSamplerSlots=" << maxSamplers << '\n'
              << rows.str();
         if (!file) throw std::runtime_error("native inventory write");
     }

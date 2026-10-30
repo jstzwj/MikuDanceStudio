@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 
 namespace {
@@ -15,7 +16,35 @@ bool Identifier(const std::string& s) {
            std::all_of(s.begin(), s.end(),
                        [](unsigned char c) { return std::isalnum(c) || c == '_'; });
 }
-std::vector<std::string> Lex(const std::string& source) {
+struct SourceError : std::runtime_error {
+    std::size_t offset;
+    SourceError(const char* reason, std::size_t at) : std::runtime_error(reason), offset(at) {}
+};
+void Locate(const std::string& source, std::size_t offset, MmeLegacyDiagnostic& d) {
+    d.offset = std::min(offset, source.size());
+    d.line = d.column = 1;
+    for (std::size_t start = 0; start <= d.offset;) {
+        const auto end = source.find('\n', start);
+        if (end == std::string::npos || end >= d.offset) {
+            d.column = unsigned(d.offset - start + 1);
+            break;
+        }
+        const auto line = source.substr(start, end - start);
+        std::istringstream directive(line);
+        std::string marker;
+        unsigned mapped;
+        if ((directive >> marker) && marker == "#line" && (directive >> mapped) && mapped) {
+            d.line = mapped;
+            const auto quote = line.find('"'), last = line.rfind('"');
+            if (quote != std::string::npos && last > quote)
+                d.file = line.substr(quote + 1, last - quote - 1);
+        } else
+            ++d.line;
+        start = end + 1;
+    }
+}
+std::vector<std::string> Lex(const std::string& source,
+                             std::vector<std::size_t>* offsets = nullptr) {
     std::vector<std::string> tokens;
     for (std::size_t p = 0; p < source.size();) {
         const auto start = p;
@@ -27,7 +56,7 @@ std::vector<std::string> Lex(const std::string& source) {
         if (c == '#') {
             const auto end = source.find('\n', p);
             if (source.compare(p, 5, "#line") != 0)
-                throw std::runtime_error("MME_legacy_preprocessor_directive");
+                throw SourceError("MME_legacy_preprocessor_directive", start);
             p = end == std::string::npos ? source.size() : end + 1;
             continue;
         }
@@ -39,7 +68,7 @@ std::vector<std::string> Lex(const std::string& source) {
         if (source.compare(p, 2, "/*") == 0) {
             const auto end = source.find("*/", p + 2);
             if (end == std::string::npos)
-                throw std::runtime_error("MME_legacy_unclosed_comment");
+                throw SourceError("MME_legacy_unclosed_comment", start);
             p = end + 2;
             continue;
         }
@@ -55,7 +84,7 @@ std::vector<std::string> Lex(const std::string& source) {
                 }
             }
             if (!closed)
-                throw std::runtime_error("MME_legacy_unclosed_string");
+                throw SourceError("MME_legacy_unclosed_string", start);
         } else if (std::isalpha(c) || c == '_') {
             while (++p < source.size() &&
                    (std::isalnum(static_cast<unsigned char>(source[p])) || source[p] == '_')) {}
@@ -79,6 +108,8 @@ std::vector<std::string> Lex(const std::string& source) {
                 ++p;
         }
         tokens.push_back(source.substr(start, p - start));
+        if (offsets)
+            offsets->push_back(start);
         if (tokens.size() > 1024 * 1024)
             throw std::runtime_error("MME_legacy_source_budget");
     }
@@ -92,13 +123,18 @@ std::string Join(const std::vector<std::string>& tokens, std::size_t begin, std:
 }
 class Parser {
 public:
+    const std::string& source;
+    std::vector<std::size_t> offsets;
     std::vector<std::string> t;
     std::size_t p = 0;
     MmeLegacyProgram result;
     std::map<std::string, std::string> textures;
     std::set<std::string> names;
     std::string constants, code;
-    explicit Parser(const std::string& source, bool scene = false) : t(Lex(source)) {
+    MmeLegacyDiagnostic* diagnostic;
+    std::string declaration, technique, pass;
+    explicit Parser(const std::string& text, bool scene, MmeLegacyDiagnostic* d)
+        : source(text), t(Lex(text, &offsets)), diagnostic(d) {
         result.scene = scene;
     }
     std::string Peek() const { return p < t.size() ? t[p] : ""; }
@@ -120,10 +156,25 @@ public:
         return s;
     }
     void Need(const char* s) {
-        if (!Eat(s))
+        if (!Eat(s)) {
+            if (diagnostic)
+                diagnostic->message = std::string("expected ") + s;
             Fail("syntax");
+        }
     }
-    [[noreturn]] void Fail(const char* s) const {
+    [[noreturn]] void Fail(const char* s, std::size_t at = std::size_t(-1)) const {
+        if (diagnostic) {
+            if (at == std::size_t(-1))
+                at = p;
+            Locate(source, at < offsets.size() ? offsets[at] : source.size(), *diagnostic);
+            diagnostic->token = at < t.size() ? t[at] : "";
+            diagnostic->declaration = declaration;
+            diagnostic->technique = technique;
+            diagnostic->pass = pass;
+            diagnostic->stage = "source";
+            if (diagnostic->message.empty())
+                diagnostic->message = std::string("MME_legacy_") + s;
+        }
         throw std::runtime_error(std::string("MME_legacy_") + s);
     }
     void Unique(const std::string& name) {
@@ -209,6 +260,7 @@ public:
         const auto begin = p;
         Need("struct");
         const auto name = Name();
+        declaration = name;
         Unique(name);
         Need("{");
         std::vector<MmeLegacyProgram::Function::Field> fields;
@@ -225,7 +277,8 @@ public:
     }
     void Technique() {
         Take();
-        const auto technique = Name();
+        technique = Name();
+        declaration = technique;
         Unique(technique);
         std::map<std::string, std::string> annotations;
         Annotations(annotations);
@@ -237,6 +290,7 @@ public:
             MmeLegacyPass pass;
             pass.technique = technique;
             pass.name = Name();
+            this->pass = pass.name;
             annotations.clear();
             Annotations(annotations);
             if (!annotations.empty() && (!result.scene || annotations.size() != 1 ||
@@ -287,6 +341,7 @@ public:
             isConst |= q == "const";
         }
         const auto type = Name(), name = Name();
+        declaration = name;
         if (Eat("(")) {
             MmeLegacyProgram::Function f;
             f.result = type;
@@ -381,7 +436,7 @@ public:
                 auto v = Take();
                 if (state == "TEXTURE") {
                     if (v != "<")
-                        Fail("sampler_texture");
+                        Fail("sampler_texture", p - 1);
                     v = Name();
                     Need(">");
                 } else
@@ -519,12 +574,19 @@ public:
     }
 };
 }
-bool MmeLegacyImport(const std::string& source, MmeLegacyProgram& out, std::string& reason) {
+namespace {
+bool Import(const std::string& source, MmeLegacyProgram& out, std::string& reason, bool scene,
+            MmeLegacyDiagnostic* diagnostic) {
+    if (diagnostic)
+        *diagnostic = {};
     try {
         if (source.size() > 16 * 1024 * 1024)
             throw std::runtime_error("MME_legacy_source_budget");
-        Parser parser(source);
+        Parser parser(source, scene, diagnostic);
         while (!parser.Peek().empty()) {
+            parser.declaration.clear();
+            parser.technique.clear();
+            parser.pass.clear();
             if (parser.Peek() == "struct")
                 parser.Structure();
             else if (parser.Peek() == "technique")
@@ -536,16 +598,42 @@ bool MmeLegacyImport(const std::string& source, MmeLegacyProgram& out, std::stri
         out = std::move(parser.result);
         reason.clear();
         return true;
+    } catch (const SourceError& e) {
+        reason = e.what();
+        if (diagnostic) {
+            Locate(source, e.offset, *diagnostic);
+            diagnostic->stage = "source";
+            diagnostic->message = reason;
+        }
+        return false;
     } catch (const std::exception& e) {
         reason = e.what();
+        if (diagnostic && diagnostic->stage.empty()) {
+            diagnostic->stage = "source";
+            diagnostic->message = reason;
+        }
         return false;
     }
 }
+}
+bool MmeLegacyImport(const std::string& source, MmeLegacyProgram& out, std::string& reason,
+                     MmeLegacyDiagnostic* diagnostic) {
+    return Import(source, out, reason, false, diagnostic);
+}
 bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass, std::string& hlsl,
                      std::vector<MmeLegacyInput>& inputs, std::string& reason,
-                     std::vector<unsigned>* colorOutputs) {
+                     std::vector<unsigned>* colorOutputs, MmeLegacyDiagnostic* diagnostic) {
+    if (diagnostic) {
+        *diagnostic = {};
+        diagnostic->stage = "wrapper";
+        diagnostic->technique = pass.technique;
+        diagnostic->pass = pass.name;
+        diagnostic->declaration = pass.vertex + "/" + pass.pixel;
+    }
     const auto fail = [&](const char* s) {
         reason = std::string("MME_legacy_") + s;
+        if (diagnostic)
+            diagnostic->message = reason;
         return false;
     };
     const auto vs = program.functions.find(pass.vertex), ps = program.functions.find(pass.pixel);
@@ -733,30 +821,14 @@ bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
     if (colorOutputs)
         *colorOutputs = std::move(components);
     reason.clear();
+    if (diagnostic)
+        *diagnostic = {};
     return true;
 }
 
-bool MmeLegacyImportScene(const std::string& source, MmeLegacyProgram& out, std::string& reason) {
-    try {
-        if (source.size() > 16 * 1024 * 1024)
-            throw std::runtime_error("MME_legacy_source_budget");
-        Parser parser(source, true);
-        while (!parser.Peek().empty()) {
-            if (parser.Peek() == "struct")
-                parser.Structure();
-            else if (parser.Peek() == "technique")
-                parser.Technique();
-            else
-                parser.Declaration();
-        }
-        parser.Finish();
-        out = std::move(parser.result);
-        reason.clear();
-        return true;
-    } catch (const std::exception& e) {
-        reason = e.what();
-        return false;
-    }
+bool MmeLegacyImportScene(const std::string& source, MmeLegacyProgram& out, std::string& reason,
+                          MmeLegacyDiagnostic* diagnostic) {
+    return Import(source, out, reason, true, diagnostic);
 }
 std::vector<unsigned> MmeLegacySamplers(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
                                         bool vertex) {
