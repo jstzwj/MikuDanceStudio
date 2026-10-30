@@ -91,20 +91,44 @@ do not establish native support for arbitrary FX9 effects or Ray.
 
 ## Local batch status (2026-10-30)
 
-The final x64 independent suite passed all 30 gates: CPU/Null contracts,
-standard-entry compilation/reflection on all three APIs, generic shader output
-and MRT/multipass regressions. The equivalent x86 scope passed 24 gates with
-six explicit Vulkan runtime-compiler/validation capability skips. x64 and x86
-application builds, diagnostics-off product and newer-backends-disabled product
-configurations all built successfully.
+After DX9 became available, all 11 direct/struct/inout standard-parameter image
+gates passed against the actual native binder, including DX12 debug and Vulkan
+validation. This covers the expanded 24-matrix oracle on all three APIs.
 
-Earlier offscreen DX9 runs passed the standard material/post comparison on
-DX11/DX12/Vulkan; the expanded 24-matrix direct/struct/inout oracle also passed
-on DX11. The final DX9-dependent suite is **not accepted yet**: its 17
-shader/editor/Ray-fallback gates failed before drawing when native DX9 HAL
-initialization became unavailable (CheckDeviceType=0x8876086A; CreateDevice also
-reported 0x8876086C). Three optional Sour Miku PMX standard-effect gates were
-attempted and hit the same initialization failure. Full hidden-editor switching,
-clock failure/recovery and real-model acceptance require a successful rerun.
-No device-availability skip, tolerance relaxation or desktop action was added.
-The independent compilation checks do not substitute for these image/frame gates.
+The hidden-editor rerun corrected two fixture errors: resizing only the viewport
+without its hidden parent client, and querying a lazily created device before
+its first frame. Real PMD switching then exposed a production Vulkan shader
+build omission that dropped ordinary material specular highlights. The shared
+SPIR-V build now enables the same lit pixel variant as DX11/DX12; see the public
+[specular regression](RHI_MATERIAL_SAMPLING.md#lit-material-specular-regression).
+
+The final x64 56-gate MME/material/editor run passed 37 gates. These include the
+720-case sampling matrix, the four exact specular cases, DX11/DX12 effect image
+oracles and the following hidden-editor entries:
+
+- `editor_frame_dx11`: generated PMD/PMX, resize, unload, frame driver, switching,
+  same-frame fallback and device recovery.
+- `editor_mme_standard_pmd_dx11` and `editor_mme_standard_pmx_dx11`: local original
+  Miku PMD and Sour Miku PMX. Each entry switches the retained effect through
+  DX9/DX11/DX12/Vulkan, requires exact output equality between supported RHI
+  backends, tests recreation and seek, and counts once-only geometry/clock
+  updates and zero DX9 scene draws on RHI frames.
+- `editor_ray_fallback_dx11`: generated PMD/PMX with the local Ray effect,
+  retaining same-frame DX9 fallback across backend switches.
+
+DX9 HAL initialization became unavailable again midway through
+`editor_frame_dx12`: its PMD subprocess passed, but PMX did not create a device.
+That gate and the remaining 18 DX12/Vulkan entries failed at native DX9
+initialization (CheckDeviceType=0x8876086A; CreateDevice also returned 0x8876086C).
+They remain **unaccepted**, including duplicate real-model/Ray entries starting
+from DX12/Vulkan. A later native probe still failed. The earlier Vulkan image
+results and real-model switches above do not substitute for this final rerun.
+
+Independent final checks passed another 22 x64 gates covering CPU/Null contracts,
+generic shaders and MRT/multipass, including Vulkan validation. The x86
+independent suite passed 27 gates with eight explicit runtime-DXC/validation
+capability skips; its 720-case sampling and four specular cases ran on all three
+APIs. x64/x86 applications and the diagnostics-off product built successfully;
+the newer-backends-disabled product had already passed in the preceding batch.
+The x86 DX9-dependent acceptance remains pending. No device-availability skip,
+tolerance relaxation or desktop action was added. All test windows stayed hidden.

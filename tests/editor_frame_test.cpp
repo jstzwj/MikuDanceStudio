@@ -100,6 +100,15 @@ int main(int argc, char** argv) try {
                                     rect.right - rect.left, rect.bottom - rect.top, nullptr,
                                     nullptr, GetModuleHandleW(nullptr), nullptr);
         }
+        bool Resize(int width, int height) {
+            RECT client{};
+            if (GetClientRect(value, &client) && client.right == width && client.bottom == height)
+                return true;
+            RECT rect{0, 0, width, height};
+            AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+            return SetWindowPos(value, nullptr, 0, 0, rect.right - rect.left,
+                                rect.bottom - rect.top, SWP_NOACTIVATE | SWP_NOZORDER) != FALSE;
+        }
         ~Window() { DestroyWindow(value); }
     } window(benchmark ? 1280 : 160, benchmark ? 720 : 120);
     CHECK(window.value && !IsWindowVisible(window.value));
@@ -253,6 +262,11 @@ int main(int argc, char** argv) try {
     CHECK(SUCCEEDED(device->SetTransform(D3DTS_PROJECTION, &projection)));
     RgbaImage lastImage;
     const auto frame = [&](bool expectRhi, bool driver = false) {
+        // Match the real host layout: the parent client must contain the
+        // viewport. Otherwise EnsureWindow correctly clips a resize to the
+        // old client extent, and FrameDriver can replace the test's viewport.
+        const auto view = app->ViewportRect();
+        CHECK(window.Resize(view.right, view.bottom));
         const auto clockUpdates = ::mme::g_frameClockUpdates;
         const bool effectsEnabled = MmeHostEffectsEnabled() != 0;
         const auto before = app->FrameRenderingStats();
@@ -323,6 +337,18 @@ int main(int argc, char** argv) try {
         return bytes;
     };
     if (realStandard) {
+        // Native devices are created lazily by the first render, including
+        // after selecting DX9 and returning to a newer backend. Cache actual
+        // shader capabilities before assigning the effect under test.
+        std::map<Backend, bool> shaderSupport;
+        for (const auto selected : {Backend::D3D11, Backend::D3D12, Backend::Vulkan}) {
+            if (!BackendAvailable(selected))
+                continue;
+            CHECK(app->ViewportRenderer().Select(*app, selected, false));
+            frame(true);
+            shaderSupport[selected] = app->ViewportRenderer().GetDevice()->ShaderFeatures().hlsl;
+        }
+        CHECK(app->ViewportRenderer().Select(*app, api, false));
         ComPtr<ID3DXEffect> hostEffect;
         ComPtr<ID3DXBuffer> errors;
         const auto root = std::filesystem::path(MDS_TEST_SOURCE_DIR);
@@ -358,14 +384,27 @@ int main(int argc, char** argv) try {
             if (selected != Backend::D3D9 && !BackendAvailable(selected))
                 continue;
             CHECK(app->ViewportRenderer().Select(*app, selected, false));
-            const bool supported = selected != Backend::D3D9 &&
-                                   app->ViewportRenderer().GetDevice()->ShaderFeatures().hlsl;
+            const bool supported = selected != Backend::D3D9 && shaderSupport.at(selected);
             frame(supported);
             frame(supported);
             if (!supported)
                 continue;
             if (baseline.empty())
                 baseline = image().pixels;
+            if (image().pixels != baseline) {
+                unsigned maximum = 0, changed = 0;
+                for (std::size_t n = 0; n < baseline.size(); ++n) {
+                    const auto delta =
+                        unsigned(std::abs(int(image().pixels[n]) - int(baseline[n])));
+                    maximum = std::max(maximum, delta);
+                    changed += delta != 0;
+                }
+                std::fprintf(
+                    stderr, "real switch backend=%u frame=%d clock=%g,%g,%g,%g changed=%u max=%u\n",
+                    unsigned(selected), app->CurrentFrame(), ::mme::g_frameTimeBase,
+                    ::mme::g_deltaSeconds, ::mme::g_lastFrameTime, ::mme::g_frameDelta, changed,
+                    maximum);
+            }
             CHECK(image().pixels == baseline);
             CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
             frame(true);
