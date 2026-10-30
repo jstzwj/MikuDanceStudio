@@ -7,7 +7,7 @@ the device. Replacing a device recreates them from the CPU description.
 The profile supports up to four ordered RGBA8, R32Float or RGBA16Float color
 attachments (subject to native capabilities), the existing
 depth/stencil attachment, four constant slots (`b0..b3`, shared between stages),
-four pixel texture slots (`t0..t3`) and four pixel samplers (`s0..s3`). Constants
+sixteen pixel texture slots (`t0..t15`) and sixteen pixel samplers (`s0..s15`). Constants
 have an explicit byte size and optional named members. Matrices are row-major;
 arrays start on a 16-byte boundary. Constant blocks are multiples of 16 bytes.
 Vertex texture reads, descriptor arrays, UAVs and depth sampling are outside
@@ -18,7 +18,7 @@ rejects undeclared, sparse or differently shaped pixel outputs. Format-specific
 render/sample/blend/raw-readback capabilities are queried separately; see
 [MRT/HDR](RHI_MRT_HDR.md).
 
-The Vulkan ABI maps constants to bindings 0..3, images to 4..7, samplers to 8..11
+The Vulkan generic ABI maps constants to bindings 0..3, images to 4..19, samplers to 20..35
 in set 0. HLSL uses the same register numbers as D3D. Native reflection checks
 the compiled bindings against the description. Layouts can declare optimized-out
 bindings, but callers must still supply the complete declared layout.

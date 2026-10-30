@@ -16,10 +16,14 @@ function(mds_spirv name source entry profile color)
     else()
         set(buffer_shift 1)
     endif()
+    set(sampler_shift 8)
+    if(name MATCHES "^generic_")
+        set(sampler_shift 20)
+    endif()
     set(output "${MDS_SPIRV_DIR}/${name}.spv")
     add_custom_command(OUTPUT "${output}"
         COMMAND "${MDS_DXC}" -spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout
-            -fvk-stage-io-order=decl -fvk-b-shift ${buffer_shift} 0 -fvk-t-shift 4 0 -fvk-s-shift 8 0
+            -fvk-stage-io-order=decl -fvk-b-shift ${buffer_shift} 0 -fvk-t-shift 4 0 -fvk-s-shift ${sampler_shift} 0
             -D MDS_MODEL_VERTEX_COLOR=${color} -D MDS_MODEL_DX9_COMPATIBILITY=0 -D MDS_MODEL_SPECULAR=1
             -T ${profile} -E ${entry} -Ges -Gis -Fo "${output}" "${PROJECT_SOURCE_DIR}/${source}"
         COMMAND "${MDS_SPIRV_VAL}" --target-env vulkan1.3 --relax-block-layout "${output}"

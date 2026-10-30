@@ -80,7 +80,7 @@ inline bool CompileSpirv(const ShaderModule& source, SnapshotBytes& output, std:
                              L"4",
                              L"0",
                              L"-fvk-s-shift",
-                             L"8",
+                             L"20",
                              L"0",
                              L"-Zpr",
                              L"-Ges",
@@ -287,7 +287,7 @@ inline bool ReflectSpirv(const ShaderProgramDesc& desc, const ShaderModule& sour
                 return fail("shader_resource_type_not_supported");
             const unsigned shift = kind == ShaderBindingKind::Constants ? 0
                                    : kind == ShaderBindingKind::Texture ? 4
-                                                                        : 8;
+                                                                        : 4 + GraphicsTextureSlots;
             const ShaderBinding* found = nullptr;
             for (const auto& b : desc.bindings)
                 if (b.kind == kind && b.slot + shift == binding->second &&

@@ -104,8 +104,8 @@ public:
         if (!genericBound || !BindShaderResources(genericBindings))
             return false;
         ID3D11Buffer* cb[4]{};
-        ID3D11ShaderResourceView* images[4]{};
-        ID3D11SamplerState* sampling[4]{};
+        ID3D11ShaderResourceView* images[GraphicsTextureSlots]{};
+        ID3D11SamplerState* sampling[GraphicsTextureSlots]{};
         for (const auto& c : genericBindings.constants) {
             auto& buffer = genericConstants[c.slot];
             D3D11_BUFFER_DESC old{};
@@ -160,8 +160,8 @@ public:
         }
         context->VSSetConstantBuffers(0, 4, cb);
         context->PSSetConstantBuffers(0, 4, cb);
-        context->PSSetShaderResources(0, 4, images);
-        context->PSSetSamplers(0, 4, sampling);
+        context->PSSetShaderResources(0, GraphicsTextureSlots, images);
+        context->PSSetSamplers(0, GraphicsTextureSlots, sampling);
         return true;
     }
     Handle shadowTexture;
@@ -382,8 +382,8 @@ public:
     bool BeginRenderPass(const RenderPassDesc& p) override {
         if (!Live() || !inFrame || !passes.Begin(p))
             return false;
-        ID3D11ShaderResourceView* empty[4]{};
-        context->PSSetShaderResources(0, 4, empty);
+        ID3D11ShaderResourceView* empty[GraphicsTextureSlots]{};
+        context->PSSetShaderResources(0, GraphicsTextureSlots, empty);
         const auto colors = ColorAttachments(p);
         std::vector<ID3D11RenderTargetView*> rt;
         for (const auto& a : colors)
@@ -411,8 +411,8 @@ public:
         if (!inFrame || !passes.Active())
             return false;
         context->OMSetRenderTargets(0, nullptr, nullptr);
-        ID3D11ShaderResourceView* empty[4]{};
-        context->PSSetShaderResources(0, 4, empty);
+        ID3D11ShaderResourceView* empty[GraphicsTextureSlots]{};
+        context->PSSetShaderResources(0, GraphicsTextureSlots, empty);
         modelReady = pipelineReady = false;
         modelTextures = {};
         boundTexture = {};
@@ -955,8 +955,8 @@ public:
         ComPtr<ID3D11Resource> output;
         target->GetResource(&output);
         context->OMSetRenderTargets(0, nullptr, nullptr);
-        ID3D11ShaderResourceView* empty[4]{};
-        context->PSSetShaderResources(0, 4, empty);
+        ID3D11ShaderResourceView* empty[GraphicsTextureSlots]{};
+        context->PSSetShaderResources(0, GraphicsTextureSlots, empty);
         context->CopyResource(output.Get(), r->texture.Get());
         modelReady = false;
         return native->GetDeviceRemovedReason() == S_OK;

@@ -1772,8 +1772,8 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
                 return false;
         }
         VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * MaxDraws},
-                                        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4 * MaxDraws},
-                                        {VK_DESCRIPTOR_TYPE_SAMPLER, 4 * MaxDraws}};
+                                        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GraphicsTextureSlots * MaxDraws},
+                                        {VK_DESCRIPTOR_TYPE_SAMPLER, GraphicsTextureSlots * MaxDraws}};
         VkDescriptorPoolCreateInfo p{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         p.maxSets = MaxDraws;
         p.poolSizeCount = 3;
@@ -1996,19 +1996,19 @@ bool VulkanDevice::PrepareShaderPipeline(const ShaderPipeline& p) {
     if (!result || !Live())
         return false;
     if (!genericDescriptorLayout) {
-        VkDescriptorSetLayoutBinding bindings[12]{};
-        for (unsigned i = 0; i < 12; ++i) {
+        VkDescriptorSetLayoutBinding bindings[4 + 2 * GraphicsTextureSlots]{};
+        for (unsigned i = 0; i < 4 + 2 * GraphicsTextureSlots; ++i) {
             bindings[i].binding = i;
             bindings[i].descriptorCount = 1;
             bindings[i].descriptorType = i < 4   ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                                         : i < 8 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                         : i < 4 + GraphicsTextureSlots ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
                                                  : VK_DESCRIPTOR_TYPE_SAMPLER;
             bindings[i].stageFlags = i < 4
                                          ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                                          : VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        info.bindingCount = 12;
+        info.bindingCount = 4 + 2 * GraphicsTextureSlots;
         info.pBindings = bindings;
         if (!Check(vkCreateDescriptorSetLayout(native, &info, nullptr, &genericDescriptorLayout)))
             return false;
@@ -2111,7 +2111,7 @@ bool VulkanDevice::BindGenericDescriptors() {
     const auto align =
         (std::max)(VkDeviceSize(1), properties.limits.minUniformBufferOffsetAlignment);
     VkDescriptorBufferInfo buffers[4]{};
-    VkDescriptorImageInfo images[4]{}, sampling[4]{};
+    VkDescriptorImageInfo images[GraphicsTextureSlots]{}, sampling[GraphicsTextureSlots]{};
     const auto upload = [&](VkDescriptorBufferInfo& info, const void* data, std::size_t bytes) {
         const auto offset = (f.offset + align - 1) / align * align;
         if (offset + bytes > UniformBytes)
@@ -2128,7 +2128,7 @@ bool VulkanDevice::BindGenericDescriptors() {
     for (const auto& c : genericBindings.constants)
         if (!upload(buffers[c.slot], c.bytes.data(), c.bytes.size()))
             return false;
-    for (unsigned i = 0; i < 4; ++i) {
+    for (unsigned i = 0; i < GraphicsTextureSlots; ++i) {
         Resource* r = &white;
         for (const auto& t : genericBindings.textures)
             if (t.slot == i)
@@ -2155,22 +2155,22 @@ bool VulkanDevice::BindGenericDescriptors() {
     VkDescriptorSet set;
     if (!Check(vkAllocateDescriptorSets(native, &alloc, &set)))
         return false;
-    VkWriteDescriptorSet writes[12]{};
-    for (unsigned i = 0; i < 12; ++i) {
+    VkWriteDescriptorSet writes[4 + 2 * GraphicsTextureSlots]{};
+    for (unsigned i = 0; i < 4 + 2 * GraphicsTextureSlots; ++i) {
         auto& w = writes[i];
         w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w.dstSet = set;
         w.dstBinding = i;
         w.descriptorCount = 1;
         w.descriptorType = i < 4   ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                           : i < 8 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                           : i < 4 + GraphicsTextureSlots ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
                                    : VK_DESCRIPTOR_TYPE_SAMPLER;
         if (i < 4)
             w.pBufferInfo = &buffers[i];
         else
-            w.pImageInfo = i < 8 ? &images[i - 4] : &sampling[i - 8];
+            w.pImageInfo = i < 4 + GraphicsTextureSlots ? &images[i - 4] : &sampling[i - 4 - GraphicsTextureSlots];
     }
-    vkUpdateDescriptorSets(native, 12, writes, 0, nullptr);
+    vkUpdateDescriptorSets(native, 4 + 2 * GraphicsTextureSlots, writes, 0, nullptr);
     vkCmdBindDescriptorSets(f.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, genericPipelineLayout, 0,
                             1, &set, 0, nullptr);
     ++f.draws;

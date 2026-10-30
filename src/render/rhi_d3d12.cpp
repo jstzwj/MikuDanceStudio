@@ -24,7 +24,7 @@ using Microsoft::WRL::ComPtr;
 namespace mikudancestudio::rhi {
 namespace {
 constexpr unsigned FrameCount = 3, BackbufferCount = 2, MaxDraws = 512,
-                   DescriptorCount = MaxDraws * 4, MaxResources = 8192;
+                   DescriptorCount = MaxDraws * GraphicsTextureSlots, MaxResources = 8192;
 constexpr UINT64 ConstantBytes = 2 * 1024 * 1024;
 D3D12_HEAP_PROPERTIES Heap(D3D12_HEAP_TYPE type) {
     D3D12_HEAP_PROPERTIES p{};
@@ -100,7 +100,8 @@ struct Frame {
     ComPtr<ID3D12Resource> constants;
     std::uint8_t* mapped = nullptr;
     UINT64 fence = 0, constantOffset = 0;
-    unsigned drawCount = 0;
+    unsigned drawCount = 0, samplerCount = 0;
+    std::map<std::string, unsigned> samplerTables;
     std::vector<ComPtr<ID3D12Resource>> uploads;
 };
 class D3D12Device final : public Device {
@@ -161,6 +162,26 @@ public:
         genericBound = true;
         return true;
     }
+    bool SamplerTable(const D3D12_SAMPLER_DESC* descriptions, unsigned count,
+                      D3D12_GPU_DESCRIPTOR_HANDLE& gpu) {
+        auto& f = frames[frameIndex];
+        const std::string key(reinterpret_cast<const char*>(descriptions), count * sizeof(*descriptions));
+        auto found = f.samplerTables.find(key);
+        if (found == f.samplerTables.end()) {
+            if (f.samplerCount + count > 2048) return false;
+            const auto offset = f.samplerCount;
+            auto cpu = f.samplers->GetCPUDescriptorHandleForHeapStart();
+            cpu.ptr += SIZE_T(offset) * samplerStride;
+            for (unsigned n = 0; n < count; ++n) {
+                native->CreateSampler(&descriptions[n], cpu); cpu.ptr += samplerStride;
+            }
+            f.samplerCount += count;
+            found = f.samplerTables.emplace(key, offset).first;
+        }
+        gpu = f.samplers->GetGPUDescriptorHandleForHeapStart();
+        gpu.ptr += UINT64(found->second) * samplerStride;
+        return true;
+    }
     bool BindGenericDescriptors() {
         if (!genericBound || !BindShaderResources(genericBindings))
             return false;
@@ -181,10 +202,11 @@ public:
         }
         auto views = f.views->GetCPUDescriptorHandleForHeapStart(),
              samplers = f.samplers->GetCPUDescriptorHandleForHeapStart();
-        const auto offset = f.drawCount * 4;
+        D3D12_SAMPLER_DESC samplerSet[GraphicsTextureSlots]{};
+        const auto offset = f.drawCount * GraphicsTextureSlots;
         views.ptr += SIZE_T(offset) * viewStride;
         samplers.ptr += SIZE_T(offset) * samplerStride;
-        for (unsigned i = 0; i < 4; ++i) {
+        for (unsigned i = 0; i < GraphicsTextureSlots; ++i) {
             Handle h;
             for (const auto& t : genericBindings.textures)
                 if (t.slot == i)
@@ -219,14 +241,14 @@ public:
             s.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
             s.MaxAnisotropy = a.maxAnisotropy;
             s.MaxLOD = D3D12_FLOAT32_MAX;
-            native->CreateSampler(&s, samplers);
+            samplerSet[i] = s;
             views.ptr += viewStride;
             samplers.ptr += samplerStride;
         }
         auto gpuViews = f.views->GetGPUDescriptorHandleForHeapStart(),
              gpuSamplers = f.samplers->GetGPUDescriptorHandleForHeapStart();
         gpuViews.ptr += UINT64(offset) * viewStride;
-        gpuSamplers.ptr += UINT64(offset) * samplerStride;
+        if (!SamplerTable(samplerSet, GraphicsTextureSlots, gpuSamplers)) return false;
         f.commands->SetGraphicsRootDescriptorTable(4, gpuViews);
         f.commands->SetGraphicsRootDescriptorTable(5, gpuSamplers);
         ++f.drawCount;
@@ -783,6 +805,7 @@ public:
             if (FAILED(lastError))
                 return false;
             d.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+            d.NumDescriptors = 2048;
             lastError = native->CreateDescriptorHeap(&d, IID_PPV_ARGS(&f.samplers));
             if (FAILED(lastError))
                 return false;
@@ -897,7 +920,8 @@ public:
             return false;
         f.uploads.clear();
         f.constantOffset = 0;
-        f.drawCount = 0;
+        f.drawCount = f.samplerCount = 0;
+        f.samplerTables.clear();
         lastError = f.allocator->Reset();
         if (SUCCEEDED(lastError))
             lastError = f.commands->Reset(f.allocator.Get(), nullptr);
@@ -1147,7 +1171,7 @@ public:
         auto& f = frames[frameIndex];
         if (f.drawCount >= MaxDraws)
             return false;
-        const unsigned offset = f.drawCount * 4;
+        const unsigned offset = f.drawCount * GraphicsTextureSlots;
         auto views = f.views->GetCPUDescriptorHandleForHeapStart(),
              samplers = f.samplers->GetCPUDescriptorHandleForHeapStart();
         views.ptr += SIZE_T(offset) * viewStride;
@@ -1171,14 +1195,14 @@ public:
                 native->CopyDescriptorsSimple(1, views, CpuView(h.index),
                                               D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             }
-            native->CreateSampler(&samplerDescriptions[i], samplers);
+
             views.ptr += viewStride;
             samplers.ptr += samplerStride;
         }
         auto gpuViews = f.views->GetGPUDescriptorHandleForHeapStart(),
              gpuSamplers = f.samplers->GetGPUDescriptorHandleForHeapStart();
         gpuViews.ptr += UINT64(offset) * viewStride;
-        gpuSamplers.ptr += UINT64(offset) * samplerStride;
+        if (!SamplerTable(samplerDescriptions.data(), 4, gpuSamplers)) return false;
         f.commands->SetGraphicsRootDescriptorTable(3, gpuViews);
         f.commands->SetGraphicsRootDescriptorTable(4, gpuSamplers);
         ++f.drawCount;
@@ -1431,8 +1455,8 @@ bool D3D12Device::PrepareShaderPipeline(const ShaderPipeline& p) {
             parameters[i].Descriptor.ShaderRegister = i;
             parameters[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         }
-        ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0};
-        ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 4, 0, 0, 0};
+        ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, GraphicsTextureSlots, 0, 0, 0};
+        ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, GraphicsTextureSlots, 0, 0, 0};
         for (unsigned i = 0; i < 2; ++i) {
             parameters[i + 4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             parameters[i + 4].DescriptorTable = {1, &ranges[i]};

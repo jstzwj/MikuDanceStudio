@@ -42,7 +42,7 @@ int main() {
     bad.program = std::make_shared<ShaderProgram>(description);
     CHECK(!ValidateShaderPipeline(bad, d.ShaderFeatures()));
     description = p.program->description;
-    description.bindings[1].slot = 4;
+    description.bindings[1].slot = GraphicsTextureSlots;
     bad.program = std::make_shared<ShaderProgram>(description);
     CHECK(!ValidateShaderPipeline(bad, d.ShaderFeatures()));
     description = p.program->description;

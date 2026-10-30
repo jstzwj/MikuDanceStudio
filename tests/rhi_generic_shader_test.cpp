@@ -30,7 +30,7 @@ int main(int argc, char** argv) try {
     ShaderProgramDesc desc;
     desc.vertex.hlsl = desc.pixel.hlsl = R"(
 cbuffer Parameters : register(b0) { row_major float4x4 transform; float4 tint; };
-Texture2D image : register(t1); SamplerState imageSampler : register(s2);
+Texture2D image : register(t15); SamplerState imageSampler : register(s15);
 struct Output { float4 p:SV_POSITION; float2 uv:TEXCOORD0; };
 Output vertex(float3 p:POSITION, float2 uv:TEXCOORD0) {
  Output o; o.p=mul(float4(p,1),transform); o.uv=uv; return o;
@@ -47,8 +47,8 @@ float4 pixel(Output o):SV_TARGET { return image.SampleLevel(imageSampler,o.uv,0)
          3,
          80,
          {{"transform", ShaderValueType::Matrix4x4, 0}, {"tint", ShaderValueType::Float4, 64}}},
-        {ShaderBindingKind::Texture, 1},
-        {ShaderBindingKind::Sampler, 2}};
+        {ShaderBindingKind::Texture, 15},
+        {ShaderBindingKind::Sampler, 15}};
     ShaderPipeline pipeline;
     pipeline.program = std::make_shared<const ShaderProgram>(desc);
     pipeline.raster.depthTest = pipeline.raster.depthWrite = pipeline.raster.alphaBlend = false;
@@ -118,9 +118,9 @@ float4 pixel(Output o):SV_TARGET { double value=double(o.uv.x);return float(valu
     draw.shader->constants.push_back({0});
     draw.shader->constants.back().bytes.resize(sizeof(constants));
     std::memcpy(draw.shader->constants.back().bytes.data(), constants, sizeof(constants));
-    draw.shader->textures.push_back({1, texture.key});
+    draw.shader->textures.push_back({15, texture.key});
     draw.shader->samplers.push_back(
-        {2, {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point}});
+        {15, {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point}});
     FramePass pass;
     pass.color = FrameAttachment{1};
     pass.color->clear = {0, 0, 0, 0};
@@ -163,6 +163,42 @@ float4 pixel(Output o):SV_TARGET { double value=double(o.uv.x);return float(valu
         CHECK(!rejected && rejected.reason == "shader_frame_constant_budget_exceeded");
         CHECK(renderer.Stats().uploads == uploads);
     }
+    // Exercise all sixteen live descriptors together with distinct contents.
+    auto all = desc;
+    std::string declarations, expression = "image.SampleLevel(imageSampler,o.uv,0)";
+    for (unsigned slot = 0; slot < 15; ++slot) {
+        const auto n = std::to_string(slot);
+        declarations += "Texture2D image" + n + ":register(t" + n + ");SamplerState sampler" + n +
+                        ":register(s" + n + ");\n";
+        expression += "+image" + n + ".SampleLevel(sampler" + n + ",o.uv,0)";
+        all.bindings.push_back({ShaderBindingKind::Texture, slot});
+        all.bindings.push_back({ShaderBindingKind::Sampler, slot});
+    }
+    for (auto* module : {&all.vertex, &all.pixel}) {
+        module->hlsl.insert(0, declarations);
+        module->hlsl.erase(module->hlsl.find("float4 pixel"));
+        module->hlsl += "float4 pixel(Output o):SV_TARGET{return (" + expression + ")*(tint/16);}";
+    }
+    auto sixteen = frame;
+    auto& combined = *sixteen.passes[0].draws[0].shader;
+    combined.pipeline.program = std::make_shared<const ShaderProgram>(all);
+    combined.textures.clear();
+    combined.samplers.clear();
+    for (unsigned slot = 0; slot < 16; ++slot) {
+        auto resource = texture;
+        resource.key = {100 + slot, 1};
+        resource.texture.levels = {{1, 1, {std::uint8_t(slot * 2), 0, 0, 254}}};
+        sixteen.resources.push_back(resource);
+        combined.textures.push_back({slot, resource.key});
+        combined.samplers.push_back(
+            {slot, {SamplerFilter::Point, SamplerFilter::Point, SamplerFilter::Point}});
+    }
+    CHECK(renderer.Prepare(1, sixteen, prepared) && renderer.Submit(prepared, token));
+    AttachmentReadback summed;
+    CHECK(renderer.ReadTarget(1, 1, summed));
+    const auto center = (16 * 48 + 24) * 4;
+    CHECK(summed.bytes[center] == 15 && summed.bytes[center + 1] == 0 &&
+          summed.bytes[center + 3] == 127);
     auto replacement = CreateOffscreenBackendDevice(48, 32, options);
     CHECK(replacement);
     CHECK(renderer.Rebind(*replacement.device));

@@ -260,6 +260,7 @@ struct Capabilities {
     bool textureRenderTargets = false;
     bool deviceLoss = false;
 };
+inline constexpr unsigned GraphicsTextureSlots = 16;
 struct ShaderCapabilities {
     bool programs = false, hlsl = false, spirv = false;
     // First graphics profile: one color attachment, four shared register

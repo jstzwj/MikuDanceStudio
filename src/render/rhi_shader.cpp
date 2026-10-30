@@ -91,7 +91,7 @@ ShaderProgram::ShaderProgram(ShaderProgramDesc d)
     : description(Seal(std::move(d))), key(Key(description)) {
 }
 ShaderCapabilities GraphicsShaderProfile(bool hlsl, bool spirv) {
-    return {true, hlsl, spirv, 4, 4, 4, 65536};
+    return {true, hlsl, spirv, 4, GraphicsTextureSlots, GraphicsTextureSlots, 65536};
 }
 std::uint64_t ShaderConstantBytes(const ShaderPipeline& p, ShaderCapabilities caps) {
     const auto alignment = std::max(1u, caps.constantAlignment);
