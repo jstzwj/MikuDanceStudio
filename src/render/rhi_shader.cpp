@@ -257,7 +257,9 @@ ShaderResult ValidateShaderBindings(const ShaderPipeline& p, const ShaderResourc
         if (!binding(ShaderBindingKind::Sampler, s.slot))
             return Fail("sampler_binding_layout_mismatch");
         const auto& a = s.sampler;
-        if (unsigned(a.min) > 2 || unsigned(a.mag) > 2 || unsigned(a.mip) > 1 ||
+        if (unsigned(a.min) > 2 || unsigned(a.mag) > 2 || unsigned(a.mip) > 2 ||
+            (a.mip == SamplerFilter::Anisotropic && a.min != SamplerFilter::Anisotropic &&
+             a.mag != SamplerFilter::Anisotropic) ||
             unsigned(a.u) > 1 || unsigned(a.v) > 1 || a.maxAnisotropy < 1 || a.maxAnisotropy > 16)
             return Fail("shader_sampler_not_supported");
     }

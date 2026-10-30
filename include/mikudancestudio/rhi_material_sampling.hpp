@@ -27,8 +27,22 @@ inline bool ApplyMaterialSampling(RenderFrame& frame, MaterialSamplingPolicy pol
         policy != MaterialSamplingPolicy::PortableTrilinear)
         return false;
     for (auto& pass : frame.passes)
-        for (auto& draw : pass.draws)
+        for (auto& draw : pass.draws) {
             ApplyMaterialSampling(draw.pipeline, policy);
+            if (policy == MaterialSamplingPolicy::PortableTrilinear && draw.shader)
+                for (auto& binding : draw.shader->samplers) {
+                    auto& sampler = binding.sampler;
+                    const bool anisotropic = sampler.min == SamplerFilter::Anisotropic ||
+                                             sampler.mag == SamplerFilter::Anisotropic ||
+                                             sampler.mip == SamplerFilter::Anisotropic;
+                    if (anisotropic) {
+                        for (auto* filter : {&sampler.min, &sampler.mag, &sampler.mip})
+                            if (*filter == SamplerFilter::Anisotropic)
+                                *filter = SamplerFilter::Linear;
+                        sampler.maxAnisotropy = 1;
+                    }
+                }
+        }
     return true;
 }
 }

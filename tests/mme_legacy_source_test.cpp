@@ -33,6 +33,9 @@ int main() try {
     CHECK(!MmeLegacyImport("#line 9 \"comment.fx\"\n/*", program, reason, &diagnostic));
     CHECK(reason == "MME_legacy_unclosed_comment" && diagnostic.line == 9 &&
           diagnostic.file == "comment.fx" && diagnostic.column == 1);
+    CHECK(!MmeLegacyImport("#line 7 \"C:\\\\effects\\\\source.fx\"\n/*", program, reason,
+                           &diagnostic));
+    CHECK(diagnostic.file == "C:\\effects\\source.fx" && diagnostic.line == 7);
     CHECK(MmeLegacyImport(source, program, reason, &diagnostic) && diagnostic.stage.empty());
     std::vector<MmeLegacyInput> inputs;
     CHECK(MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
@@ -106,9 +109,9 @@ int main() try {
                              std::istreambuf_iterator<char>()};
     CHECK(MmeLegacyImport(shared, program, reason));
     CHECK(program.samplers.size() == 2 && program.samplers[0].semantic == "RENDERCOLORTARGET");
-    for (const auto* name :
-         {"DefaultEffectScene.fx", "NestedScene.fx", "LegacyChildMaterial.fx",
-          "LegacyLeafMaterial.fx", "LegacyMrtMaterial.fx", "LegacyMrtScene.fx"}) {
+    for (const auto* name : {"DefaultEffectScene.fx", "NestedScene.fx", "LegacyChildMaterial.fx",
+                             "LegacyLeafMaterial.fx", "LegacyMrtMaterial.fx", "LegacyMrtScene.fx",
+                             "LegacyMaterialMap.fx", "LegacyMaterialMapScene.fx"}) {
         std::ifstream fixture(std::string(MDS_TEST_SOURCE_DIR) + "/assets/effects/portable/" +
                               name);
         const std::string text{std::istreambuf_iterator<char>(fixture),
@@ -117,12 +120,37 @@ int main() try {
         if (!(scene ? MmeLegacyImportScene(text, program, reason)
                     : MmeLegacyImport(text, program, reason)))
             throw std::runtime_error(std::string(name) + ": " + reason);
+        if (std::string(name) == "LegacyMaterialMap.fx") {
+            CHECK(program.overloads.at("Scale").size() == 1);
+            CHECK(program.hlsl.find("Unused") == std::string::npos);
+            CHECK(program.hlsl.find("weights [ 2 ]") != std::string::npos);
+            CHECK(program.samplers[0].anisotropicMin && program.samplers[0].anisotropicMag &&
+                  program.samplers[0].anisotropicMip && program.samplers[0].maxAnisotropy == 16);
+            auto active = text;
+            const auto call = active.find("color=tex2D(Albedo,uv)");
+            CHECK(call != std::string::npos);
+            active.replace(call, std::string("color=tex2D(Albedo,uv)").size(),
+                           "color=Unused(Albedo,uv)");
+            rejects(active, "MME_legacy_texture_intrinsic");
+            auto invalid = text;
+            invalid.replace(invalid.find("weights[2]"), 10, "weights[257]");
+            rejects(invalid, "MME_legacy_array_extent");
+            invalid = text;
+            invalid.replace(invalid.find("MaxAnisotropy=16"), 16, "MaxAnisotropy=17");
+            rejects(invalid, "MME_legacy_sampler_anisotropy");
+            invalid = text;
+            invalid.erase(invalid.find("MaxAnisotropy=16;"), 17);
+            rejects(invalid, "MME_legacy_sampler_anisotropy_missing");
+        }
         for (const auto& pass : program.passes) {
             std::vector<unsigned> outputs;
             CHECK(MmeLegacyShader(program, pass, hlsl, inputs, reason, &outputs));
             const bool mrt = std::string(name) == "LegacyMrtMaterial.fx" ||
                              (std::string(name) == "LegacyMrtScene.fx" && pass.name == "Split");
-            CHECK(outputs == (mrt ? std::vector<unsigned>{4, 4} : std::vector<unsigned>{4}));
+            CHECK(outputs == (std::string(name) == "LegacyMaterialMap.fx"
+                                  ? std::vector<unsigned>{4, 4, 4, 4}
+                              : mrt ? std::vector<unsigned>{4, 4}
+                                    : std::vector<unsigned>{4}));
             if (mrt) {
                 auto invalid = program;
                 if (invalid.structures.count("Gbuffer"))

@@ -154,6 +154,26 @@ int main() try {
     CHECK(!MmePortableExtent(relative, 1, 1, width, height, reason));
     relative.viewportRatio[0] = std::numeric_limits<float>::quiet_NaN();
     CHECK(!MmePortableExtent(relative, 55, 37, width, height, reason));
+    MmePortableEffect material;
+    material.targets = {{"B", MmePortableFormat::Rgba8, false, 1}};
+    material.passes = {{"T", "A"}, {"T", "B"}};
+    material.script = {{K::ColorTarget, "", 0},  {K::ColorTarget, "B", 1}, {K::Pass, "", 0},
+                       {K::ColorTarget, "B", 0}, {K::ColorTarget, "", 1},  {K::Pass, "", 1}};
+    CHECK(MmePortableMaterialLayout(material, reason) && material.steps.size() == 2 &&
+          material.steps[0].colors == (std::vector<std::string>{"DrawColor", "B"}) &&
+          material.steps[1].colors == (std::vector<std::string>{"B"}));
+    const auto previous = material.steps;
+    material.script[0].parameter = "missing";
+    CHECK(!MmePortableMaterialLayout(material, reason) && material.steps.size() == previous.size());
+    material.script[0].parameter = "B";
+    CHECK(!MmePortableMaterialLayout(material, reason) &&
+          reason == "MME_material_script_output_layout");
+    material.script[0].parameter.clear();
+    material.passes[0].sampled = {"B"};
+    CHECK(!MmePortableMaterialLayout(material, reason) && reason == "MME_material_script_feedback");
+    material.passes[0].sampled.clear();
+    material.script.push_back({K::Capture});
+    CHECK(!MmePortableMaterialLayout(material, reason) && reason == "MME_material_script_command");
     relative.viewportRatio[0] = -1;
     CHECK(!MmePortableExtent(relative, 55, 37, width, height, reason));
     relative.viewportRatio[0] = 1;

@@ -36,8 +36,15 @@ void Locate(const std::string& source, std::size_t offset, MmeLegacyDiagnostic& 
         if ((directive >> marker) && marker == "#line" && (directive >> mapped) && mapped) {
             d.line = mapped;
             const auto quote = line.find('"'), last = line.rfind('"');
-            if (quote != std::string::npos && last > quote)
-                d.file = line.substr(quote + 1, last - quote - 1);
+            if (quote != std::string::npos && last > quote) {
+                d.file.clear();
+                for (auto i = quote + 1; i < last; ++i) {
+                    if (line[i] == '\\' && i + 1 < last &&
+                        (line[i + 1] == '\\' || line[i + 1] == '"'))
+                        ++i;
+                    d.file += line[i];
+                }
+            }
         } else
             ++d.line;
         start = end + 1;
@@ -267,8 +274,6 @@ public:
         while (!Eat("}")) {
             const auto type = Name(), member = Name(), semantic = Semantic();
             Need(";");
-            if (semantic.empty())
-                Fail("struct_semantic");
             fields.push_back({type, member, semantic});
         }
         Need(";");
@@ -282,8 +287,8 @@ public:
         Unique(technique);
         std::map<std::string, std::string> annotations;
         Annotations(annotations);
-        if (!result.scene && annotations.count("SCRIPT"))
-            Fail("material_technique_script");
+        // The source importer retains shader declarations. Production export
+        // separately validates the actual parsed SAS material command table.
         Need("{");
         while (!Eat("}")) {
             Need("pass");
@@ -357,20 +362,15 @@ public:
                 Need(")");
             }
             f.semantic = Semantic();
+            f.signature = Join(t, begin, p);
             f.body = Body();
+            if (!result.functions.count(name))
+                Unique(name);
             if (!result.functions.emplace(name, f).second)
-                Fail("overloaded_function");
-            code += Join(t, begin, p);
+                result.overloads[name].push_back(std::move(f));
             return;
         }
         Unique(name);
-        if (isStatic || isConst) {
-            if (!isConst)
-                Fail("static_initializer");
-            Initializer();
-            code += Join(t, begin, p);
-            return;
-        }
         unsigned elements = 1;
         if (Eat("[")) {
             const auto n = Take();
@@ -381,6 +381,16 @@ public:
             if (!elements || elements > 256)
                 Fail("array_extent");
             Need("]");
+        }
+        if (isStatic || isConst) {
+            if (!isConst)
+                Fail("static_initializer");
+            Initializer();
+            // FX const declarations are immutable shader values. Modern
+            // HLSL otherwise reflects a non-static global into $Globals,
+            // outside the explicit per-instance parameter ABI.
+            code += (isStatic ? "" : "static ") + Join(t, begin, p);
+            return;
         }
         const auto semantic = Semantic();
         std::map<std::string, std::string> annotations;
@@ -435,10 +445,11 @@ public:
                 Need("=");
                 auto v = Take();
                 if (state == "TEXTURE") {
-                    if (v != "<")
+                    if (v == "<") {
+                        v = Name();
+                        Need(">");
+                    } else if (!Identifier(v))
                         Fail("sampler_texture", p - 1);
-                    v = Name();
-                    Need(">");
                 } else
                     v = Upper(v);
                 Need(";");
@@ -450,15 +461,31 @@ public:
             states.erase("TEXTURE");
             for (auto field : {"MINFILTER", "MAGFILTER", "MIPFILTER"}) {
                 auto v = states[field];
-                if (v != "LINEAR" && v != "POINT" &&
+                if (v != "LINEAR" && v != "POINT" && v != "ANISOTROPIC" &&
                     !(std::string(field) == "MIPFILTER" && v == "NONE"))
                     Fail("sampler_filter");
                 (std::string(field) == "MINFILTER"   ? s.linearMin
                  : std::string(field) == "MAGFILTER" ? s.linearMag
-                                                     : s.linearMip) = v == "LINEAR";
+                                                     : s.linearMip) = v != "POINT" && v != "NONE";
+                (std::string(field) == "MINFILTER"   ? s.anisotropicMin
+                 : std::string(field) == "MAGFILTER" ? s.anisotropicMag
+                                                     : s.anisotropicMip) = v == "ANISOTROPIC";
                 if (std::string(field) == "MIPFILTER")
                     s.mipNone = v == "NONE";
                 states.erase(field);
+            }
+            if ((s.anisotropicMin || s.anisotropicMag || s.anisotropicMip) &&
+                !states.count("MAXANISOTROPY"))
+                Fail("sampler_anisotropy_missing");
+            if (states.count("MAXANISOTROPY")) {
+                const auto v = states.at("MAXANISOTROPY");
+                if (v.empty() || v.size() > 2 ||
+                    !std::all_of(v.begin(), v.end(),
+                                 [](unsigned char c) { return std::isdigit(c); }) ||
+                    std::stoul(v) < 1 || std::stoul(v) > 16)
+                    Fail("sampler_anisotropy");
+                s.maxAnisotropy = unsigned(std::stoul(v));
+                states.erase("MAXANISOTROPY");
             }
             for (auto field : {"ADDRESSU", "ADDRESSV"}) {
                 auto v = states[field];
@@ -528,7 +555,35 @@ public:
                 s.semantic != "RENDERCOLORTARGET" && s.semantic != "OFFSCREENRENDERTARGET")
                 Fail("sampler_filter");
         }
-        const auto tokens = Lex(code);
+        // FX9 libraries contain unused sampler-parameter helpers. Emit the
+        // conservative reachable function graph for all declared pass entries;
+        // never invent texture/state pairs for a reachable sampler parameter.
+        std::set<std::string> visited;
+        std::vector<std::string> pending;
+        for (const auto& pass : result.passes) {
+            pending.push_back(pass.vertex);
+            pending.push_back(pass.pixel);
+        }
+        for (const auto& token : Lex(code))
+            if (result.functions.count(token))
+                pending.push_back(token);
+        std::string prototypes, definitions;
+        while (!pending.empty()) {
+            const auto name = pending.back();
+            pending.pop_back();
+            if (!visited.insert(name).second || !result.functions.count(name))
+                continue;
+            auto functions = result.overloads[name];
+            functions.insert(functions.begin(), result.functions.at(name));
+            for (const auto& f : functions) {
+                prototypes += f.signature + ";\n";
+                definitions += f.signature + f.body + "\n";
+                for (const auto& token : Lex(f.body))
+                    if (result.functions.count(token))
+                        pending.push_back(token);
+            }
+        }
+        const auto tokens = Lex(code + prototypes + definitions);
         code.clear();
         for (std::size_t i = 0; i < tokens.size(); ++i) {
             const auto& token = tokens[i];
@@ -639,6 +694,11 @@ bool MmeLegacyShader(const MmeLegacyProgram& program, const MmeLegacyPass& pass,
     const auto vs = program.functions.find(pass.vertex), ps = program.functions.find(pass.pixel);
     if (vs == program.functions.end() || ps == program.functions.end())
         return fail("entry_not_found");
+    for (const auto& entry : {pass.vertex, pass.pixel}) {
+        const auto overload = program.overloads.find(entry);
+        if (overload != program.overloads.end() && !overload->second.empty())
+            return fail("overloaded_entry");
+    }
     using Field = MmeLegacyProgram::Function::Field;
     struct Value {
         Field field;
@@ -842,11 +902,16 @@ std::vector<unsigned> MmeLegacySamplers(const MmeLegacyProgram& program, const M
         const auto function = program.functions.find(name);
         if (function == program.functions.end())
             continue;
-        for (const auto& token : Lex(function->second.body)) {
-            identifiers.insert(token);
-            if (program.functions.count(token))
-                pending.push_back(token);
-        }
+        auto functions = std::vector<MmeLegacyProgram::Function>{function->second};
+        const auto overloads = program.overloads.find(name);
+        if (overloads != program.overloads.end())
+            functions.insert(functions.end(), overloads->second.begin(), overloads->second.end());
+        for (const auto& f : functions)
+            for (const auto& token : Lex(f.body)) {
+                identifiers.insert(token);
+                if (program.functions.count(token))
+                    pending.push_back(token);
+            }
     }
     std::vector<unsigned> slots;
     for (unsigned slot = 0; slot < program.samplers.size(); ++slot)

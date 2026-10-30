@@ -21,6 +21,10 @@ struct MmeLegacySampler {
     std::string name, texture, semantic;
     bool linearMin = true, linearMag = true, linearMip = true;
     bool clampU = false, clampV = false, mipNone = false;
+    // Preserve the request; the portable material profile uses trilinear for
+    // native anisotropy, as it does for built-in material samplers.
+    unsigned maxAnisotropy = 1;
+    bool anisotropicMin = false, anisotropicMag = false, anisotropicMip = false;
 };
 struct MmeLegacyPass {
     std::string technique, name, vertex, pixel;
@@ -51,10 +55,11 @@ struct MmeLegacyProgram {
         };
         std::string result, name, semantic;
         std::vector<Field> parameters;
-        std::string body;
+        std::string body, signature;
     };
     std::map<std::string, std::vector<Function::Field>> structures;
     std::map<std::string, Function> functions;
+    std::map<std::string, std::vector<Function>> overloads;
 };
 bool MmeLegacyImport(const std::string& expandedSource, MmeLegacyProgram&, std::string& reason,
                      MmeLegacyDiagnostic* diagnostic = nullptr);

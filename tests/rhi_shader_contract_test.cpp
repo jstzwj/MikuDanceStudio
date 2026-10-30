@@ -85,6 +85,14 @@ int main() {
     sampler.min = sampler.mag = sampler.mip = SamplerFilter::Point;
     bindings.samplers = {{0, sampler}};
     CHECK(d.BindShaderResources(bindings) && d.Draw(draw));
+    auto anisotropic = bindings;
+    auto& filter = anisotropic.samplers[0].sampler;
+    filter.min = filter.mag = filter.mip = SamplerFilter::Anisotropic;
+    filter.maxAnisotropy = 16;
+    CHECK(d.BindShaderResources(anisotropic));
+    filter.min = filter.mag = SamplerFilter::Linear;
+    CHECK(!d.BindShaderResources(anisotropic)); // Anisotropic mip needs a texel footprint.
+    CHECK(d.BindShaderResources(bindings));
     auto wrong = bindings;
     wrong.constants[0].bytes.resize(64);
     CHECK(!d.BindShaderResources(wrong) && !d.Draw(draw));

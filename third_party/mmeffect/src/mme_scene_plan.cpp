@@ -27,6 +27,57 @@ bool MmePortableExtent(const MmePortableTarget& target, unsigned viewportWidth,
     reason.clear();
     return true;
 }
+bool MmePortableMaterialLayout(MmePortableEffect& effect, std::string& reason) {
+    const auto fail = [&](const char* text) {
+        reason = text;
+        return false;
+    };
+    if (effect.post || effect.script.empty() || effect.passes.empty())
+        return fail("MME_material_script_missing");
+    std::set<std::string> targets;
+    for (const auto& target : effect.targets)
+        if (target.depth || !target.identity || target.name == "DrawColor" ||
+            !targets.insert(target.name).second)
+            return fail("MME_material_script_target");
+    std::array<std::string, 4> colors{"DrawColor", "", "", ""};
+    std::vector<MmePortableStep> steps;
+    for (const auto& command : effect.script) {
+        if (command.kind == MmePortableCommand::Kind::ColorTarget) {
+            if (command.value < 0 || command.value > 3 ||
+                (!command.parameter.empty() && !targets.count(command.parameter)))
+                return fail("MME_material_script_target");
+            colors[command.value] =
+                command.parameter.empty() && command.value == 0 ? "DrawColor" : command.parameter;
+        } else if (command.kind == MmePortableCommand::Kind::Pass) {
+            if (command.value < 0 || unsigned(command.value) >= effect.passes.size() ||
+                steps.size() >= 32)
+                return fail("MME_material_script_pass");
+            MmePortableStep step;
+            step.pass = unsigned(command.value);
+            bool gap = false;
+            std::set<std::string> unique;
+            for (const auto& name : colors) {
+                if (name.empty()) {
+                    gap = true;
+                    continue;
+                }
+                if (gap || !unique.insert(name).second)
+                    return fail("MME_material_script_output_layout");
+                step.colors.push_back(name);
+            }
+            for (const auto& sampled : effect.passes[step.pass].sampled)
+                if (unique.count(sampled))
+                    return fail("MME_material_script_feedback");
+            steps.push_back(std::move(step));
+        } else
+            return fail("MME_material_script_command");
+    }
+    if (steps.empty())
+        return fail("MME_material_script_missing");
+    effect.steps = std::move(steps);
+    reason.clear();
+    return true;
+}
 bool MmePortableSceneLayout(MmePortableEffect& effect, std::string& reason) {
     const auto fail = [&](const char* r) {
         reason = r;

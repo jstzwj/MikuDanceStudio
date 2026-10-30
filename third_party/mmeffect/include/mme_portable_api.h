@@ -125,6 +125,10 @@ bool MmePortablePostLayout(MmePortableEffect&, std::string& reason);
 // Pure CPU execution of the exported SAS command table. No native state or
 // pool is mutated. Bounds are checked before any graphics work is submitted.
 bool MmePortableSceneLayout(MmePortableEffect&, std::string& reason);
+// Object scripts: ordered Pass and RenderColorTarget0..3 only. DrawColor names
+// the caller's slot zero; all other outputs must name exported shared targets.
+// The caller must provide initialized attachments; this never invents clears.
+bool MmePortableMaterialLayout(MmePortableEffect&, std::string& reason);
 bool MmePortableExtent(const MmePortableTarget&, unsigned viewportWidth, unsigned viewportHeight,
                        unsigned& width, unsigned& height, std::string& reason);
 bool MmePortableEffects(std::vector<MmePortableEffect>&, std::string& reason, unsigned turn = 0);
@@ -138,3 +142,5 @@ struct SasEffect;
 }
 // Export the original parsed command table without executing or mutating it.
 bool MmePortableExportScene(mme::SasEffect&, MmePortableEffect&, std::string& reason);
+bool MmePortableExportMaterial(mme::SasEffect&, unsigned technique, MmePortableEffect&,
+                               std::string& reason);
