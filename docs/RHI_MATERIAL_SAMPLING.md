@@ -79,6 +79,25 @@ PMX failure. The portable Vulkan PMX comparison is exact on this workstation
 for both shadow modes and widths 128/160/128; native mode remains a different
 image and is still tracked separately.
 
+## Lit-material specular regression
+
+The DX9 recovery rerun on 2026-10-30 exposed a separate Vulkan build error:
+SPIR-V model pixel compilation omitted `MDS_MODEL_SPECULAR=1`, although the
+vertex shader emitted COLOR1 and both Direct3D backends compiled the lit pixel
+variant. This discarded specular highlights in ordinary model draws, including
+untextured materials beside imported MME materials. On the local original
+`Miku_Hatsune.pmd`, Vulkan differed from DX11 by up to 69 channel bytes at 197
+pixels, with alpha unchanged. Compiling the same specular variant restores
+byte-exact cross-backend output in that hidden editor scenario.
+
+`rhi_material_specular` uses public generated geometry and textures to exercise
+textured/untextured materials with specular enabled/disabled. A black diffuse
+base isolates the directional highlight. Its three API outputs, alpha, final
+copy and repeated submissions must match byte-for-byte; the analytical highlight
+allows one UNORM step for normalization/pow rounding. The four cases also run
+before the existing 720-case sampling matrix. No existing image bounds were
+changed. Native anisotropic/mip differences remain independently tracked.
+
 ## Common final color and presentation
 
 `RenderFrame::finalColor` selects a stored, initialized RGBA8 target with
