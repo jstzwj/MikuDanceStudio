@@ -21,6 +21,17 @@ only bindings retained by the compiler. Identity numbers are report-local,
 never native addresses. Depth placeholder textures are distinguished from the
 resource's requested depth surface format.
 
+The v2 report additionally records numeric viewport ratios, automatic source
+import status, and a shader row for every selected technique/pass in each effect.
+Successful source import is followed by wrapper generation and actual VS/PS SM5
+compilation. First-stage failures mark later shader work `blocked-by-source`;
+parameters/resources/states are explicitly `unassessed`, not assumed supported.
+Compilation results are independent of Vulkan execution and whole-frame acceptance.
+The public ordinary MRT scene tests also exercise the successful reporting path.
+The current local root reports `MME_legacy_syntax`; the MaterialMap child reports
+`MME_legacy_sampler_texture`. These are the first observed source blockers,
+not an exhaustive list of Ray incompatibilities.
+
 Local x64 DX9 HAL run on 2026-10-30 passed both gates. The screen shader uses
 pixel sampler registers through s12: **13 slots**, requiring expansion beyond
 the previous four-slot RHI ABI. A 16-slot graphics profile covers the native

@@ -17,6 +17,12 @@ They contain no external model or texture assets.
 - `LegacyScene.fx` / `LegacySharedMaterial.fx`: an ordinary SAS scene script
   publishes a shared mask, captures the scene and grades/copies the result;
   the separate material samples the mask during `ScriptExternal`.
+- `LegacyMrtMaterial.fx` / `LegacyMrtScene.fx`: assign the material to a model
+  and the scene to one accessory. Ordinary FX9 COLOR0/1 outputs feed float
+  captures, half-size float MRT, quarter-size HDR composition, tone mapping and
+  an exact final copy. Both files import directly, without a custom profile.
+  Supported material editing uses the shared renderer; captured builtin outline
+  draws retain DX9 fallback. See [sizing and scope](../../../docs/RHI_MME_LEGACY_MRT.md).
 - `DefaultEffectScene.fx` / `LegacyChildMaterial.fx` / `LegacyLeafMaterial.fx`:
   assign the first to a scene accessory and the leaf to a model. The scene's
   ordered `DefaultEffect` rows select a child material for PMD/PMX filenames;

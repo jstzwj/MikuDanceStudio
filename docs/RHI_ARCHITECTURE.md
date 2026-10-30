@@ -38,6 +38,10 @@ native Ray inventory. See [automatic scenes and sharing](RHI_MME_SHARED_SCENES.m
 [native Ray requirements](RHI_MME_NATIVE_REQUIREMENTS.md). Bounded `DefaultEffect`
 child turns, ordered nested scene carriers and explicit RGBA8 render-target mip
 generation now enter that shared frame; see [subeffects and mip timing](RHI_MME_SUBEFFECTS.md).
+Ordinary FX9 shaders now lower ordered MRT outputs, float scene captures and
+viewport-relative intermediate targets without custom profiles; see
+[FX9 MRT/HDR and relative sizing](RHI_MME_LEGACY_MRT.md) for supported geometry,
+native viewport semantics, comparison gates and remaining Ray blockers.
 Unmodified Ray still uses same-frame DX9 fallback. Camera/geometry matrix
 variants, camera/light vectors, native draw names and once-per-frame MME clocks
 now have CPU providers; see [standard parameters](RHI_MME_STANDARDS.md).

@@ -1152,7 +1152,7 @@ int main(int argc, char** argv) try {
                                                    0, FALSE, &oracleColor, nullptr)));
         CHECK(SUCCEEDED(device->CreateDepthStencilSurface(
             160, 120, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, FALSE, &oracleDepth, nullptr)));
-        const D3DVIEWPORT9 oracleViewport{0, 0, 160, 120, 0, 1};
+        D3DVIEWPORT9 oracleViewport{0, 0, 160, 120, 0, 1};
         const auto defaultScene =
             (sourceRoot / L"assets/effects/portable/DefaultEffectScene.fx").string();
         const auto nestedScene = (sourceRoot / L"assets/effects/portable/NestedScene.fx").string();
@@ -1162,18 +1162,38 @@ int main(int argc, char** argv) try {
                                      leafMaterial));
         CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, defaultScene));
         const auto oracle = [&](const char* label) {
+            const auto width = unsigned(app->ViewportRect().right),
+                       height = unsigned(app->ViewportRect().bottom);
+            if (oracleViewport.Width != width || oracleViewport.Height != height) {
+                // These private oracle surfaces replace the native logical
+                // target. Drop the snapshot family just as host target/device
+                // replacement does; otherwise its grow-only cache rescales an
+                // old larger snapshot when this isolated oracle shrinks again.
+                ::mme::g_context->ReleaseMainSnapshotCache();
+                CHECK(SUCCEEDED(device->SetDepthStencilSurface(nullptr)) &&
+                      SUCCEEDED(device->SetRenderTarget(0, savedColor.Get())));
+                oracleColor.Reset();
+                oracleDepth.Reset();
+                CHECK(SUCCEEDED(device->CreateRenderTarget(width, height, D3DFMT_A8R8G8B8,
+                                                           D3DMULTISAMPLE_NONE, 0, FALSE,
+                                                           &oracleColor, nullptr)));
+                CHECK(SUCCEEDED(device->CreateDepthStencilSurface(width, height, D3DFMT_D24S8,
+                                                                  D3DMULTISAMPLE_NONE, 0, FALSE,
+                                                                  &oracleDepth, nullptr)));
+                oracleViewport = {0, 0, width, height, 0, 1};
+            }
             CHECK(app->ViewportRenderer().Select(*app, Backend::D3D9, false));
             CHECK(SUCCEEDED(device->SetRenderTarget(0, oracleColor.Get())) &&
                   SUCCEEDED(device->SetDepthStencilSurface(oracleDepth.Get())) &&
                   SUCCEEDED(device->SetViewport(&oracleViewport)));
             frame(false);
             const auto bgra = legacyImage();
-            CHECK(bgra.size() == 160 * 120 * 4);
+            CHECK(bgra.size() == width * height * 4);
             CHECK(app->ViewportRenderer().Select(*app, api, false));
             frame(runtimeEffects);
             if (runtimeEffects) {
                 const auto& rgba = image();
-                CHECK(rgba.width == 160 && rgba.height == 120);
+                CHECK(rgba.width == width && rgba.height == height);
                 unsigned maximum = 0;
                 for (std::size_t n = 0; n < bgra.size(); n += 4)
                     for (unsigned c = 0; c < 4; ++c)
@@ -1315,6 +1335,67 @@ int main(int argc, char** argv) try {
         oracle("nested scene removal");
         if (runtimeEffects)
             CHECK(image().pixels == childBaseline);
+        const auto mrtMaterial =
+            (sourceRoot / L"assets/effects/portable/LegacyMrtMaterial.fx").string();
+        const auto mrtScene = (sourceRoot / L"assets/effects/portable/LegacyMrtScene.fx").string();
+        CHECK(
+            ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, mrtMaterial));
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, mrtScene));
+        const auto mrtEditMode = app->EditMode();
+        const auto beforeMrtOutline = app->ViewportRenderer().Statistics();
+        frame(false); // Native outline has a different vertex layout and no MRT shader yet.
+        CHECK(app->ViewportRenderer().Statistics().uploads == beforeMrtOutline.uploads &&
+              app->ViewportRenderer().Statistics().submissions == beforeMrtOutline.submissions);
+        app->EditMode() = ViewportEditMode::Bone; // A supported material-only editing frame.
+        oracle("ordinary FX9 MRT/HDR relative targets");
+        const auto mrtBaseline = image().pixels;
+        std::vector<MmePortableEffect> mrtEffects;
+        CHECK(MmePortableEffects(mrtEffects, portableReason));
+        const auto mrt = std::find_if(mrtEffects.begin(), mrtEffects.end(),
+                                      [](const auto& e) { return e.post; });
+        CHECK(mrt != mrtEffects.end() && mrt->profile == "legacy-scene-v1" &&
+              mrt->passes[0].colors.size() == 2);
+        const auto half = std::find_if(mrt->targets.begin(), mrt->targets.end(),
+                                       [](const auto& t) { return t.name == "HalfA"; });
+        CHECK(half != mrt->targets.end() && half->relative &&
+              half->viewportRatio == (std::array<float, 2>{.5f, .5f}) &&
+              half->format == MmePortableFormat::Rgba16Float);
+        if (runtimeEffects) {
+            frame(true);
+            CHECK(image().pixels == mrtBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == mrtBaseline);
+        }
+        app->ViewportRect() = {0, 0, 163, 123};
+        oracle("ordinary MRT odd viewport resize");
+        app->ViewportRect() = {0, 0, 160, 120};
+        oracle("ordinary MRT viewport restore");
+        if (runtimeEffects)
+            CHECK(image().pixels == mrtBaseline);
+        for (const auto selected : {Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+            if (!BackendAvailable(selected))
+                continue;
+            CHECK(app->ViewportRenderer().Select(*app, selected, false));
+            const bool supported = runtimeShaderSupport.at(selected);
+            frame(supported);
+            if (supported && runtimeEffects)
+                CHECK(image().pixels == mrtBaseline);
+        }
+        // A single-output material cannot fill two capture attachments. The
+        // whole frame falls back before any RHI upload, then recovers in place.
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     leafMaterial));
+        const auto beforeMrtMismatch = app->ViewportRenderer().Statistics();
+        frame(false);
+        CHECK(app->ViewportRenderer().Statistics().uploads == beforeMrtMismatch.uploads &&
+              app->ViewportRenderer().Statistics().submissions == beforeMrtMismatch.submissions);
+        CHECK(
+            ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1, mrtMaterial));
+        frame(runtimeEffects);
+        if (runtimeEffects)
+            CHECK(image().pixels == mrtBaseline);
+        app->EditMode() = mrtEditMode;
         CHECK(SUCCEEDED(device->SetRenderTarget(0, savedColor.Get())) &&
               SUCCEEDED(device->SetDepthStencilSurface(savedDepth.Get())) &&
               SUCCEEDED(device->SetViewport(&savedViewport)));
