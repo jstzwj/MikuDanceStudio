@@ -147,8 +147,16 @@ public:
                         Fail("annotation");
                     value += next.substr(1, next.size() - 2);
                 }
-            } else if (type != "bool" && type != "int" && type != "float")
-                Fail("annotation");
+            } else {
+                if (type != "bool" && type != "int" && type != "float" && type != "float2" &&
+                    type != "float3" && type != "float4")
+                    Fail("annotation");
+                while (Peek() != ";") {
+                    if (Peek().empty() || Peek() == ">")
+                        Fail("annotation");
+                    value += Take();
+                }
+            }
             Need(";");
             if (!values.emplace(name, value).second)
                 Fail("duplicate_annotation");
@@ -332,19 +340,27 @@ public:
             return;
         }
         if (type == "texture" || type == "texture2D") {
-            const bool target =
-                semantic == "RENDERCOLORTARGET" || semantic == "RENDERDEPTHSTENCILTARGET";
+            const bool target = semantic == "RENDERCOLORTARGET" ||
+                                semantic == "RENDERDEPTHSTENCILTARGET" ||
+                                semantic == "OFFSCREENRENDERTARGET";
             const bool sharedReference =
                 shared && annotations.empty() && (target || semantic.empty());
             const bool upload = annotations.empty() &&
                                 (semantic == "MATERIALTEXTURE" || semantic == "MATERIALSPHEREMAP" ||
                                  semantic == "MATERIALTOONTEXTURE");
             if (elements != 1 ||
-                !(result.scene ? (target || sharedReference) : (upload || sharedReference)))
+                !(result.scene ? (target || sharedReference)
+                               : (upload || sharedReference ||
+                                  (target && semantic == "OFFSCREENRENDERTARGET"))))
                 Fail("texture_semantic");
-            if (result.scene && target && !(shared && annotations.empty()) &&
-                (annotations.size() != 1 || !annotations.count("FORMAT")))
-                Fail("scene_target_annotations");
+            if (target && !annotations.empty()) {
+                static const std::set<std::string> supported = {
+                    "FORMAT",     "MIPLEVELS", "LEVELS", "DEFAULTEFFECT", "CLEARCOLOR",
+                    "CLEARDEPTH", "WIDTH",     "HEIGHT", "VIEWPORTRATIO"};
+                for (const auto& a : annotations)
+                    if (!supported.count(a.first))
+                        Fail("scene_target_annotations");
+            }
             textures.emplace(name, semantic);
             result.textures.push_back({name, semantic, shared, annotations});
             Need(";");
@@ -454,7 +470,7 @@ public:
                 Fail("sampler_texture");
             s.semantic = textures.at(s.texture);
             if (s.mipNone && !result.scene && !s.semantic.empty() &&
-                s.semantic != "RENDERCOLORTARGET")
+                s.semantic != "RENDERCOLORTARGET" && s.semantic != "OFFSCREENRENDERTARGET")
                 Fail("sampler_filter");
         }
         const auto tokens = Lex(code);

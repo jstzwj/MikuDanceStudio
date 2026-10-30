@@ -27,6 +27,8 @@ struct MmePortableTarget {
     std::uint64_t identity = 0;
     // Zero means the current frame viewport extent.
     unsigned width = 0, height = 0;
+    // Native offscreen autogen chain (resolved from the current RHI extent).
+    bool mipmapped = false, offscreen = false;
 };
 struct MmePortableParameter {
     std::string name, semantic;
@@ -74,6 +76,7 @@ struct MmePortableStep {
 struct MmePortableEffect {
     unsigned long long object = 0;
     int subset = -1;
+    unsigned turn = 0;
     bool post = false;
     std::shared_ptr<const std::string> source;
     std::shared_ptr<const std::string> legacySource, modernSource;
@@ -94,6 +97,15 @@ struct MmePortableEffect {
     std::array<float, 4> scriptClearColor{};
     float scriptClearDepth = 1;
 };
+struct MmePortableTurn {
+    unsigned id = 0;
+    MmePortableTarget target;
+    std::array<float, 4> clearColor{};
+    float clearDepth = 1;
+    std::vector<MmePortableEffect> effects;
+};
+// In native discovery order; actual rendering consumes this list in reverse.
+bool MmePortableTurns(std::vector<MmePortableTurn>&, std::string& reason);
 // CPU-only host refresh and the original ordered control-object assignment walk.
 // Never enters a scene, binds native render targets or executes SAS draws.
 void MmePortablePrepareParameters();
@@ -109,11 +121,11 @@ bool MmePortablePostLayout(MmePortableEffect&, std::string& reason);
 // Pure CPU execution of the exported SAS command table. No native state or
 // pool is mutated. Bounds are checked before any graphics work is submitted.
 bool MmePortableSceneLayout(MmePortableEffect&, std::string& reason);
-bool MmePortableEffects(std::vector<MmePortableEffect>&, std::string& reason);
+bool MmePortableEffects(std::vector<MmePortableEffect>&, std::string& reason, unsigned turn = 0);
 // 0: native technique selection forwards the ordinary draw, 1: portable
 // material/pass, 2: scene carrier (no object draw), -1: unsupported assignment.
 int MmePortableDraw(unsigned long long object, int subset, int mode, unsigned useFlags,
-                    MmePortableEffect&, std::string& reason);
+                    MmePortableEffect&, std::string& reason, unsigned turn = 0);
 
 namespace mme {
 struct SasEffect;

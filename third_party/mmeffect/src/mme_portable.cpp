@@ -19,6 +19,13 @@
 #include <cstring>
 #include <sstream>
 namespace {
+std::vector<mme::MmeRenderPassItem> portableTurnPlan;
+const mme::MmeRenderPassItem* FindTurn(unsigned turn) {
+    for (const auto& item : portableTurnPlan)
+        if (item.turnId == turn)
+            return &item;
+    return nullptr;
+}
 std::string Text(ID3DXEffect* fx, D3DXHANDLE handle, const char* annotation = nullptr) {
     const char* value = nullptr;
     if (annotation)
@@ -187,7 +194,8 @@ bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePorta
             auto& query = *static_cast<Find*>(data);
             for (auto& resource : sas->resources)
                 if (resource.texture == query.texture && resource.portableIdentity &&
-                    (resource.semanticId == 0x26 || resource.semanticId == 0x27)) {
+                    (resource.semanticId == 0x26 || resource.semanticId == 0x27 ||
+                     resource.semanticId == 0x2E)) {
                     query.resource = &resource;
                     query.publisher = sas->effect;
                     return false;
@@ -202,38 +210,58 @@ bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePorta
     }
     const auto& resource = *query.resource;
     D3DXPARAMETER_DESC publication{};
-    if (FAILED(query.publisher->GetParameterDesc(resource.param, &publication)) ||
-        publication.Annotations != 1 ||
-        !query.publisher->GetAnnotationByName(resource.param, "Format")) {
-        reason = "MME_shared_target_publisher_extent_or_annotations";
+    static const std::set<std::string> annotations = {
+        "FORMAT",     "MIPLEVELS", "LEVELS", "DEFAULTEFFECT", "CLEARCOLOR",
+        "CLEARDEPTH", "WIDTH",     "HEIGHT", "VIEWPORTRATIO"};
+    if (FAILED(query.publisher->GetParameterDesc(resource.param, &publication))) {
+        reason = "MME_shared_target_publisher_description";
         return false;
+    }
+    for (unsigned i = 0; i < publication.Annotations; ++i) {
+        D3DXPARAMETER_DESC a{};
+        if (FAILED(query.publisher->GetParameterDesc(
+                query.publisher->GetAnnotation(resource.param, i), &a)) ||
+            !a.Name)
+            return false;
+        std::string name = a.Name;
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char c) { return char(std::toupper(c)); });
+        if (!annotations.count(name)) {
+            reason = "MME_shared_target_publisher_extent_or_annotations";
+            return false;
+        }
     }
     const bool depth = resource.semanticId == 0x27;
     if (resource.textureType != D3DXPT_TEXTURE && resource.textureType != D3DXPT_TEXTURE2D) {
         reason = "MME_target_dimension_not_supported";
         return false;
     }
-    if (resource.texMips != 1 || resource.reqWidth <= 0 || resource.reqHeight <= 0 ||
+    const bool mipmapped = resource.texMips <= 0;
+    if ((resource.texMips > 1) ||
+        (mipmapped && (resource.semanticId != 0x2E || resource.format != D3DFMT_A8R8G8B8)) ||
+        resource.reqWidth <= 0 || resource.reqHeight <= 0 ||
         (depth ? resource.format != D3DFMT_D24S8
                : resource.format != D3DFMT_A8R8G8B8 && resource.format != D3DFMT_A16B16G16R16F)) {
         reason = "MME_target_format_or_mips_not_supported";
         return false;
     }
-    // First imported profile is viewport-sized. Native dimensions are observed,
-    // but rebuilt against the current RHI viewport by the frame assembler.
+    // Viewport-relative targets follow the current RHI extent; explicit paired
+    // Width/Height annotations retain their native fixed extent.
     if (resource.hasViewportRatio &&
         (resource.viewportRatio[0] != 1 || resource.viewportRatio[1] != 1)) {
         reason = "MME_target_ratio_not_supported";
         return false;
     }
     if (!declaration.semantic.empty() &&
-        declaration.semantic != (depth ? "RENDERDEPTHSTENCILTARGET" : "RENDERCOLORTARGET")) {
+        declaration.semantic != (depth                         ? "RENDERDEPTHSTENCILTARGET"
+                                 : resource.semanticId == 0x2E ? "OFFSCREENRENDERTARGET"
+                                                               : "RENDERCOLORTARGET")) {
         reason = "MME_shared_target_semantic_mismatch";
         return false;
     }
-    if (!declaration.annotations.empty()) {
+    if (declaration.annotations.count("FORMAT")) {
         const auto format = declaration.annotations.find("FORMAT");
-        if (declaration.annotations.size() != 1 || format == declaration.annotations.end() ||
+        if (format == declaration.annotations.end() ||
             format->second != (depth                                     ? "D24S8"
                                : resource.format == D3DFMT_A16B16G16R16F ? "A16B16G16R16F"
                                                                          : "A8R8G8B8")) {
@@ -245,6 +273,21 @@ bool ExportTarget(ID3DXEffect* fx, const MmeLegacyTexture& declaration, MmePorta
            resource.format == D3DFMT_A16B16G16R16F ? MmePortableFormat::Rgba16Float
                                                    : MmePortableFormat::Rgba8,
            depth, resource.portableIdentity};
+    const bool fixedWidth =
+        query.publisher->GetAnnotationByName(resource.param, "Width") != nullptr;
+    const bool fixedHeight =
+        query.publisher->GetAnnotationByName(resource.param, "Height") != nullptr;
+    if (fixedWidth || fixedHeight) {
+        if (!fixedWidth || !fixedHeight || resource.reqWidth <= 0 || resource.reqHeight <= 0 ||
+            query.publisher->GetAnnotationByName(resource.param, "ViewPortRatio")) {
+            reason = "MME_target_partial_extent";
+            return false;
+        }
+        out.width = unsigned(resource.reqWidth);
+        out.height = unsigned(resource.reqHeight);
+    }
+    out.mipmapped = mipmapped;
+    out.offscreen = resource.semanticId == 0x2E;
     return true;
 }
 bool DescribeLegacyScene(const mme::EffectOwnerManager::BindingKey& key,
@@ -386,8 +429,9 @@ bool DescribeLegacy(const mme::EffectOwnerManager::BindingKey& key, mme::Materia
         out.parameters.push_back(std::move(p));
     }
     for (const auto& declaration : out.legacy->textures) {
-        if (!declaration.shared ||
-            (declaration.semantic != "RENDERCOLORTARGET" && !declaration.semantic.empty()))
+        if ((!declaration.shared && declaration.semantic != "OFFSCREENRENDERTARGET") ||
+            (declaration.semantic != "RENDERCOLORTARGET" &&
+             declaration.semantic != "OFFSCREENRENDERTARGET" && !declaration.semantic.empty()))
             continue;
         MmePortableTarget target;
         if (!ExportTarget(binding.effect, declaration, target, reason)) {
@@ -424,7 +468,7 @@ bool Describe(const mme::EffectOwnerManager::BindingKey& key, mme::MaterialBindi
         return false;
     };
     auto* fx = binding.effect;
-    if (!binding.instance || !binding.instance->originalSource || !binding.sas || key.turnId)
+    if (!binding.instance || !binding.instance->originalSource || !binding.sas)
         return fail("MME_portable_source_or_turn");
     const auto profile = Text(fx, fx->GetParameterByName(nullptr, "MDSRhiProfile"));
     if (profile.empty())
@@ -631,9 +675,10 @@ void MmePortableCommitParameters(const MmePortableEffect& effect) {
         return;
     for (const auto& entry : mme::g_ownerManager->bindings) {
         const auto* binding = entry.second;
-        if (entry.first.turnId || !entry.first.model || !binding || !binding->effect ||
-            entry.first.model->objectId() != effect.object || entry.first.subset != effect.subset ||
-            !binding->instance || binding->instance->originalSource != effect.source)
+        if (entry.first.turnId != effect.turn || !entry.first.model || !binding ||
+            !binding->effect || entry.first.model->objectId() != effect.object ||
+            entry.first.subset != effect.subset || !binding->instance ||
+            binding->instance->originalSource != effect.source)
             continue;
         for (const auto& p : effect.writes) {
             if (p.shared || p.type != MmePortableParameter::Type::Int || p.value.size() != 4)
@@ -684,7 +729,7 @@ bool MmePortablePostLayout(MmePortableEffect& effect, std::string& reason) {
     effect.targets.push_back({"FinalColor", F::Rgba8});
     return true;
 }
-bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason) {
+bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason, unsigned turn) {
     out.clear();
     reason.clear();
     if (!MmeHostEffectsEnabled() || !mme::g_ownerManager)
@@ -696,12 +741,31 @@ bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason
                     reason = "MME_visibility_not_supported";
                     return false;
                 }
-    unsigned posts = 0;
+    const auto* turnItem = turn ? FindTurn(turn) : nullptr;
+    if (turn && !turnItem) {
+        reason = "MME_stale_turn";
+        return false;
+    }
+    std::map<int, mme::ModelData*> sceneOrder;
+    if (mme::g_context) {
+        for (bool accessory : {false, true}) {
+            const int count = accessory ? ExpGetAcsNum() : ExpGetPmdNum();
+            for (int i = 0; i < count; ++i) {
+                const auto id = reinterpret_cast<unsigned long long>(accessory ? ExpGetAcsID(i)
+                                                                               : ExpGetPmdID(i));
+                const auto found = mme::g_context->modelRegistry.find(id);
+                if (found != mme::g_context->modelRegistry.end() && found->second)
+                    sceneOrder[found->second->passPlanScratch().renderOrder] = found->second;
+            }
+        }
+    }
     for (const auto& entry : mme::g_ownerManager->bindings) {
-        // Derived offscreen bindings are a DX9 cache and can survive removal
-        // of their scene owner. Eligibility follows live base assignments:
-        // each supported profile excludes offscreen child turns itself.
-        if (entry.first.turnId)
+        // Turn discovery retires derived bindings whose owner disappeared.
+        // Each scope exports only the assignments from that native turn.
+        if (entry.first.turnId != turn)
+            continue;
+        if (turnItem && !mme::MmeOffscreenObjectShown(*turnItem->offscreen, entry.first.model,
+                                                      turnItem->carrier, entry.first.subset))
             continue;
         const auto* b = entry.second;
         if (!b || !b->effect || b->effectPath.empty())
@@ -709,26 +773,77 @@ bool MmePortableEffects(std::vector<MmePortableEffect>& out, std::string& reason
         MmePortableEffect value;
         if (!Describe(entry.first, *entry.second, value, reason))
             return false;
-        if (value.post && !Visible(*entry.first.model))
-            continue;
-        if (value.post && ++posts > 1) {
-            reason = "MME_multiple_post_effects";
+        // Native scene walks use the base frame's carrier list. A child
+        // assignment cannot promote an ordinary model into that list.
+        if (turn && value.post && entry.first.model->renderClass() != 2) {
+            reason = "MME_offscreen_scene_carrier_not_supported";
             return false;
         }
+        if (value.post && !Visible(*entry.first.model))
+            continue;
+        if (value.post) {
+            const auto position = sceneOrder.find(entry.first.model->passPlanScratch().renderOrder);
+            if (position == sceneOrder.end() || position->second != entry.first.model)
+                continue;
+        }
+        value.turn = turn;
         out.push_back(std::move(value));
     }
     for (const auto& effect : out)
         if (effect.post)
             for (const auto& entry : mme::g_ownerManager->bindings)
-                if (!entry.first.turnId && entry.first.model &&
+                if (entry.first.turnId == turn && entry.first.model &&
                     entry.first.model->objectId() == effect.object && entry.first.subset >= 0) {
                     reason = "MME_scene_subset_override_not_supported";
                     return false;
                 }
+    std::stable_sort(out.begin(), out.end(), [&](const auto& a, const auto& b) {
+        const auto order = [&](auto id) {
+            for (const auto& row : sceneOrder)
+                if (row.second->objectId() == id)
+                    return row.first;
+            return 0;
+        };
+        return order(a.object) < order(b.object);
+    });
+    return true;
+}
+bool MmePortableTurns(std::vector<MmePortableTurn>& out, std::string& reason) {
+    out.clear();
+    portableTurnPlan.clear();
+    if (!MmeHostEffectsEnabled() || !mme::g_ownerManager)
+        return true;
+    if (!mme::MmePortableTurnPlan(portableTurnPlan)) {
+        reason = "MME_offscreen_graph_limit";
+        return false;
+    }
+    for (const auto& item : portableTurnPlan) {
+        MmePortableTurn turn;
+        turn.id = item.turnId;
+        if (!item.assignment || !item.offscreen || !item.offscreen->hasClearColor ||
+            !item.offscreen->hasClearDepth) {
+            reason = "MME_offscreen_requires_clear";
+            return false;
+        }
+        const auto& resource = *item.offscreen;
+        MmeLegacyTexture declaration{resource.name, "OFFSCREENRENDERTARGET"};
+        D3DXPARAMETER_DESC d{};
+        item.assignment->effect->GetParameterDesc(resource.param, &d);
+        declaration.shared = bool(d.Flags & D3DX_PARAMETER_SHARED);
+        if (!ExportTarget(item.assignment->effect, declaration, turn.target, reason))
+            return false;
+        const auto c = resource.clearColorArgb;
+        turn.clearColor = {float((c >> 16) & 255) / 255, float((c >> 8) & 255) / 255,
+                           float(c & 255) / 255, float((c >> 24) & 255) / 255};
+        turn.clearDepth = resource.clearDepth;
+        if (!MmePortableEffects(turn.effects, reason, turn.id))
+            return false;
+        out.push_back(std::move(turn));
+    }
     return true;
 }
 int MmePortableDraw(unsigned long long id, int subset, int mode, unsigned flags,
-                    MmePortableEffect& out, std::string& reason) {
+                    MmePortableEffect& out, std::string& reason, unsigned turn) {
     out = {};
     reason.clear();
     if (!MmeHostEffectsEnabled() || !mme::g_ownerManager)
@@ -737,14 +852,35 @@ int MmePortableDraw(unsigned long long id, int subset, int mode, unsigned flags,
     for (auto* object : manager.registeredObjects) {
         if (!object || object->objectId() != id)
             continue;
-        auto found = manager.bindings.find({0, object, subset});
+        if (turn) {
+            const auto* item = FindTurn(turn);
+            if (!item) {
+                reason = "MME_stale_turn";
+                return -1;
+            }
+            if (!mme::MmeOffscreenObjectShown(*item->offscreen, object, item->carrier, subset))
+                return 2;
+            const auto* value =
+                mme::MmeOffscreenEffectValue(*item->offscreen, object, item->carrier, subset);
+            if (!value)
+                return 2; // Native offscreen lookup misses swallow the draw.
+            if (value && *value != "none" && *value != "hide" &&
+                !mme::MmeResolveTurnEffectBinding(turn, *item->offscreen, item->carrier, object,
+                                                  subset) &&
+                (*value != "main_default" || !object->effectFile().empty())) {
+                reason = "MME_offscreen_assignment_failed";
+                return -1;
+            }
+        }
+        auto found = manager.bindings.find({turn, object, subset});
         if (found == manager.bindings.end())
-            found = manager.bindings.find({0, object, -1});
+            found = manager.bindings.find({turn, object, -1});
         if (found == manager.bindings.end() || !found->second || !found->second->effect ||
             found->second->effectPath.empty())
             return 0;
         if (!Describe(found->first, *found->second, out, reason))
             return -1;
+        out.turn = turn;
         if (out.post)
             return 2;
         bool valid = false;

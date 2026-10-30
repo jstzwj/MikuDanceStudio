@@ -43,6 +43,7 @@
 #pragma once
 
 #include <map>
+#include <vector>
 
 #include <d3d9.h>
 #include <d3dx9.h>
@@ -51,6 +52,9 @@ namespace mme {
 
 class MmeContext;
 class ModelData;
+struct MmeRenderPassItem;
+// CPU-only bounded discovery; native scene queues and run states are untouched.
+bool MmePortableTurnPlan(std::vector<MmeRenderPassItem>&);
 
 // Production Draw=Buffer callback, also exercised by the GPU regression.
 HRESULT SasDefaultDrawBufferPass(ID3DXEffect* effect, IDirect3DDevice9* device,

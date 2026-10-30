@@ -818,9 +818,107 @@ void MmeRefreshPortableParameters()
     }
 }
 
-void MmeSortPlanObjects(MmeContext* ctx,
-                        const std::map<int, ModelData*>& orderMap)
-{
+namespace {
+// Assignment discovery is shared by native drawing and the CPU-only exporter.
+// The bounded walk never changes native viewport/targets or suspended scripts.
+bool MmeDiscoverOffscreenTurns(MmeContext* ctx, const std::vector<ModelData*>& carriers,
+                               std::vector<MmeRenderPassItem>& plan, bool bounded) {
+    auto* manager = g_ownerManager;
+    plan.clear();
+    if (!manager)
+        return true;
+    manager->turnOwners.clear();
+    struct PendingTurn {
+        MmeRenderPassItem item;
+        bool visible;
+    };
+    std::vector<PendingTurn> pending;
+    bool exceeded = false;
+    std::set<unsigned int> visited;
+    std::set<MaterialBinding*> assignments;
+    auto collect = [&](ModelData* model, MaterialBinding* binding, bool visible, ModelData* owner) {
+        if (!binding || !binding->sas || !assignments.insert(binding).second)
+            return;
+        if (!bounded)
+            SasRefreshViewport(binding->sas, ctx->device);
+        MmeUpdateControlObjects(model, binding, owner);
+        for (auto& resource : binding->sas->resources) {
+            if (resource.semanticId != 0x2E)
+                continue;
+            if (bounded && pending.size() >= 32) {
+                exceeded = true;
+                return;
+            }
+            unsigned int& id = binding->offscreenTurns[resource.name];
+            if (!id)
+                id = ++manager->nextTurnId;
+            if (!visited.insert(id).second)
+                continue;
+            manager->turnOwners[id] = model;
+            MmeRenderPassItem item(model, &resource, id);
+            item.assignment = binding;
+            pending.push_back({item, visible});
+            if (visible)
+                plan.push_back(item);
+        }
+    };
+    auto visitScene = [&](const PendingTurn* turn) {
+        for (ModelData* model : carriers) {
+            if (exceeded)
+                return;
+            const bool visible = model->passPlanScratch().flag != 0 && (!turn || turn->visible);
+            auto resolve = [&](int subset) -> MaterialBinding* {
+                if (turn)
+                    return MmeResolveTurnEffectBinding(turn->item.turnId, *turn->item.offscreen,
+                                                       turn->item.carrier, model, subset);
+                if (subset < 0)
+                    return MmeResolveModelEffectBinding(model);
+                const auto assigned = model->subsetEffects().find(subset);
+                if (assigned == model->subsetEffects().end())
+                    return nullptr;
+                return MmeResolveSubsetEffectBinding(model, subset, assigned->second);
+            };
+            collect(model, resolve(-1), visible, turn ? turn->item.carrier : nullptr);
+            if (model->renderClass() == 0) {
+                for (int subset = 0; subset < model->materialCount(); ++subset)
+                    collect(model, resolve(subset), visible, turn ? turn->item.carrier : nullptr);
+            }
+        }
+    };
+    visitScene(nullptr);
+    for (size_t index = 0; !exceeded && index < pending.size(); ++index) {
+        // Resolution appends to pending; copy before its vector can grow.
+        const PendingTurn turn = pending[index];
+        visitScene(&turn);
+    }
+    if (exceeded)
+        return false;
+    // Retire assignments belonging to targets no longer in this graph.
+    for (auto it = manager->bindings.begin(); it != manager->bindings.end();) {
+        if (it->first.turnId && !assignments.count(it->second)) {
+            delete it->second;
+            it = manager->bindings.erase(it);
+        } else
+            ++it;
+    }
+    return true;
+}
+}
+bool MmePortableTurnPlan(std::vector<MmeRenderPassItem>& plan) {
+    plan.clear();
+    if (!g_context || !g_context->effectEnabled)
+        return true;
+    auto carriers = g_context->models;
+    carriers.erase(std::remove(carriers.begin(), carriers.end(), nullptr), carriers.end());
+    std::sort(carriers.begin(), carriers.end(), [](const auto* a, const auto* b) {
+        if (a->passPlanScratch().renderOrder != b->passPlanScratch().renderOrder)
+            return a->passPlanScratch().renderOrder < b->passPlanScratch().renderOrder;
+        return reinterpret_cast<uintptr_t>(a) < reinterpret_cast<uintptr_t>(b);
+    });
+    return MmeDiscoverOffscreenTurns(g_context, carriers, plan, true);
+}
+
+void MmeSortPlanObjects(MmeContext* ctx, const std::map<int, ModelData*>& orderMap) {
     // Scene scripts follow the host's unique order map; target discovery
     // visits every assignment in (absolute order, object) order.
     EffectOwnerManager* manager = g_ownerManager;
@@ -831,13 +929,13 @@ void MmeSortPlanObjects(MmeContext* ctx,
         manager->turnOwners.clear();
     }
 
-    for (std::map<int, ModelData*>::const_iterator it = orderMap.begin();
-         it != orderMap.end(); ++it) {
+    for (std::map<int, ModelData*>::const_iterator it = orderMap.begin(); it != orderMap.end();
+         ++it) {
         ModelData* model = it->second;
         if (model->renderClass() == 1) {
-            ctx->passPlanA.push_back(model);            // [kit L303-361]
+            ctx->passPlanA.push_back(model); // [kit L303-361]
         } else if (model->renderClass() == 2) {
-            ctx->passPlanB.push_back(model);            // [kit L363-422]
+            ctx->passPlanB.push_back(model); // [kit L363-422]
         }
     }
 
@@ -851,73 +949,16 @@ void MmeSortPlanObjects(MmeContext* ctx,
         }
         carriers.push_back(model);
     }
-    std::sort(carriers.begin(), carriers.end(),
-              [](const ModelData* a, const ModelData* b) {
-                  const int oa = a->passPlanScratch().renderOrder;   // +0xec
-                  const int ob = b->passPlanScratch().renderOrder;
-                  if (oa != ob) {
-                      return oa < ob;
-                  }
-                  return reinterpret_cast<uintptr_t>(a) <
-                         reinterpret_cast<uintptr_t>(b);
-              });
-    if (manager != nullptr) {
-        struct PendingTurn {
-            MmeRenderPassItem item;
-            bool visible;
-        };
-        std::vector<PendingTurn> pending;
-        std::set<unsigned int> visited;
-        std::set<MaterialBinding*> assignments;
-        auto collect = [&](ModelData* model, MaterialBinding* binding, bool visible, ModelData* owner) {
-            if (!binding || !binding->sas || !assignments.insert(binding).second) return;
-            SasRefreshViewport(binding->sas, ctx->device);
-            MmeUpdateControlObjects(model, binding, owner);
-            for (auto& resource : binding->sas->resources) {
-                if (resource.semanticId != 0x2E) continue;
-                unsigned int& id = binding->offscreenTurns[resource.name];
-                if (!id) id = ++manager->nextTurnId;
-                if (!visited.insert(id).second) continue;
-                manager->turnOwners[id] = model;
-                MmeRenderPassItem item(model, &resource, id);
-                item.assignment = binding;
-                pending.push_back({item, visible});
-                if (visible) manager->orderedPlan.push_back(item);
-            }
-        };
-        auto visitScene = [&](const PendingTurn* turn) {
-            for (ModelData* model : carriers) {
-                const bool visible = model->passPlanScratch().flag != 0 &&
-                                     (!turn || turn->visible);
-                auto resolve = [&](int subset) -> MaterialBinding* {
-                    if (turn) return MmeResolveTurnEffectBinding(turn->item.turnId,
-                        *turn->item.offscreen, turn->item.carrier, model, subset);
-                    if (subset < 0) return MmeResolveModelEffectBinding(model);
-                    const auto assigned = model->subsetEffects().find(subset);
-                    if (assigned == model->subsetEffects().end()) return nullptr;
-                    return MmeResolveSubsetEffectBinding(model, subset, assigned->second);
-                };
-                collect(model, resolve(-1), visible, turn ? turn->item.carrier : nullptr);
-                if (model->renderClass() == 0) {
-                    for (int subset = 0; subset < model->materialCount(); ++subset)
-                        collect(model, resolve(subset), visible, turn ? turn->item.carrier : nullptr);
-                }
-            }
-        };
-        visitScene(nullptr);
-        for (size_t index = 0; index < pending.size(); ++index) {
-            // Resolution appends to pending; copy before its vector can grow.
-            const PendingTurn turn = pending[index];
-            visitScene(&turn);
+    std::sort(carriers.begin(), carriers.end(), [](const ModelData* a, const ModelData* b) {
+        const int oa = a->passPlanScratch().renderOrder; // +0xec
+        const int ob = b->passPlanScratch().renderOrder;
+        if (oa != ob) {
+            return oa < ob;
         }
-        // Retire assignments belonging to targets no longer in this graph.
-        for (auto it = manager->bindings.begin(); it != manager->bindings.end();) {
-            if (it->first.turnId && !assignments.count(it->second)) {
-                delete it->second;
-                it = manager->bindings.erase(it);
-            } else ++it;
-        }
-    }
+        return reinterpret_cast<uintptr_t>(a) < reinterpret_cast<uintptr_t>(b);
+    });
+    if (manager != nullptr)
+        MmeDiscoverOffscreenTurns(ctx, carriers, manager->orderedPlan, false);
 
     // [0x18005fd30] FUN_18005fd30(dst = ctx+0x148, src = manager+0x158).
     if (manager != nullptr) {

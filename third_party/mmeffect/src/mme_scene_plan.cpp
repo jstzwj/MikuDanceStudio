@@ -81,7 +81,8 @@ bool MmePortableSceneLayout(MmePortableEffect& effect, std::string& reason) {
             for (const auto& input : pass.sampled) {
                 if (unique.count(input))
                     return fail("MME_scene_feedback");
-                if (!initialized.count(input))
+                if (!initialized.count(input) &&
+                    (!targets.count(input) || !targets.at(input).identity))
                     return fail("MME_scene_read_before_write");
             }
             for (const auto& name : step.colors)

@@ -338,15 +338,21 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
             ++i;
     std::vector<MmePortableEffect> assigned;
     MmePortablePrepareParameters();
-    if (!MmePortableEffects(assigned, reason))
+    std::vector<MmePortableTurn> turns;
+    if (!MmePortableTurns(turns, reason) || !MmePortableEffects(assigned, reason))
         return false;
-    const MmePortableEffect* postEffect = nullptr;
-    for (const auto& effect : assigned)
-        if (effect.post)
-            postEffect = &effect;
+    const bool hasPost =
+        std::any_of(assigned.begin(), assigned.end(), [](const auto& e) { return e.post; });
+    const auto isCarrier = [&](const void* object) {
+        return std::any_of(assigned.begin(), assigned.end(), [&](const auto& e) {
+            return e.post && e.object == reinterpret_cast<std::uintptr_t>(object);
+        });
+    };
+    std::vector<PortableMmeDrawSource> drawSources;
     std::vector<std::pair<int, MmePortableEffect>> effects;
     const auto append = [&](unsigned slot, SceneDrawReplacement draw) {
         MmePortableEffect effect;
+        PortableMmeDrawSource source;
         int selection = 0;
         const bool accessory = draw.family == SceneDrawFamily::AccessoryMaterial;
         const ModelReplayDraw* command = nullptr;
@@ -371,6 +377,13 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                              : draw.family == SceneDrawFamily::ProjectedModelShadow ? 2
                              : mode                                                 ? 1
                                                                                     : 0;
+            source.object = reinterpret_cast<std::uintptr_t>(object);
+            source.subset = int(draw.material);
+            source.mode = pass;
+            source.flags = flags;
+            source.vertexCount = accessory ? -1 : int(app.ModelSlot(slot)->vertexCount);
+            source.transparent =
+                UseEffectModelRenderer(&app) && app.state.characterTransparentMode != 0;
             selection = MmePortableDraw(reinterpret_cast<std::uintptr_t>(object),
                                         int(draw.material), pass, flags, effect, reason);
             if (selection == 1 && !accessory && effect.legacy)
@@ -381,6 +394,7 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
             if (selection < 0)
                 impl->assembler.Block(reason.c_str());
         }
+        drawSources.push_back(std::move(source));
         effects.emplace_back(selection, std::move(effect));
         draw.model = slot;
         impl->assembler.Append(std::move(draw));
@@ -406,8 +420,7 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                     continue;
                 if ((int(order) >= app.AccessoryRenderSplitOrder()) != after || !a->visible)
                     break;
-                const bool carrier =
-                    postEffect && postEffect->object == reinterpret_cast<std::uintptr_t>(a);
+                const bool carrier = isCarrier(a);
                 if (!carrier && a->shadowEnabled && (projected || mode))
                     return fail("accessory_shadows");
                 auto& cached = impl->accessories[slot];
@@ -562,6 +575,7 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
                 ++ordinal;
                 continue;
             }
+            drawSources.at(ordinal).draw = e.draw;
             const auto& effect = effects.at(ordinal);
             if (effect.first == 2) {
                 ++ordinal;
@@ -597,13 +611,18 @@ bool EditorSceneProducer::Build(MMDApp& app, unsigned width, unsigned height, Re
     if (mode)
         result.passes.push_back(std::move(generate));
     result.passes.push_back(std::move(main));
-    if (postEffect) {
+    if (hasPost) {
         if (!screens.empty())
             return fail("MME_screen_history_not_supported");
         result.finalColor = 1;
-        if (!AppendPortableMmePost(result, *postEffect, reason))
+        if (!AppendPortableMmePosts(result, assigned, reason, !turns.empty()))
             return false;
     }
+    drawSources.resize(sceneDraws);
+    if (!turns.empty() && !screens.empty())
+        return fail("MME_offscreen_screen_history_not_supported");
+    if (!PrependPortableMmeTurns(result, turns, drawSources, assigned, reason))
+        return false;
     // Capture before editor gizmos/HUD, matching the native screen.bmp timing.
     if (!AppendPostProcess(result, result.finalColor ? result.finalColor : 1, 5, width, height) ||
         !impl->history.Apply(result, consumers, ScreenCaptureKind(app.CaptureMode()), 5))
