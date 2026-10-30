@@ -1199,6 +1199,10 @@ bool PrependPortableMmeTurns(RenderFrame& frame, const std::vector<MmePortableTu
         pass.depthStencil = FrameAttachment{depth};
         pass.depthStencil->clearDepth = turn.clearDepth;
         for (const auto& source : sources) {
+            // Native queued grid/axis/background draws replay only in the
+            // base scene, never inside an offscreen object turn.
+            if (!source.object)
+                continue;
             auto draw = source.draw;
             MmePortableEffect effect;
             const int selected = source.object

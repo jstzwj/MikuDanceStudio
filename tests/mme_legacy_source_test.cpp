@@ -95,6 +95,18 @@ int main() try {
                              std::istreambuf_iterator<char>()};
     CHECK(MmeLegacyImport(shared, program, reason));
     CHECK(program.samplers.size() == 2 && program.samplers[0].semantic == "RENDERCOLORTARGET");
+    for (const auto* name : {"DefaultEffectScene.fx", "NestedScene.fx", "LegacyChildMaterial.fx",
+                             "LegacyLeafMaterial.fx"}) {
+        std::ifstream fixture(std::string(MDS_TEST_SOURCE_DIR) + "/assets/effects/portable/" +
+                              name);
+        const std::string text{std::istreambuf_iterator<char>(fixture),
+                               std::istreambuf_iterator<char>()};
+        const bool scene = std::string(name).find("Scene") != std::string::npos;
+        if (!(scene ? MmeLegacyImportScene(text, program, reason)
+                    : MmeLegacyImport(text, program, reason)))
+            throw std::runtime_error(std::string(name) + ": " + reason);
+        CHECK(MmeLegacyShader(program, program.passes[0], hlsl, inputs, reason));
+    }
     std::puts(
         "PASS FX9 source import: entries, declarations, samplers, stage wrappers and unsupported syntax");
 } catch (const std::exception& e) {

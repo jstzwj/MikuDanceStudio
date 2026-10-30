@@ -104,8 +104,9 @@ void Contract() {
     CHECK(device->BeginRenderPass(write) && device->EndRenderPass() &&
           !device->BeginRenderPass(read));
     CHECK(device->GenerateRenderMips(source) && device->EndFrame() && device->Present());
-    CHECK(device->Destroy(source) && !device->GenerateRenderMips(source) &&
-          device->Destroy(output));
+    CHECK(device->Destroy(source) && device->Destroy(output));
+    CHECK(device->BeginFrame({}) && !device->GenerateRenderMips(source) && device->EndFrame() &&
+          device->Present());
 }
 }
 int main(int argc, char** argv) try {

@@ -6,8 +6,10 @@ The importer reads immutable expanded legacy source for declarations and VS/PS
 entries, and exports commands from the existing parsed SAS description. There is
 no second scene-script parser and no DX9 draw needed to prepare a supported frame.
 
-The first scope is one whole-object scene carrier, one selected technique,
-multiple Buffer passes and one `ScriptExternal` scene capture. Numeric instance,
+Each imported whole-object scene carrier has one selected technique,
+multiple Buffer passes and one `ScriptExternal` scene capture. Ordered nesting,
+`DefaultEffect` children and offscreen mip timing are described in
+[subeffects and mip timing](RHI_MME_SUBEFFECTS.md). Numeric instance,
 shared and CONTROLOBJECT parameters use the existing refresh walk. Viewport
 parameters use the current RHI extent. Pass dependencies include only samplers
 reachable from the selected pixel entry, including calls through helper functions;
@@ -84,9 +86,8 @@ All GPU work is offscreen or uses never-shown HWNDs. No desktop input or visible
 application is needed. Runtime shader compilation remains capability-dependent;
 unavailable compilation is an explicit direct-test skip and editor DX9 fallback.
 
-DefaultEffect subeffect scheduling, nested carriers, render-target mip generation,
-viewport ratios, sampled depth/cube/volume and arbitrary FX9 syntax remain later
-work. Unmodified Ray continues to use same-frame DX9 fallback.
+Viewport ratios other than one, sampled depth/cube/volume and arbitrary FX9 syntax
+remain later work. Unmodified Ray continues to use same-frame DX9 fallback.
 
 ## Local acceptance (2026-10-30)
 

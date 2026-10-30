@@ -14,6 +14,18 @@ They contain no external model or texture assets.
 - `LegacyStandard.fx`: unchanged FX9 source exercising all 24 camera/geometry
   matrix variants, camera/light vectors and colors, native names, frame clocks
   and float4 POSITION with out parameters. No profile or alternate branch.
+- `LegacyScene.fx` / `LegacySharedMaterial.fx`: an ordinary SAS scene script
+  publishes a shared mask, captures the scene and grades/copies the result;
+  the separate material samples the mask during `ScriptExternal`.
+- `DefaultEffectScene.fx` / `LegacyChildMaterial.fx` / `LegacyLeafMaterial.fx`:
+  assign the first to a scene accessory and the leaf to a model. The scene's
+  ordered `DefaultEffect` rows select a child material for PMD/PMX filenames;
+  that material selects the leaf for its own offscreen target. Each turn builds
+  its mip chain before the parent samples an explicit LOD. These unlit examples
+  disable depth testing and use procedural colors without external textures.
+- `NestedScene.fx`: assign to a second scene accessory alongside
+  `DefaultEffectScene.fx`. Swapping their native display order changes the
+  nested capture/composition order and therefore the final color.
 - `TwoStage.fx`: assign to one scene carrier, usually a small accessory. Its
   script captures the scene at `ScriptExternal`, grades it into Ping, then
   copies Ping to the final color target. Editor overlays follow this chain.
@@ -31,9 +43,10 @@ They contain no external model or texture assets.
   LoopByCount/LoopGetIndex, and copies Pong exactly. Zero iterations preserve
   Pong's clear color. Private loop-index writes persist after successful frames.
 
-All files also run as ordinary DX9 effects. Except for LegacyMaterial.fx and LegacyStandard.fx,
-`MDS_RHI` selects their HLSL 5/6
-shader branch. Explicit profile and pass annotations opt into the initial
+All files also run as ordinary DX9 effects. The `Legacy*`, `DefaultEffectScene`
+and `NestedScene` examples import their original FX9 source directly. Other
+examples use `MDS_RHI` to select their HLSL 5/6 shader branch.
+Explicit profile and pass annotations opt into the initial
 portable ABI. Changing the shader functions within that ABI is supported;
 adding unrecognized parameters, pass state, resources or script commands
 selects the editor's same-frame DX9 fallback.

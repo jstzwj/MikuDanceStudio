@@ -695,7 +695,9 @@ PixelOutput WrappedPixel(in PixelInput input) {
         bad.parameters[2].type = MmePortableParameter::Type::Int;
         reject(bad, "MME_parameter_snapshot_type");
     }
+    draw.pipeline.shadow.mode = BuiltinShadowMode::Material;
     CHECK(ApplyPortableMmeMaterial(draw, material, reason));
+    CHECK(draw.pipeline.shadow.mode == BuiltinShadowMode::None && !draw.shadowTarget);
     if (standard) {
         auto singular = draw;
         singular.pipeline.shader.view = {};

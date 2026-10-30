@@ -88,6 +88,15 @@ int main() try {
     bad = Fixture();
     bad.passes[0].sampled = {"missing"};
     rejects(bad, "MME_scene_read_before_write");
+    auto external = Fixture();
+    external.targets.push_back({"External"});
+    external.targets.back().identity = 42;
+    external.passes[0].sampled = {"External"};
+    CHECK(MmePortableSceneLayout(external, reason)); // Producer is checked in the assembled frame.
+    bad = Fixture();
+    bad.targets.push_back({"External"});
+    bad.passes[0].sampled = {"External"};
+    rejects(bad, "MME_scene_read_before_write");
     bad = Fixture();
     bad.script.erase(bad.script.begin() + 7);
     rejects(bad, "MME_scene_write_requires_clear");

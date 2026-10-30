@@ -29,14 +29,16 @@ per loaded revision for stable device reconstruction. See
 A bounded source importer now translates unannotated FX9 model-material effects
 to the shared shader contract, including actual sampler bindings and current
 per-draw matrices/material values. Hidden tests retain these effects across
-backend switches. See [legacy FX9 import](RHI_MME_LEGACY_IMPORT.md). Single-carrier
+backend switches. See [legacy FX9 import](RHI_MME_LEGACY_IMPORT.md). Postprocess
 postprocess scene effects can now import their existing SAS scripts without
 proprietary annotations and share frame-local render targets with other effects.
 The generic graphics profile has sixteen texture/sampler slots, based on the
 native Ray inventory. See [automatic scenes and sharing](RHI_MME_SHARED_SCENES.md),
 [shared resource contracts](RHI_SHARED_TARGETS.md) and
-[native Ray requirements](RHI_MME_NATIVE_REQUIREMENTS.md). Native Ray execution,
-DefaultEffect children, nested carriers and mip scheduling remain pending. Camera/geometry matrix
+[native Ray requirements](RHI_MME_NATIVE_REQUIREMENTS.md). Bounded `DefaultEffect`
+child turns, ordered nested scene carriers and explicit RGBA8 render-target mip
+generation now enter that shared frame; see [subeffects and mip timing](RHI_MME_SUBEFFECTS.md).
+Unmodified Ray still uses same-frame DX9 fallback. Camera/geometry matrix
 variants, camera/light vectors, native draw names and once-per-frame MME clocks
 now have CPU providers; see [standard parameters](RHI_MME_STANDARDS.md).
 The proposed ownership, lifecycle and call sequence are specified in

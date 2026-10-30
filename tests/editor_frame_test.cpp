@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#include <dbghelp.h>
 #include <d3d9.h>
 #include <wrl/client.h>
 #include "mikudancestudio/mmd_app.hpp"
@@ -21,6 +22,7 @@
 #include "mme_globals.h"
 #include "model_data.h"
 #include "material_bind.h"
+#include "sas_exec.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -61,6 +63,25 @@ LRESULT CALLBACK BlockTestDialog(int code, WPARAM window, LPARAM data) {
 
 int main(int argc, char** argv) try {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* exception) -> LONG {
+        std::fprintf(stderr, "exception=%lx address=%p\n",
+                     exception->ExceptionRecord->ExceptionCode,
+                     exception->ExceptionRecord->ExceptionAddress);
+        SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+        void* stack[40]{};
+        const auto count = CaptureStackBackTrace(0, 40, stack, nullptr);
+        for (unsigned n = 0; n < count; ++n) {
+            alignas(SYMBOL_INFO) char data[sizeof(SYMBOL_INFO) + 1024]{};
+            auto* symbol = reinterpret_cast<SYMBOL_INFO*>(data);
+            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+            symbol->MaxNameLen = 1023;
+            DWORD64 delta = 0;
+            if (SymFromAddr(GetCurrentProcess(), DWORD64(stack[n]), &delta, symbol))
+                std::fprintf(stderr, "%s+%llu\n", symbol->Name, delta);
+        }
+        return EXCEPTION_EXECUTE_HANDLER;
+    });
     CHECK(argc >= 3);
     const std::string mode = argv[1];
     const auto api = mode == "dx11"   ? Backend::D3D11
@@ -702,7 +723,7 @@ int main(int argc, char** argv) try {
         throw std::runtime_error(portableReason);
     const auto assignedEffect = [&](const void* object) -> ID3DXEffect* {
         for (const auto& entry : ::mme::g_ownerManager->bindings)
-            if (entry.first.model &&
+            if (!entry.first.turnId && entry.first.model &&
                 entry.first.model->objectId() == reinterpret_cast<std::uintptr_t>(object) &&
                 entry.first.subset == -1)
                 return entry.second->effect;
@@ -1105,6 +1126,204 @@ int main(int argc, char** argv) try {
                 CHECK(image().pixels == automaticSwitchBaseline);
             }
         }
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     materialEffect));
+        // Ordinary FX9 DefaultEffect chain plus two native scene carriers.
+        // Read the DX9 render target directly; no window is ever shown.
+        const auto originalExtent = app->ViewportRect();
+        const auto savedModelOrder = model->comboSelIndex;
+        model->comboSelIndex = 1; // Native host order zero denotes background, not a model.
+        auto* savedSprites = app->SpriteOverlayVertices();
+        const auto savedSpriteCount = app->SpriteOverlayPrimitiveCount();
+        const auto savedTextCount = app->TextOverlayPrimitiveCount(),
+                   savedLineCount = app->LineOverlayPrimitiveCount();
+        app->SpriteOverlayVertices() = nullptr;
+        app->SpriteOverlayPrimitiveCount() = app->TextOverlayPrimitiveCount() =
+            app->LineOverlayPrimitiveCount() = 0;
+        app->ViewportRenderer().ClearOverlay(EditorOverlay::Text);
+        app->ViewportRenderer().ClearOverlay(EditorOverlay::Lines);
+        app->ViewportRect() = {0, 0, 160, 120};
+        ComPtr<IDirect3DSurface9> savedColor, savedDepth, oracleColor, oracleDepth;
+        D3DVIEWPORT9 savedViewport{};
+        CHECK(SUCCEEDED(device->GetRenderTarget(0, &savedColor)) &&
+              SUCCEEDED(device->GetDepthStencilSurface(&savedDepth)) &&
+              SUCCEEDED(device->GetViewport(&savedViewport)));
+        CHECK(SUCCEEDED(device->CreateRenderTarget(160, 120, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE,
+                                                   0, FALSE, &oracleColor, nullptr)));
+        CHECK(SUCCEEDED(device->CreateDepthStencilSurface(
+            160, 120, D3DFMT_D24S8, D3DMULTISAMPLE_NONE, 0, FALSE, &oracleDepth, nullptr)));
+        const D3DVIEWPORT9 oracleViewport{0, 0, 160, 120, 0, 1};
+        const auto defaultScene =
+            (sourceRoot / L"assets/effects/portable/DefaultEffectScene.fx").string();
+        const auto nestedScene = (sourceRoot / L"assets/effects/portable/NestedScene.fx").string();
+        const auto leafMaterial =
+            (sourceRoot / L"assets/effects/portable/LegacyLeafMaterial.fx").string();
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
+                                     leafMaterial));
+        CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&carrier), -1, defaultScene));
+        const auto oracle = [&](const char* label) {
+            CHECK(app->ViewportRenderer().Select(*app, Backend::D3D9, false));
+            CHECK(SUCCEEDED(device->SetRenderTarget(0, oracleColor.Get())) &&
+                  SUCCEEDED(device->SetDepthStencilSurface(oracleDepth.Get())) &&
+                  SUCCEEDED(device->SetViewport(&oracleViewport)));
+            frame(false);
+            const auto bgra = legacyImage();
+            CHECK(bgra.size() == 160 * 120 * 4);
+            CHECK(app->ViewportRenderer().Select(*app, api, false));
+            frame(runtimeEffects);
+            if (runtimeEffects) {
+                const auto& rgba = image();
+                CHECK(rgba.width == 160 && rgba.height == 120);
+                unsigned maximum = 0;
+                for (std::size_t n = 0; n < bgra.size(); n += 4)
+                    for (unsigned c = 0; c < 4; ++c)
+                        maximum = std::max(maximum,
+                                           unsigned(std::abs(int(rgba.pixels[n + c]) -
+                                                             int(bgra[n + (c == 3 ? 3 : 2 - c)]))));
+                std::printf("%s %s DX9 max RGBA delta=%u (limit=2)\n", mode.c_str(), label,
+                            maximum);
+                CHECK(maximum <= 2);
+            }
+        };
+        oracle("DefaultEffect two-level mip chain");
+        const auto childBaseline = image().pixels;
+        MmePortablePrepareParameters();
+        std::vector<MmePortableTurn> childTurns;
+        CHECK(MmePortableTurns(childTurns, portableReason));
+        CHECK(childTurns.size() == 2 && childTurns[0].target.name == "Child" &&
+              childTurns[1].target.name == "Leaf");
+        CHECK(childTurns[0].target.mipmapped && childTurns[1].target.mipmapped);
+        CHECK(childTurns[1].target.width == 64 && childTurns[1].target.height == 32);
+        {
+            RenderFrame background;
+            background.targets = {{1,
+                                   {160, 120, TextureFormat::Rgba8,
+                                    TextureAccess::ColorAttachment | TextureAccess::CopySource}}};
+            background.finalColor = 1;
+            FramePass clear;
+            clear.color = FrameAttachment{1};
+            background.passes = {clear};
+            auto child = childTurns.front();
+            child.effects.clear();
+            std::vector<MmePortableEffect> completed;
+            // An invalid host-background draw must not enter child turns.
+            CHECK(PrependPortableMmeTurns(background, {child}, {PortableMmeDrawSource{}}, completed,
+                                          portableReason));
+            for (const auto& pass : background.passes)
+                CHECK(pass.draws.empty());
+        }
+        if (runtimeEffects) {
+            frame(true);
+            CHECK(image().pixels == childBaseline);
+            CHECK(app->ViewportRenderer().HandleCommand(*app, EditorRecreateCommand));
+            frame(true);
+            CHECK(image().pixels == childBaseline);
+            app->ViewportRect().right += 8;
+            frame(true);
+            app->ViewportRect().right -= 8;
+            frame(true);
+            CHECK(image().pixels == childBaseline);
+        }
+        // The native target's ordered rows remain the sole selection rule.
+        auto* parentBinding = ::mme::MmeResolveModelEffectBinding(
+            ::mme::g_context->modelRegistry.at(reinterpret_cast<std::uintptr_t>(&carrier)));
+        CHECK(parentBinding && parentBinding->sas);
+        auto target =
+            std::find_if(parentBinding->sas->resources.begin(), parentBinding->sas->resources.end(),
+                         [](const auto& r) { return r.name == "Child"; });
+        CHECK(target != parentBinding->sas->resources.end());
+        const auto rows = target->defaultEffectMap;
+        const auto uploadsBeforeChildFailure = app->ViewportRenderer().Statistics().uploads;
+        const auto requestedMips = target->texMips;
+        target->texMips = 2; // Partial native chains have no portable generation contract.
+        CHECK(!MmePortableTurns(childTurns, portableReason));
+        CHECK(portableReason == "MME_target_format_or_mips_not_supported");
+        frame(false);
+        CHECK(!runtimeEffects || app->ViewportRenderer().Reason() == "MME");
+        CHECK(app->ViewportRenderer().Statistics().uploads == uploadsBeforeChildFailure);
+        target->texMips = requestedMips;
+        target->defaultEffectMap = {{"self", "hide"}, {"*.pm*", nestedScene}, {"*", "hide"}};
+        CHECK(!MmePortableTurns(childTurns, portableReason));
+        CHECK(portableReason == "MME_offscreen_scene_carrier_not_supported");
+        frame(false); // Child selection must not invent a native scene carrier.
+        CHECK(app->ViewportRenderer().Statistics().uploads == uploadsBeforeChildFailure);
+        target->defaultEffectMap = {
+            {"self", "hide"},
+            {"*.pm*", (sourceRoot / L"res/assets/skin_effect_sm3.fx").string()},
+            {"*", "hide"}};
+        frame(false); // One unsupported descendant rejects the whole frame before upload.
+        CHECK(app->ViewportRenderer().Statistics().uploads == uploadsBeforeChildFailure);
+        target->defaultEffectMap = {{"self", "hide"}};
+        oracle("unlisted object"); // A native offscreen lookup miss swallows its draw.
+        if (runtimeEffects)
+            CHECK(image().pixels != childBaseline); // The child geometry must affect the image.
+        target->defaultEffectMap = {{"self", "hide"}, {"*.pm*", "none"}, {"*", "hide"}};
+        frame(false); // Native host-shader forwarding is still whole-frame fallback.
+        CHECK(app->ViewportRenderer().Reason() == "MME_offscreen_host_pipeline_not_supported" ||
+              !runtimeEffects);
+        for (const auto* assignment : {"hide", "main_default"}) {
+            target->defaultEffectMap = {{"self", "hide"}, {"*.pm*", assignment}, {"*", "hide"}};
+            oracle(assignment);
+        }
+        target->defaultEffectMap = rows;
+        oracle("restored child assignments");
+        if (runtimeEffects)
+            CHECK(image().pixels == childBaseline);
+        {
+            mdl::AccessoryRecord outer{};
+            CHECK(
+                LoadAccessoryObject(app.get(), &outer, (path.parent_path() / L"bound.x").c_str()));
+            outer.parentModel = -1;
+            outer.visible = 1;
+            outer.opacity = outer.scale = 1;
+            outer.order = 1;
+            app->AccessorySlot(1) = &outer;
+            struct RemoveOuter {
+                MMDApp* app;
+                mdl::AccessoryRecord* object;
+                ~RemoveOuter() {
+                    app->AccessorySlot(1) = nullptr;
+                    DisposeAccessory(object);
+                }
+            } removeOuter{app.get(), &outer};
+            CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));
+            CHECK(
+                ::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&outer), -1, nestedScene));
+            oracle("nested scene reverse-enter forward-resume");
+            const auto nestedBaseline = image().pixels;
+            carrier.order = 2;
+            oracle("reversed scene order");
+            if (runtimeEffects)
+                CHECK(image().pixels != nestedBaseline);
+            carrier.order = 0;
+            oracle("restored scene order");
+            if (runtimeEffects)
+                CHECK(image().pixels == nestedBaseline);
+            for (const auto selected : {Backend::D3D11, Backend::D3D12, Backend::Vulkan, api}) {
+                if (!BackendAvailable(selected))
+                    continue;
+                CHECK(app->ViewportRenderer().Select(*app, selected, false));
+                const bool supported = runtimeShaderSupport.at(selected);
+                frame(supported);
+                if (supported && runtimeEffects)
+                    CHECK(image().pixels == nestedBaseline);
+            }
+            CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(&outer), -1, ""));
+            app->AccessorySlot(1) = nullptr;
+            CHECK(mikudancestudio::mme::PrepareEffectAssignments(app.get()));
+        }
+        oracle("nested scene removal");
+        if (runtimeEffects)
+            CHECK(image().pixels == childBaseline);
+        CHECK(SUCCEEDED(device->SetRenderTarget(0, savedColor.Get())) &&
+              SUCCEEDED(device->SetDepthStencilSurface(savedDepth.Get())) &&
+              SUCCEEDED(device->SetViewport(&savedViewport)));
+        app->ViewportRect() = originalExtent;
+        model->comboSelIndex = savedModelOrder;
+        app->SpriteOverlayVertices() = savedSprites;
+        app->SpriteOverlayPrimitiveCount() = savedSpriteCount;
+        app->TextOverlayPrimitiveCount() = savedTextCount;
+        app->LineOverlayPrimitiveCount() = savedLineCount;
         CHECK(::mme::MmeAssignEffect(reinterpret_cast<std::uintptr_t>(model.get()), -1,
                                      materialEffect));
         const auto hdrPath = (sourceRoot / L"assets/effects/portable/MrtHdr.fx").string();
