@@ -66,7 +66,9 @@ does not assert that an arbitrary Ray editor frame is supported.
 without alternate shader branches or portable annotations. The material uses
 two ordered four-output geometry passes. The scene explicitly clears all seven
 shared targets, captures the material, and combines the two groups. Signed and
-greater-than-one values remain in RGBA16F targets.
+greater-than-one values remain in RGBA16F targets. The public GPU tests require
+both groups to cover pixels without overlapping; the hidden editor also checks
+these masks on the native DX9 inputs before accepting its composite as an oracle.
 
 `mme_material_script_test` uses generated real PMD/PMX inputs through the CPU
 producer and actual texture preparation. It has independent paths:
@@ -115,19 +117,13 @@ cases on DX11/DX12, including DX12 debug, also measured zero difference for
 every intermediate and combined output. Evidence:
 `out/mme-ray-material-x86-test.log` and `-details.log`.
 
-**The native DX9/editor matrix remains incomplete.** After DX9 recovered, the
-x64 `mme_ray_material_dx11` gate passed against the original Ray material child,
-including all eight attachments, PMD/PMX, both material opacities, resize,
-repeat and replacement. This is the isolated material oracle, not a complete
-Ray scene. Evidence: `out/mme-ray-material-native-probe3.log`.
-
-That run exposed two public-fixture issues. Shared MRT clears now use transparent
-black on both sides; the old RHI test initialization used the attachment default
-Alpha of one while the native side cleared to zero. The public UV clip plane
-also moves from .5 to .473 to avoid testing an exact pixel-center `clip(0)`
-decision whose interpolated sign can differ between SM3 and SM5. Both ordered
-passes and their coverage remain in the fixture; image limits are unchanged.
-Native confirmation of the adjusted clip plane is still pending.
+The first recovered DX9 run passed x64 `mme_ray_material_dx11` against the
+original Ray material child. It also exposed a public-oracle initialization
+error: RHI used the attachment default Alpha of one while DX9 cleared to zero.
+Shared MRT clears now use transparent black on both sides. The public UV clip
+plane moves from .5 to .473 to avoid an exact pixel-center `clip(0)` decision
+whose interpolated sign can differ between SM3 and SM5. Both ordered passes
+and their coverage remain in the fixture; image limits are unchanged.
 
 After these fixture changes, the focused independent x64 suite passed 11/11
 gates. Its 120 material cases produced 1,080 attachment/final-color comparisons
@@ -137,26 +133,91 @@ Both architecture test builds succeeded. Evidence:
 `out/mme-ray-material-resume-x64-test.log`, `-details.log`, and the corresponding
 `out/mme-ray-material-resume-x86-test.log` / `-details.log`.
 
-The hidden editor's earlier DefaultEffect, nested scene and ordinary MRT/HDR
-oracle phases passed, but the new scripted-material composite failed with
-maximum RGBA delta 120 (limit 2). Its cause is still unresolved. The test now
-rejects a native effect with a latched execution failure before accepting its
-image as a reference, and reports both native composition inputs alongside
-the first differing pixels. Evidence for the original image failure:
-`out/mme-ray-material-native-probe2.log` and `-details.log`.
+## RDP follow-up and native clip limitation
 
-Subsequent x64 and x86 native attempts again failed before executing a frame:
-`CreateDevice` returned `0x8876086C`, with adapter display 0x0/unknown format.
-These remain failures, not passing tests or capability skips. The remaining
-native backend gates, the final hidden editor matrix and native v3 requirement
-inventories need another run when DX9 stays available. Evidence:
-`out/mme-ray-material-editor-native-probe2.log`,
-`out/mme-ray-material-native-x86-probe.log` and
-`out/mme-ray-material-native-clip-probe.log`. The final editor attempt with
-the rebuilt diagnostics failed at the same device initialization step:
-`out/mme-ray-material-resume-native-final.log` and `-details.log`.
+After the user restored the RDP session, both x64 public/Ray material DX11
+native gates passed. They cover all eight raw attachments, generated PMD/PMX,
+opaque/translucent material values, resize, repeat and replacement. RGBA8
+differences were zero; RGBA16F stayed within one half ULP. Evidence:
+`out/mme-ray-material-rdp-resume-material.log` and `-details.log`.
 
-The independent RHI comparisons above do not substitute for the native oracle
-or establish DX9 image parity. The earlier intermittent Vulkan/Ray crash
-observation also remains open; see the preceding subeffect batch's stability
-note. This batch makes no full-Ray or general FX9 compatibility claim.
+The editor's scripted-material composite initially still differed by 120 code
+values. Temporary native readbacks localized this to the public transparent
+shader's `clip(uv.x-.473)`: its target was empty before that draw, but afterward
+covered the entire 1,803-pixel triangle, overlapping all 853 pixels in the
+primary group. The UV attachment was interpolated normally, and the bound
+native shader contained the subtract/add and `texkill` instructions. Target
+restoration and composite texture bindings were correct. Disabling depth or
+changing alpha test, filtering and shader-object recreation did not resolve it.
+This is an observed native arithmetic-clip anomaly; its underlying cause is
+not established. Evidence: `out/mme-ray-material-rdp-target-trace6.log`,
+`out/mme-ray-material-rdp-target-trace7.log` and the state probe logs.
+
+The public fixture now expresses the same inclusive half-plane as
+`clip(uv.x>=.473 ? 1 : -1)`. It uses that expression on every backend, retaining
+both material passes and the original image thresholds. The test additionally
+requires both groups to have coverage with no overlap, and checks the native
+editor inputs before accepting their composite. The original arithmetic form
+is **not repaired or certified** by this fixture change. To reproduce it, replace
+the transparent fixture's comparison with `clip(uv.x-.473)` and run
+`ctest --test-dir build-x64/build -C Release -R '^editor_frame_dx11$' --output-on-failure`.
+Temporary native tracing, forced states and readbacks were removed from
+production code.
+
+With the comparison fixture and production tracing removed, the x64
+`editor_frame_dx11` and `editor_ray_fallback_dx11` gates passed for both PMD and
+PMX. These exercise the earlier DefaultEffect/nested scenes, ordinary MRT/HDR,
+the scripted material composite, odd resize, backend switching, reconstruction,
+missing-publisher fallback, once-only updates and zero DX9 scene draws on RHI
+frames. This confirms the tested fixture's composition; it does not execute a
+complete Ray scene on RHI.
+
+The attempted 29-gate x64 matrix finished with 15 passes and 14 failures:
+all 11 independent gates, the two DX11 native gates and the two DX11 editor
+gates passed. DX9 became unavailable again before the DX12/Vulkan native and
+editor gates and both requirements gates could initialize. Errors were
+`0x8876086C` / `0x8876086A`; the user identified RDP lock/disconnect as the
+cause of earlier device interruptions. These failures remain failures, not
+capability skips. Evidence: `out/mme-ray-material-rdp-x64-test.log` and
+`-details.log`. Requirement files still dated 14:50 are old inventories;
+they are not evidence of regeneration in this attempt.
+
+After adding the explicit coverage assertions, the independent x64 suite
+passed 11/11 gates: 120 cases, 1,080 attachment/final-color comparisons and
+180 public coverage checks. Every comparison measured zero difference.
+The x86 suite passed seven gates, with four explicit Vulkan capability skips
+and no failures: 72 cases, 648 zero-difference comparisons and 108 public
+coverage checks. Both architecture test builds succeeded. Evidence:
+`out/mme-ray-material-rdp-coverage-x64-test.log`, `-details.log`, and the
+corresponding `out/mme-ray-material-rdp-coverage-x86-test.log` / `-details.log`.
+
+When DX9 became available again, the final x64 native matrix passed all 18
+gates. All 120 public/Ray material cases and their 960 raw attachment
+comparisons measured zero difference, including zero half ULP. All 180
+hidden-editor image comparisons also measured zero RGBA difference. The six
+editor gates cover all three backends with generated PMD/PMX, switching,
+resize, device reconstruction, same-frame fallback and once-only updates.
+The new native coverage assertions passed. DX12 debug and Vulkan validation
+reported no errors. Both v3 requirement inventories were freshly regenerated;
+each still reports 13 native pixel-sampler slots and the root import blocker
+at `ray.fx:61`, `mSSAOScale`. Evidence:
+`out/mme-ray-material-rdp-final-native-x64-test.log`, `-details.log`,
+`-mme-ray-requirements.txt` and `-mme-ray-shared-requirements.txt`.
+
+The final x86 native matrix finished with 14 passes, four explicit Vulkan
+runtime-HLSL capability skips and zero failures. Its 72 native material cases
+produced 576 zero-difference raw attachment comparisons. The 120 supported
+editor image comparisons also measured zero difference; all six editor gates
+passed, including safe fallback where Vulkan runtime shaders are unavailable.
+That fallback is not Vulkan material execution. Both x86 v3 inventories were
+freshly regenerated with the same 13-slot observation and root source blocker.
+Evidence uses the corresponding `out/mme-ray-material-rdp-final-native-x86-*`
+logs and inventory files. Together with the independent coverage suite, the
+final focused scope is 29 passes on x64 and 21 passes/eight capability skips
+on x86, with no remaining failures in these final runs.
+
+These native results cover the bounded public scenes and isolated Ray material
+child. They do not certify the original arithmetic clip expression or a complete
+Ray scene on RHI. The earlier intermittent Vulkan/Ray crash observation also
+remains open; see the preceding subeffect batch's stability note. This batch
+makes no full-Ray or general FX9 compatibility claim.

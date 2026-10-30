@@ -302,6 +302,23 @@ void Compare(const AttachmentReadback& image, const std::vector<std::uint8_t>& r
         CHECK(maximum <= 2);
     }
 }
+void PublicMaterialCoverage(const AttachmentReadback& primary,
+                            const AttachmentReadback& secondary) {
+    CHECK(primary.description.format == TextureFormat::Rgba8 &&
+          secondary.description.format == TextureFormat::Rgba8 &&
+          primary.description.width == secondary.description.width &&
+          primary.description.height == secondary.description.height &&
+          primary.bytes.size() == secondary.bytes.size());
+    unsigned left = 0, right = 0;
+    for (std::size_t n = 3; n < primary.bytes.size(); n += 4) {
+        const bool a = primary.bytes[n] > 127, b = secondary.bytes[n] > 127;
+        CHECK(!(a && b));
+        left += a;
+        right += b;
+    }
+    CHECK(left > 20 && right > 20);
+    std::printf("public clip coverage: primary=%u secondary=%u overlap=0\n", left, right);
+}
 void Diagnostics(Device& device) {
 #ifdef MIKUDANCESTUDIO_RHI_D3D12
     if (device.BackendType() == Backend::D3D12)
@@ -599,6 +616,8 @@ int Contract(const std::filesystem::path& model, const std::filesystem::path& ma
             const auto coverage = opacity == 1 ? 0u : 4u;
             CHECK(std::count_if(output[coverage].bytes.begin(), output[coverage].bytes.end(),
                                 [](auto b) { return b != 0; }) > 20);
+            if (material.filename() == L"LegacyMaterialMap.fx")
+                PublicMaterialCoverage(output[0], output[4]);
             AttachmentReadback final;
             CHECK(renderer.ReadTarget(1, copyOutput, final) && final.bytes == output.back().bytes);
             for (unsigned n = 0; n < 5; ++n)
@@ -876,6 +895,7 @@ int main(int argc, char** argv) try {
                 throw std::runtime_error(ready.reason + ": " + backend.device->ShaderDiagnostic());
             CHECK(renderer.Submit(prepared, completion));
             std::vector<std::pair<std::string, std::uint64_t>> targets{{"MaterialMap", 1}};
+            std::array<AttachmentReadback, 2> publicGroups;
             for (const auto& target : effect.targets)
                 targets.emplace_back(target.name, SharedFrameTargetId(target.identity));
             for (const auto& target : targets) {
@@ -891,10 +911,18 @@ int main(int argc, char** argv) try {
                 AttachmentReadback image;
                 CHECK(renderer.ReadTarget(1, target.second, image));
                 Compare(image, Read(device.Get(), surface.Get()), target.first.c_str());
+                if (material.filename() == L"LegacyMaterialMap.fx") {
+                    if (target.first == "MaterialMap")
+                        publicGroups[0] = image;
+                    else if (target.first == "Gbuffer5RT")
+                        publicGroups[1] = image;
+                }
                 if (target.first == (opacity == 1.f ? "MaterialMap" : "Gbuffer5RT"))
                     CHECK(std::count_if(image.bytes.begin(), image.bytes.end(),
                                         [](auto b) { return b != 0; }) > 20);
             }
+            if (material.filename() == L"LegacyMaterialMap.fx")
+                PublicMaterialCoverage(publicGroups[0], publicGroups[1]);
             AttachmentReadback before, after;
             CHECK(renderer.ReadTarget(1, 1, before) && renderer.ReadTarget(1, 16, after) &&
                   before.bytes == after.bytes);

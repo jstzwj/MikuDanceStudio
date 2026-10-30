@@ -1230,6 +1230,20 @@ int main(int argc, char** argv) try {
                     CHECK(bytes.size() == bgra.size());
                     nativeInputs.emplace(name, std::move(bytes));
                 }
+                // The public fixture partitions one triangle into two MRT
+                // groups. Reject a broken native clip oracle before comparing
+                // its composite with RHI, even if both images happen to match.
+                unsigned primary = 0, secondary = 0;
+                for (std::size_t n = 3; n < bgra.size(); n += 4) {
+                    const bool a = nativeInputs.at("Capture")[n] > 127,
+                               b = nativeInputs.at("Gbuffer5RT")[n] > 127;
+                    CHECK(!(a && b));
+                    primary += a;
+                    secondary += b;
+                }
+                CHECK(primary > 20 && secondary > 20);
+                std::printf("native public clip coverage: primary=%u secondary=%u overlap=0\n",
+                            primary, secondary);
             }
             CHECK(app->ViewportRenderer().Select(*app, api, false));
             frame(runtimeEffects);
