@@ -22,47 +22,6 @@ subject to the following restrictions:
 ///This is to allow MaterialCombiner/Custom Friction/Restitution values
 ContactAddedCallback		gContactAddedCallback=0;
 
-#if defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static btScalar mmdManifoldAddFloat(btScalar left, btScalar right)
-{
-	volatile btScalar result = left + right;
-	return result;
-}
-
-enum MmdManifoldDotOrder
-{
-	MMD_DOT_ZYX,
-	MMD_DOT_XZY,
-	MMD_DOT_YZX
-};
-
-static btScalar mmdManifoldDot(const btMatrix3x3& basis,
-	const btVector3& value, int column, MmdManifoldDotOrder order)
-{
-	const btScalar x = basis[0][column] * value[0];
-	const btScalar y = basis[1][column] * value[1];
-	const btScalar z = basis[2][column] * value[2];
-	if (order == MMD_DOT_XZY)
-		return mmdManifoldAddFloat(mmdManifoldAddFloat(x,z),y);
-	if (order == MMD_DOT_YZX)
-		return mmdManifoldAddFloat(mmdManifoldAddFloat(y,z),x);
-	return mmdManifoldAddFloat(mmdManifoldAddFloat(z,y),x);
-}
-
-static btVector3 mmdManifoldInvXform(const btTransform& transform,
-	const btVector3& point, MmdManifoldDotOrder order0,
-	MmdManifoldDotOrder order1, MmdManifoldDotOrder order2)
-{
-	const btVector3 value = point - transform.getOrigin();
-	btVector3 result;
-	result[0] = mmdManifoldDot(transform.getBasis(),value,0,order0);
-	result[1] = mmdManifoldDot(transform.getBasis(),value,1,order1);
-	result[2] = mmdManifoldDot(transform.getBasis(),value,2,order2);
-	return result;
-}
-
 ///User can override this material combiner by implementing gContactAddedCallback and setting body0->m_collisionFlags |= btCollisionObject::customMaterialCallback;
 inline btScalar	calculateCombinedFriction(const btCollisionObject* body0,const btCollisionObject* body1)
 {
@@ -114,29 +73,16 @@ void btManifoldResult::addContactPoint(const btVector3& normalOnBInWorld,const b
 
 	btVector3 localA;
 	btVector3 localB;
-
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	// MMD x64 RVA 0xFAB90 uses (x+y)+z for both inverse transforms.
-	// The x86 path below has distinct dot-product orders for each branch.
-	localA = (isSwapped ? m_rootTransB : m_rootTransA).invXform(pointA);
-	localB = (isSwapped ? m_rootTransA : m_rootTransB).invXform(pointInWorld);
-#else
+	
 	if (isSwapped)
 	{
-		// VC9 instruction order at MMD 0x4D7D37..0x4D7EAD.
-		localA = mmdManifoldInvXform(m_rootTransB,pointA,
-			MMD_DOT_YZX,MMD_DOT_XZY,MMD_DOT_XZY);
-		localB = mmdManifoldInvXform(m_rootTransA,pointInWorld,
-			MMD_DOT_ZYX,MMD_DOT_ZYX,MMD_DOT_ZYX);
+		localA = m_rootTransB.invXform(pointA );
+		localB = m_rootTransA.invXform(pointInWorld);
 	} else
 	{
-		// VC9 instruction order at MMD 0x4D7EB2..0x4D807B.
-		localA = mmdManifoldInvXform(m_rootTransA,pointA,
-			MMD_DOT_ZYX,MMD_DOT_ZYX,MMD_DOT_ZYX);
-		localB = mmdManifoldInvXform(m_rootTransB,pointInWorld,
-			MMD_DOT_XZY,MMD_DOT_ZYX,MMD_DOT_ZYX);
+		localA = m_rootTransA.invXform(pointA );
+		localB = m_rootTransB.invXform(pointInWorld);
 	}
-#endif
 
 	btManifoldPoint newPt(localA,localB,normalOnBInWorld,depth);
 	newPt.m_positionWorldOnA = pointA;

@@ -56,13 +56,6 @@ protected:
 	btVector3	m_appliedAngularImpulseA;
 	btVector3	m_appliedAngularImpulseB;
 
-	// MikuMikuDance v9.32's VC9 Bullet 2.75 ABI has a distinct solver UID
-	// at +0x60 followed by 12 bytes of base-class tail padding.  Modern MSVC
-	// otherwise folds the base to 0x60 bytes and moves every 6DOF field back
-	// by 16 bytes, changing both the ABI and constraint sort key.
-	int m_uid;
-	int m_vc9TailPadding[3];
-
 public:
 
 	btTypedConstraint(btTypedConstraintType type);
@@ -171,13 +164,8 @@ public:
 
 	int getUid() const
 	{
-		return m_uid;
+		return m_userConstraintId;   
 	} 
-
-	void setUid(int uid)
-	{
-		m_uid = uid;
-	}
 
 	bool	needsFeedback() const
 	{

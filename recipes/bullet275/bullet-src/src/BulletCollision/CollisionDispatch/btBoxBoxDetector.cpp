@@ -25,40 +25,6 @@ subject to the following restrictions:
 #include <float.h>
 #include <string.h>
 
-// Env-gated (OPENMMD_DUMP_DBOX=<path>) intermediate trace of the face-contact
-// chain, mirroring the solver instrumentation: every value is logged as raw
-// bits so offline comparison against the original's instructions is exact.
-#include <cstdio>
-#include <cstdlib>
-#include <cstdarg>
-#include <cstring>
-extern "C" int openmmdDboxTraceEnabled(void)
-{
-	static int state = -1;
-	if (state < 0)
-		state = getenv("OPENMMD_DUMP_DBOX") ? 1 : 0;
-	return state;
-}
-extern "C" void openmmdDboxLog(const char* fmt, ...)
-{
-	static FILE* stream = 0;
-	if (!stream)
-		stream = fopen(getenv("OPENMMD_DUMP_DBOX"), "w");
-	if (!stream)
-		return;
-	va_list args;
-	va_start(args, fmt);
-	vfprintf(stream, fmt, args);
-	va_end(args);
-}
-extern "C" unsigned openmmdDboxBits(float v)
-{
-	unsigned bits;
-	memcpy(&bits, &v, 4);
-	return bits;
-}
-#define DBX(v) openmmdDboxBits(v)
-
 btBoxBoxDetector::btBoxBoxDetector(btBoxShape* box1,btBoxShape* box2)
 : m_box1(box1),
 m_box2(box2)
@@ -96,36 +62,6 @@ static btScalar dDOT   (const btScalar *a, const btScalar *b) { return dDOTpq(a,
 static btScalar dDOT44 (const btScalar *a, const btScalar *b) { return dDOTpq(a,b,4,4); }
 static btScalar dDOT41 (const btScalar *a, const btScalar *b) { return dDOTpq(a,b,4,1); }
 static btScalar dDOT14 (const btScalar *a, const btScalar *b) { return dDOTpq(a,b,1,4); }
-
-// VC9 emits the face-contact construction as a specific chain of scalar-SSE
-// operations.  A modern optimizer legally reassociates several additions even
-// under the project's floating-point settings, which moves MMD contacts by a
-// few ULP.  Keep these two original float rounding boundaries explicit.
-#if defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static btScalar mmdAddFloat(btScalar left, btScalar right)
-{
-  volatile btScalar result = left + right;
-  return result;
-}
-
-#if defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static btScalar mmdSubFloat(btScalar left, btScalar right)
-{
-  volatile btScalar result = left - right;
-  return result;
-}
-/* VC9 (MMD): the 2x2 inverse stores 1/(m11*m22-m12*m21) through an fstps
-   (reciprocal rounded to float ONCE, like the stock `det1 = 1.f/det` store)
-   before scaling each component.  Pair (25,39) proved the earlier extended
-   reciprocal variant wrong: its clipped contacts differ from the original by
-   1-14 ULP while the float-rounded reciprocal reproduces the original
-   exactly, so the plain C path below is the faithful one. */
-
-
 #define dMULTIPLYOP1_331(A,op,B,C) \
 {\
   (A)[0] op dDOT41((B),(C)); \
@@ -339,18 +275,7 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
 
   // get vector from centers of box 1 to box 2, relative to box 1
   p = p2 - p1;
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-  // MMD x64 RVA 0xFE150: single-precision (x+y)+z throughout SAT.
-  typedef btScalar MmdSatScalar;
-  dMULTIPLY1_331(pp, R1, p);
-#else
-  typedef double MmdSatScalar;
-  // MMD's VC9 build evaluates all three transpose-dot products z+y+x.
-  // The source macro's x+y+z spelling is reassociated differently by VS2022.
-  pp[0] = mmdAddFloat(mmdAddFloat(R1[8]*p[2],R1[4]*p[1]),R1[0]*p[0]);
-  pp[1] = mmdAddFloat(mmdAddFloat(R1[9]*p[2],R1[5]*p[1]),R1[1]*p[0]);
-  pp[2] = mmdAddFloat(mmdAddFloat(R1[10]*p[2],R1[6]*p[1]),R1[2]*p[0]);
-#endif
+  dMULTIPLY1_331 (pp,R1,p);		// get pp = p relative to body 1
 
   // get side lengths / 2
   A[0] = side1[0]*btScalar(0.5);
@@ -361,31 +286,9 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   B[2] = side2[2]*btScalar(0.5);
 
   // Rij is R1'*R2, i.e. the relative rotation between R1 and R2
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-  R11 = dDOT44(R1 + 0, R2 + 0);
-  R12 = dDOT44(R1 + 0, R2 + 1);
-  R13 = dDOT44(R1 + 0, R2 + 2);
-  R21 = dDOT44(R1 + 1, R2 + 0);
-  R22 = dDOT44(R1 + 1, R2 + 1);
-  R23 = dDOT44(R1 + 1, R2 + 2);
-  R31 = dDOT44(R1 + 2, R2 + 0);
-  R32 = dDOT44(R1 + 2, R2 + 1);
-  R33 = dDOT44(R1 + 2, R2 + 2);
-#else
-  // Preserve the exact scalar-SSE scheduling at MMD 0x4E756A..0x4E777B.
-  R11 = mmdAddFloat(mmdAddFloat(R1[0]*R2[0],R1[8]*R2[8]),R1[4]*R2[4]);
-  // VC9 happens to keep this one dot product on x87 until its final store.
-  R12 = (btScalar)((double)R1[8]*R2[9] +
-                   (double)R1[4]*R2[5] +
-                   (double)R1[0]*R2[1]);
-  R13 = mmdAddFloat(mmdAddFloat(R1[4]*R2[6],R1[8]*R2[10]),R1[0]*R2[2]);
-  R21 = mmdAddFloat(mmdAddFloat(R1[5]*R2[4],R1[9]*R2[8]),R1[1]*R2[0]);
-  R22 = mmdAddFloat(mmdAddFloat(R1[9]*R2[9],R1[5]*R2[5]),R1[1]*R2[1]);
-  R23 = mmdAddFloat(mmdAddFloat(R1[9]*R2[10],R1[5]*R2[6]),R1[1]*R2[2]);
-  R31 = mmdAddFloat(mmdAddFloat(R1[6]*R2[4],R1[10]*R2[8]),R1[2]*R2[0]);
-  R32 = mmdAddFloat(mmdAddFloat(R1[10]*R2[9],R1[6]*R2[5]),R1[2]*R2[1]);
-  R33 = mmdAddFloat(mmdAddFloat(R1[10]*R2[10],R1[6]*R2[6]),R1[2]*R2[2]);
-#endif
+  R11 = dDOT44(R1+0,R2+0); R12 = dDOT44(R1+0,R2+1); R13 = dDOT44(R1+0,R2+2);
+  R21 = dDOT44(R1+1,R2+0); R22 = dDOT44(R1+1,R2+1); R23 = dDOT44(R1+1,R2+2);
+  R31 = dDOT44(R1+2,R2+0); R32 = dDOT44(R1+2,R2+1); R33 = dDOT44(R1+2,R2+2);
 
   Q11 = btFabs(R11); Q12 = btFabs(R12); Q13 = btFabs(R13);
   Q21 = btFabs(R21); Q22 = btFabs(R22); Q23 = btFabs(R23);
@@ -401,19 +304,14 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   // set to a vector relative to body 1. invert_normal is 1 if the sign of
   // the normal should be flipped.
 
-#define TST(expr1, expr2, norm, cc)                                                                \
-  {                                                                                                \
-	  const MmdSatScalar mmd_face_expr1 = (expr1);                                                 \
-	  const MmdSatScalar mmd_face_expr2 = (expr2);                                                 \
-	  s2 = (btScalar)(fabs(mmd_face_expr1) - mmd_face_expr2);                                      \
-	  if (s2 > 0)                                                                                  \
-		  return 0;                                                                                \
-	  if (s2 > s) {                                                                                \
-		  s = s2;                                                                                  \
-		  normalR = norm;                                                                          \
-		  invert_normal = (mmd_face_expr1 < 0);                                                    \
-		  code = (cc);                                                                             \
-	  }                                                                                            \
+#define TST(expr1,expr2,norm,cc) \
+  s2 = btFabs(expr1) - (expr2); \
+  if (s2 > 0) return 0; \
+  if (s2 > s) { \
+    s = s2; \
+    normalR = norm; \
+    invert_normal = ((expr1) < 0); \
+    code = (cc); \
   }
 
   s = -dInfinity;
@@ -421,108 +319,47 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   code = 0;
 
   // separating axis = u1,u2,u3
-  TST((MmdSatScalar)pp[0],
-	  ((MmdSatScalar)A[0] + (MmdSatScalar)B[0] * Q11 + (MmdSatScalar)B[1] * Q12 +
-	   (MmdSatScalar)B[2] * Q13),
-	  R1 + 0, 1);
-  TST((MmdSatScalar)pp[1],
-	  ((MmdSatScalar)A[1] + (MmdSatScalar)B[0] * Q21 + (MmdSatScalar)B[1] * Q22 +
-	   (MmdSatScalar)B[2] * Q23),
-	  R1 + 1, 2);
-  TST((MmdSatScalar)pp[2],
-	  ((MmdSatScalar)A[2] + (MmdSatScalar)B[0] * Q31 + (MmdSatScalar)B[1] * Q32 +
-	   (MmdSatScalar)B[2] * Q33),
-	  R1 + 2, 3);
+  TST (pp[0],(A[0] + B[0]*Q11 + B[1]*Q12 + B[2]*Q13),R1+0,1);
+  TST (pp[1],(A[1] + B[0]*Q21 + B[1]*Q22 + B[2]*Q23),R1+1,2);
+  TST (pp[2],(A[2] + B[0]*Q31 + B[1]*Q32 + B[2]*Q33),R1+2,3);
 
   // separating axis = v1,v2,v3
-  TST((MmdSatScalar)R2[0] * p[0] + (MmdSatScalar)R2[4] * p[1] + (MmdSatScalar)R2[8] * p[2],
-	  ((MmdSatScalar)A[0] * Q11 + (MmdSatScalar)A[1] * Q21 + (MmdSatScalar)A[2] * Q31 +
-	   (MmdSatScalar)B[0]),
-	  R2 + 0, 4);
-  TST((MmdSatScalar)R2[1] * p[0] + (MmdSatScalar)R2[5] * p[1] + (MmdSatScalar)R2[9] * p[2],
-	  ((MmdSatScalar)A[0] * Q12 + (MmdSatScalar)A[1] * Q22 + (MmdSatScalar)A[2] * Q32 +
-	   (MmdSatScalar)B[1]),
-	  R2 + 1, 5);
-  TST((MmdSatScalar)R2[2] * p[0] + (MmdSatScalar)R2[6] * p[1] + (MmdSatScalar)R2[10] * p[2],
-	  ((MmdSatScalar)A[0] * Q13 + (MmdSatScalar)A[1] * Q23 + (MmdSatScalar)A[2] * Q33 +
-	   (MmdSatScalar)B[2]),
-	  R2 + 2, 6);
+  TST (dDOT41(R2+0,p),(A[0]*Q11 + A[1]*Q21 + A[2]*Q31 + B[0]),R2+0,4);
+  TST (dDOT41(R2+1,p),(A[0]*Q12 + A[1]*Q22 + A[2]*Q32 + B[1]),R2+1,5);
+  TST (dDOT41(R2+2,p),(A[0]*Q13 + A[1]*Q23 + A[2]*Q33 + B[2]),R2+2,6);
 
   // note: cross product axes need to be scaled when s is computed.
   // normal (n1,n2,n3) is relative to box 1.
 #undef TST
-#define TST(expr1, expr2, n1, n2, n3, cc)                                                          \
-  /* VC9 evaluates the two SAT expressions and the squared axis length on */                       \
-  /* x87, then spills s2 and sqrt(length2) to float.  It subsequently */                           \
-  /* forms one scalar-SSE reciprocal and multiplies both s2 and the three */                       \
-  /* normal components by it (MMD 0x4E7B22..0x4E8409).  Keeping every */                           \
-  /* operation as btScalar makes VS2022 round each product/add too early. */                       \
-  {                                                                                                \
-	  const MmdSatScalar mmd_expr1 = (expr1);                                                      \
-	  const MmdSatScalar mmd_expr2 = (expr2);                                                      \
-	  const MmdSatScalar mmd_n1 = (n1);                                                            \
-	  const MmdSatScalar mmd_n2 = (n2);                                                            \
-	  const MmdSatScalar mmd_n3 = (n3);                                                            \
-	  s2 = (btScalar)(fabs(mmd_expr1) - mmd_expr2);                                                \
-	  if (s2 > 0)                                                                                  \
-		  return 0;                                                                                \
-	  l = (btScalar)sqrt(mmd_n1 * mmd_n1 + mmd_n2 * mmd_n2 + mmd_n3 * mmd_n3);                     \
-	  if (l > 0) {                                                                                 \
-		  const btScalar mmd_inv_l = btScalar(1.0) / l;                                            \
-		  s2 *= mmd_inv_l;                                                                         \
-		  if (s2 * fudge_factor > s) {                                                             \
-			  s = s2;                                                                              \
-			  normalR = 0;                                                                         \
-			  normalC[0] = (btScalar)(n1) * mmd_inv_l;                                             \
-			  normalC[1] = (btScalar)(n2) * mmd_inv_l;                                             \
-			  normalC[2] = (btScalar)(n3) * mmd_inv_l;                                             \
-			  invert_normal = ((expr1) < 0);                                                       \
-			  code = (cc);                                                                         \
-		  }                                                                                        \
-	  }                                                                                            \
+#define TST(expr1,expr2,n1,n2,n3,cc) \
+  s2 = btFabs(expr1) - (expr2); \
+  if (s2 > 0) return 0; \
+  l = btSqrt((n1)*(n1) + (n2)*(n2) + (n3)*(n3)); \
+  if (l > 0) { \
+    s2 /= l; \
+    if (s2*fudge_factor > s) { \
+      s = s2; \
+      normalR = 0; \
+      normalC[0] = (n1)/l; normalC[1] = (n2)/l; normalC[2] = (n3)/l; \
+      invert_normal = ((expr1) < 0); \
+      code = (cc); \
+    } \
   }
 
   // separating axis = u1 x (v1,v2,v3)
-  TST((MmdSatScalar)pp[2] * R21 - (MmdSatScalar)pp[1] * R31,
-	  ((MmdSatScalar)A[1] * Q31 + (MmdSatScalar)A[2] * Q21 + (MmdSatScalar)B[1] * Q13 +
-	   (MmdSatScalar)B[2] * Q12),
-	  0, -R31, R21, 7);
-  TST((MmdSatScalar)pp[2] * R22 - (MmdSatScalar)pp[1] * R32,
-	  ((MmdSatScalar)A[1] * Q32 + (MmdSatScalar)A[2] * Q22 + (MmdSatScalar)B[0] * Q13 +
-	   (MmdSatScalar)B[2] * Q11),
-	  0, -R32, R22, 8);
-  TST((MmdSatScalar)pp[2] * R23 - (MmdSatScalar)pp[1] * R33,
-	  ((MmdSatScalar)A[1] * Q33 + (MmdSatScalar)A[2] * Q23 + (MmdSatScalar)B[0] * Q12 +
-	   (MmdSatScalar)B[1] * Q11),
-	  0, -R33, R23, 9);
+  TST(pp[2]*R21-pp[1]*R31,(A[1]*Q31+A[2]*Q21+B[1]*Q13+B[2]*Q12),0,-R31,R21,7);
+  TST(pp[2]*R22-pp[1]*R32,(A[1]*Q32+A[2]*Q22+B[0]*Q13+B[2]*Q11),0,-R32,R22,8);
+  TST(pp[2]*R23-pp[1]*R33,(A[1]*Q33+A[2]*Q23+B[0]*Q12+B[1]*Q11),0,-R33,R23,9);
 
   // separating axis = u2 x (v1,v2,v3)
-  TST((MmdSatScalar)pp[0] * R31 - (MmdSatScalar)pp[2] * R11,
-	  ((MmdSatScalar)A[0] * Q31 + (MmdSatScalar)A[2] * Q11 + (MmdSatScalar)B[1] * Q23 +
-	   (MmdSatScalar)B[2] * Q22),
-	  R31, 0, -R11, 10);
-  TST((MmdSatScalar)pp[0] * R32 - (MmdSatScalar)pp[2] * R12,
-	  ((MmdSatScalar)A[0] * Q32 + (MmdSatScalar)A[2] * Q12 + (MmdSatScalar)B[0] * Q23 +
-	   (MmdSatScalar)B[2] * Q21),
-	  R32, 0, -R12, 11);
-  TST((MmdSatScalar)pp[0] * R33 - (MmdSatScalar)pp[2] * R13,
-	  ((MmdSatScalar)A[0] * Q33 + (MmdSatScalar)A[2] * Q13 + (MmdSatScalar)B[0] * Q22 +
-	   (MmdSatScalar)B[1] * Q21),
-	  R33, 0, -R13, 12);
+  TST(pp[0]*R31-pp[2]*R11,(A[0]*Q31+A[2]*Q11+B[1]*Q23+B[2]*Q22),R31,0,-R11,10);
+  TST(pp[0]*R32-pp[2]*R12,(A[0]*Q32+A[2]*Q12+B[0]*Q23+B[2]*Q21),R32,0,-R12,11);
+  TST(pp[0]*R33-pp[2]*R13,(A[0]*Q33+A[2]*Q13+B[0]*Q22+B[1]*Q21),R33,0,-R13,12);
 
   // separating axis = u3 x (v1,v2,v3)
-  TST((MmdSatScalar)pp[1] * R11 - (MmdSatScalar)pp[0] * R21,
-	  ((MmdSatScalar)A[0] * Q21 + (MmdSatScalar)A[1] * Q11 + (MmdSatScalar)B[1] * Q33 +
-	   (MmdSatScalar)B[2] * Q32),
-	  -R21, R11, 0, 13);
-  TST((MmdSatScalar)pp[1] * R12 - (MmdSatScalar)pp[0] * R22,
-	  ((MmdSatScalar)A[0] * Q22 + (MmdSatScalar)A[1] * Q12 + (MmdSatScalar)B[0] * Q33 +
-	   (MmdSatScalar)B[2] * Q31),
-	  -R22, R12, 0, 14);
-  TST((MmdSatScalar)pp[1] * R13 - (MmdSatScalar)pp[0] * R23,
-	  ((MmdSatScalar)A[0] * Q23 + (MmdSatScalar)A[1] * Q13 + (MmdSatScalar)B[0] * Q32 +
-	   (MmdSatScalar)B[1] * Q31),
-	  -R23, R13, 0, 15);
+  TST(pp[1]*R11-pp[0]*R21,(A[0]*Q21+A[1]*Q11+B[1]*Q33+B[2]*Q32),-R21,R11,0,13);
+  TST(pp[1]*R12-pp[0]*R22,(A[0]*Q22+A[1]*Q12+B[0]*Q33+B[2]*Q31),-R22,R12,0,14);
+  TST(pp[1]*R13-pp[0]*R23,(A[0]*Q23+A[1]*Q13+B[0]*Q32+B[1]*Q31),-R23,R13,0,15);
 
 #undef TST
 
@@ -554,16 +391,7 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
     btScalar sign;
     for (i=0; i<3; i++) pa[i] = p1[i];
     for (j=0; j<3; j++) {
-      /* MMD: dot = ((n.x*R[0][j] + n.z*R[2][j]) + n.y*R[1][j]); the
-         grouping decides degenerate near-zero sign tests (edge contacts
-         where the normal is perpendicular to an axis). */
-#if defined(_M_X64)
-	  const btScalar dj = dDOT14(normal, R1 + j);
-#else
-	  const btScalar dj = (normal[0]*R1[0*4+j] + normal[2]*R1[2*4+j])
-                        + normal[1]*R1[1*4+j];
-#endif
-	  sign = (dj > 0) ? btScalar(1.0) : btScalar(-1.0);
+      sign = (dDOT14(normal,R1+j) > 0) ? btScalar(1.0) : btScalar(-1.0);
       for (i=0; i<3; i++) pa[i] += sign * A[j] * R1[i*4+j];
     }
 
@@ -571,15 +399,8 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
     btVector3 pb;
     for (i=0; i<3; i++) pb[i] = p2[i];
     for (j=0; j<3; j++) {
-#if defined(_M_X64)
-		const btScalar dj2 = dDOT14(normal, R2 + j);
-#else
-		const btScalar dj2 =
-			(normal[0] * R2[0 * 4 + j] + normal[2] * R2[2 * 4 + j]) + normal[1] * R2[1 * 4 + j];
-#endif
-		sign = (dj2 > 0) ? btScalar(-1.0) : btScalar(1.0);
-		for (i = 0; i < 3; i++)
-			pb[i] += sign * B[j] * R2[i * 4 + j];
+      sign = (dDOT14(normal,R2+j) > 0) ? btScalar(-1.0) : btScalar(1.0);
+      for (i=0; i<3; i++) pb[i] += sign * B[j] * R2[i*4+j];
     }
 
     btScalar alpha,beta;
@@ -649,11 +470,6 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   anr[0] = btFabs (nr[0]);
   anr[1] = btFabs (nr[1]);
   anr[2] = btFabs (nr[2]);
-  if (openmmdDboxTraceEnabled()) {
-    openmmdDboxLog("nr %08X %08X %08X n2 %08X %08X %08X\n",
-                   DBX(nr[0]), DBX(nr[1]), DBX(nr[2]),
-                   DBX(normal2[0]), DBX(normal2[1]), DBX(normal2[2]));
-  }
 
   // find the largest compontent of anr: this corresponds to the normal
   // for the indident face. the other axis numbers of the indicent face
@@ -712,78 +528,28 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   // find the four corners of the incident face, in reference-face coordinates
   btScalar quad[8];	// 2D coordinate of incident face (x,y pairs)
   btScalar c1,c2,m11,m12,m21,m22;
-  if (openmmdDboxTraceEnabled()) {
-    openmmdDboxLog("lanr %d a1 %d a2 %d center %08X %08X %08X\n",
-                   lanr, a1, a2,
-                   DBX(center[0]), DBX(center[1]), DBX(center[2]));
-  }
-#if defined(_M_X64)
-  c1 = dDOT14(center, Ra + code1);
-  c2 = dDOT14(center, Ra + code2);
-#else
-  c1 = mmdAddFloat(mmdAddFloat(center[1]*Ra[4+code1],
-                              center[2]*Ra[8+code1]),
-                   center[0]*Ra[code1]);
-  c2 = mmdAddFloat(mmdAddFloat(center[1]*Ra[4+code2],
-                              center[2]*Ra[8+code2]),
-                   center[0]*Ra[code2]);
-#endif
-  if (openmmdDboxTraceEnabled()) {
-    openmmdDboxLog("c1 %08X c2 %08X\n", DBX(c1), DBX(c2));
-  }
+  c1 = dDOT14 (center,Ra+code1);
+  c2 = dDOT14 (center,Ra+code2);
   // optimize this? - we have already computed this data above, but it is not
   // stored in an easy-to-index format. for now it's quicker just to recompute
   // the four dot products.
-#if defined(_M_X64)
-  m11 = dDOT44(Ra + code1, Rb + a1);
-  m12 = dDOT44(Ra + code1, Rb + a2);
-  m21 = dDOT44(Ra + code2, Rb + a1);
-  m22 = dDOT44(Ra + code2, Rb + a2);
-#else
-  m11 = mmdAddFloat(mmdAddFloat(Ra[8+code1]*Rb[8+a1],
-                                Ra[4+code1]*Rb[4+a1]),
-                    Ra[code1]*Rb[a1]);
-  m12 = mmdAddFloat(mmdAddFloat(Ra[8+code1]*Rb[8+a2],
-                                Ra[4+code1]*Rb[4+a2]),
-                    Ra[code1]*Rb[a2]);
-  m21 = mmdAddFloat(mmdAddFloat(Ra[8+code2]*Rb[8+a1],
-                                Ra[4+code2]*Rb[4+a1]),
-                    Ra[code2]*Rb[a1]);
-  m22 = mmdAddFloat(mmdAddFloat(Ra[8+code2]*Rb[8+a2],
-                                Ra[4+code2]*Rb[4+a2]),
-                    Ra[code2]*Rb[a2]);
-#endif
-  if (openmmdDboxTraceEnabled()) {
-    openmmdDboxLog("m %08X %08X %08X %08X\n",
-                   DBX(m11), DBX(m12), DBX(m21), DBX(m22));
-  }
+  m11 = dDOT44 (Ra+code1,Rb+a1);
+  m12 = dDOT44 (Ra+code1,Rb+a2);
+  m21 = dDOT44 (Ra+code2,Rb+a1);
+  m22 = dDOT44 (Ra+code2,Rb+a2);
   {
     btScalar k1 = m11*Sb[a1];
     btScalar k2 = m21*Sb[a1];
     btScalar k3 = m12*Sb[a2];
     btScalar k4 = m22*Sb[a2];
-    const btScalar c1MinusK1 = mmdSubFloat(c1,k1);
-    const btScalar c2MinusK2 = mmdSubFloat(c2,k2);
-    quad[0] = mmdSubFloat(c1MinusK1,k3);
-    quad[1] = mmdSubFloat(c2MinusK2,k4);
-    quad[2] = mmdAddFloat(c1MinusK1,k3);
-    quad[3] = mmdAddFloat(c2MinusK2,k4);
-#if defined(_M_X64)
-	quad[4] = mmdAddFloat(mmdAddFloat(k1, c1), k3);
-	quad[5] = mmdAddFloat(mmdAddFloat(k2, c2), k4);
-#else
-	quad[4] = mmdAddFloat(mmdAddFloat(k3,k1),c1);
-    quad[5] = mmdAddFloat(mmdAddFloat(k4,k2),c2);
-#endif
-	quad[6] = mmdSubFloat(mmdAddFloat(k1,c1),k3);
-    quad[7] = mmdSubFloat(mmdAddFloat(k2,c2),k4);
-    if (openmmdDboxTraceEnabled()) {
-      openmmdDboxLog("k %08X %08X %08X %08X quad %08X %08X %08X %08X "
-                     "%08X %08X %08X %08X\n",
-                     DBX(k1), DBX(k2), DBX(k3), DBX(k4),
-                     DBX(quad[0]), DBX(quad[1]), DBX(quad[2]), DBX(quad[3]),
-                     DBX(quad[4]), DBX(quad[5]), DBX(quad[6]), DBX(quad[7]));
-    }
+    quad[0] = c1 - k1 - k3;
+    quad[1] = c2 - k2 - k4;
+    quad[2] = c1 - k1 + k3;
+    quad[3] = c2 - k2 + k4;
+    quad[4] = c1 + k1 + k3;
+    quad[5] = c2 + k2 + k4;
+    quad[6] = c1 + k1 - k3;
+    quad[7] = c2 + k2 - k4;
   }
 
   // find the size of the reference face
@@ -794,12 +560,6 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   // intersect the incident and reference faces
   btScalar ret[16];
   int n = intersectRectQuad2 (rect,quad,ret);
-  if (openmmdDboxTraceEnabled()) {
-    openmmdDboxLog("rect %08X %08X n %d ret", DBX(rect[0]), DBX(rect[1]), n);
-    for (int q = 0; q < 2*n; q++)
-      openmmdDboxLog(" %08X", DBX(ret[q]));
-    openmmdDboxLog("\n");
-  }
   if (n < 1) return 0;		// this should never happen
 
   // convert the intersection points into reference-face coordinates,
@@ -808,8 +568,6 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   // the 'ret' array as necessary so that 'point' and 'ret' correspond.
   btScalar point[3*8];		// penetrating contact points
   btScalar dep[8];			// depths for those points
-  // MMD rounds the reciprocal to float once (fstps det1) before scaling
-  // each component; see the comment above the disabled asm variant.
   btScalar det1 = 1.f/(m11*m22 - m12*m21);
   m11 *= det1;
   m12 *= det1;
@@ -819,26 +577,9 @@ int dBoxBox2 (const btVector3& p1, const dMatrix3 R1,
   for (j=0; j < n; j++) {
     btScalar k1 =  m22*(ret[j*2]-c1) - m12*(ret[j*2+1]-c2);
     btScalar k2 = -m21*(ret[j*2]-c1) + m11*(ret[j*2+1]-c2);
-    for (i=0; i<3; i++)
-		point[cnum * 3 + i] =
-#if defined(_M_X64)
-			mmdAddFloat(mmdAddFloat(k1 * Rb[i * 4 + a1], center[i]), k2 * Rb[i * 4 + a2]);
-	const btScalar normalDotPoint = dDOT(normal2, point + cnum * 3);
-#else
-			mmdAddFloat(mmdAddFloat(k1 * Rb[i * 4 + a1], k2 * Rb[i * 4 + a2]), center[i]);
-	const btScalar normalDotPoint = mmdAddFloat(
-      mmdAddFloat(normal2[2]*point[cnum*3+2],
-                  normal2[0]*point[cnum*3]),
-      normal2[1]*point[cnum*3+1]);
-#endif
-	dep[cnum] = mmdSubFloat(Sa[codeN],normalDotPoint);
-    if (openmmdDboxTraceEnabled()) {
-      openmmdDboxLog("pt %d kk %08X %08X p %08X %08X %08X ndp %08X dep %08X"
-                     "\n", j, DBX(k1), DBX(k2),
-                     DBX(point[cnum*3]), DBX(point[cnum*3+1]),
-                     DBX(point[cnum*3+2]), DBX(normalDotPoint),
-                     DBX(dep[cnum]));
-    }
+    for (i=0; i<3; i++) point[cnum*3+i] =
+			  center[i] + k1*Rb[i*4+a1] + k2*Rb[i*4+a2];
+    dep[cnum] = Sa[codeN] - dDOT(normal2,point+cnum*3);
     if (dep[cnum] >= 0) {
       ret[cnum*2] = ret[j*2];
       ret[cnum*2+1] = ret[j*2+1];

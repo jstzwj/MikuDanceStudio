@@ -24,11 +24,9 @@ if (MSVC)
     # The original binary tolerates implicit narrowing everywhere; keep the
     # port close to VC9 behaviour rather than modern strictness.
     add_compile_options(/wd4267 /wd4244 /wd4245)
-    # Match VC9's plain new/delete convention on both sides of the Bullet
-    # boundary. The Bullet recipe must use this switch too: on x86, C++17
-    # otherwise pairs a plain constraint allocation with an aligned deleting
-    # destructor (or the reverse with a C++14 library), corrupting the heap.
-    add_compile_options(/Zc:alignedNew-)
+    # Match the C++17 allocation convention of the unmodified Bullet package,
+    # including over-aligned classes without a class-specific allocator.
+    add_compile_options(/Zc:alignedNew)
 else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
@@ -48,6 +46,9 @@ endif()
 # Dependencies (provisioned by Conan; see conanfile.py / recipes/)
 # ---------------------------------------------------------------------------
 find_package(BULLET275 REQUIRED)
+if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    add_subdirectory(src/math/mmd_compat)
+endif()
 
 # ---------------------------------------------------------------------------
 # Core static library: application state, math, startup chain, effect API.
@@ -220,6 +221,9 @@ if (MSVC)
     # parallel regions (x64 _vcomp_fork, default static schedule).
     target_compile_options(mikudancestudio_core PRIVATE /openmp)
 endif()
+if(TARGET mikudancestudio_math)
+    target_link_libraries(mikudancestudio_core PRIVATE mikudancestudio_math)
+endif()
 
 # ---------------------------------------------------------------------------
 # Porting-era diagnostics.  The MIKUDANCESTUDIO_* environment probes
@@ -372,6 +376,8 @@ target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
 
 include(CTest)
 if(BUILD_TESTING)
+    option(MIKUDANCESTUDIO_STRICT_PHYSICS_PARITY
+        "Register historical MMD bitwise physics checks for the upstream Bullet build" OFF)
     add_executable(vmd_record_decode_test tests/vmd_record_decode_test.cpp src/model/vmd_load.cpp)
     target_include_directories(vmd_record_decode_test PRIVATE include)
     target_link_libraries(vmd_record_decode_test PRIVATE user32)
@@ -423,7 +429,7 @@ if(BUILD_TESTING)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         add_executable(mmd_math_test tests/mmd_math_test.cpp
             tests/mmd_math_x87_reference.cpp)
-        target_link_libraries(mmd_math_test PRIVATE BULLET275::BULLET275)
+        target_link_libraries(mmd_math_test PRIVATE mikudancestudio_math)
         add_test(NAME mmd_math COMMAND mmd_math_test)
     endif()
     add_executable(wave_data_chunk_test tests/wave_data_chunk_test.cpp
@@ -581,13 +587,18 @@ if(BUILD_TESTING)
     set_tests_properties(scene_roundtrip PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     add_executable(physics_trajectory_test tests/physics_trajectory_test.cpp)
     target_link_libraries(physics_trajectory_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
-    add_test(NAME physics_trajectory COMMAND physics_trajectory_test)
+    add_test(NAME physics_trajectory COMMAND physics_trajectory_test --reference-prefix 0)
     set_tests_properties(physics_trajectory PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        add_test(NAME physics_trajectory_d3dx_amd COMMAND physics_trajectory_test --d3dx-dispatch amd)
+        add_test(NAME physics_trajectory_d3dx_amd COMMAND physics_trajectory_test --d3dx-dispatch amd --reference-prefix 0)
         set_tests_properties(physics_trajectory_d3dx_amd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
-        add_test(NAME bullet_kernel_parity COMMAND physics_trajectory_test --kernels 1)
-        set_tests_properties(bullet_kernel_parity PROPERTIES TIMEOUT 30)
+        if(MIKUDANCESTUDIO_STRICT_PHYSICS_PARITY)
+            add_test(NAME bullet_kernel_parity COMMAND physics_trajectory_test --kernels 1)
+            set_tests_properties(bullet_kernel_parity PROPERTIES TIMEOUT 30 LABELS strict_physics_parity)
+            add_test(NAME physics_trajectory_reference_digest COMMAND physics_trajectory_test)
+            set_tests_properties(physics_trajectory_reference_digest PROPERTIES
+                SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS strict_physics_parity)
+        endif()
     endif()
     add_executable(pmd_save_test tests/pmd_save_test.cpp)
     target_link_libraries(pmd_save_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -781,12 +792,11 @@ if(BUILD_TESTING)
         src/physics/scene_dispose.cpp)
     target_compile_definitions(physics_scene_dispose_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
     target_link_libraries(physics_scene_dispose_test PRIVATE BULLET275::BULLET275)
-    add_executable(bullet_diagnostics_fixture tests/bullet_diagnostics_fixture.cpp)
-    target_link_libraries(bullet_diagnostics_fixture PRIVATE BULLET275::BULLET275)
-    add_test(NAME bullet_diagnostics COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_bullet_diagnostics.py
-        $<TARGET_FILE:bullet_diagnostics_fixture>)
-    set_tests_properties(bullet_diagnostics PROPERTIES TIMEOUT 60)
+    add_test(NAME bullet_upstream_sources COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/recipes/bullet275/verify_sources.py)
+    add_executable(bullet_simulation_test tests/bullet_simulation_test.cpp)
+    target_link_libraries(bullet_simulation_test PRIVATE BULLET275::BULLET275)
+    add_test(NAME bullet_simulation COMMAND bullet_simulation_test)
     add_executable(physics_gizmo_reset_test tests/physics_gizmo_reset_test.cpp)
     target_include_directories(physics_gizmo_reset_test PRIVATE include)
     target_link_libraries(physics_gizmo_reset_test PRIVATE mikudancestudio_core MMEffect dsound)
@@ -888,7 +898,8 @@ if(BUILD_TESTING)
         COMMAND embedded_mme_resources_test $<TARGET_FILE:MikuDanceStudio>)
     # These tests do not create windows, devices or modal dialogs. Safe while
     # the interactive desktop is in use: ctest -L cpu_no_windows.
-    set_tests_properties(bullet_allocation mme_technique_validation scene_comparison_inputs
+    set_tests_properties(bullet_allocation bullet_upstream_sources bullet_simulation
+        mme_technique_validation scene_comparison_inputs
         gui_export_comparison mme_effect_mapping mme_emm_save mme_initialization_test
         mme_host_object_cache embedded_mme_resources PROPERTIES LABELS cpu_no_windows)
     if (TEST mmd_math)

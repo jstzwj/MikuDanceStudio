@@ -12,7 +12,7 @@ MikuDanceStudio 使用 C++、Win32 和 DirectX 9，内置 Bullet 2.75 与 MME。
 | `src/render` | DirectX 9 设备、模型绘制、阴影与覆盖层 |
 | `src/media`、`src/mmdxshow` | 音频、视频录制与独立的 MMDxShow.dll |
 | `third_party/mmeffect` | 静态链接的效果引擎 |
-| `recipes/bullet275` | 带数值兼容修正的本地 Bullet 源码和 Conan 配方 |
+| `recipes/bullet275` | 未修改的原始 Bullet 2.75 源码、校验清单，以及独立的 CMake / Conan 构建配置 |
 
 帧复制粘贴由 `src/window/frame_clipboard.cpp` 处理；相机、灯光、阴影和重力轨道注册位于 `src/model/global_key_registration.cpp`。
 

@@ -80,7 +80,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #if defined(_M_IX86)
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #endif
 #include <Windows.h>
 
@@ -721,7 +721,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
             const int rZ = std::rand();
             const float direction[3] = {s.GravityX(), s.GravityY(), s.GravityZ()};
             float gravity[3];
-            btMmdMath::gravityNoise(rStrength, rX, rY, rZ, strengthInt, magnitude, direction,
+            mikudancestudio::mmd_math::gravityNoise(rStrength, rX, rY, rZ, strengthInt, magnitude, direction,
                                     gravity);
             world->setGravity(btVector3(gravity[0], gravity[1], gravity[2]));
             s.state.gravityNoiseTimer = 0.0f; // 0x46F6AC

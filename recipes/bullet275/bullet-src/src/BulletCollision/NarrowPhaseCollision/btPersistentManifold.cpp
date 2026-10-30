@@ -216,34 +216,8 @@ void btPersistentManifold::refreshContactPoints(const btTransform& trA,const btT
 	{
 		btManifoldPoint &manifoldPoint = m_pointCache[i];
 		manifoldPoint.m_positionWorldOnA = trA( manifoldPoint.m_localPointA );
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-		/* MMD 0x4D77D5..0x4D7922: transform A folds (x,y,z) per component
-		   (matching trA(v)), but transform B uses per-component folds
-		   x:(z,x,y) y:(x,z,y) z:(z,y,x).  Each product and addition
-		   rounds once, SSE-style. */
-		{
-			const btVector3& v = manifoldPoint.m_localPointB;
-			const btMatrix3x3& m = trB.getBasis();
-			const btVector3& o = trB.getOrigin();
-			btScalar px = (m[0][2]*v.z() + m[0][0]*v.x()) + m[0][1]*v.y();
-			btScalar py = (m[1][0]*v.x() + m[1][2]*v.z()) + m[1][1]*v.y();
-			btScalar pz = (m[2][2]*v.z() + m[2][1]*v.y()) + m[2][0]*v.x();
-			manifoldPoint.m_positionWorldOnB =
-				btVector3(px + o.x(), py + o.y(), pz + o.z());
-		}
-#else
 		manifoldPoint.m_positionWorldOnB = trB( manifoldPoint.m_localPointB );
-#endif
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-		/* MMD 0x4D792A: the depth dot folds (n.z*dz + n.y*dy) + n.x*dx with
-		   the normal as the left operand of each product. */
-		manifoldPoint.m_distance1 =
-			(manifoldPoint.m_normalWorldOnB.z() * (manifoldPoint.m_positionWorldOnA.z() - manifoldPoint.m_positionWorldOnB.z())
-			 + manifoldPoint.m_normalWorldOnB.y() * (manifoldPoint.m_positionWorldOnA.y() - manifoldPoint.m_positionWorldOnB.y()))
-			+ manifoldPoint.m_normalWorldOnB.x() * (manifoldPoint.m_positionWorldOnA.x() - manifoldPoint.m_positionWorldOnB.x());
-#else
 		manifoldPoint.m_distance1 = (manifoldPoint.m_positionWorldOnA -  manifoldPoint.m_positionWorldOnB).dot(manifoldPoint.m_normalWorldOnB);
-#endif
 		manifoldPoint.m_lifeTime++;
 	}
 

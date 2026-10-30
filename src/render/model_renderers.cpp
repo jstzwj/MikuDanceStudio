@@ -4,7 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #if defined(_M_IX86)
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #endif
 #include <Windows.h>
 #include <d3d9.h>
@@ -357,7 +357,7 @@ bool ContainsTextureMarker(const wchar_t* value, const wchar_t* lower, const wch
 
 void Cross3(float out[3], const float left[3], const float right[3]) {
 #if defined(_M_IX86)
-    btMmdMath::cross3(out, left, right);
+    mikudancestudio::mmd_math::cross3(out, left, right);
 #else
     out[0] = static_cast<float>(static_cast<double>(left[1]) * right[2] -
                                 static_cast<double>(left[2]) * right[1]);

@@ -17,37 +17,7 @@ subject to the following restrictions:
 #define SIMD_TRANSFORM_UTIL_H
 
 #include "btTransform.h"
-#include "btMmdMath.h"
-#include <math.h>
 #define ANGULAR_MOTION_THRESHOLD btScalar(0.5)*SIMD_HALF_PI
-
-// MMD (VC9, x87) rounding boundaries for the rotation-integration chain.
-// The additions below feed scalar-SSE stores, so a modern optimizer must not
-// reassociate them; keep every rounding point explicit.
-#if defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static inline btScalar mmdTfAdd(btScalar a, btScalar b)
-{
-	volatile btScalar r = a + b;
-	return r;
-}
-#if defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static inline btScalar mmdTfSub(btScalar a, btScalar b)
-{
-	volatile btScalar r = a - b;
-	return r;
-}
-#if defined(_MSC_VER)
-__declspec(noinline)
-#endif
-static inline btScalar mmdTfMul(btScalar a, btScalar b)
-{
-	volatile btScalar r = a * b;
-	return r;
-}
 
 
 
@@ -63,65 +33,6 @@ SIMD_FORCE_INLINE btVector3 btAabbSupport(const btVector3& halfExtents,const btV
 
 
 
-
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-// The isolated numeric implementation preserves VC9's extended intermediates
-// and the float rounding used by the clamp and Taylor branch.
-#endif
-
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-/* Env-gated (OPENMMD_DUMP_ITRANS=<path>) intermediate trace of the
-   rotation-integration chain; body id read from the MMD rigid slot at
-   btTransform+0x214 (the caller passes body+0x10 as curTrans). */
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-static int mmdITransEnabled(void)
-{
-	static int state = -1;
-	if (state < 0)
-		state = getenv("OPENMMD_DUMP_ITRANS") ? 1 : 0;
-	return state;
-}
-static FILE* mmdITransStream(void)
-{
-	static FILE* stream = 0;
-	if (!stream)
-		stream = fopen(getenv("OPENMMD_DUMP_ITRANS"), "w");
-	return stream;
-}
-static unsigned mmdBits(float v)
-{
-	unsigned bits;
-	memcpy(&bits, &v, 4);
-	return bits;
-}
-#define MTB(v) mmdBits(v)
-static void mmdITransLog(int id, const btQuaternion& orn0,
-                         const btVector3& angvel, const btVector3& linvel,
-                         btScalar ax, btScalar ay, btScalar az, btScalar dw,
-                         btScalar px, btScalar py, btScalar pz, btScalar pw,
-                         btScalar invLen, const btQuaternion& q)
-{
-	if (!mmdITransEnabled()) return;
-	FILE* s = mmdITransStream();
-	if (!s) return;
-	fprintf(s, "itr %d o %08X %08X %08X %08X w %08X %08X %08X "
-	           "l %08X %08X %08X d %08X %08X %08X %08X "
-	           "p %08X %08X %08X %08X i %08X q %08X %08X %08X %08X\n",
-	        id, MTB(orn0.x()), MTB(orn0.y()), MTB(orn0.z()), MTB(orn0.w()),
-	        MTB(angvel.x()), MTB(angvel.y()), MTB(angvel.z()),
-	        MTB(linvel.x()), MTB(linvel.y()), MTB(linvel.z()),
-	        MTB(ax), MTB(ay), MTB(az), MTB(dw),
-	        MTB(px), MTB(py), MTB(pz), MTB(pw), MTB(invLen),
-	        MTB(q.x()), MTB(q.y()), MTB(q.z()), MTB(q.w()));
-}
-#else
-static inline void mmdITransLog(int, const btQuaternion&,
-                                btScalar, btScalar, btScalar, btScalar,
-                                btScalar, btScalar, btScalar, btScalar,
-                                btScalar, const btQuaternion&) {}
-#endif
 
 /// Utils related to temporal transforms
 class btTransformUtil
@@ -140,63 +51,9 @@ public:
 	#else
 		//Exponential map
 		//google for "Practical Parameterization of Rotations Using the Exponential Map", F. Sebastian Grassia
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-		/* MMD's VC9 build (0x4EFC90) keeps the angular speed length, the
-		   sync quotient and the quaternion normalization factor on the x87
-		   stack (extended) and rounds each to float exactly once:
-		   - fAngle = fstp(sqrt((z^2+y^2)+x^2))
-		   - sin path: axis_i = fstp(w_i * (sin((fAngle*dt)*0.5)/fAngle))
-		   - cos path: dorn.w = fstp(cos(0.5*(dt*fAngle)))
-		   - normalize: invLen = fstp(1/sqrt(((w^2+z^2)+y^2)+x^2)),
-		     then one SSE multiply per component.
-		   The Taylor branch and the Hamilton product stay scalar-SSE with
-		   one rounding per operation, but with MMD's operand order (the x
-		   row of the product groups the cross terms differently). */
-		btScalar axisArr[3];
-		btScalar dw;
-		btMmdMath::integrateRotation((const float*)&angvel.x(), timeStep, axisArr, &dw);
-		const btScalar ax = axisArr[0];
-		const btScalar ay = axisArr[1];
-		const btScalar az = axisArr[2];
 
-		btQuaternion orn0 = curTrans.getRotation();
-		const btScalar ox = orn0.x(), oy = orn0.y(),
-			oz = orn0.z(), ow = orn0.w();
-		/* Hamilton product dorn*orn0 with MMD's add tree: the x row sums
-		   (o.z*d.y + o.w*d.x) + d.w*o.x first, the other rows match the
-		   source spelling. */
-		const btScalar px = mmdTfSub(
-			mmdTfAdd(mmdTfAdd(mmdTfMul(oz, ay), mmdTfMul(ow, ax)),
-				mmdTfMul(dw, ox)),
-			mmdTfMul(oy, az));
-		const btScalar py = mmdTfSub(
-			mmdTfAdd(mmdTfAdd(mmdTfMul(oy, dw), mmdTfMul(ow, ay)),
-				mmdTfMul(az, ox)),
-			mmdTfMul(oz, ax));
-		const btScalar pz = mmdTfSub(
-			mmdTfAdd(mmdTfAdd(mmdTfMul(oz, dw), mmdTfMul(ow, az)),
-				mmdTfMul(oy, ax)),
-			mmdTfMul(ay, ox));
-		const btScalar pw = mmdTfSub(
-			mmdTfSub(mmdTfSub(mmdTfMul(ow, dw), mmdTfMul(ax, ox)),
-				mmdTfMul(ay, oy)),
-			mmdTfMul(az, oz));
-
-		double lenD = (double)pw * pw;
-		lenD += (double)pz * pz;
-		lenD += (double)py * py;
-		lenD += (double)px * px;
-		const btScalar invLen = (btScalar)(1.0 / ::sqrt(lenD));
-		btQuaternion predictedOrn(
-			mmdTfMul(px, invLen), mmdTfMul(py, invLen),
-			mmdTfMul(pz, invLen), mmdTfMul(pw, invLen));
-		mmdITransLog(
-			*(const int*)((const char*)&curTrans + 0x214),
-			orn0, angvel, linvel, ax, ay, az, dw,
-			px, py, pz, pw, invLen, predictedOrn);
-#else
 		btVector3 axis;
-		btScalar	fAngle = angvel.length();
+		btScalar	fAngle = angvel.length(); 
 		//limit the angular motion
 		if (fAngle*timeStep > ANGULAR_MOTION_THRESHOLD)
 		{
@@ -218,7 +75,6 @@ public:
 
 		btQuaternion predictedOrn = dorn * orn0;
 		predictedOrn.normalize();
-#endif
 	#endif
 		predictedTransform.setRotation(predictedOrn);
 	}

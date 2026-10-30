@@ -52,27 +52,7 @@ void btSphereSphereCollisionAlgorithm::processCollision (btCollisionObject* col0
 	btSphereShape* sphere1 = (btSphereShape*)col1->getCollisionShape();
 
 	btVector3 diff = col0->getWorldTransform().getOrigin()-  col1->getWorldTransform().getOrigin();
-#if defined(_MSC_VER) && defined(_M_IX86)
-	// MMD 0x4DFA33..0x4DFA88: the whole length chain is x87 extended -
-	// the origins are SUBTRACTED on the FPU stack (fsub of two floats is
-	// exact in extended), squared and folded x*x + (y*y + z*z) without a
-	// single rounding, fsqrt in extended, and ONE fstp to float at the end.
-	// The stock SSE path stores the rounded float diff first and rounds
-	// (x*x+y*y)+z*z at every step.  Double arithmetic on the exact
-	// difference reproduces the extended chain bit-for-bit.
-	btScalar len;
-	{
-		const btVector3& o0 = col0->getWorldTransform().getOrigin();
-		const btVector3& o1 = col1->getWorldTransform().getOrigin();
-		const double dx = (double)o0.getX() - (double)o1.getX();
-		const double dy = (double)o0.getY() - (double)o1.getY();
-		const double dz = (double)o0.getZ() - (double)o1.getZ();
-		len = static_cast<btScalar>(
-		    sqrt(dx * dx + (dy * dy + dz * dz)));
-	}
-#else
 	btScalar len = diff.length();
-#endif
 	btScalar radius0 = sphere0->getRadius();
 	btScalar radius1 = sphere1->getRadius();
 

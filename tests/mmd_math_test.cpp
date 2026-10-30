@@ -1,6 +1,6 @@
 // Regression values captured from d7425a5's original numeric implementations.
 // The fixture includes all output bits (including signed zero and NaN payloads).
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #include "mmd_math_golden.hpp"
 #include "mmd_math_x87_reference.hpp"
 #include <algorithm>
@@ -12,7 +12,7 @@
 #include <float.h>
 #include <initializer_list>
 #include <intrin.h>
-namespace math = btMmdMath;
+namespace math = mikudancestudio::mmd_math;
 namespace {
 constexpr const char* operations[] = {"sinTimes",
                                       "cosine",

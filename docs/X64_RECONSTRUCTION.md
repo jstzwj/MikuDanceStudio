@@ -29,7 +29,11 @@ IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或
 
 x64 的单精度运算和 x86 的 x87/双精度表达式分别维护。即使数学公式相同，也不能合并浮点写回阶段或重新结合求值顺序；直接定位与播放推进的四元数插值同样需要保留各自的除法、倒数乘法和舍入阶段。
 
-`LinearMath/btMmdMath.cpp` 隔离了 VC9 x86 求值方式，其 `/arch:IA32 /fp:precise /O2 /Oi /GL- /RTC-` 选项只作用于该编译单元。修改时保留 x87 扩展精度中间值、`volatile float` 写回点、有序求和的 `noinline` 边界，以及调用方的精度控制和舍入模式。MSVC 的 `long double` 为 8 字节，不能仅靠替换类型恢复 x87 求值。
+Bullet 2.75 的第三方源码保持为用户提供的 `bullet-2.75.zip` 原始 `src` 树（只允许换行格式差异），来源和逐文件 SHA-256 由 `recipes/bullet275/upstream.json` 记录，构建前自动校验。CMake 定义位于源码树之外，使用 `/fp:precise`，x86 额外使用 `/arch:IA32`；头文件中的内联代码通过 Conan 传递相同配置。Debug 和 Release 保留各自的默认优化和运行时检查，不再通过修改 Bullet 表达式、对象布局或算法追求原版逐位一致。单一构建选项无法恢复 VC9 所有混合 x87/SSE 求值顺序，物理一致性必须根据实际回归结果判断。
+
+应用自身使用的 x86 数学辅助函数移至 `src/math/mmd_compat` 和 `include/mikudancestudio/mmd_math.hpp`，独立于第三方包，通过 `mikudancestudio_math` OBJECT 目标保留原有 `/arch:IA32 /fp:precise /O2 /Ob2 /Oi /GL-` 配置和舍入边界。这些函数不再替换 Bullet 内部的计算。应用和依赖统一使用 C++17 对齐分配，以支持上游没有自定义分配器的过对齐类。
+
+纯上游构建的默认物理回归验证两次全新 600 帧轨迹逐位自洽，以及停止、跳帧、模式切换、模型与 PMM 重载的生命周期。历史 MMD 轨迹前缀和内核摘要保留原值，通过 `MIKUDANCESTUDIO_STRICT_PHYSICS_PARITY=ON` 注册为额外诊断；不将这些摘要改写成新实现输出。该策略允许与 MMD 有数值差异，不代表已证明视觉等价或长期轨迹误差有界。
 
 [数学回归](../tests/mmd_math_test.cpp) 的 [golden 数据](../tests/mmd_math_golden.hpp) 来自旧实现，不能用替换后的实现重新生成。x87 三角函数近似可能随 CPU 变化；相关用例使用[冻结的旧实现](../tests/mmd_math_x87_reference.cpp)在当前 CPU、相同精度及舍入模式下生成对照值，历史汇编仅编译进 x86 测试程序。
 

@@ -18,10 +18,6 @@ subject to the following restrictions:
 
 #include "LinearMath/btQuaternion.h"
 
-// MMD reciprocal-multiply normalize for the virtual support entry
-// (defined in btConvexShape.cpp, next to the other mmd helpers).
-void mmdVirtualSupportNormalize(btVector3& vecnorm);
-
 btVector3	btSphereShape::localGetSupportingVertexWithoutMargin(const btVector3& vec)const
 {
 	(void)vec;
@@ -45,10 +41,11 @@ btVector3	btSphereShape::localGetSupportingVertex(const btVector3& vec)const
 	supVertex = localGetSupportingVertexWithoutMargin(vec);
 
 	btVector3 vecnorm = vec;
-	// MMD 0x4D0840: reciprocal-multiply normalize (see
-	// mmdVirtualSupportNormalize in btConvexShape.cpp) instead of the
-	// stock component-wise division.
-	mmdVirtualSupportNormalize(vecnorm);
+	if (vecnorm .length2() < (SIMD_EPSILON*SIMD_EPSILON))
+	{
+		vecnorm.setValue(btScalar(-1.),btScalar(-1.),btScalar(-1.));
+	} 
+	vecnorm.normalize();
 	supVertex+= getMargin() * vecnorm;
 	return supVertex;
 }
@@ -67,16 +64,7 @@ void btSphereShape::getAabb(const btTransform& t,btVector3& aabbMin,btVector3& a
 
 void	btSphereShape::calculateLocalInertia(btScalar mass,btVector3& inertia) const
 {
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	// MMD x64 RVA 0xECA40: ((mass * 0.4f) * radius) * radius.
-	const btScalar radius = getMargin();
-	const btScalar elem = ((mass * btScalar(0.4f)) * radius) * radius;
-#else
-	// MMD 0x4D0A70: r*r*mass*0.4f evaluated on the x87 stack with a
-	// single float rounding (double math below is exact per step).
-	const double mmdR = getMargin();
-	btScalar elem = btScalar(mmdR * mmdR * double(mass) * double(btScalar(0.4f)));
-#endif
+	btScalar elem = btScalar(0.4) * mass * getMargin()*getMargin();
 	inertia.setValue(elem,elem,elem);
 
 }

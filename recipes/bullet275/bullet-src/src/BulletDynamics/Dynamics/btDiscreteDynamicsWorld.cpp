@@ -958,10 +958,9 @@ public:
 		wv0 = m_worldTrans*triangle[0];
 		wv1 = m_worldTrans*triangle[1];
 		wv2 = m_worldTrans*triangle[2];
-		// MMD 0x4F4BC0 draws the same three edges in a different order.
-		m_debugDrawer->drawLine(wv1,wv2,m_color);
-		m_debugDrawer->drawLine(wv0,wv2,m_color);
 		m_debugDrawer->drawLine(wv0,wv1,m_color);
+		m_debugDrawer->drawLine(wv1,wv2,m_color);
+		m_debugDrawer->drawLine(wv2,wv0,m_color);
 	}
 };
 

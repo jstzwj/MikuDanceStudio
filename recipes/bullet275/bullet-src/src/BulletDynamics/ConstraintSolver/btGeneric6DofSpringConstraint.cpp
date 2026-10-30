@@ -17,35 +17,6 @@ subject to the following restrictions:
 #include "BulletDynamics/Dynamics/btRigidBody.h"
 #include "LinearMath/btTransformUtil.h"
 
-// Env-gated (OPENMMD_DUMP_SPRING=<path>) per-axis trace of the spring
-// parameter refresh: the calculated diff / equilibrium / stiffness /
-// damping inputs and the targetVelocity / maxMotorForce outputs.  The
-// original (0x500990) reads no body state here, so these six scalars per
-// axis fully determine the motor-row inputs downstream in getInfo2.
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-static int mmdSpringEnabled()
-{
-	static int state = -1;
-	if (state < 0)
-		state = getenv("OPENMMD_DUMP_SPRING") ? 1 : 0;
-	return state;
-}
-static FILE* mmdSpringStream()
-{
-	static FILE* stream = 0;
-	if (!stream)
-		stream = fopen(getenv("OPENMMD_DUMP_SPRING"), "w");
-	return stream;
-}
-static unsigned mmdSpringBits(float v)
-{
-	unsigned b;
-	memcpy(&b, &v, 4);
-	return b;
-}
-
 
 btGeneric6DofSpringConstraint::btGeneric6DofSpringConstraint(btRigidBody& rbA, btRigidBody& rbB, const btTransform& frameInA, const btTransform& frameInB ,bool useLinearReferenceFrameA)
 	: btGeneric6DofConstraint(rbA, rbB, frameInA, frameInB, useLinearReferenceFrameA)
@@ -126,14 +97,6 @@ void btGeneric6DofSpringConstraint::internalUpdateSprings(btConstraintInfo2* inf
 	// it is assumed that calculateTransforms() have been called before this call
 	int i;
 	btVector3 relVel = m_rbB.getLinearVelocity() - m_rbA.getLinearVelocity();
-	FILE* dump = mmdSpringEnabled() ? mmdSpringStream() : 0;
-	int bodyA_id = 0, bodyB_id = 0;
-	if (dump) {
-		// Observe the same bodies used by the solver. Their native layout
-		// differs between x86 and x64; diagnostics must not assume an ABI.
-		bodyA_id = m_rbA.m_debugBodyId;
-		bodyB_id = m_rbB.m_debugBodyId;
-	}
 	for(i = 0; i < 3; i++)
 	{
 		if(m_springEnabled[i])
@@ -147,14 +110,6 @@ void btGeneric6DofSpringConstraint::internalUpdateSprings(btConstraintInfo2* inf
 			btScalar velFactor = info->fps * m_springDamping[i] / btScalar(info->m_numIterations);
 			m_linearLimits.m_targetVelocity[i] =  velFactor * force;
 			m_linearLimits.m_maxMotorForce[i] =  btFabs(force) / info->fps;
-			if (dump)
-				fprintf(dump, "lin uid=%d ba=%d bb=%d ax=%d curr=%08X equi=%08X stif=%08X dmp=%08X dlt=%08X frc=%08X vf=%08X tv=%08X mf=%08X fps=%08X ni=%d\n",
-				        getUid(), bodyA_id, bodyB_id, i, mmdSpringBits(currPos), mmdSpringBits(m_equilibriumPoint[i]),
-				        mmdSpringBits(m_springStiffness[i]), mmdSpringBits(m_springDamping[i]),
-				        mmdSpringBits(delta), mmdSpringBits(force), mmdSpringBits(velFactor),
-				        mmdSpringBits(m_linearLimits.m_targetVelocity[i]),
-				        mmdSpringBits(m_linearLimits.m_maxMotorForce[i]),
-				        mmdSpringBits(info->fps), info->m_numIterations);
 		}
 	}
 	for(i = 0; i < 3; i++)
@@ -170,91 +125,8 @@ void btGeneric6DofSpringConstraint::internalUpdateSprings(btConstraintInfo2* inf
 			btScalar velFactor = info->fps * m_springDamping[i+3] / btScalar(info->m_numIterations);
 			m_angularLimits[i].m_targetVelocity = velFactor * force;
 			m_angularLimits[i].m_maxMotorForce = btFabs(force) / info->fps;
-			if (dump)
-				fprintf(dump, "ang uid=%d ba=%d bb=%d ax=%d curr=%08X equi=%08X stif=%08X dmp=%08X dlt=%08X frc=%08X vf=%08X tv=%08X mf=%08X fps=%08X ni=%d\n",
-				        getUid(), bodyA_id, bodyB_id, i, mmdSpringBits(currPos), mmdSpringBits(m_equilibriumPoint[i+3]),
-				        mmdSpringBits(m_springStiffness[i+3]), mmdSpringBits(m_springDamping[i+3]),
-				        mmdSpringBits(delta), mmdSpringBits(force), mmdSpringBits(velFactor),
-				        mmdSpringBits(m_angularLimits[i].m_targetVelocity),
-				        mmdSpringBits(m_angularLimits[i].m_maxMotorForce),
-				        mmdSpringBits(info->fps), info->m_numIterations);
 		}
 	}
-	if (dump)
-	{
-		// Raw constraint state block (linear limits, angular limit motors,
-		// all six axis diffs - including axes whose springs are disabled)
-		// so a word-level diff against the original localises the exact
-		// field of any per-frame 1-ULP divergence.
-		fprintf(dump, "raw uid=%d ba=%d bb=%d w=", getUid(), bodyA_id, bodyB_id);
-		const unsigned* words = reinterpret_cast<const unsigned*>(
-		    static_cast<const char*>(static_cast<const void*>(this)) + 0x2A0);
-		for (int w = 0; w < 176; ++w)
-			fprintf(dump, "%08X ", words[w]);
-		fprintf(dump, "\n");
-	}
-	if (dump)
-	{
-		// m_calculatedAxis triad for per-value comparison against the
-		// original (0x502930 tail) - the axis chain is stock here, so any
-		// per-component ULP difference must be fixed per observed value.
-		fprintf(dump, "axs uid=%d ba=%d bb=%d a0=%08X %08X %08X a1=%08X %08X %08X a2=%08X %08X %08X\n",
-		        getUid(), bodyA_id, bodyB_id,
-		        mmdSpringBits(m_calculatedAxis[0].getX()), mmdSpringBits(m_calculatedAxis[0].getY()), mmdSpringBits(m_calculatedAxis[0].getZ()),
-		        mmdSpringBits(m_calculatedAxis[1].getX()), mmdSpringBits(m_calculatedAxis[1].getY()), mmdSpringBits(m_calculatedAxis[1].getZ()),
-		        mmdSpringBits(m_calculatedAxis[2].getX()), mmdSpringBits(m_calculatedAxis[2].getY()), mmdSpringBits(m_calculatedAxis[2].getZ()));
-	}
-	if (dump)
-	{
-		// Absolute body velocities read by the rhs chain, not solver deltas.
-		const btVector3& la = m_rbA.getLinearVelocity();
-		const btVector3& aa = m_rbA.getAngularVelocity();
-		const btVector3& lb = m_rbB.getLinearVelocity();
-		const btVector3& ab = m_rbB.getAngularVelocity();
-		fprintf(dump, "vel uid=%d ba=%d bb=%d Al=%08X %08X %08X Aa=%08X %08X %08X Bl=%08X %08X %08X Bb=%08X %08X %08X\n",
-		        getUid(), bodyA_id, bodyB_id,
-		        mmdSpringBits(la[0]), mmdSpringBits(la[1]), mmdSpringBits(la[2]),
-		        mmdSpringBits(aa[0]), mmdSpringBits(aa[1]), mmdSpringBits(aa[2]),
-		        mmdSpringBits(lb[0]), mmdSpringBits(lb[1]), mmdSpringBits(lb[2]),
-		        mmdSpringBits(ab[0]), mmdSpringBits(ab[1]), mmdSpringBits(ab[2]));
-	}
-	if (dump)
-	{
-		// The calculated transforms (body transform x joint frame) at solve
-		// time: comparing against the original localises the creation chain -
-		// identical body transforms with differing calculated transforms
-		// means the joint frames themselves differ.
-		const btMatrix3x3& ba = m_calculatedTransformA.getBasis();
-		const btMatrix3x3& bb = m_calculatedTransformB.getBasis();
-		const btVector3& oa = m_calculatedTransformA.getOrigin();
-		const btVector3& ob = m_calculatedTransformB.getOrigin();
-		fprintf(dump, "ctx uid=%d ba=%d bb=%d A=%08X %08X %08X %08X %08X %08X %08X %08X %08X o=%08X %08X %08X B=%08X %08X %08X %08X %08X %08X %08X %08X %08X o=%08X %08X %08X\n",
-		        getUid(), bodyA_id, bodyB_id,
-		        mmdSpringBits(ba[0][0]), mmdSpringBits(ba[0][1]), mmdSpringBits(ba[0][2]),
-		        mmdSpringBits(ba[1][0]), mmdSpringBits(ba[1][1]), mmdSpringBits(ba[1][2]),
-		        mmdSpringBits(ba[2][0]), mmdSpringBits(ba[2][1]), mmdSpringBits(ba[2][2]),
-		        mmdSpringBits(oa[0]), mmdSpringBits(oa[1]), mmdSpringBits(oa[2]),
-		        mmdSpringBits(bb[0][0]), mmdSpringBits(bb[0][1]), mmdSpringBits(bb[0][2]),
-		        mmdSpringBits(bb[1][0]), mmdSpringBits(bb[1][1]), mmdSpringBits(bb[1][2]),
-		        mmdSpringBits(bb[2][0]), mmdSpringBits(bb[2][1]), mmdSpringBits(bb[2][2]),
-		        mmdSpringBits(ob[0]), mmdSpringBits(ob[1]), mmdSpringBits(ob[2]));
-		// and the body transforms feeding the multiply
-		const btTransform& wa = m_rbA.getCenterOfMassTransform();
-		const btTransform& wb = m_rbB.getCenterOfMassTransform();
-		const btMatrix3x3& wba = wa.getBasis();
-		const btMatrix3x3& wbb = wb.getBasis();
-		fprintf(dump, "wtx uid=%d ba=%d bb=%d A=%08X %08X %08X %08X %08X %08X %08X %08X %08X o=%08X %08X %08X B=%08X %08X %08X %08X %08X %08X %08X %08X %08X o=%08X %08X %08X\n",
-		        getUid(), bodyA_id, bodyB_id,
-		        mmdSpringBits(wba[0][0]), mmdSpringBits(wba[0][1]), mmdSpringBits(wba[0][2]),
-		        mmdSpringBits(wba[1][0]), mmdSpringBits(wba[1][1]), mmdSpringBits(wba[1][2]),
-		        mmdSpringBits(wba[2][0]), mmdSpringBits(wba[2][1]), mmdSpringBits(wba[2][2]),
-		        mmdSpringBits(wa.getOrigin()[0]), mmdSpringBits(wa.getOrigin()[1]), mmdSpringBits(wa.getOrigin()[2]),
-		        mmdSpringBits(wbb[0][0]), mmdSpringBits(wbb[0][1]), mmdSpringBits(wbb[0][2]),
-		        mmdSpringBits(wbb[1][0]), mmdSpringBits(wbb[1][1]), mmdSpringBits(wbb[1][2]),
-		        mmdSpringBits(wbb[2][0]), mmdSpringBits(wbb[2][1]), mmdSpringBits(wbb[2][2]),
-		        mmdSpringBits(wb.getOrigin()[0]), mmdSpringBits(wb.getOrigin()[1]), mmdSpringBits(wb.getOrigin()[2]));
-	}
-	if (dump) fflush(dump);
 }
 
 

@@ -18,7 +18,6 @@ subject to the following restrictions:
 ///with reproduction case
 //define BT_DISABLE_CAPSULE_CAPSULE_COLLIDER 1
 
-#include "LinearMath/btMmdMath.h"
 #include "btConvexConvexAlgorithm.h"
 
 //#include <stdio.h>
@@ -56,50 +55,6 @@ subject to the following restrictions:
 
 
 
-// MMD 0x4E18B0 (capsule-capsule fast path): the distance is computed as
-// (float)(sqrt(lenSqr) - radiusA - radiusB) with the square root and both
-// subtractions kept extended on the x87 stack.
-static __declspec(noinline) btScalar mmdCapsuleDistance(btScalar lenSqr,
-                                                       btScalar radiusA,
-                                                       btScalar radiusB)
-{
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	return btMmdMath::capsuleDistance(lenSqr, radiusA, radiusB);
-#else
-	return btSqrt(lenSqr) - radiusA - radiusB;
-#endif
-}
-
-// normalOnB = ptsVector * -(1/sqrt(lenSqr)), reciprocal extended and each
-// component rounded once (MMD 0x4E18B0).
-static __declspec(noinline) void mmdCapsuleNormal(btVector3& normal,
-                                                 const btVector3& pts,
-                                                 btScalar lenSqr)
-{
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btMmdMath::capsuleNormal(normal, pts, lenSqr);
-#else
-	normal = pts * -btRecipSqrt(lenSqr);
-#endif
-}
-
-// MMD's plane-space fallback branches: inv = 1/sqrt(a*a + b*b) stays
-// extended while the two components are scaled once.
-static __declspec(noinline) void mmdCapsulePlaneSpace(btVector3& normal,
-                                                     btScalar a, btScalar b,
-                                                     bool zBranch)
-{
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btMmdMath::planeSpace(normal, a, b, zBranch);
-#else
-	const btScalar inv = btScalar(1.)/btSqrt(a*a + b*b);
-	if (zBranch)
-		normal.setValue(0, -(a*inv), inv*b);
-	else
-		normal.setValue(-(b*inv), a*inv, 0);
-#endif
-}
-
 static SIMD_FORCE_INLINE void segmentsClosestPoints(
 	btVector3& ptsVector,
 	btVector3& offsetA,
@@ -111,21 +66,9 @@ static SIMD_FORCE_INLINE void segmentsClosestPoints(
 {
 	// compute the parameters of the closest points on each line segment
 
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	// MMD x64 RVA 0xF6180: all three dot products use (x+y)+z.
-	const btScalar dirA_dot_dirB = dirA.dot(dirB);
-	const btScalar dirA_dot_trans = dirA.dot(translation);
-	const btScalar dirB_dot_trans = dirB.dot(translation);
-#else
-	// VC9 (MMD 0x4E18B0): dirA_dot_dirB and dirA_dot_trans are grouped
-	// (z + x) + y, dirB_dot_trans is grouped (z + y) + x.
-	btScalar dirA_dot_dirB = (dirB.z()*dirA.z() + dirB.x()*dirA.x())
-		+ dirB.y()*dirA.y();
-	btScalar dirA_dot_trans = (translation.z()*dirA.z()
-		+ translation.x()*dirA.x()) + translation.y()*dirA.y();
-	btScalar dirB_dot_trans = (translation.z()*dirB.z()
-		+ translation.y()*dirB.y()) + translation.x()*dirB.x();
-#endif
+	btScalar dirA_dot_dirB = btDot(dirA,dirB);
+	btScalar dirA_dot_trans = btDot(dirA,translation);
+	btScalar dirB_dot_trans = btDot(dirB,translation);
 
 	btScalar denom = 1.0f - dirA_dot_dirB * dirA_dot_dirB;
 
@@ -200,35 +143,21 @@ static SIMD_FORCE_INLINE btScalar capsuleCapsuleDistance(
 	segmentsClosestPoints( ptsVector, offsetA, offsetB, tA, tB, translation,
 						   directionA, capsuleLengthA, directionB, capsuleLengthB );
 
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	const btScalar lenSqr = ptsVector.length2();
-#else
-	// VC9 (MMD 0x4E18B0): lenSqr is ((z*z + y*y) + x*x); the distance keeps
-	// the sqrt and both radius subtractions extended.
-	const btScalar lenSqr = (ptsVector.z()*ptsVector.z()
-		+ ptsVector.y()*ptsVector.y()) + ptsVector.x()*ptsVector.x();
-#endif
-	btScalar distance = mmdCapsuleDistance(lenSqr, capsuleRadiusA,
-		capsuleRadiusB);
+	btScalar distance = ptsVector.length() - capsuleRadiusA - capsuleRadiusB;
 
 	if ( distance > distanceThreshold )
 		return distance;
 
+	btScalar lenSqr = ptsVector.length2();
 	if (lenSqr<= (SIMD_EPSILON*SIMD_EPSILON))
 	{
 		//degenerate case where 2 capsules are likely at the same location: take a vector tangential to 'directionA'
-		if (btFabs(directionA.z()) > btScalar(0.70710677))
-		{
-			mmdCapsulePlaneSpace(normalOnB, directionA.z(), directionA.y(), true);
-		}
-		else
-		{
-			mmdCapsulePlaneSpace(normalOnB, directionA.x(), directionA.y(), false);
-		}
+		btVector3 q;
+		btPlaneSpace1(directionA,normalOnB,q);
 	} else
 	{
 		// compute the contact normal
-		mmdCapsuleNormal(normalOnB, ptsVector, lenSqr);
+		normalOnB = ptsVector*-btRecipSqrt(lenSqr);
 	}
 	pointOnB = transformB.getOrigin()+offsetB + normalOnB * capsuleRadiusB;
 
@@ -424,15 +353,8 @@ void btConvexConvexAlgorithm ::processCollision (btCollisionObject* body0,btColl
 	} else
 #endif //USE_SEPDISTANCE_UTIL2
 	{
-		// VC9 (MMD 0x4E18B0): the threshold sum is folded in double precision
-		// as (marginB + (threshold + marginA)), squared in double, and only the
-		// final product is rounded to float.
-		const double mmdThresholdSum =
-			(double)min1->getMargin()
-			+ ((double)m_manifoldPtr->getContactBreakingThreshold()
-				+ (double)min0->getMargin());
-		input.m_maximumDistanceSquared =
-			(btScalar)(mmdThresholdSum * mmdThresholdSum);
+		input.m_maximumDistanceSquared = min0->getMargin() + min1->getMargin() + m_manifoldPtr->getContactBreakingThreshold();
+		input.m_maximumDistanceSquared*= input.m_maximumDistanceSquared;
 	}
 
 	input.m_stackAlloc = dispatchInfo.m_stackAllocator;

@@ -561,13 +561,13 @@ void CheckKernels(const std::filesystem::path& original) {
             }
         }
     }
+    std::printf("1000 GJK + 111 box contacts + 200 inertia cases: %016llX%s\n",
+                static_cast<unsigned long long>(hash),
+                binary ? " (original matched bit for bit)" : "");
     if (binary)
         Check(hash == referenceHash, "reference collision/inertia float words differ");
     if (!binary)
         Check(hash == 0xF9489A9C38A111A4ull, "reference-derived collision/inertia digest");
-    std::printf("1000 GJK + 111 box contacts + 200 inertia cases: %016llX%s\n",
-                static_cast<unsigned long long>(hash),
-                binary ? " (original matched bit for bit)" : "");
     std::uint32_t mathSeed = 932;
     const auto mathScalar = [&] {
         mathSeed = mathSeed * 1664525u + 1013904223u;
@@ -957,7 +957,8 @@ struct ReferenceScene {
 
 std::vector<Sample> Run(const std::filesystem::path& externalModel,
                         const std::filesystem::path& original, int frames, bool stages,
-                        const std::filesystem::path& report = {}, bool* matched = nullptr) {
+                        const std::filesystem::path& report = {}, bool* matched = nullptr,
+                        bool referencePrefix = true) {
     Fixture f(true);
     Check(f.ready, "D3D9 fixture unavailable");
     const auto modelPath = externalModel.empty() ? f.directory / L"physics.pmx" : externalModel;
@@ -1093,10 +1094,11 @@ std::vector<Sample> Run(const std::filesystem::path& externalModel,
 #if defined(_M_X64)
         const auto signature = D3dxMathSignature();
         std::printf("D3DX math signature: %016llX\n", static_cast<unsigned long long>(signature));
-        const auto expected = ExpectedTrajectoryDigest(signature);
-        if (digest != expected || std::getenv("MDS_PHYSICS_TRACE"))
+        if (std::getenv("MDS_PHYSICS_TRACE"))
             DumpTrajectoryPrefix(trajectory, 20);
-        Check(digest == expected, "reference-derived PMX trajectory prefix");
+        if (referencePrefix)
+            Check(digest == ExpectedTrajectoryDigest(signature),
+                  "reference-derived PMX trajectory prefix");
 #endif
     }
     Check(f.physics->world->getNumConstraints() == static_cast<int>(model.jointCount),
@@ -1248,7 +1250,7 @@ int main(int argc, char** argv) {
     SetWindowsHookExA(WH_CBT, CloseUnexpectedDialog, nullptr, GetCurrentThreadId());
     std::filesystem::path model, original, report;
     int frames = 600;
-    bool stages = false, kernels = false;
+    bool stages = false, kernels = false, referencePrefix = true;
     std::string dispatch = "native";
     try {
         for (int i = 1; i < argc; i += 2) {
@@ -1265,6 +1267,8 @@ int main(int argc, char** argv) {
                 kernels = std::stoi(argv[i + 1]) != 0;
             else if (std::strcmp(argv[i], "--stages") == 0)
                 stages = std::stoi(argv[i + 1]) != 0;
+            else if (std::strcmp(argv[i], "--reference-prefix") == 0)
+                referencePrefix = std::stoi(argv[i + 1]) != 0;
             else if (std::strcmp(argv[i], "--d3dx-dispatch") == 0)
                 dispatch = argv[i + 1];
             else
@@ -1286,8 +1290,8 @@ int main(int argc, char** argv) {
         Check(!stages || !original.empty(), "stage comparison requires --original");
         Check(report.empty() || !original.empty(), "comparison report requires --original");
         bool matched = true;
-        const auto first = Run(model, original, frames, stages, report, &matched);
-        const auto second = Run(model, {}, frames, false);
+        const auto first = Run(model, original, frames, stages, report, &matched, referencePrefix);
+        const auto second = Run(model, {}, frames, false, {}, nullptr, referencePrefix);
         for (int i = 0; i < frames; ++i)
             Compare(first[i], second[i], i, "fresh reload", 0);
         CheckLifecycle();

@@ -14,7 +14,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #if defined(_M_IX86)
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #endif
 #include <Windows.h>
 
@@ -48,7 +48,7 @@ constexpr double kAccDrag = 0.01; // dbl 0x52E9C8
 
 float OriginalSinTimes(float angle, float factor) {
 #if defined(_M_IX86)
-    return btMmdMath::sinTimes(angle, factor);
+    return mikudancestudio::mmd_math::sinTimes(angle, factor);
 #else
     return static_cast<float>(std::sin(angle) * factor);
 #endif
@@ -56,7 +56,7 @@ float OriginalSinTimes(float angle, float factor) {
 
 float OriginalCos(float angle) {
 #if defined(_M_IX86)
-    return btMmdMath::cosine(angle);
+    return mikudancestudio::mmd_math::cosine(angle);
 #else
     return static_cast<float>(std::cos(angle));
 #endif

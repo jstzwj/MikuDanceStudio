@@ -135,45 +135,16 @@ class btMatrix3x3 {
    *  @param q The Quaternion to match */  
 		void setRotation(const btQuaternion& q) 
 		{
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-			/* MMD (0x401026) accumulates y^2+x^2+z^2+w^2 on the x87 stack and
-			   stores d once; s is the extended 2.0/d rounded once.  The stock
-			   per-op float dot drifts the basis by 1 ULP on hair capsules. */
-			/* MSVC x86 long double is the 80-bit x87 type: the four-square
-			   sum stays extended (64-bit mantissa) exactly like MMD's fmul/
-			   faddp chain before its single fstp. */
-			const long double dExt = (long double)q.x() * q.x()
-				+ (long double)q.y() * q.y()
-				+ (long double)q.z() * q.z()
-				+ (long double)q.w() * q.w();
-			btScalar d = (btScalar)dExt;
-			btFullAssert(d != btScalar(0.0));
-			/* the reciprocal divides 2.0 by the once-rounded float d, not the
-			   extended sum: at d just above 1.0 the float rounds to 1.0 and
-			   s becomes exactly 2.0 (fstp d; fld d; fdivr 2.0 at 0x401026) */
-			btScalar s = (btScalar)(2.0L / (long double)d);
-#else
 			btScalar d = q.length2();
 			btFullAssert(d != btScalar(0.0));
 			btScalar s = btScalar(2.0) / d;
-#endif
 			btScalar xs = q.x() * s,   ys = q.y() * s,   zs = q.z() * s;
 			btScalar wx = q.w() * xs,  wy = q.w() * ys,  wz = q.w() * zs;
 			btScalar xx = q.x() * xs,  xy = q.x() * ys,  xz = q.x() * zs;
 			btScalar yy = q.y() * ys,  yz = q.y() * zs,  zz = q.z() * zs;
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-			/* MMD 0x4010BD..0x40113C: the diagonal elements fold
-			   1-(a+b) with the sum and subtraction both on the x87 stack,
-			   storing once -- a single rounding -- unlike the stock two
-			   float roundings (proven by body8's [1][1] at MMD's exact q). */
-			setValue((btScalar)(1.0 - ((double)yy + (double)zz)), xy - wz, xz + wy,
-					 xy + wz, (btScalar)(1.0 - ((double)xx + (double)zz)), yz - wx,
-					 xz - wy, yz + wx, (btScalar)(1.0 - ((double)xx + (double)yy)));
-#else
 			setValue(btScalar(1.0) - (yy + zz), xy - wz, xz + wy,
 					 xy + wz, btScalar(1.0) - (xx + zz), yz - wx,
 					 xz - wy, yz + wx, btScalar(1.0) - (xx + yy));
-#endif
 		}
 		
 
@@ -257,13 +228,7 @@ class btMatrix3x3 {
 			
 			if (trace > btScalar(0.0)) 
 			{
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-				/* MMD (0x4E03DA) adds 1.0 and takes sqrt on the x87 stack,
-				   rounding s once; the stock float sum drifts orn0 by 1 ULP. */
-				btScalar s = (btScalar)::sqrt((double)trace + 1.0);
-#else
 				btScalar s = btSqrt(trace + btScalar(1.0));
-#endif
 				temp[3]=(s * btScalar(0.5));
 				s = btScalar(0.5) / s;
 				
@@ -279,13 +244,7 @@ class btMatrix3x3 {
 				int j = (i + 1) % 3;  
 				int k = (i + 2) % 3;
 				
-#if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-				btScalar s = (btScalar)::sqrt(
-					(double)m_el[i][i] - (double)m_el[j][j]
-					- (double)m_el[k][k] + 1.0);
-#else
 				btScalar s = btSqrt(m_el[i][i] - m_el[j][j] - m_el[k][k] + btScalar(1.0));
-#endif
 				temp[i] = s * btScalar(0.5);
 				s = btScalar(0.5) / s;
 				

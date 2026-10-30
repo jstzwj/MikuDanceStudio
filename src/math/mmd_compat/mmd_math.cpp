@@ -5,7 +5,7 @@
 // Ordered sums cross a noinline boundary before relaxed sqrt/trig evaluation:
 // this prevents reassociation while selecting native x87 math, including the
 // caller's precision/rounding mode. Do not enable whole-program optimization.
-#include "btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
 
@@ -13,10 +13,9 @@
 #pragma float_control(precise, on)
 #include <xmmintrin.h>
 
-namespace btMmdMath {
+namespace mikudancestudio::mmd_math {
 namespace {
-template <int I, int J, int K>
-__declspec(noinline) double sumSquares(const btVector3& v) {
+template <int I, int J, int K> __declspec(noinline) double sumSquares(const btVector3& v) {
     return (double(v[I]) * v[I] + double(v[J]) * v[J]) + double(v[K]) * v[K];
 }
 __declspec(noinline) double pairSquares(float a, float b) {
@@ -29,9 +28,10 @@ __declspec(noinline) double integrationSquare(const float* w) {
     return double(w[2]) * w[2] + (double(w[1]) * w[1] + double(w[0]) * w[0]);
 }
 #pragma float_control(precise, off, push)
-__declspec(noinline) double scalarRoot(float a) { return std::sqrt(double(a)); }
-template <int I, int J, int K>
-__declspec(noinline) double vectorRoot(const btVector3& v) {
+__declspec(noinline) double scalarRoot(float a) {
+    return std::sqrt(double(a));
+}
+template <int I, int J, int K> __declspec(noinline) double vectorRoot(const btVector3& v) {
     return std::sqrt(sumSquares<I, J, K>(v));
 }
 __declspec(noinline) double pairRoot(float a, float b) {
@@ -87,22 +87,21 @@ float edgeDistanceScale(float distance, float fov, float modelScale) {
     // the model scale; omitting this store changes the original rounding.
     const double distanceScale = double(0.00004500000068219379f);
     const double fovScale = double(0.6000000238418579f);
-    volatile float scale = static_cast<float>((double(distance) * distanceScale) *
-                                              (double(fov) * fovScale + 1.0));
+    volatile float scale =
+        static_cast<float>((double(distance) * distanceScale) * (double(fov) * fovScale + 1.0));
     return scale * modelScale;
 }
-float blendTransformComponent(const float* input, const float* matrix0,
-                              const float* matrix1, int component, float weight0,
-                              bool position) {
+float blendTransformComponent(const float* input, const float* matrix0, const float* matrix1,
+                              int component, float weight0, bool position) {
     volatile float weight1 = 1.0f - weight0;
-    double transformed1 = (double(input[0]) * matrix1[component] +
-                           double(input[1]) * matrix1[component + 4]) +
-                          double(input[2]) * matrix1[component + 8];
+    double transformed1 =
+        (double(input[0]) * matrix1[component] + double(input[1]) * matrix1[component + 4]) +
+        double(input[2]) * matrix1[component + 8];
     if (position)
         transformed1 += matrix1[component + 12];
-    double transformed0 = (double(input[0]) * matrix0[component] +
-                           double(input[1]) * matrix0[component + 4]) +
-                          double(input[2]) * matrix0[component + 8];
+    double transformed0 =
+        (double(input[0]) * matrix0[component] + double(input[1]) * matrix0[component + 4]) +
+        double(input[2]) * matrix0[component + 8];
     if (position)
         transformed0 += matrix0[component + 12];
     return static_cast<float>(transformed1 * weight1 + transformed0 * weight0);
@@ -121,8 +120,7 @@ void boneMarkerBounds(int x, int y, float scale, float* left, float* top, float*
     *bottom = static_cast<float>(topEdge + double(scale) * 18.0);
 }
 void __fastcall rotationBasis(float* basis, const float* quaternion) {
-    const double x = quaternion[0], y = quaternion[1], z = quaternion[2],
-                 w = quaternion[3];
+    const double x = quaternion[0], y = quaternion[1], z = quaternion[2], w = quaternion[3];
     volatile float normSquared = static_cast<float>(((y * y + x * x) + z * z) + w * w);
     volatile float scale = static_cast<float>(2.0 / normSquared);
     volatile float xs = static_cast<float>(x * scale), ys = static_cast<float>(y * scale),
@@ -154,25 +152,24 @@ void __fastcall transformPoint(float* out, const float* point, const float* matr
             matrix[column + 12]);
 }
 
-float lengthXYZ(const btVector3& v) { return static_cast<float>(vectorRoot<0, 1, 2>(v)); }
+float lengthXYZ(const btVector3& v) {
+    return static_cast<float>(vectorRoot<0, 1, 2>(v));
+}
 void normalizeDirection(const btVector3& direction, btVector3& out) {
     const double inverseLength = 1.0 / vectorRoot<0, 1, 2>(direction);
     volatile float roundedInverseLength = static_cast<float>(inverseLength);
-    out[0] = _mm_cvtss_f32(
-        _mm_mul_ss(_mm_set_ss(direction[0]), _mm_set_ss(roundedInverseLength)));
+    out[0] = _mm_cvtss_f32(_mm_mul_ss(_mm_set_ss(direction[0]), _mm_set_ss(roundedInverseLength)));
     out[1] = static_cast<float>(inverseLength * direction[1]);
     out[2] = static_cast<float>(inverseLength * direction[2]);
     out[3] = 0;
 }
 float determinant(const btVector3& a, const btVector3& b, const btVector3& c) {
-    return static_cast<float>(
-        ((((double(b[0]) * c[1]) * a[2] + (double(c[0]) * b[2]) * a[1]) -
-          (double(b[2]) * c[1]) * a[0]) -
-         (double(a[1]) * b[0]) * c[2]) +
-        (double(c[2]) * b[1]) * a[0] - (double(b[1]) * a[2]) * c[0]);
+    return static_cast<float>(((((double(b[0]) * c[1]) * a[2] + (double(c[0]) * b[2]) * a[1]) -
+                                (double(b[2]) * c[1]) * a[0]) -
+                               (double(a[1]) * b[0]) * c[2]) +
+                              (double(c[2]) * b[1]) * a[0] - (double(b[1]) * a[2]) * c[0]);
 }
-void triangleWeights(const btVector3& a, const btVector3& b, float lengthSquared,
-                     float* weights) {
+void triangleWeights(const btVector3& a, const btVector3& b, float lengthSquared, float* weights) {
     const double inverseLength = 1.0 / scalarRoot(lengthSquared);
     const double weight0 = vectorRoot<2, 1, 0>(a) * inverseLength;
     const double weight1 = vectorRoot<2, 1, 0>(b) * inverseLength;
@@ -180,19 +177,20 @@ void triangleWeights(const btVector3& a, const btVector3& b, float lengthSquared
     weights[1] = static_cast<float>(weight1);
     weights[2] = static_cast<float>(1.0 - (weight1 + weight0));
 }
-void tetrahedronWeights(float detCBD, float detACD, float detBAD, float volume,
-                        float* weights) {
-    const double inverseVolume = 1.0 / double(volume),
-                 weight0 = double(detCBD) * inverseVolume,
-                 weight1 = double(detACD) * inverseVolume,
-                 weight2 = double(detBAD) * inverseVolume;
+void tetrahedronWeights(float detCBD, float detACD, float detBAD, float volume, float* weights) {
+    const double inverseVolume = 1.0 / double(volume), weight0 = double(detCBD) * inverseVolume,
+                 weight1 = double(detACD) * inverseVolume, weight2 = double(detBAD) * inverseVolume;
     weights[0] = static_cast<float>(weight0);
     weights[1] = static_cast<float>(weight1);
     weights[2] = static_cast<float>(weight2);
     weights[3] = static_cast<float>(1.0 - ((weight2 + weight1) + weight0));
 }
-float lengthYZX(const btVector3& v) { return static_cast<float>(vectorRoot<1, 2, 0>(v)); }
-float lengthXZY(const btVector3& v) { return static_cast<float>(vectorRoot<0, 2, 1>(v)); }
+float lengthYZX(const btVector3& v) {
+    return static_cast<float>(vectorRoot<1, 2, 0>(v));
+}
+float lengthXZY(const btVector3& v) {
+    return static_cast<float>(vectorRoot<0, 2, 1>(v));
+}
 void normalize(btVector3& vector, float lengthSquared) {
     const double inverseLength = 1.0 / scalarRoot(lengthSquared);
     vector[0] = static_cast<float>(double(vector[0]) * inverseLength);
@@ -208,8 +206,7 @@ void tailNormalize(btVector3& normal, float lengthSquared, float distanceSquared
     normal[2] = static_cast<float>(double(normal[2]) * inverseLength);
     *distanceOut = static_cast<float>(scalarRoot(distanceSquared));
 }
-static __declspec(noinline) double distanceSquare(const btVector3& left,
-                                                  const btVector3& right) {
+static __declspec(noinline) double distanceSquare(const btVector3& left, const btVector3& right) {
     const double dx = double(left[0]) - right[0], dy = double(left[1]) - right[1],
                  dz = double(left[2]) - right[2];
     return (dz * dz + dy * dy) + dx * dx;
@@ -257,11 +254,12 @@ void normalizeSupportLength(btVector3& vector, float lengthSquared) {
 }
 
 #pragma float_control(precise, off, push)
-static __forceinline double nativeAcos(double a) { return std::acos(a); }
+static __forceinline double nativeAcos(double a) {
+    return std::acos(a);
+}
 #pragma float_control(pop)
 static __declspec(noinline) double quaternionSquare(const float* quaternion) {
-    return ((double(quaternion[2]) * quaternion[2] +
-             double(quaternion[3]) * quaternion[3]) +
+    return ((double(quaternion[2]) * quaternion[2] + double(quaternion[3]) * quaternion[3]) +
             double(quaternion[1]) * quaternion[1]) +
            double(quaternion[0]) * quaternion[0];
 }
@@ -273,15 +271,19 @@ void quaternionAngle(const float* quaternion, float* inverseLengthOut, float* an
 }
 
 #pragma float_control(pop)
-void quaternionRootParts(float diagonalI, float diagonalJ, float diagonalK,
-                         bool positiveTrace, float* rootOut, float* halfRootOut) {
+void quaternionRootParts(float diagonalI, float diagonalJ, float diagonalK, bool positiveTrace,
+                         float* rootOut, float* halfRootOut) {
     const double root = quaternionRoot(diagonalI, diagonalJ, diagonalK, positiveTrace);
     *rootOut = static_cast<float>(root);
     *halfRootOut = static_cast<float>(root * 0.5);
 }
 #pragma float_control(precise, off, push)
-static __forceinline double nativeSin(double a) { return std::sin(a); }
-static __forceinline double nativeCos(double a) { return std::cos(a); }
+static __forceinline double nativeSin(double a) {
+    return std::sin(a);
+}
+static __forceinline double nativeCos(double a) {
+    return std::cos(a);
+}
 #pragma float_control(pop)
 static inline float multiplyFloat(float a, float b) {
     return _mm_cvtss_f32(_mm_mul_ss(_mm_set_ss(a), _mm_set_ss(b)));
@@ -299,28 +301,21 @@ float addFloat(float a, float b) {
     return _mm_cvtss_f32(_mm_add_ss(_mm_set_ss(a), _mm_set_ss(b)));
 }
 template <int I, int J, int K>
-float inertiaElement(const btMatrix3x3& basis, const btVector3& local, int row,
-                     int column) {
-    const float p0 =
-        multiplyFloat(basis[column][0], multiplyFloat(basis[row][0], local[0]));
-    const float p1 =
-        multiplyFloat(basis[column][1], multiplyFloat(basis[row][1], local[1]));
-    const float p2 =
-        multiplyFloat(basis[column][2], multiplyFloat(basis[row][2], local[2]));
+float inertiaElement(const btMatrix3x3& basis, const btVector3& local, int row, int column) {
+    const float p0 = multiplyFloat(basis[column][0], multiplyFloat(basis[row][0], local[0]));
+    const float p1 = multiplyFloat(basis[column][1], multiplyFloat(basis[row][1], local[1]));
+    const float p2 = multiplyFloat(basis[column][2], multiplyFloat(basis[row][2], local[2]));
     const float terms[3] = {p0, p1, p2};
     return addFloat(addFloat(terms[I], terms[J]), terms[K]);
 }
 } // namespace
 btMatrix3x3 inverseInertiaTensor(const btMatrix3x3& basis, const btVector3& local) {
-    return btMatrix3x3(inertiaElement<2, 0, 1>(basis, local, 0, 0),
-                       inertiaElement<2, 1, 0>(basis, local, 0, 1),
-                       inertiaElement<2, 0, 1>(basis, local, 0, 2),
-                       inertiaElement<1, 2, 0>(basis, local, 1, 0),
-                       inertiaElement<1, 2, 0>(basis, local, 1, 1),
-                       inertiaElement<2, 1, 0>(basis, local, 1, 2),
-                       inertiaElement<1, 2, 0>(basis, local, 2, 0),
-                       inertiaElement<1, 2, 0>(basis, local, 2, 1),
-                       inertiaElement<2, 1, 0>(basis, local, 2, 2));
+    return btMatrix3x3(
+        inertiaElement<2, 0, 1>(basis, local, 0, 0), inertiaElement<2, 1, 0>(basis, local, 0, 1),
+        inertiaElement<2, 0, 1>(basis, local, 0, 2), inertiaElement<1, 2, 0>(basis, local, 1, 0),
+        inertiaElement<1, 2, 0>(basis, local, 1, 1), inertiaElement<2, 1, 0>(basis, local, 1, 2),
+        inertiaElement<1, 2, 0>(basis, local, 2, 0), inertiaElement<1, 2, 0>(basis, local, 2, 1),
+        inertiaElement<2, 1, 0>(basis, local, 2, 2));
 }
 
 #pragma float_control(precise, off, push)
@@ -335,10 +330,9 @@ void integrateRotation(const float* angularVelocity, float timeStep, float* axis
     // The original unordered comparison also selects Taylor for NaN.
     if (!(speedFloat >= 0.001f)) {
         float cubic = multiplyFloat(
-            multiplyFloat(
-                multiplyFloat(multiplyFloat(multiplyFloat(timeStep, timeStep), timeStep),
-                              speedFloat),
-                speedFloat),
+            multiplyFloat(multiplyFloat(multiplyFloat(multiplyFloat(timeStep, timeStep), timeStep),
+                                        speedFloat),
+                          speedFloat),
             0.020833334f);
         float factor = subtractFloat(multiplyFloat(timeStep, 0.5f), cubic);
         axis[0] = multiplyFloat(angularVelocity[0], factor);
@@ -366,5 +360,5 @@ void gravityNoise(int rStrength, int rX, int rY, int rZ, int noise, float magnit
             strength);
 }
 
-} // namespace btMmdMath
+} // namespace mikudancestudio::mmd_math
 #endif
