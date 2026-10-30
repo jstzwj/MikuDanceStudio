@@ -523,11 +523,12 @@ bool BindLegacyMaterial(ReplayShader& shader, const ModelReplayDraw& draw,
                 reason = "MME_mipped_sampler_none_not_supported";
                 return false;
             }
-            shader.textures.push_back({slot,
-                                       {},
-                                       {SharedFrameTargetId(target->identity),
-                                        target->width ? target->width : viewport.width,
-                                        target->height ? target->height : viewport.height}});
+            unsigned targetWidth, targetHeight;
+            if (!MmePortableExtent(*target, viewport.width, viewport.height, targetWidth,
+                                   targetHeight, reason))
+                return false;
+            shader.textures.push_back(
+                {slot, {}, {SharedFrameTargetId(target->identity), targetWidth, targetHeight}});
             shader.samplers.push_back(
                 {slot,
                  {sampler.linearMin ? SamplerFilter::Linear : SamplerFilter::Point,
@@ -589,8 +590,12 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
         ShaderProgramDesc d;
         std::string hlsl;
         std::vector<MmeLegacyInput> inputs;
-        if (!MmeLegacyShader(*effect.legacy, *imported, hlsl, inputs, reason))
+        if (!MmeLegacyShader(*effect.legacy, *imported, hlsl, inputs, reason, &d.colorOutputs))
             return {};
+        if (effect.post && d.colorOutputs.size() != pass.colors.size()) {
+            reason = "MME_scene_shader_output_layout";
+            return {};
+        }
         d.name = pass.technique + "/" + pass.name;
         d.vertex.entry = "mdsLegacyVS";
         d.pixel.entry = "mdsLegacyPS";
@@ -612,8 +617,6 @@ std::shared_ptr<const rhi::ShaderProgram> PortableMmeProgram(const MmePortableEf
                               1,
                               16,
                               {{"mdsLegacyViewport", ShaderValueType::Float4, 0}}});
-        if (effect.post)
-            d.colorOutputs.assign(pass.colors.size(), 4);
         const auto active = effect.post ? pass.sampleSlots : std::vector<unsigned>{};
         for (unsigned slot = 0; slot < effect.legacy->samplers.size(); ++slot) {
             if (effect.post && std::find(active.begin(), active.end(), slot) == active.end())
@@ -682,11 +685,14 @@ bool RegisterPortableMmeTargets(RenderFrame& frame, const std::vector<MmePortabl
                                 : target.format == MmePortableFormat::Rgba16Float
                                     ? TextureFormat::Rgba16Float
                                     : TextureFormat::Rgba8;
-            RenderTextureDesc desc{
-                target.width ? target.width : width, target.height ? target.height : height, format,
-                target.depth ? unsigned(TextureAccess::DepthStencilAttachment)
-                             : TextureAccess::ColorAttachment | TextureAccess::Sampled |
-                                   TextureAccess::CopySource};
+            unsigned targetWidth, targetHeight;
+            if (!MmePortableExtent(target, width, height, targetWidth, targetHeight, reason))
+                return false;
+            RenderTextureDesc desc{targetWidth, targetHeight, format,
+                                   target.depth
+                                       ? unsigned(TextureAccess::DepthStencilAttachment)
+                                       : TextureAccess::ColorAttachment | TextureAccess::Sampled |
+                                             TextureAccess::CopySource};
             if (target.mipmapped) {
                 desc.mips = 1;
                 for (auto size = std::max(desc.width, desc.height); size > 1; size >>= 1)
@@ -728,6 +734,8 @@ bool ApplyPortableMmeMaterial(rhi::ModelReplayDraw& draw, const MmePortableEffec
         }
         ReplayShader shader;
         shader.pipeline.program = program;
+        shader.pipeline.colorFormats.assign(program->description.colorOutputs.size(),
+                                            TextureFormat::Rgba8);
         shader.pipeline.viewport = draw.pipeline.viewport;
         shader.pipeline.raster = draw.pipeline.raster;
         if (!LegacyRaster(*imported, shader.pipeline.raster, reason) ||
@@ -819,13 +827,14 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
     };
     const auto source = std::find_if(frame.targets.begin(), frame.targets.end(),
                                      [&](const auto& t) { return t.id == frame.finalColor; });
-    if (source == frame.targets.end() || source->description.format != TextureFormat::Rgba8)
+    if (source == frame.targets.end() || (source->description.format != TextureFormat::Rgba8 &&
+                                          source->description.format != TextureFormat::Rgba16Float))
         return fail("MME_post_missing_scene_color");
     const unsigned width = source->description.width, height = source->description.height;
     const auto capture = std::find_if(effect.steps.begin(), effect.steps.end(), [](const auto& s) {
         return s.kind == MmePortableStep::Kind::Capture;
     });
-    if (capture == effect.steps.end() || capture->colors.size() != 1)
+    if (capture == effect.steps.end() || capture->colors.empty())
         return fail("MME_scene_capture_layout");
     auto next = frame;
     if (!RegisterPortableMmeTargets(next, {effect}, reason))
@@ -836,16 +845,13 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
     const auto captureTarget =
         std::find_if(effect.targets.begin(), effect.targets.end(),
                      [&](const auto& t) { return t.name == capture->colors[0]; });
-    ids[capture->colors[0]] = captureTarget != effect.targets.end() && captureTarget->identity
-                                  ? SharedFrameTargetId(captureTarget->identity)
-                                  : frame.finalColor;
-    formats[capture->colors[0]] = TextureFormat::Rgba8;
-    const auto captured =
-        std::find_if(next.targets.begin(), next.targets.end(),
-                     [&](const auto& t) { return t.id == ids.at(capture->colors[0]); });
-    if (captured == next.targets.end() || captured->description.width != width ||
-        captured->description.height != height)
-        return fail("MME_scene_capture_extent_not_supported");
+    const auto incomingFormat = source->description.format;
+    if (captureTarget != effect.targets.end() && captureTarget->identity)
+        ids[capture->colors[0]] = SharedFrameTargetId(captureTarget->identity);
+    else if (captureTarget != effect.targets.end() &&
+             (captureTarget->format == MmePortableFormat::Rgba16Float) ==
+                 (incomingFormat == TextureFormat::Rgba16Float))
+        ids[capture->colors[0]] = frame.finalColor;
     std::uint64_t incomingDepth = 0;
     if (!capture->depth.empty()) {
         for (const auto& pass : frame.passes)
@@ -860,7 +866,9 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
             ids[capture->depth] = incomingDepth;
     }
     auto descriptions = effect.targets;
-    descriptions.push_back({"FinalColor", MmePortableFormat::Rgba8});
+    descriptions.push_back({"FinalColor", incomingFormat == TextureFormat::Rgba16Float
+                                              ? MmePortableFormat::Rgba16Float
+                                              : MmePortableFormat::Rgba8});
     descriptions.push_back({"FinalDepth", MmePortableFormat::Rgba8, true});
     std::uint64_t id = 16;
     for (const auto& t : frame.targets)
@@ -872,31 +880,66 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
                                 ? TextureFormat::Rgba16Float
                                 : TextureFormat::Rgba8;
         formats[t.name] = format;
-        if (ids.count(t.name))
+        unsigned targetWidth, targetHeight;
+        if (!MmePortableExtent(t, width, height, targetWidth, targetHeight, reason))
+            return false;
+        if (ids.count(t.name)) {
+            const auto aliased =
+                std::find_if(next.targets.begin(), next.targets.end(),
+                             [&](const auto& item) { return item.id == ids.at(t.name); });
+            if (aliased == next.targets.end() || aliased->description.width != targetWidth ||
+                aliased->description.height != targetHeight)
+                return fail("MME_scene_capture_extent_not_supported");
             continue;
+        }
         if (t.identity) {
             ids[t.name] = SharedFrameTargetId(t.identity);
             continue;
         }
         ids[t.name] = id++;
         next.targets.push_back({ids[t.name],
-                                {width, height, format,
+                                {targetWidth, targetHeight, format,
                                  t.depth ? unsigned(TextureAccess::DepthStencilAttachment)
                                          : TextureAccess::ColorAttachment | TextureAccess::Sampled |
                                                TextureAccess::CopySource}});
+    }
+    std::vector<TextureFormat> captureFormats;
+    for (const auto& name : capture->colors) {
+        const auto captured = std::find_if(next.targets.begin(), next.targets.end(),
+                                           [&](const auto& t) { return t.id == ids.at(name); });
+        if (captured == next.targets.end() || captured->description.width != width ||
+            captured->description.height != height)
+            return fail("MME_scene_capture_extent_not_supported");
+        captureFormats.push_back(captured->description.format);
     }
     std::set<std::uint64_t> initialized;
     for (const auto& step : effect.steps) {
         if (step.kind == MmePortableStep::Kind::Capture) {
             for (auto pass : frame.passes) {
-                const auto remap = [&](FrameAttachment& a) {
-                    if (a.target == frame.finalColor)
-                        a.target = ids.at(capture->colors[0]);
-                };
-                if (pass.color)
-                    remap(*pass.color);
-                for (auto& a : pass.colors)
-                    remap(a);
+                const auto colors = ColorAttachments(pass);
+                if (std::any_of(colors.begin(), colors.end(),
+                                [&](const auto& a) { return a.target == frame.finalColor; })) {
+                    if (colors.size() != 1)
+                        return fail("MME_nested_capture_layout");
+                    pass.color.reset();
+                    pass.colors.clear();
+                    for (const auto& name : capture->colors) {
+                        auto attachment = colors[0];
+                        attachment.target = ids.at(name);
+                        pass.colors.push_back(attachment);
+                    }
+                    for (auto& draw : pass.draws) {
+                        if (draw.shader) {
+                            if (!draw.shader->pipeline.program ||
+                                draw.shader->pipeline.program->description.colorOutputs.size() !=
+                                    captureFormats.size())
+                                return fail("MME_capture_shader_output_layout");
+                            draw.shader->pipeline.colorFormats = captureFormats;
+                        } else if (captureFormats !=
+                                   std::vector<TextureFormat>{TextureFormat::Rgba8})
+                            return fail("MME_capture_host_pipeline_not_supported");
+                    }
+                }
                 if (pass.depthStencil && incomingDepth &&
                     pass.depthStencil->target == incomingDepth)
                     pass.depthStencil->target = ids.at(capture->depth);
@@ -969,7 +1012,9 @@ bool AppendPortableScene(RenderFrame& frame, const MmePortableEffect& effect, st
                 shader.constants.push_back({0, Bytes(dimensions.data(), sizeof(dimensions))});
                 for (auto& p : instance.parameters)
                     if (p.semantic == "VIEWPORTPIXELSIZE") {
-                        const float dimensions[] = {float(drawWidth), float(drawHeight)};
+                        // Native VIEWPORTPIXELSIZE stays at the BeginScene /
+                        // offscreen-turn size across intermediate target changes.
+                        const float dimensions[] = {float(width), float(height)};
                         if (p.rows != 1 || p.columns != 2 || p.elements != 1 ||
                             p.value.size() != 8) {
                             reason = "MME_scene_viewport_layout";
@@ -1228,6 +1273,7 @@ bool PrependPortableMmeTurns(RenderFrame& frame, const std::vector<MmePortableTu
                         if (known != next.targets.end()) {
                             t.width = known->description.width;
                             t.height = known->description.height;
+                            t.relative = false;
                         }
                     }
                 effect.counts[0] = source.vertexCount;
@@ -1253,7 +1299,24 @@ bool PrependPortableMmeTurns(RenderFrame& frame, const std::vector<MmePortableTu
         auto turnFrame = next;
         turnFrame.finalColor = color;
         turnFrame.passes = {std::move(pass)};
-        if (!AppendPortableMmePosts(turnFrame, turn.effects, reason, true))
+        auto turnEffects = turn.effects;
+        // SAS resources are allocated against the discovery viewport. A turn
+        // changes VIEWPORTPIXELSIZE, not the publisher's allocation ratio.
+        // Keep those resolved identities when lowering its nested scenes.
+        for (auto& effect : turnEffects)
+            for (auto& t : effect.targets)
+                if (t.identity) {
+                    const auto known = std::find_if(
+                        next.targets.begin(), next.targets.end(), [&](const auto& item) {
+                            return item.id == SharedFrameTargetId(t.identity);
+                        });
+                    if (known != next.targets.end()) {
+                        t.width = known->description.width;
+                        t.height = known->description.height;
+                        t.relative = false;
+                    }
+                }
+        if (!AppendPortableMmePosts(turnFrame, turnEffects, reason, true))
             return false;
         // A scene's empty RenderColorTarget restores the turn's actual output.
         if (turnFrame.finalColor != color) {
