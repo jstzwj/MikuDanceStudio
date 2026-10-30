@@ -340,14 +340,13 @@ int main(int argc, char** argv) try {
             CHECK(::mme::g_frameClockUpdates == clockUpdates + 1);
     };
     const auto image = [&]() -> const RgbaImage& { return lastImage; };
-    const auto legacyImage = [&] {
-        ComPtr<IDirect3DSurface9> source, cpu;
-        CHECK(SUCCEEDED(device->GetRenderTarget(0, &source)));
+    const auto legacySurfaceImage = [&](IDirect3DSurface9* source) {
+        ComPtr<IDirect3DSurface9> cpu;
         D3DSURFACE_DESC surface{};
         CHECK(SUCCEEDED(source->GetDesc(&surface)));
         CHECK(SUCCEEDED(device->CreateOffscreenPlainSurface(
             surface.Width, surface.Height, surface.Format, D3DPOOL_SYSTEMMEM, &cpu, nullptr)));
-        CHECK(SUCCEEDED(device->GetRenderTargetData(source.Get(), cpu.Get())));
+        CHECK(SUCCEEDED(device->GetRenderTargetData(source, cpu.Get())));
         D3DLOCKED_RECT locked{};
         CHECK(SUCCEEDED(cpu->LockRect(&locked, nullptr, D3DLOCK_READONLY)));
         std::vector<std::uint8_t> bytes(std::size_t(surface.Width) * surface.Height * 4);
@@ -356,6 +355,11 @@ int main(int argc, char** argv) try {
                         static_cast<char*>(locked.pBits) + row * locked.Pitch, surface.Width * 4);
         CHECK(SUCCEEDED(cpu->UnlockRect()));
         return bytes;
+    };
+    const auto legacyImage = [&] {
+        ComPtr<IDirect3DSurface9> source;
+        CHECK(SUCCEEDED(device->GetRenderTarget(0, &source)));
+        return legacySurfaceImage(source.Get());
     };
     if (realStandard) {
         // Native devices are created lazily by the first render, including
@@ -1187,8 +1191,46 @@ int main(int argc, char** argv) try {
                   SUCCEEDED(device->SetDepthStencilSurface(oracleDepth.Get())) &&
                   SUCCEEDED(device->SetViewport(&oracleViewport)));
             frame(false);
+            // A failed native effect is not a valid image oracle: later host
+            // draws can fall back through whatever shader state it left behind.
+            for (auto* effect : {assignedEffect(model.get()), assignedEffect(&carrier)}) {
+                struct Probe {
+                    ID3DXEffect* effect;
+                    bool found = false, valid = false;
+                } probe{effect};
+                ::mme::MmeEngineForEachSas(
+                    [](void* data, ::mme::SasEffect* sas) {
+                        auto& probe = *static_cast<Probe*>(data);
+                        if (sas->effect != probe.effect)
+                            return true;
+                        probe.found = true;
+                        probe.valid = !sas->runFailed;
+                        if (!probe.valid)
+                            std::fprintf(stderr, "Native oracle effect failed: %s\n",
+                                         sas->log.c_str());
+                        return false;
+                    },
+                    &probe);
+                CHECK(probe.found && probe.valid);
+            }
             const auto bgra = legacyImage();
             CHECK(bgra.size() == width * height * 4);
+            std::map<std::string, std::vector<std::uint8_t>> nativeInputs;
+            if (std::string(label).find("scripted") != std::string::npos) {
+                // Keep both inputs for failure diagnostics before RHI preparation
+                // can replace the native effect's viewport-relative resources.
+                for (const auto* name : {"Capture", "Gbuffer5RT"}) {
+                    ComPtr<IDirect3DBaseTexture9> texture;
+                    ComPtr<IDirect3DTexture9> image;
+                    ComPtr<IDirect3DSurface9> surface;
+                    CHECK(SUCCEEDED(assignedEffect(&carrier)->GetTexture(name, &texture)) &&
+                          SUCCEEDED(texture.As(&image)) &&
+                          SUCCEEDED(image->GetSurfaceLevel(0, &surface)));
+                    auto bytes = legacySurfaceImage(surface.Get());
+                    CHECK(bytes.size() == bgra.size());
+                    nativeInputs.emplace(name, std::move(bytes));
+                }
+            }
             CHECK(app->ViewportRenderer().Select(*app, api, false));
             frame(runtimeEffects);
             if (runtimeEffects) {
@@ -1202,6 +1244,29 @@ int main(int argc, char** argv) try {
                                                              int(bgra[n + (c == 3 ? 3 : 2 - c)]))));
                 std::printf("%s %s DX9 max RGBA delta=%u (limit=2)\n", mode.c_str(), label,
                             maximum);
+                if (maximum > 2) {
+                    unsigned shown = 0;
+                    for (std::size_t n = 0; n < bgra.size() && shown < 8; n += 4) {
+                        unsigned pixelDelta = 0;
+                        for (unsigned c = 0; c < 4; ++c)
+                            pixelDelta =
+                                std::max(pixelDelta,
+                                         unsigned(std::abs(int(rgba.pixels[n + c]) -
+                                                           int(bgra[n + (c == 3 ? 3 : 2 - c)]))));
+                        if (pixelDelta > 2) {
+                            std::printf("pixel %zu,%zu RHI=%u,%u,%u,%u DX9=%u,%u,%u,%u\n",
+                                        (n / 4) % width, (n / 4) / width, rgba.pixels[n],
+                                        rgba.pixels[n + 1], rgba.pixels[n + 2], rgba.pixels[n + 3],
+                                        bgra[n + 2], bgra[n + 1], bgra[n], bgra[n + 3]);
+                            for (const auto& input : nativeInputs) {
+                                const auto& bytes = input.second;
+                                std::printf("  native %s=%u,%u,%u,%u\n", input.first.c_str(),
+                                            bytes[n + 2], bytes[n + 1], bytes[n], bytes[n + 3]);
+                            }
+                            ++shown;
+                        }
+                    }
+                }
                 CHECK(maximum <= 2);
             }
         };

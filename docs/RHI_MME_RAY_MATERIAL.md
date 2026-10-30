@@ -115,15 +115,46 @@ cases on DX11/DX12, including DX12 debug, also measured zero difference for
 every intermediate and combined output. Evidence:
 `out/mme-ray-material-x86-test.log` and `-details.log`.
 
-**Native DX9 comparison and hidden editor validation remain pending.** The
-final focused attempts failed before executing a frame: `CreateDevice`
-returned `0x8876086C`, and the adapter display query returned 0x0/unknown format.
-These failures are recorded as failures, not converted to passing tests or
-capability skips. The new native oracle, production material-script exporter
-and editor-assignment regressions have built, but this environment did not
-execute them. The native v3 requirement inventories also need regeneration
-when DX9 is available. Evidence:
-`out/mme-ray-material-native-final-attempt.log` and `-details.log`.
+**The native DX9/editor matrix remains incomplete.** After DX9 recovered, the
+x64 `mme_ray_material_dx11` gate passed against the original Ray material child,
+including all eight attachments, PMD/PMX, both material opacities, resize,
+repeat and replacement. This is the isolated material oracle, not a complete
+Ray scene. Evidence: `out/mme-ray-material-native-probe3.log`.
+
+That run exposed two public-fixture issues. Shared MRT clears now use transparent
+black on both sides; the old RHI test initialization used the attachment default
+Alpha of one while the native side cleared to zero. The public UV clip plane
+also moves from .5 to .473 to avoid testing an exact pixel-center `clip(0)`
+decision whose interpolated sign can differ between SM3 and SM5. Both ordered
+passes and their coverage remain in the fixture; image limits are unchanged.
+Native confirmation of the adjusted clip plane is still pending.
+
+After these fixture changes, the focused independent x64 suite passed 11/11
+gates. Its 120 material cases produced 1,080 attachment/final-color comparisons
+with zero difference, including zero half ULP. The x86 rerun passed seven gates
+with four explicit Vulkan runtime-HLSL/validation-capability skips and no failures.
+Both architecture test builds succeeded. Evidence:
+`out/mme-ray-material-resume-x64-test.log`, `-details.log`, and the corresponding
+`out/mme-ray-material-resume-x86-test.log` / `-details.log`.
+
+The hidden editor's earlier DefaultEffect, nested scene and ordinary MRT/HDR
+oracle phases passed, but the new scripted-material composite failed with
+maximum RGBA delta 120 (limit 2). Its cause is still unresolved. The test now
+rejects a native effect with a latched execution failure before accepting its
+image as a reference, and reports both native composition inputs alongside
+the first differing pixels. Evidence for the original image failure:
+`out/mme-ray-material-native-probe2.log` and `-details.log`.
+
+Subsequent x64 and x86 native attempts again failed before executing a frame:
+`CreateDevice` returned `0x8876086C`, with adapter display 0x0/unknown format.
+These remain failures, not passing tests or capability skips. The remaining
+native backend gates, the final hidden editor matrix and native v3 requirement
+inventories need another run when DX9 stays available. Evidence:
+`out/mme-ray-material-editor-native-probe2.log`,
+`out/mme-ray-material-native-x86-probe.log` and
+`out/mme-ray-material-native-clip-probe.log`. The final editor attempt with
+the rebuilt diagnostics failed at the same device initialization step:
+`out/mme-ray-material-resume-native-final.log` and `-details.log`.
 
 The independent RHI comparisons above do not substitute for the native oracle
 or establish DX9 image parity. The earlier intermittent Vulkan/Ray crash

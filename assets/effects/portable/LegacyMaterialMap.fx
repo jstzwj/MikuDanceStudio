@@ -32,8 +32,10 @@ Outputs Shade(float2 uv) {
     o.c=float4(.5,.25,.75,1); o.d=float4(highlight+uv.x,-.5,uv.y,v.alpha);
     return o;
 }
-Outputs opaque(float2 uv:TEXCOORD0) { clip(.5-uv.x); return Shade(uv); }
-Outputs transparent(float2 uv:TEXCOORD0) { clip(uv.x-.5); return Shade(uv); }
+// Keep the clip plane away from the generated mesh's pixel centers. At exactly
+// uv.x=.5 SM3/SM5 interpolation rounding can select different sides of clip(0).
+Outputs opaque(float2 uv:TEXCOORD0) { clip(.473-uv.x); return Shade(uv); }
+Outputs transparent(float2 uv:TEXCOORD0) { clip(uv.x-.473); return Shade(uv); }
 technique Main <string MMDPass="object"; string Script=
     "RenderColorTarget0=;RenderColorTarget1=Gbuffer2RT;RenderColorTarget2=Gbuffer3RT;RenderColorTarget3=Gbuffer4RT;Pass=Opaque;"
     "RenderColorTarget0=Gbuffer5RT;RenderColorTarget1=Gbuffer6RT;RenderColorTarget2=Gbuffer7RT;RenderColorTarget3=Gbuffer8RT;Pass=Transparent;";> {

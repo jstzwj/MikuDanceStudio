@@ -282,6 +282,23 @@ void Compare(const AttachmentReadback& image, const std::vector<std::uint8_t>& r
         for (std::size_t i = 0; i < reference.size(); ++i)
             maximum = std::max(maximum, float(std::abs(int(image.bytes[i]) - int(reference[i]))));
         std::printf("%s RGBA delta=%g limit=2\n", label, maximum);
+        if (maximum > 2) {
+            unsigned shown = 0;
+            for (std::size_t i = 0; i < reference.size() && shown < 8; i += 4) {
+                unsigned pixelDelta = 0;
+                for (unsigned c = 0; c < 4; ++c)
+                    pixelDelta = std::max(pixelDelta, unsigned(std::abs(int(image.bytes[i + c]) -
+                                                                        int(reference[i + c]))));
+                if (pixelDelta > 2) {
+                    std::printf("pixel %zu,%zu RHI=%u,%u,%u,%u reference=%u,%u,%u,%u\n",
+                                (i / 4) % image.description.width,
+                                (i / 4) / image.description.width, image.bytes[i],
+                                image.bytes[i + 1], image.bytes[i + 2], image.bytes[i + 3],
+                                reference[i], reference[i + 1], reference[i + 2], reference[i + 3]);
+                    ++shown;
+                }
+            }
+        }
         CHECK(maximum <= 2);
     }
 }
@@ -489,6 +506,8 @@ int Contract(const std::filesystem::path& model, const std::filesystem::path& ma
             for (const auto& target : effect.targets) {
                 FramePass clear;
                 clear.color = FrameAttachment{SharedFrameTargetId(target.identity)};
+                // Shared attachments use the publisher's transparent black clear.
+                clear.color->clear = {0, 0, 0, 0};
                 frame.passes.push_back(clear);
             }
         if (!AppendPortableMmeMaterial(frame, pending, draw, effect, reason))
@@ -772,6 +791,7 @@ int main(int argc, char** argv) try {
             for (const auto& target : effect.targets) {
                 FramePass clear;
                 clear.color = FrameAttachment{SharedFrameTargetId(target.identity)};
+                clear.color->clear = {0, 0, 0, 0};
                 frame.passes.push_back(clear);
                 ComPtr<IDirect3DBaseTexture9> texture;
                 ComPtr<IDirect3DTexture9> image;
