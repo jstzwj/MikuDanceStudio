@@ -3,6 +3,7 @@
 #include "mme_globals.h"
 #include "pass_planner.h"
 #include "sas_exec.h"
+#include "mme_requirements_report.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,7 @@ struct DrawStats {
     int draws = 0;
     HRESULT firstFailure = S_OK;
     std::set<int> passes;
+    MmeRequirementsReport* report = nullptr;
 };
 long DrawPass(void* opaque, mme::SasEffect* sas, int kind, int index) {
     auto& stats = *static_cast<DrawStats*>(opaque);
@@ -49,6 +51,7 @@ long DrawPass(void* opaque, mme::SasEffect* sas, int kind, int index) {
         return E_NOTIMPL;
     }
     ++stats.draws;
+    if (stats.report) stats.report->Executed(*sas, index);
     stats.passes.insert(index);
     const HRESULT hr = mme::SasDefaultDrawBufferPass(sas->effect, stats.device, index);
     if (FAILED(hr) && SUCCEEDED(stats.firstFailure)) stats.firstFailure = hr;
@@ -60,8 +63,9 @@ long DrawPass(void* opaque, mme::SasEffect* sas, int kind, int index) {
 // Runs the actual loader, SAS resource creation, step/resume interpreter and
 // production fullscreen draw on a HAL device. It deliberately has no model,
 // controller binding or DefaultEffect child scene; this is not an image A/B test.
-int main(int argc, char** argv) {
-    if (argc != 2) {
+int main(int argc, char** argv) try {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    if (argc != 2 && argc != 3) {
         std::fprintf(stderr, "Usage: mme_ray_smoke_test.exe <absolute ray.fx path>\n");
         return 2;
     }
@@ -107,6 +111,11 @@ int main(int argc, char** argv) {
     std::fputs(mme::SasGetLog(sas), stdout);
     if (mme::SasHadErrors(sas) || sas->techniqueOrder.empty()) return 1;
     DrawStats stats{device.p};
+    MmeRequirementsReport report;
+    if (argc == 3) {
+        report.Effect(*sas);
+        stats.report = &report;
+    }
     mme::SasHostCallbacks callbacks = {};
     callbacks.ctx = &stats;
     callbacks.RunPass = DrawPass;
@@ -152,5 +161,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::printf("Ray empty-scene HAL script smoke passed (%d Buffer draws); model/control/offscreen child rendering untested\n", stats.draws);
+    if (argc == 3) report.Write(argv[2]);
     return 0;
+} catch (const std::exception& error) {
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
 }

@@ -5,6 +5,7 @@
 #include "sas_exec.h"
 #include "material_bind.h"
 #include "model_data.h"
+#include "mme_requirements_report.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -42,8 +43,9 @@ struct Runtime {
 }
 
 // Production repeat-boundary and first-draw regression for a real Ray MaterialMap turn.
-int main(int argc, char** argv) {
-    if (argc != 2) {
+int main(int argc, char** argv) try {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    if (argc != 2 && argc != 3) {
         std::fprintf(stderr, "Usage: mme_offscreen_turn_test.exe <absolute ray.fx path>\n");
         return 2;
     }
@@ -136,6 +138,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Sky filename failed to resolve MaterialMap *.pmx child effect\n");
         return 1;
     }
+    // Capture the actual child before subsequent main_default/none mutations
+    // replace its live binding node in place.
+    MmeRequirementsReport report;
+    if (argc == 3) {
+        report.Effect(*sas);
+        report.Effect(*skyBinding->sas);
+    }
     auto* namedSkybox = new mme::ModelData(device.p, 3, "Sky with box.pmx", 0, 0, nullptr);
     ctx->models.push_back(namedSkybox);
     auto* namedSkyboxBinding = mme::MmeFindMaterialBinding(0, namedSkybox, -1, true);
@@ -213,5 +222,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::puts("MME offscreen turn target/DefaultEffect regression passed");
+    if (argc == 3) {
+        report.Write(argv[2]);
+    }
     return 0;
+} catch (const std::exception& error) {
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
 }
