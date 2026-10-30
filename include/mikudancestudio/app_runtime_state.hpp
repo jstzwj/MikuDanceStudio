@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/dialog_order_arrays.hpp"
 #include "mikudancestudio/path_workspace.hpp"
@@ -117,7 +118,7 @@ struct AppRuntimeState {
     PlatformRuntimeState platform;
     CaptureRuntimeState capture;
     PathResolutionWorkspace paths{};
-    std::uint8_t accessoryTrackActive[55]{};
+    std::uint8_t accessoryTrackActive[mdl::kAccessorySlotCount]{};
 };
 
 } // namespace mikudancestudio

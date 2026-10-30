@@ -11,7 +11,7 @@
 //      interpolator (ported in model_keyframe_advance.cpp).
 //   2. advance != 0 -> stop here (0x4175DB skips everything below; the
 //      globals are rebuilt once by the final settle call).
-//   3. frame rounding (0x4175ED): f = cursor*30 (double); if
+//   3. frame rounding (0x4175ED): f = cursor*30 (x64 float; x86 double); if
 //      f*1000 - (int)(f*1000) >= 0.5 -> f = ((int)(f*1000)+1)/1000.
 //   4. FOUR global keyframe tracks, all keyed on (0x2F8 || 0x9ED98) plus a
 //      per-track active byte.  The key lists are the arrays allocated by
@@ -293,12 +293,23 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         return; // 0x4175DB
 
     // ---- 3. frame rounding (0x4175ED) -------------------------------------
+#if defined(_M_X64)
+    // Original x64 RVA 0x69A92..0x69ACF: mulss/subss/divss, including
+    // rounding to the next thousandth. Promoting these stages changes keys.
+    float frame = s.PlaybackCursorSeconds() * 30.0f;
+    {
+        const float scaled = frame * 1000.0f;
+        if (scaled - static_cast<float>(static_cast<int>(scaled)) >= 0.5f)
+            frame = static_cast<float>(static_cast<int>(scaled) + 1) / 1000.0f;
+    }
+#else
     double frame = static_cast<double>(s.PlaybackCursorSeconds() * 30.0f);
     {
         const double scaled = frame * 1000.0;
         if (scaled - static_cast<double>(static_cast<int>(scaled)) >= 0.5)
             frame = static_cast<double>(static_cast<int>(scaled) + 1) / 1000.0;
     }
+#endif
 
     const bool editGate = s.CameraMode() != 0 || s.state.followCameraEnabled != 0;
 
@@ -524,7 +535,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
     }
 
     // ---- 6. accessory tracks (0x418093..0x4184E9) ---------------------------
-    for (int i = 0; i < 0xFF; ++i) {
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i) {
         if (s.AccessoryTrackActive(i) == 0)
             continue;
         auto& cursor = s.AccessoryTrackCursor(i);
@@ -550,7 +561,8 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         };
         while (true) {
             const mdl::AccessoryKey& rec = keys[cursor];
-            if (!(static_cast<double>(rec.frame) < frame && s.AccessoryTrackActive(i) != 0))
+            if (!(static_cast<decltype(frame)>(rec.frame) < frame &&
+                  s.AccessoryTrackActive(i) != 0))
                 break;
             const std::uint32_t next = rec.next;
             if (next != 0) {
@@ -567,15 +579,17 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             continue;
         const mdl::AccessoryKey& recCur = keys[cursor];
         const std::uint32_t frameCur = recCur.frame;
-        if (frame == static_cast<double>(frameCur)) {
+        if (frame == static_cast<decltype(frame)>(frameCur)) {
             applyDiscreteState(recCur);
             accessory.scale = recCur.scale;
             accessory.opacity = recCur.opacity;
         } else {
             const mdl::AccessoryKey& recPrev = keys[recCur.previous];
             const std::uint32_t framePrev = recPrev.frame;
-            const float t = static_cast<float>((frame - static_cast<double>(framePrev)) /
-                                               static_cast<double>(frameCur - framePrev));
+            // x64 RVA 0x6A82F..0x6A847 subtracts and divides in float.
+            // The x86 path retains its existing double intermediates.
+            const float t = static_cast<float>((frame - static_cast<decltype(frame)>(framePrev)) /
+                                               static_cast<decltype(frame)>(frameCur - framePrev));
             accessory.scale = t * (recCur.scale - recPrev.scale) + recPrev.scale;
             accessory.opacity = t * (recCur.opacity - recPrev.opacity) + recPrev.opacity;
             applyDiscreteState(recPrev);
