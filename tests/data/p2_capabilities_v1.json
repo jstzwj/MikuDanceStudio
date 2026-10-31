@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "stage": "P2",
+  "supported": [
+    "pmd-runtime",
+    "pmx-2.0-utf16le",
+    "basic-bone-hierarchy",
+    "cp932-motion-name-decoding",
+    "vmd-model-and-ik-tracks",
+    "vpd-pose",
+    "integer-frame-seek",
+    "bdef1",
+    "bdef2",
+    "bdef4",
+    "sdef",
+    "vertex-morph",
+    "bone-group-uv-material-morph",
+    "append-or-fixed-axis-bones",
+    "scene-ik-physics",
+    "pmm-camera-light-shadow-gravity",
+    "external-parent",
+    "static-x-text-binary-mszip"
+  ],
+  "unsupported": [
+    "qdef",
+    "pmx-2.1",
+    "pmx-utf8",
+    "animated-or-framed-x",
+    "rendering",
+    "mme"
+  ]
+}

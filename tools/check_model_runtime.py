@@ -43,8 +43,9 @@ def main():
         raise RuntimeError('public PMX/VMD input hashes changed')
     program = str(args.program.resolve())
     capabilities = json.loads(subprocess.check_output([program, '--capabilities']))
-    if capabilities['stage'] != 'P1' or set(capabilities['unsupported']) != set(expected['unsupported']):
-        raise RuntimeError('P1 capability scope changed without a reviewed baseline')
+    expected_capabilities = json.loads((ROOT / 'tests/data/p2_capabilities_v1.json').read_text(encoding='utf-8'))
+    if capabilities != expected_capabilities:
+        raise RuntimeError('Runtime capability scope changed without a reviewed baseline')
     frames = [0, 4, 8, 12, 4, 0, 8]
     command = [program, '--model', str(model), '--motion', str(motion)]
     for frame in frames:

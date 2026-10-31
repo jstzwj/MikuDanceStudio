@@ -13,6 +13,8 @@ FORBIDDEN_HEADERS = {'windows.h', 'd3d9.h', 'd3dx9.h', 'mikudancestudio/model.hp
                      'mikudancestudio/d3dx_dyn.hpp'}
 FORBIDDEN_LIBRARIES = ('d3d', 'd3dx', 'dxgi', 'vulkan', 'moltenvk', 'opengl', 'mmeffect',
                        'user32', 'gdi32', 'ole32', 'oleaut32', 'combase', 'qt', 'sdl')
+SYSTEM_C_HEADERS = {'assert.h', 'ctype.h', 'float.h', 'limits.h', 'math.h', 'memory.h',
+                    'stdarg.h', 'stddef.h', 'stdint.h', 'stdio.h', 'stdlib.h', 'string.h', 'time.h'}
 
 
 def pe_imports(program):
@@ -49,14 +51,22 @@ def pe_imports(program):
     return result
 
 
-def audit(program, manifest):
+def audit(program, manifest, stage='P1'):
     graph = json.loads(manifest.read_text(encoding='utf-8'))
     expected = {'mds_model_cli', 'mikudancestudio_model_runtime', 'mikudancestudio_cpu_math',
                 'mikudancestudio_formats'}
+    root = 'mds_model_cli'
+    if stage == 'P2':
+        root = 'mds_cpu_scene_cli'
+        expected.remove('mds_model_cli')
+        expected.update({'mds_cpu_scene_cli', 'mikudancestudio_scene_runtime', 'mds_cpu_simulation',
+                         'BULLET275::BULLET275', 'BulletDynamics', 'BulletCollision', 'LinearMath'})
+        if 'mikudancestudio_math' in graph:
+            expected.add('mikudancestudio_math')
     if set(graph) != expected:
-        raise RuntimeError('P1 target manifest changed')
+        raise RuntimeError(f'{stage} target manifest changed: {set(graph) ^ expected}')
     visited = set()
-    pending = ['mds_model_cli']
+    pending = [root]
     sources = []
     while pending:
         name = pending.pop()
@@ -69,8 +79,9 @@ def audit(program, manifest):
             if dependency not in expected:
                 raise RuntimeError(f'non-portable runtime link: {name} -> {dependency}')
             pending.append(dependency)
-        sources += graph[name]['sources']
+        sources += [source for source in graph[name]['sources'] if source]
     scanned = set()
+    vendor_platform_headers = []
     pending = [ROOT / source for source in sources]
     while pending:
         path = pending.pop().resolve()
@@ -79,16 +90,24 @@ def audit(program, manifest):
         if not path.is_relative_to(ROOT):
             raise RuntimeError('project include escaped source root')
         scanned.add(path)
-        source = path.read_text(encoding='utf-8')
+        source = path.read_text(encoding='utf-8', errors='surrogateescape')
         for delimiter, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"\n]+)[>"]', source, re.M):
             if name.lower() in FORBIDDEN_HEADERS:
+                if (stage == 'P2' and name.lower() == 'windows.h' and
+                        path == ROOT / 'recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h'):
+                    # Pinned upstream profiling clock, behind WIN32/_WIN32.
+                    # No project runtime code or public semantic API uses it.
+                    vendor_platform_headers.append({'source': str(path.relative_to(ROOT)).replace('\\', '/'),
+                                                    'header': name, 'purpose': 'conditional upstream profiling timer'})
+                    continue
                 raise RuntimeError(f'forbidden project dependency: {path.name} -> {name}')
-            candidates = [path.parent / name, ROOT / 'include' / name]
+            candidates = [path.parent / name, ROOT / 'include' / name,
+                          ROOT / 'recipes/bullet275/bullet-src/src' / name]
             local = next((p for p in candidates if p.is_file()), None)
             if local:
                 pending.append(local)
-            elif delimiter == '"':
-                raise RuntimeError(f'unresolved project include: {name}')
+            elif delimiter == '"' and name not in SYSTEM_C_HEADERS:
+                raise RuntimeError(f'unresolved project include: {path.name} -> {name}')
     if sys.platform == 'win32':
         libraries = pe_imports(program)
     else:
@@ -99,6 +118,7 @@ def audit(program, manifest):
         if any(word in library.lower() for word in FORBIDDEN_LIBRARIES):
             raise RuntimeError(f'forbidden binary dependency: {library}')
     return {'schema': 1, 'status': 'passed', 'targets': sorted(visited),
+            'vendor_platform_headers': vendor_platform_headers,
             'project_files': sorted(str(p.relative_to(ROOT)).replace('\\', '/') for p in scanned),
             'binary_dependencies': libraries}
 
@@ -108,10 +128,11 @@ def main():
     parser.add_argument('--program', required=True, type=Path)
     parser.add_argument('--manifest', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--stage', choices=['P1', 'P2'], default='P1')
     args = parser.parse_args()
-    result = audit(args.program.resolve(), args.manifest)
+    result = audit(args.program.resolve(), args.manifest, args.stage)
     args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-    print('P1 passed: link graph, project headers and binary dependencies contain no UI, GPU or native model dependency')
+    print(f'{args.stage} passed: link graph, project headers and binary dependencies contain no UI, GPU or native model dependency')
 
 
 if __name__ == '__main__':

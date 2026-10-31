@@ -73,4 +73,7 @@ jobs:
             out/p0/resources/portable/p1/
             out/p0/resources/portable/p1-dependencies.json
             out/p0/resources/portable/generated/model_runtime_targets.json
+            out/p0/cpu/p2/
+            out/p0/cpu/p2-dependencies.json
+            out/p0/cpu/generated/scene_runtime_targets.json
           if-no-files-found: error

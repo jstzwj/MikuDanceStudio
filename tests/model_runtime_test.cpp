@@ -63,9 +63,9 @@ int main() {
     CHECK(!instance.Seek(0xffffffff,reason) && instance.Snapshot().frame==100);
     auto invalid=Model(); invalid.pmx.bones[1].fields.parent=0;
     CHECK(!ModelResource::Create(invalid,resource,reason) && reason.find("cyclic-")==0 && resource==original);
-    invalid=Model(); invalid.pmx.vertices[0].weightType=3;
+    invalid=Model(); invalid.pmx.vertices[0].weightType=4;
     CHECK(!ModelResource::Create(invalid,resource,reason) && reason.find("unsupported-skinning")==0);
-    invalid=Model(); invalid.pmx.bones[0].fields.flags=0x20;
+    invalid=Model(); invalid.pmx.bones[0].fields.flags=0x8000;
     CHECK(!ModelResource::Create(invalid,resource,reason) && reason.find("unsupported-bone-flags")==0);
     invalid=Model(); invalid.pmx.vertices[0].bone[0]=2;
     CHECK(!ModelResource::Create(invalid,resource,reason) && reason.find("invalid-skin-bone")==0);
@@ -74,7 +74,7 @@ int main() {
     invalid=Model(); invalid.pmx.morphs[0].header.type=8;
     CHECK(!ModelResource::Create(invalid,resource,reason));
     invalid=Model(); invalid.pmx.rigids.resize(1);
-    CHECK(!ModelResource::Create(invalid,resource,reason) && reason.find("unsupported-physics")==0);
+    CHECK(!ModelResource::Create(invalid,resource,reason) && reason.find("invalid-rigid")==0);
     invalid=Model(); invalid.pmx.vertices[0].position[0]=std::numeric_limits<float>::quiet_NaN();
     CHECK(!ModelResource::Create(invalid,resource,reason));
     invalid=Model(); invalid.pmx.bones[0].names[0]={0x00,0xd8};
@@ -91,8 +91,8 @@ int main() {
     CHECK(MotionClip::Create(original,motion,clip,reason));
     CHECK(instance.BindMotion(clip,reason) && instance.Seek(10,reason));
     CHECK(Near(instance.Snapshot().vertices[0].position[0],3)); // duplicate last wins
-    motion.bones.back().name[0]=char(0x83);
-    CHECK(!MotionClip::Create(original,motion,other,reason) && reason.find("unsupported-vmd-name-encoding")==0);
+    motion.bones.back().name.fill(0); motion.bones.back().name[0]=char(0x81);
+    CHECK(!MotionClip::Create(original,motion,other,reason) && reason.find("invalid-vmd-name-encoding")==0);
     motion=Motion(); motion.bones[0].rotation[3]=0;
     CHECK(!MotionClip::Create(original,motion,other,reason));
     // Snapshots own their values, without pointers into a native model record.

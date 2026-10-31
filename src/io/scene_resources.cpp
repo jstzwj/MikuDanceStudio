@@ -1,4 +1,5 @@
 #include "mikudancestudio/scene_resources.hpp"
+#include "mikudancestudio/text_encoding.hpp"
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -16,14 +17,15 @@ std::string RawPath(const std::array<char, 256>& path) {
     const auto end = std::find(path.begin(), path.end(), '\0');
     return {path.begin(), end};
 }
-std::optional<std::filesystem::path> AsciiPath(const std::string& raw) {
-    if (std::any_of(raw.begin(), raw.end(), [](unsigned char ch) { return ch < 32 || ch >= 127; }))
-        return std::nullopt;
-    return std::filesystem::u8path(raw);
+std::optional<std::filesystem::path> Cp932Path(const std::string& raw) {
+    std::string decoded;
+    if(!text::DecodeCp932(raw,decoded) || decoded.find_first_of("\r\n\t")!=std::string::npos)return std::nullopt;
+    std::replace(decoded.begin(),decoded.end(),'\\','/');
+    return std::filesystem::u8path(decoded);
 }
 }
 SceneResourceResolver::SceneResourceResolver(std::filesystem::path scenePath)
-    : scenePath_(std::move(scenePath)), decoder_(AsciiPath) {
+    : scenePath_(std::move(scenePath)), decoder_(Cp932Path) {
 }
 void SceneResourceResolver::AddSearchRoot(std::filesystem::path root) {
     roots_.push_back(std::move(root));

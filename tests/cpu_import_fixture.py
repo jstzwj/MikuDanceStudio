@@ -10,7 +10,7 @@ class Bytes(bytearray):
     def f(self, *v): self.extend(struct.pack('<' + 'f' * len(v), *v))
     def zero(self, n): self.extend(bytes(n))
     def fixed(self, text, size):
-        encoded = text.encode('ascii')
+        encoded = text.encode('cp932')
         assert len(encoded) < size
         self.extend(encoded); self.zero(size - len(encoded))
     def text(self, text):
@@ -276,6 +276,37 @@ Material { 0.2;0.7;0.4;0.6;; 2.0; 0.0;0.0;0.0;; 0.1;0.0;0.0;; }
     varied = varied.replace('0.0;2.0;0.0', '0.875;2.25;-0.625')
     varied = varied.replace('0.0;0.0;-1.0', '0.37;-0.62;-0.41')
     (root / 'bound-varied.x').write_text(varied, encoding='ascii')
+    # X MSZIP: file size includes the uncompressed 16-byte header. Each
+    # independent raw-DEFLATE block can use the previous 32 KiB as history.
+    import zlib
+    def compressed_x(source):
+        payload = source[16:]
+        output = source[:8] + (b'tzip' if source[8:12] == b'txt ' else b'bzip') + source[12:16]
+        output += struct.pack('<I', len(source))
+        for at in range(0, len(payload), 32768):
+            block = payload[at:at + 32768]
+            history = payload[max(0, at - 32768):at]
+            compressor = zlib.compressobj(wbits=-15, **({'zdict': history} if history else {}))
+            packed = b'CK' + compressor.compress(block) + compressor.flush()
+            output += struct.pack('<HH', len(block), len(packed)) + packed
+        return output
+    text_x = (root / 'bound.x').read_bytes()
+    (root / 'bound-tzip.x').write_bytes(compressed_x(text_x))
+    # Repeated comment data forces later blocks to use the preceding dictionary.
+    long_x = text_x[:16] + (b'// shared dictionary example 0123456789 abcdefghijklmnopqrstuvwxyz\n' * 1800) + text_x[16:]
+    (root / 'bound-tzip-multi.x').write_bytes(compressed_x(long_x))
+    binary = bytearray(b'xof 0303bin 0032')
+    def word(name):
+        binary.extend(struct.pack('<HI', 1, len(name)) + name.encode('ascii'))
+    def opening(name):
+        word(name); binary.extend(struct.pack('<H', 10))
+    def close(): binary.extend(struct.pack('<H', 11))
+    def ints(*values): binary.extend(struct.pack('<HI', 6, len(values)) + struct.pack('<' + 'I'*len(values), *values))
+    def floats(*values): binary.extend(struct.pack('<HI', 7, len(values)) + struct.pack('<' + 'f'*len(values), *values))
+    opening('Mesh'); ints(3); floats(0,0,0,1,0,0,0,1,0); ints(1,3,0,1,2)
+    opening('MeshNormals'); ints(1); floats(0,0,1); ints(1,3,0,0,0); close()
+    opening('MeshMaterialList'); ints(1,1,0); opening('Material'); floats(1,1,1,1,4,0,0,0,0,0,0); close(); close(); close()
+    (root / 'triangle-bzip.x').write_bytes(compressed_x(bytes(binary)))
 
 
 if __name__ == '__main__':

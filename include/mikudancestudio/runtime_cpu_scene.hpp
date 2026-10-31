@@ -34,6 +34,7 @@ public:
               std::string& reason, int selectedSlot = -1);
     bool LoadModel(const std::filesystem::path&, std::string& reason);
     bool Seek(std::uint32_t frame, std::string& reason);
+    bool SetPhysicsMode(unsigned mode,std::string& reason);
     bool StartPlayback(std::string& reason);
     void Pause();
     bool Advance(float absoluteSeconds, float deltaSeconds, std::string& reason);

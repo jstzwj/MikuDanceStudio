@@ -20,6 +20,9 @@ if(TARGET mikudancestudio_math)
     target_link_libraries(mds_cpu_simulation PRIVATE mikudancestudio_math)
 endif()
 
+include("${MDS_SOURCE}/cmake/SceneRuntime.cmake")
+mds_add_scene_runtime(mds_cpu_simulation)
+
 if(BUILD_TESTING)
     foreach(test IN ITEMS physics_world_state cpu_scene_simulation)
         add_executable(${test}_test "${MDS_SOURCE}/tests/${test}_test.cpp")

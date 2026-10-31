@@ -1,4 +1,4 @@
-"""Build and repeat the P0/P1 foundation tests without opening a window."""
+"""Build and repeat the P0/P1/P2 foundation tests without opening a window."""
 import argparse
 import json
 import os
@@ -29,7 +29,7 @@ def main():
     evidence = build / "evidence"
     evidence.mkdir(parents=True, exist_ok=True)
     report = {
-        "schema": 1, "stage": "P0+P1", "status": "failed",
+        "schema": 1, "stage": "P0+P1+P2", "status": "failed",
         "host": {"system": platform.system(), "release": platform.release(),
                  "macos_version": platform.mac_ver()[0],
                  "architecture": platform.machine(), "python": platform.python_version()},
@@ -79,13 +79,16 @@ def main():
             skipped = [case.attrib["name"] for case in cases if case.find("skipped") is not None]
             required = {"bullet_allocation", "bullet_simulation", "bullet_upstream_sources",
                         "physics_world_state", "cpu_scene_simulation", "portable_baseline_contract",
-                        "cpu_math", "model_runtime", "model_runtime_cli", "model_runtime_dependencies"}
+                        "cpu_math", "model_runtime", "model_runtime_cli", "model_runtime_dependencies",
+                        "text_encoding", "cpu_bone_kernel", "model_runtime_features", "accessory_resource",
+                        "cp932_mapping", "scene_runtime", "scene_runtime_cli", "scene_runtime_dependencies"}
             names = {case.attrib["name"] for case in cases}
             if not required <= names or set(skipped) - {"pmm_scene_session_external"}:
                 raise RuntimeError(f"missing required tests or unexpected skips: {skipped}")
             report["test_runs"].append({"total": len(cases), "skipped": skipped})
         report["baseline"] = json.loads((build / "baseline/report.json").read_text())
-        for key, name in (("model_runtime", "p1-report.json"), ("model_dependencies", "p1-dependencies.json")):
+        for key, name in (("model_runtime", "p1-report.json"), ("model_dependencies", "p1-dependencies.json"),
+                          ("scene_runtime", "p2-report.json"), ("scene_dependencies", "p2-dependencies.json")):
             paths = list(build.rglob(name))
             if len(paths) != 1:
                 raise RuntimeError(f"missing or ambiguous P1 evidence: {name}")

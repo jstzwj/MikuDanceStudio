@@ -6,6 +6,7 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/vmd_format.hpp"
+#include "mikudancestudio/vmd_scene_tracks.hpp"
 
 namespace mikudancestudio {
 
@@ -13,19 +14,19 @@ void ApplyVmdGlobalTracks(MMDApp* app, const format::VmdDocument& motion) {
     bool cameraOk = true;
     for (const format::VmdCameraKey& key : motion.cameras) {
         mdl::CameraClipboardRecord rec{};
-        rec.frame = key.frame;
-        rec.distance = key.distance;
-        rec.parentModel = -1;
-        std::memcpy(rec.eye, key.eye, sizeof rec.eye);
-        std::memcpy(rec.target, key.target, sizeof rec.target);
-        for (int channel = 0; channel < 6; ++channel) {
-            rec.interpolation[channel] = key.interpolation[channel][0];
-            rec.interpolation[12 + channel] = key.interpolation[channel][1];
-            rec.interpolation[6 + channel] = key.interpolation[channel][2];
-            rec.interpolation[18 + channel] = key.interpolation[channel][3];
+        format::PmmCameraKey decoded;
+        if (!format::DecodeVmdSceneKey(key, decoded)) {
+            cameraOk = false;
+            continue;
         }
-        rec.fov = static_cast<std::int32_t>(key.fov);
-        rec.perspective = key.perspective != 0 ? 1 : 0;
+        rec.frame = decoded.frame;
+        rec.distance = decoded.distance;
+        rec.parentModel = decoded.parentModel;
+        std::memcpy(rec.eye, decoded.eye.data(), sizeof rec.eye);
+        std::memcpy(rec.target, decoded.target.data(), sizeof rec.target);
+        std::memcpy(rec.interpolation, decoded.interpolation.data(), sizeof rec.interpolation);
+        rec.fov = decoded.fov;
+        rec.perspective = decoded.perspective;
         if (cameraOk && !RegisterCameraKey(app, rec))
             cameraOk = false;
     }
