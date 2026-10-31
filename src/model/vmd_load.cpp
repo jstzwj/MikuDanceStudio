@@ -1,3 +1,4 @@
+#include "mikudancestudio/vmd_bone_interpolation.hpp"
 // Windows/application adapter for VMD loading. The binary grammar and bounds
 // checks live in vmd_format.cpp; this file applies a parsed motion to the
 // original app/model records and keeps the UI and undo behavior.
@@ -209,12 +210,8 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) {
         std::memcpy(rec.rotation, key.rotation, sizeof rec.rotation);
         std::memcpy(rec.position, key.position, sizeof rec.position);
         rec.physicsDisabled = key.interpolation[2] == 0x63 && key.interpolation[3] == 0x0F ? 1 : 0;
-        for (int channel = 0; channel < 4; ++channel) {
-            rec.interpolation[0 + channel] = key.interpolation[channel * 16];
-            rec.interpolation[4 + channel] = key.interpolation[channel * 16 + 4];
-            rec.interpolation[8 + channel] = key.interpolation[channel * 16 + 8];
-            rec.interpolation[12 + channel] = key.interpolation[channel * 16 + 12];
-        }
+        const auto curve = format::DecodeVmdBoneInterpolation(key.interpolation);
+        std::memcpy(rec.interpolation, curve.data(), curve.size());
         if (boneOk && !RegisterBoneKey(model, rec, s.state.currentFrame, 0))
             boneOk = false;
     }

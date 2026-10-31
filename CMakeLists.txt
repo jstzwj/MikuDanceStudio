@@ -61,6 +61,12 @@ target_sources(mikudancestudio_formats PRIVATE src/io/pmm_format.cpp)
   target_sources(mikudancestudio_formats PRIVATE src/io/scene_resources.cpp)
   target_sources(mikudancestudio_formats PRIVATE src/render/render_snapshot.cpp)
 target_include_directories(mikudancestudio_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_library(mikudancestudio_cpu_math STATIC src/math/cpu_math.cpp)
+target_include_directories(mikudancestudio_cpu_math PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(mikudancestudio_cpu_math PUBLIC cxx_std_17)
+if(MSVC)
+    target_compile_options(mikudancestudio_cpu_math PRIVATE /fp:precise)
+endif()
 add_library(mikudancestudio_rhi STATIC
     src/render/rhi_null.cpp
     src/render/rhi_render_pass.cpp
@@ -134,6 +140,10 @@ target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(cpu_math_test tests/cpu_math_test.cpp)
+    target_link_libraries(cpu_math_test PRIVATE mikudancestudio_cpu_math)
+    add_test(NAME cpu_math COMMAND cpu_math_test)
+    set_tests_properties(cpu_math PROPERTIES LABELS "headless;portable;p1")
     add_executable(mme_legacy_source_test tests/mme_legacy_source_test.cpp third_party/mmeffect/src/mme_legacy_source.cpp)
     target_compile_definitions(mme_legacy_source_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME mme_legacy_source COMMAND mme_legacy_source_test)
@@ -1992,6 +2002,10 @@ if(BUILD_TESTING)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures/d3dx"
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures/d3dx")
     add_test(NAME d3dx_direct_imports COMMAND d3dx_import_probe)
+    add_executable(cpu_math_d3dx_test tests/cpu_math_d3dx_test.cpp)
+    target_link_libraries(cpu_math_d3dx_test PRIVATE mikudancestudio_cpu_math D3DXRuntime)
+    add_test(NAME cpu_math_d3dx COMMAND cpu_math_d3dx_test)
+    set_tests_properties(cpu_math_d3dx PROPERTIES LABELS "cpu_no_windows;p1")
     add_test(NAME d3dx_pe_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_d3dx_imports.py
         $<TARGET_FILE:MikuDanceStudio>)

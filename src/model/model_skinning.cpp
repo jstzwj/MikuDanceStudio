@@ -32,6 +32,7 @@
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/scene_cpu_frame.hpp"
 #include "mikudancestudio/model_cpu_bridge.hpp"
+#include "mikudancestudio/cpu_deform.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -120,15 +121,11 @@ inline void DumpModelVertexBuffers(MMDApp*, mdl::ModelRecord*, const mdl::Skinne
 #endif
 
 void TransformPosition(float out[3], const float in[3], const float* m) {
-    out[0] = in[0] * m[0] + in[1] * m[4] + in[2] * m[8] + m[12];
-    out[1] = in[0] * m[1] + in[1] * m[5] + in[2] * m[9] + m[13];
-    out[2] = in[0] * m[2] + in[1] * m[6] + in[2] * m[10] + m[14];
+    cpu_deform::TransformPosition(out, in, m);
 }
 
 void TransformNormal(float out[3], const float in[3], const float* m) {
-    out[0] = in[0] * m[0] + in[1] * m[4] + in[2] * m[8];
-    out[1] = in[0] * m[1] + in[1] * m[5] + in[2] * m[9];
-    out[2] = in[0] * m[2] + in[1] * m[6] + in[2] * m[10];
+    cpu_deform::TransformNormal(out, in, m);
 }
 
 void Blend3(float out[3], const float a[3], const float b[3], float wa) {
@@ -185,12 +182,7 @@ float BlendTransformComponent(const float* input, const float* matrix0, const fl
     return mikudancestudio::mmd_math::blendTransformComponent(input, matrix0, matrix1, component, weight0,
                                               position);
 #else
-    const float weight1 = 1.0f - weight0;
-    const float a = input[0] * matrix0[component] + input[1] * matrix0[component + 4] +
-                    input[2] * matrix0[component + 8] + (position ? matrix0[component + 12] : 0.0f);
-    const float b = input[0] * matrix1[component] + input[1] * matrix1[component + 4] +
-                    input[2] * matrix1[component + 8] + (position ? matrix1[component + 12] : 0.0f);
-    return b * weight1 + a * weight0;
+    return cpu_deform::BlendTransformComponent(input, matrix0, matrix1, component, weight0, position);
 #endif
 }
 
@@ -212,12 +204,7 @@ void SkinPmxBdef2(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, in
 
 float TransformComponent(const float input[3], const float matrix[16], int component,
                          bool position) {
-    float value = input[0] * matrix[component];
-    value += input[1] * matrix[component + 4];
-    value += input[2] * matrix[component + 8];
-    if (position)
-        value += matrix[component + 12];
-    return value;
+    return cpu_deform::TransformComponent(input, matrix, component, position);
 }
 
 // x64 PMX worker RVA 0x11FB7F: BDEF4 retrieves all four matrices with the
@@ -228,28 +215,11 @@ float TransformComponent(const float input[3], const float matrix[16], int compo
 // are spelled out instead of being hidden in one generic loop.
 void SkinPmxBdef4(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, int boneCount,
                   mdl::SkinnedVertexBase& destination) {
-    const float* matrix0 = PmxSkinMatrix(bones, boneCount, source.bone[0]);
-    const float* matrix1 = PmxSkinMatrix(bones, boneCount, source.bone[1]);
-    const float* matrix2 = PmxSkinMatrix(bones, boneCount, source.bone[2]);
-    const float* matrix3 = PmxSkinMatrix(bones, boneCount, source.bone[3]);
-    for (int component = 0; component < 3; ++component) {
-        float position =
-            TransformComponent(source.position, matrix1, component, true) * source.weight[1];
-        position +=
-            TransformComponent(source.position, matrix0, component, true) * source.weight[0];
-        position +=
-            TransformComponent(source.position, matrix2, component, true) * source.weight[2];
-        position +=
-            TransformComponent(source.position, matrix3, component, true) * source.weight[3];
-        destination.position[component] = position;
-
-        float normal =
-            TransformComponent(source.normal, matrix0, component, false) * source.weight[0];
-        normal += TransformComponent(source.normal, matrix1, component, false) * source.weight[1];
-        normal += TransformComponent(source.normal, matrix2, component, false) * source.weight[2];
-        normal += TransformComponent(source.normal, matrix3, component, false) * source.weight[3];
-        destination.normal[component] = normal;
-    }
+    const float* matrices[4];
+    for (int n = 0; n < 4; ++n)
+        matrices[n] = PmxSkinMatrix(bones, boneCount, source.bone[n]);
+    cpu_deform::Bdef4(destination.position, destination.normal, source.position, source.normal,
+                      matrices, source.weight);
 }
 
 // x64 helper RVA 0xC2D20: SDEF rotates through a blended quaternion that
@@ -379,9 +349,7 @@ void AccumPmxVertexMorph(mdl::PmxVertex* vertices, const mdl::MorphRecord& morph
         for (int k = 0; k < count; ++k) {
             const mdl::PmdVertexMorphEntry& entry = morph.vertexEntries[k];
             mdl::PmxVertex& vertex = vertices[entry.vertexIndex];
-            vertex.position[0] += entry.offset[0] * value * groupWeight;
-            vertex.position[1] += entry.offset[1] * value * groupWeight;
-            vertex.position[2] += entry.offset[2] * value * groupWeight;
+            cpu_deform::AccumulateVertexMorph(vertex.position, entry.offset, value, groupWeight);
         }
         return;
     }
