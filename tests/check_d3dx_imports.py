@@ -62,6 +62,11 @@ def main():
     assert not any("d3dx" in name for name in delayed), delayed
     assert not {"mmeffect.dll", "mmhack.dll"} & normal.keys()
     assert {"D3DXMatrixMultiply", "D3DXMatrixTranspose"} <= set(normal[runtime])
+    # Original MMEffect 0.37: x86 RVA 0xCD10 uses A with d3dx9_32;
+    # x64 RVA 0xC16A uses W with d3dx9_43. The older W compiler path
+    # corrupts non-ASCII paths under legacy ANSI code pages (issue #11).
+    effect_loader = "D3DXCreateEffectFromFileW" if machine == 0x8664 else "D3DXCreateEffectFromFileA"
+    assert effect_loader in normal[runtime], f"Original effect loader absent: {effect_loader}"
     print(f"PASS: {runtime}, {len(normal[runtime])} normal imports, no D3DX delay load")
 
 

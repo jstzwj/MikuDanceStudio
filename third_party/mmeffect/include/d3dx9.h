@@ -78,7 +78,7 @@ struct D3DXMATERIAL {
     LPSTR pTextureFilename;
 };
 
-// ID3DXInclude is passed only as nullptr to D3DXCreateEffectFromFileW.
+// ID3DXInclude is passed only as nullptr to D3DXCreateEffectFromFileA/W.
 struct ID3DXInclude {
     virtual HRESULT __stdcall Open(void) = 0;
     virtual HRESULT __stdcall Close(void) = 0;
@@ -466,6 +466,13 @@ HRESULT WINAPI D3DXSaveSurfaceToFileA(const char* destFile, unsigned long format
                                       const void* srcPalette,
                                       const void* srcRect);
 HRESULT WINAPI D3DXCreateEffectPool(ID3DXEffectPool** pool);
+HRESULT WINAPI D3DXCreateEffectFromFileA(IDirect3DDevice9* device,
+                                         const char* srcFile,
+                                         const D3DXMACRO* defines,
+                                         ID3DXInclude* include,
+                                         unsigned long flags, ID3DXEffectPool* pool,
+                                         ID3DXEffect** effect,
+                                         ID3DXBuffer** compilationErrors);
 HRESULT WINAPI D3DXCreateEffectFromFileW(IDirect3DDevice9* device,
                                          const wchar_t* srcFile,
                                          const D3DXMACRO* defines,

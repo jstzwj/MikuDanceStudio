@@ -835,6 +835,13 @@ if(BUILD_TESTING)
     target_include_directories(mme_effect_mapping_test PRIVATE third_party/mmeffect/src/mmeffect)
     target_link_libraries(mme_effect_mapping_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME mme_effect_mapping COMMAND mme_effect_mapping_test)
+    add_executable(mme_effect_path_test tests/mme_effect_path_test.cpp)
+    target_include_directories(mme_effect_path_test PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_effect_path_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME mme_effect_path COMMAND mme_effect_path_test)
+    set_tests_properties(mme_effect_path PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    add_test(NAME mme_effect_path_compiler COMMAND mme_effect_path_test --compiler)
+    set_tests_properties(mme_effect_path_compiler PROPERTIES LABELS cpu_no_windows TIMEOUT 90)
     add_executable(mme_technique_validation_test tests/mme_technique_validation_test.cpp)
     target_include_directories(mme_technique_validation_test PRIVATE
         third_party/mmeffect/include third_party/mmeffect/src/mmhack

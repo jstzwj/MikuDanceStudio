@@ -321,10 +321,6 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     // [big-C 11227-11229] "Loading effect file: <path>"
     MmeLogWrite(("Loading effect file: " + pathAnsi).c_str(), 0);
 
-    // [big-C 11239-11240] the wide path for D3DXCreateEffectFromFileW
-    // (FUN_180006610 = CP 0 ansi->wide, same as MmeAnsiToWide).
-    std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
-
     // [big-C 11296-11305 / 0x18000c0a4-0x18000c0f3] The macro array contains only two entries:
     //   defines[0] = {"_INDEX", "PSIZE15"}: _INDEX's value is the string
     //     "PSIZE15" (0x18000c0b2); PSIZE15 is not a separate macro name;
@@ -363,8 +359,18 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     }
 
     ID3DXBuffer* errors = nullptr;
+#if defined(_M_X64)
+    // Original x64: CP_ACP conversion (sub_180006610), then the W import
+    // from d3dx9_43 at 0x18000C16A. The x86 loader does not convert the path.
+    const std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
     HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines, nullptr, loadFlags,
                                            g_effectPool, &entry->effect, &errors);
+#else
+    // Original x86 0.37: d3dx9_32 A import at 0x1000CD10. Its W compiler
+    // path mixes UTF-8 filenames with ANSI file opens under legacy ACPs.
+    HRESULT hr = D3DXCreateEffectFromFileA(device, pathAnsi.c_str(), defines, nullptr, loadFlags,
+                                           g_effectPool, &entry->effect, &errors);
+#endif
     // [0x18000c1ab-0x18000c376] on failure exactly ONE segment is appended to
     // the error text: the compiler text when the error buffer carries bytes,
     // otherwise "DirectX Error: <desc> [%08X]\n" (the !errors ||
