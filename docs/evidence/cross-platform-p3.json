@@ -1,0 +1,675 @@
+{
+  "schema": 1,
+  "stage": "P3",
+  "status": "complete",
+  "recorded_date": "2026-11-01",
+  "source_commit": "0a7cce118d1021b6161b1c65a77ff41864e43c42",
+  "implementation_commits": [
+    "bd435ae9537c341806ff68cfba2d883c71e7f659",
+    "adbea04a0f92730f3a0c292b51f4b640102ed153",
+    "0f07421d441d3d4d7450bf7bd4131cffce1aac09",
+    "f428e84d8db447aefdaf52d4c2d0b571971757c5",
+    "4b732b6133166efed050c87b4140c024788c58ec",
+    "0a7cce118d1021b6161b1c65a77ff41864e43c42"
+  ],
+  "render_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924",
+  "jobs": [
+    {
+      "name": "linux",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924/job/124636639931"
+    },
+    {
+      "name": "mac-compiler",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924/job/124636639951"
+    },
+    {
+      "name": "macos",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924/job/124636700283"
+    }
+  ],
+  "thresholds": {
+    "identity_copy": "exact bytes (RGBA8 and RGBA16F)",
+    "hdr_arithmetic": "one binary16 ULP",
+    "unorm_tonemap_and_mips": "at most one per channel",
+    "presentation": "no readback in normal Draw; finalColor equals offscreen oracle per backend"
+  },
+  "platforms": [
+    {
+      "system": "windows",
+      "architecture": "x64",
+      "adapter": "NVIDIA TITAN Xp",
+      "ctest": {
+        "tests": 11,
+        "failures": 0,
+        "skipped": 0
+      },
+      "native_presentations": [
+        "hidden Win32"
+      ],
+      "procedural_and_p2_scene_presentation": true,
+      "offscreen_cases": [
+        {
+          "fixture": "triangle.pmd",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "shadow.pmx",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "shadow.pmx",
+          "shadow_mode": 2,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "articulated.pmd",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "articulated.pmx",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "v2.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "pmx.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "bound-v2.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        }
+      ],
+      "depth_attachment": "D24S8"
+    },
+    {
+      "system": "macos",
+      "architecture": "arm64",
+      "adapter": "Apple Paravirtual device",
+      "ctest": {
+        "tests": 11,
+        "failures": 0,
+        "skipped": 0
+      },
+      "native_presentations": [
+        "Cocoa / CAMetalLayer"
+      ],
+      "procedural_and_p2_scene_presentation": true,
+      "offscreen_cases": [
+        {
+          "fixture": "triangle.pmd",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "shadow.pmx",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "shadow.pmx",
+          "shadow_mode": 2,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "articulated.pmd",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "articulated.pmx",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "v2.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "pmx.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "bound-v2.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        }
+      ],
+      "depth_attachment": "D32FS8; exact D24S8 query and creation rejected"
+    },
+    {
+      "system": "linux",
+      "architecture": "x64",
+      "adapter": "llvmpipe (LLVM 15.0.7, 256 bits)",
+      "ctest": {
+        "tests": 9,
+        "failures": 0,
+        "skipped": 0
+      },
+      "native_presentations": [
+        "XCB / Xvfb",
+        "Wayland / headless Weston"
+      ],
+      "procedural_and_p2_scene_presentation": true,
+      "offscreen_cases": [
+        {
+          "fixture": "triangle.pmd",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "shadow.pmx",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "shadow.pmx",
+          "shadow_mode": 2,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "articulated.pmd",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "articulated.pmx",
+          "shadow_mode": 1,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "v2.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "pmx.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        },
+        {
+          "fixture": "bound-v2.pmm",
+          "shadow_mode": 0,
+          "frames": 6,
+          "timeline_frame": 8,
+          "cpu_updates": 5,
+          "device_replacements": 1,
+          "width": 131,
+          "height": 97,
+          "strict_post_copy": true
+        }
+      ],
+      "depth_attachment": "D24S8"
+    }
+  ],
+  "windows_additional_gates": [
+    {
+      "backend": "dx11",
+      "test": "generic_shader",
+      "exit": 0
+    },
+    {
+      "backend": "dx11",
+      "test": "post_process",
+      "exit": 0
+    },
+    {
+      "backend": "dx11",
+      "test": "mrt_hdr",
+      "exit": 0
+    },
+    {
+      "backend": "dx11",
+      "test": "render_mips",
+      "exit": 0
+    },
+    {
+      "backend": "dx11",
+      "test": "multipass_gpu",
+      "exit": 0
+    },
+    {
+      "backend": "dx12",
+      "test": "generic_shader",
+      "exit": 0
+    },
+    {
+      "backend": "dx12",
+      "test": "post_process",
+      "exit": 0
+    },
+    {
+      "backend": "dx12",
+      "test": "mrt_hdr",
+      "exit": 0
+    },
+    {
+      "backend": "dx12",
+      "test": "render_mips",
+      "exit": 0
+    },
+    {
+      "backend": "dx12",
+      "test": "multipass_gpu",
+      "exit": 0
+    },
+    {
+      "backend": "vulkan-debug",
+      "test": "generic_shader",
+      "exit": 0
+    },
+    {
+      "backend": "vulkan-debug",
+      "test": "post_process",
+      "exit": 0
+    },
+    {
+      "backend": "vulkan-debug",
+      "test": "mrt_hdr",
+      "exit": 0
+    },
+    {
+      "backend": "vulkan-debug",
+      "test": "render_mips",
+      "exit": 0
+    },
+    {
+      "backend": "vulkan-debug",
+      "test": "multipass_gpu",
+      "exit": 0
+    },
+    {
+      "backend": "vulkan-validation",
+      "test": "resources",
+      "exit": 0,
+      "argument": "validation"
+    }
+  ],
+  "windows_validation_presentation": "native-debug passed; procedural and P2 scene frames, 0 validation errors",
+  "windows_application_builds": {
+    "x64": "Release MikuDanceStudio and mds_render_cli passed",
+    "x86": "Release MikuDanceStudio and mds_render_cli passed",
+    "vulkan_in_editor_build": false,
+    "note": "Vulkan execution separately validated by the production portable-render x64 build."
+  },
+  "private_model_local_only": {
+    "model_sha256": "4542728612d1055186dc500bfc897cf458ce5530a87bb2c84de1dfeffeb6e5fa",
+    "cpu": "Intel Core i7-10700",
+    "gpu": "NVIDIA TITAN Xp",
+    "width": 640,
+    "height": 480,
+    "physics_mode": 0,
+    "shadow_mode": 1,
+    "vulkan_validation": true,
+    "motion": "generated root-bone translation; no private motion distributed",
+    "reports": [
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "dx11",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 20,
+        "buffer_creations": 3,
+        "buffer_reuses": 0,
+        "buffer_waits": 0,
+        "upload_bytes": 105650736,
+        "vulkan_readbacks": 0,
+        "validation_errors": 0,
+        "milliseconds": {
+          "cpu_update": 1631.95,
+          "frame_production": 4321.9,
+          "prepare": 83.6143,
+          "submit_collect": 127.889,
+          "explicit_readback": 1.9682,
+          "cold_frame": 197.016,
+          "warm_frame_mean": 67.0608
+        },
+        "motion": "static"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "dx11",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 109,
+        "buffer_creations": 5,
+        "buffer_reuses": 87,
+        "buffer_waits": 0,
+        "upload_bytes": 503493552,
+        "vulkan_readbacks": 0,
+        "validation_errors": 0,
+        "milliseconds": {
+          "cpu_update": 1435.97,
+          "frame_production": 3860.93,
+          "prepare": 151.606,
+          "submit_collect": 130.691,
+          "explicit_readback": 2.3505,
+          "cold_frame": 210.207,
+          "warm_frame_mean": 60.3263
+        },
+        "motion": "animated"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "dx12",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 20,
+        "buffer_creations": 3,
+        "buffer_reuses": 0,
+        "buffer_waits": 0,
+        "upload_bytes": 105650736,
+        "vulkan_readbacks": 0,
+        "validation_errors": 0,
+        "milliseconds": {
+          "cpu_update": 1442.81,
+          "frame_production": 3728.53,
+          "prepare": 83.494,
+          "submit_collect": 66.2992,
+          "explicit_readback": 6.9022,
+          "cold_frame": 123.597,
+          "warm_frame_mean": 58.3999
+        },
+        "motion": "static"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "dx12",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 109,
+        "buffer_creations": 5,
+        "buffer_reuses": 87,
+        "buffer_waits": 0,
+        "upload_bytes": 503493552,
+        "vulkan_readbacks": 0,
+        "validation_errors": 0,
+        "milliseconds": {
+          "cpu_update": 1547.76,
+          "frame_production": 4324.71,
+          "prepare": 143.326,
+          "submit_collect": 61.1749,
+          "explicit_readback": 6.8321,
+          "cold_frame": 92.3144,
+          "warm_frame_mean": 67.244
+        },
+        "motion": "animated"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "vulkan",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 20,
+        "buffer_creations": 3,
+        "buffer_reuses": 0,
+        "buffer_waits": 0,
+        "upload_bytes": 105650736,
+        "vulkan_readbacks": 3,
+        "validation_errors": 0,
+        "milliseconds": {
+          "cpu_update": 1497.07,
+          "frame_production": 4069.05,
+          "prepare": 141.958,
+          "submit_collect": 340.308,
+          "explicit_readback": 10.4856,
+          "cold_frame": 157.301,
+          "warm_frame_mean": 66.1926
+        },
+        "motion": "static"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "vulkan",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 109,
+        "buffer_creations": 5,
+        "buffer_reuses": 87,
+        "buffer_waits": 0,
+        "upload_bytes": 503493552,
+        "vulkan_readbacks": 3,
+        "validation_errors": 0,
+        "milliseconds": {
+          "cpu_update": 1510.83,
+          "frame_production": 3963.49,
+          "prepare": 232.674,
+          "submit_collect": 354.995,
+          "explicit_readback": 10.3544,
+          "cold_frame": 199.867,
+          "warm_frame_mean": 65.8673
+        },
+        "motion": "animated"
+      }
+    ],
+    "parity": [
+      {
+        "motion": "static",
+        "comparison": "dx11 vs dx12",
+        "changed_bytes": 0,
+        "sha256": "045a7e8ca6dba60bf606837e2d1961da74c8be7ef34bbafb6f271262b2b2298c"
+      },
+      {
+        "motion": "static",
+        "comparison": "dx11 vs vulkan",
+        "changed_bytes": 0,
+        "sha256": "045a7e8ca6dba60bf606837e2d1961da74c8be7ef34bbafb6f271262b2b2298c"
+      },
+      {
+        "motion": "animated",
+        "comparison": "dx11 vs dx12",
+        "changed_bytes": 0,
+        "sha256": "58e817ca02fcd333982a8cbfb99472ecfbbad08bd7fdc72bde18bca2f8f7b573"
+      },
+      {
+        "motion": "animated",
+        "comparison": "dx11 vs vulkan",
+        "changed_bytes": 0,
+        "sha256": "58e817ca02fcd333982a8cbfb99472ecfbbad08bd7fdc72bde18bca2f8f7b573"
+      }
+    ],
+    "no_private_asset_or_image_committed": true,
+    "timing_contract": "CPU wall-clock, asynchronous submissions; excludes loading and final explicit readback; not GPU timestamps or editor FPS"
+  },
+  "remaining_scope": [
+    "P4 Qt/editor commands and C1 rendering completion",
+    "P4 CPU frame-production optimization",
+    "P5 independent FX9/MME frontend",
+    "P6 complete media services",
+    "P7 physical GPU/driver/package qualification"
+  ]
+}

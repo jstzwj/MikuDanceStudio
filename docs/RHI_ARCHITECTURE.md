@@ -1,5 +1,16 @@
 # Rendering hardware interface: incremental migration
 
+Cross-platform status (2026-11-01): P3 adds the production Vulkan loader,
+native surface leases (HWND, Cocoa/Metal layer, XCB and Wayland), portable
+runtime DXC/SPIR-V compilation, and a scene-frame producer consuming P2 CPU
+snapshots without updating the scene. Three-platform offscreen and native
+presentation acceptance is documented in [P3](CROSS_PLATFORM_P3.md).
+Portable attachment-only depth negotiates D24S8 or D32FS8; the separate exact
+D24S8 contract remains capability-gated. Ordinary presentation stays on the GPU.
+The portable scene subset, CPU performance budget and remaining C1 rendering
+work are explicit in that record; the Qt editor and independent MME frontend
+remain P4 and P5 work.
+
 Current status (2026-10-30): the live editor supports DX11, DX12 and Vulkan
 through the **Renderer** menu. The old **Renderer Preview** menu/window has been
 removed; shared controllers remain. See [editor integration](RHI_EDITOR_VIEWPORT.md),
