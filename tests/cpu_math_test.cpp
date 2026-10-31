@@ -29,6 +29,35 @@ int main() {
     for (unsigned n=0;n<16;++n) CHECK(Near(roundtrip[n],identity[n]));
     auto retained=translation;
     CHECK(!Inverse(Matrix{},retained) && retained==translation);
+    // The third row is exactly the sum of the first two. Elimination with
+    // double arithmetic used to accept a tiny nonzero residual as a pivot.
+    const Matrix dependent{-6,2,9,0, -8,7,-3,0, -14,9,6,0, 0,0,0,1};
+    for (float factor : {1.f,1e-20f,1e20f}) {
+        auto singular=dependent;
+        for (auto& value:singular) value*=factor;
+        CHECK(!Inverse(singular,retained) && retained==translation);
+        const auto before=singular;
+        CHECK(!Inverse(singular,singular) && singular==before);
+    }
+    // Large differences in scale are not by themselves singularity. A global
+    // absolute epsilon or condition-number cutoff would reject these inputs.
+    for (const auto& diagonal : {Vec3{1e-20f,1e-20f,1e-20f},
+                                Vec3{1e20f,1e20f,1e20f},Vec3{1e-20f,1,1e20f}}) {
+        auto scaled=identity;
+        for (int n=0;n<3;++n) scaled[5*n]=diagonal[n];
+        Matrix checked;
+        CHECK(Inverse(scaled,checked));
+        for (unsigned n=0;n<16;++n) CHECK(Near(Multiply(scaled,checked)[n],identity[n]));
+    }
+    const float adjacent=std::nextafter(1.f,2.f);
+    auto close=identity;
+    close[0]=close[1]=close[4]=1;close[5]=adjacent;
+    Matrix checked;
+    CHECK(Inverse(close,checked)); // near singular but float inverse is exact
+    const Matrix unreliable{1,1,1,0, 1,adjacent,1,0, 1,1,adjacent,0, 0,0,0,1};
+    CHECK(!Inverse(unreliable,retained) && retained==translation);
+    auto overflowing=identity;overflowing[0]=std::numeric_limits<float>::denorm_min();
+    CHECK(!Inverse(overflowing,retained) && retained==translation);
     auto invalid=identity; invalid[0]=std::numeric_limits<float>::infinity();
     CHECK(!Inverse(invalid,retained) && retained==translation);
     Vec3 normalized{3,0,4}; CHECK(Normalize(normalized,normalized));

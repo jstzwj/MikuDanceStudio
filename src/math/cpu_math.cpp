@@ -26,22 +26,28 @@ Matrix Transpose(const Matrix& a) {
     return m;
 }
 bool Inverse(const Matrix& a, Matrix& output) {
-    // Partial-pivot Gauss-Jordan in double: a checked general inverse, not a
+    // Scaled partial-pivot Gauss-Jordan in double: a checked general inverse, not a
     // bit-exact replacement for the legacy D3DX inverse adapter.
     double work[4][8]{};
+    double scale[4]{};
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
             if (!std::isfinite(a[4*r+c])) return false;
             work[r][c] = a[4*r+c];
+            scale[r] = std::max(scale[r], std::abs(work[r][c]));
         }
+        if (scale[r] == 0) return false;
         work[r][4+r] = 1;
     }
     for (int c = 0; c < 4; ++c) {
         int pivot = c;
         for (int r = c+1; r < 4; ++r)
-            if (std::abs(work[r][c]) > std::abs(work[pivot][c])) pivot = r;
-        if (work[pivot][c] == 0) return false;
+            if (std::abs(work[r][c])/scale[r] > std::abs(work[pivot][c])/scale[pivot]) pivot = r;
+        // Elimination of exactly dependent nonzero rows need not leave an
+        // exact zero. A relative threshold preserves uniformly tiny matrices.
+        if (std::abs(work[pivot][c])/scale[pivot] <= 64*std::numeric_limits<double>::epsilon()) return false;
         for (int n = 0; n < 8; ++n) std::swap(work[c][n], work[pivot][n]);
+        std::swap(scale[c], scale[pivot]);
         const double divisor = work[c][c];
         for (double& value : work[c]) value /= divisor;
         for (int r = 0; r < 4; ++r) if (r != c) {
@@ -54,6 +60,18 @@ bool Inverse(const Matrix& a, Matrix& output) {
         const double value = work[r][4+c];
         if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max()) return false;
         result[4*r+c] = static_cast<float>(value);
+    }
+    // Check the published float inverse, in both directions. A finite double
+    // inverse can become unusable when stored as float, especially near a
+    // singular matrix. Do not publish it or modify aliased input on failure.
+    for (int r=0; r<4; ++r) for (int c=0; c<4; ++c) {
+        double left=0, right=0;
+        for (int k=0; k<4; ++k) {
+            left += double(a[4*r+k])*result[4*k+c];
+            right += double(result[4*r+k])*a[4*k+c];
+        }
+        const double expected=r==c?1:0;
+        if (std::abs(left-expected)>2e-5 || std::abs(right-expected)>2e-5) return false;
     }
     output = result;
     return true;

@@ -12,7 +12,8 @@ Matrix Identity();
 Matrix Translation(const Vec3&);
 Matrix Multiply(const Matrix& a, const Matrix& b);
 Matrix Transpose(const Matrix&);
-// Failure leaves output unchanged (non-finite, singular or overflowing input).
+// Failure leaves output unchanged (non-finite, numerically singular, overflow,
+// or a float inverse with either identity-product residual exceeding 2e-5).
 bool Inverse(const Matrix&, Matrix& output);
 bool Normalize(const Vec3&, Vec3& output);
 bool Normalize(const Quaternion&, Quaternion& output);
