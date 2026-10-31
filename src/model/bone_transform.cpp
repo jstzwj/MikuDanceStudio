@@ -60,7 +60,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #if defined(_M_IX86)
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #endif
 #include <Windows.h>
 
@@ -301,7 +301,7 @@ void WorldPos(float dst[3], const mdl::BoneRecord& bone) {
     // The isolated numeric helper retains that evaluation model; a
     // few ULP here become visible after many CCD iterations.
 #if defined(_M_IX86)
-    btMmdMath::transformPoint(dst, rest, mw);
+    mikudancestudio::mmd_math::transformPoint(dst, rest, mw);
 #else
     // x64 original: same source compiled for SSE2 - every multiply/add
     // rounds to float, which the plain float expression reproduces.
@@ -313,7 +313,7 @@ void WorldPos(float dst[3], const mdl::BoneRecord& bone) {
 
 float Dot3(const float a[3], const float b[3]) {
 #if defined(_M_IX86)
-    return btMmdMath::dot3(a, b);
+    return mikudancestudio::mmd_math::dot3(a, b);
 #else
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 #endif
@@ -325,7 +325,7 @@ float Dot3(const float a[3], const float b[3]) {
 // (dword_7FF7CB552C48).
 float SquaredDistance3(const float a[3], const float b[3]) {
 #if defined(_M_IX86)
-    return btMmdMath::squaredDistance3(a, b);
+    return mikudancestudio::mmd_math::squaredDistance3(a, b);
 #else
     const float dx = a[0] - b[0];
     const float dy = a[1] - b[1];
@@ -336,7 +336,7 @@ float SquaredDistance3(const float a[3], const float b[3]) {
 
 void Cross3(float dst[3], const float a[3], const float b[3]) {
 #if defined(_M_IX86)
-    btMmdMath::cross3(dst, a, b);
+    mikudancestudio::mmd_math::cross3(dst, a, b);
 #else
     dst[0] = a[1] * b[2] - a[2] * b[1];
     dst[1] = a[2] * b[0] - a[0] * b[2];

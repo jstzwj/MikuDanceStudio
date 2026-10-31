@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cassert>
 #include <memory>
 #include <map>
 #include <utility>
@@ -771,8 +772,14 @@ public:
     std::uint8_t& ShadowTrackActive() { return state.shadowTrackActive; }
     std::uint32_t& GravityTrackCursor() { return state.gravityTrackCursor; }
     std::uint8_t& GravityTrackActive() { return state.gravityTrackActive; }
-    std::uint32_t& AccessoryTrackCursor(int slot) { return m_runtime.accessoryTrackCursor[slot]; }
-    std::uint8_t& AccessoryTrackActive(int slot) { return m_runtime.accessoryTrackActive[slot]; }
+    std::uint32_t& AccessoryTrackCursor(int slot) {
+        assert(slot >= 0 && slot < mdl::kAccessorySlotCount);
+        return state.accessoryTrackCursor[slot];
+    }
+    std::uint8_t& AccessoryTrackActive(int slot) {
+        assert(slot >= 0 && slot < mdl::kAccessorySlotCount);
+        return m_runtime.accessoryTrackActive[slot];
+    }
     float* CameraPosition() { return state.cameraPosition; }
     float* CameraRotation() { return &state.cameraPitch; }
     float& CameraPositionX() { return state.cameraPosition[0]; }

@@ -4,7 +4,7 @@ build-*/
 out/
 
 # Conan
-# Bullet sources are vendored for clean CI builds, including local parity fixes.
+# Unmodified Bullet sources are vendored for clean CI builds.
 
 # Python
 __pycache__/

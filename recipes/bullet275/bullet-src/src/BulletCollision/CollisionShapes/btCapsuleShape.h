@@ -86,9 +86,6 @@ public:
 		btConvexInternalShape::setLocalScaling(scaling);
 
 		m_implicitShapeDimensions = (unScaledImplicitShapeDimensionsWithMargin * m_localScaling) - oldMargin;
-		// MMD (0x4D4260) stores the three components separately and then
-		// explicitly zeroes the w slot of m_implicitShapeDimensions.
-		m_implicitShapeDimensions[3] = 0.0f;
 
 	}
 };

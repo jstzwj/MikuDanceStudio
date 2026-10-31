@@ -33,7 +33,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #if defined(_M_IX86)
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #endif
 #include <Windows.h>
 
@@ -64,7 +64,7 @@ void QuatMultiply(float out[4], const float a[4], const float b[4]) {
 
 #if defined(_M_IX86)
 void SetRotationOriginal(float* basis, const float* quaternion) {
-    btMmdMath::rotationBasis(basis, quaternion);
+    mikudancestudio::mmd_math::rotationBasis(basis, quaternion);
 }
 #else
 void SetRotationOriginal(float* basis, const float* quaternion) {
@@ -187,7 +187,7 @@ inline void DumpConstraintCreateState(int, btGeneric6DofSpringConstraint*) {
 
 void TransformJointPointOriginal(float out[3], const float point[3], const float matrix[16]) {
 #if defined(_M_IX86)
-    btMmdMath::transformPoint(out, point, matrix);
+    mikudancestudio::mmd_math::transformPoint(out, point, matrix);
 #else
     for (int column = 0; column < 3; ++column) {
         out[column] = point[0] * matrix[column] + point[1] * matrix[4 + column] +
@@ -375,11 +375,9 @@ int CreatePhysJoint(PhysicsScene* scene, btRigidBody* rbA, btRigidBody* rbB, flo
     }
 
     int& counter = scene->constraintId; // 0x4064xx
-    // The original stores this monotonically increasing value at
-    // constraint+0x60: distinct solver UID.  m_userConstraintId at +0x18
-    // remains -1 in the original; merging the two fields changes the VC9
-    // class size and the constraint ordering used by the impulse solver.
-    con->setUid(counter);
+    // Stock Bullet 2.75 exposes the solver UID through its user constraint ID.
+    // Keep the application's monotonically increasing ID through that API.
+    con->setUserConstraintId(counter);
     DumpConstraintCreateState(counter, con);
     return counter++;
 }

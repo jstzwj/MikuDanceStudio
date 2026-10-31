@@ -67,9 +67,14 @@ the separate native DX9 image comparisons.
 
 ## Reproduce the release build
 
-The modified Bullet 2.75 source is versioned under `recipes/bullet275/bullet-src`.
-Do not replace it with an upstream ZIP: it contains the project's physics parity
-fixes. CI creates that local recipe before installing application dependencies.
+The unmodified Bullet 2.75 `src` tree from `bullet-2.75.zip` is versioned under
+`recipes/bullet275/bullet-src`. `upstream.json` records the archive SHA-256 and
+every source file's checksum; each recipe build verifies the tree. The modern
+CMake build stays outside the upstream tree and builds the three rigid-body
+libraries used by the application. Numerical alignment uses compiler settings,
+with no Bullet algorithm, expression-order, class-layout or diagnostic patches.
+This does not guarantee bitwise equivalence with MMD's historical compiler.
+CI creates that local recipe before installing application dependencies.
 `--lockfile=""` deliberately bypasses the historical workstation lock, whose
 Bullet recipe revision predates these versioned sources.
 

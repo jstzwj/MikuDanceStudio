@@ -4,7 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #if defined(_M_IX86)
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 #endif
 #include <Windows.h>
 #include <d3d9.h>
@@ -104,7 +104,7 @@ bool ProjectBonePoint(const mdl::BoneRecord& bone, const float (&point)[3], cons
 __declspec(noinline) float BoneVCoordinate(int numerator, int origin, float lengthValue,
                                            float scale) {
 #if defined(_M_IX86)
-    return btMmdMath::boneVCoordinate(numerator, origin, lengthValue, scale);
+    return mikudancestudio::mmd_math::boneVCoordinate(numerator, origin, lengthValue, scale);
 #else
     return static_cast<float>(static_cast<double>(numerator) / lengthValue * 8.0 * scale + origin);
 #endif
@@ -119,7 +119,7 @@ __declspec(noinline) void BoneMarkerBounds(int x, int y, float scale, float* lef
     // 0x49AFBD onward keeps the half extent on the x87 stack, stores the
     // leading edge as float, reloads it, then adds the full extent.
 #if defined(_M_IX86)
-    btMmdMath::boneMarkerBounds(x, y, scale, &l, &t, &r, &b);
+    mikudancestudio::mmd_math::boneMarkerBounds(x, y, scale, &l, &t, &r, &b);
 #else
     l = static_cast<float>(x - scale * 9.5);
     r = static_cast<float>(l + scale * 18.0);

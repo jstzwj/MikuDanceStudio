@@ -1,6 +1,6 @@
 #include "mikudancestudio/cpu_scene_simulation.hpp"
 #include "btBulletDynamicsCommon.h"
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -29,7 +29,7 @@ void Gravity(CpuSimulationState& s, const CpuSimulationContext& c, float delta) 
             const int rStrength = c.ops.random(), rX = c.ops.random(), rY = c.ops.random(),
                       rZ = c.ops.random();
             float result[3];
-            btMmdMath::gravityNoise(rStrength, rX, rY, rZ, s.gravityNoise, s.gravityMagnitude,
+            mmd_math::gravityNoise(rStrength, rX, rY, rZ, s.gravityNoise, s.gravityMagnitude,
                                     s.gravityDirection.data(), result);
             const float e0 = result[0], e1 = result[1], e2 = result[2];
 #else

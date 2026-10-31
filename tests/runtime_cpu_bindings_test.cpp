@@ -127,8 +127,11 @@ int main(int argc,char** argv){
             CHECK(producer.Build(scene,Frame(),target,same,reason));
             CpuSolvedModel after;CHECK(scene.Snapshot(1,after) && after.bodies==solved.bodies);
             for(std::size_t n=0;n<after.bones.size();++n)CHECK(after.bones[n].skin==solved.bones[n].skin);
+            // Shader constants store float32; round the independent expectations
+            // at the same boundary before exact comparison on x87 builds.
+            const volatile float alpha80=.8f*pose.opacity,alpha60=.6f*pose.opacity;
             bool opacity=false;for(const auto& e:same.events)if(e.label=="accessory_material"){
-                opacity=true;CHECK(e.draw.pipeline.shader.nativeDiffuse[3]==.8f*pose.opacity || e.draw.pipeline.shader.nativeDiffuse[3]==.6f*pose.opacity);}
+                opacity=true;CHECK(e.draw.pipeline.shader.nativeDiffuse[3]==alpha80 || e.draw.pipeline.shader.nativeDiffuse[3]==alpha60);}
             CHECK(opacity);
         }
         auto guard=bone; // No stale result is published for a missing attachment.

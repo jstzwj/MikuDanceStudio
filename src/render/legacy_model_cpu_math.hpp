@@ -2,13 +2,13 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/render_model_inputs.hpp"
 #include <cstring>
-#include "LinearMath/btMmdMath.h"
+#include "mikudancestudio/mmd_math.hpp"
 // Measured CPU arithmetic shared by the original renderer and the input
 // producer. No graphics device or GPU state is involved.
 namespace mikudancestudio {
 inline void LegacyModelCross3(float out[3], const float left[3], const float right[3]) {
 #if defined(_M_IX86)
-    btMmdMath::cross3(out, left, right);
+    mmd_math::cross3(out, left, right);
 #else
     out[0] = static_cast<float>(static_cast<double>(left[1]) * right[2] -
                                 static_cast<double>(left[2]) * right[1]);

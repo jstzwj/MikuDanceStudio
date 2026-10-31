@@ -114,35 +114,25 @@ bool	btVoronoiSimplexSolver::updateClosestVectorAndPoints()
 		case 2:
 			{
 			//closest point origin from line segment
-			// VC9 orders (MMD 0x4EEB7E): the projection dot is grouped
-			// (dx*(-x0) + dz*(-z0)) + dy*(-y0), dotVV is
-			// (dx*dx + dz*dz) + dy*dy, and t is an SSE division.
 					const btVector3& from = m_simplexVectorW[0];
 					const btVector3& to = m_simplexVectorW[1];
+					btVector3 nearest;
 
-					const btScalar dx = to.x() - from.x();
-					const btScalar dy = to.y() - from.y();
-					const btScalar dz = to.z() - from.z();
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-					// MMD x64 RVA 0x105E20 rounds (x+y)+z for the segment projection.
-					btScalar t = (dx * (-from.x()) + dy * (-from.y())) + dz * (-from.z());
-#else
-					btScalar t = (dx*(-from.x()) + dz*(-from.z()))
-						+ dy*(-from.y());
-#endif
-
+					btVector3 p (btScalar(0.),btScalar(0.),btScalar(0.));
+					btVector3 diff = p - from;
+					btVector3 v = to - from;
+					btScalar t = v.dot(diff);
+					
 					if (t > 0) {
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-						btScalar dotVV = (dx * dx + dy * dy) + dz * dz;
-#else
-						btScalar dotVV = (dx*dx + dz*dz) + dy*dy;
-#endif
-						if (dotVV > t) {
-							t = t / dotVV;
+						btScalar dotVV = v.dot(v);
+						if (t < dotVV) {
+							t /= dotVV;
+							diff -= t*v;
 							m_cachedBC.m_usedVertices.usedVertexA = true;
 							m_cachedBC.m_usedVertices.usedVertexB = true;
 						} else {
 							t = 1;
+							diff -= v;
 							//reduce to 1 point
 							m_cachedBC.m_usedVertices.usedVertexB = true;
 						}
@@ -153,17 +143,12 @@ bool	btVoronoiSimplexSolver::updateClosestVectorAndPoints()
 						m_cachedBC.m_usedVertices.usedVertexA = true;
 					}
 					m_cachedBC.setBarycentricCoordinates(1-t,t);
+					nearest = from + t*v;
 
-					m_cachedP1 = btVector3(
-						(m_simplexPointsP[1].x()-m_simplexPointsP[0].x())*t + m_simplexPointsP[0].x(),
-						(m_simplexPointsP[1].y()-m_simplexPointsP[0].y())*t + m_simplexPointsP[0].y(),
-						(m_simplexPointsP[1].z()-m_simplexPointsP[0].z())*t + m_simplexPointsP[0].z());
-					m_cachedP2 = btVector3(
-						(m_simplexPointsQ[1].x()-m_simplexPointsQ[0].x())*t + m_simplexPointsQ[0].x(),
-						(m_simplexPointsQ[1].y()-m_simplexPointsQ[0].y())*t + m_simplexPointsQ[0].y(),
-						(m_simplexPointsQ[1].z()-m_simplexPointsQ[0].z())*t + m_simplexPointsQ[0].z());
+					m_cachedP1 = m_simplexPointsP[0] + t * (m_simplexPointsP[1] - m_simplexPointsP[0]);
+					m_cachedP2 = m_simplexPointsQ[0] + t * (m_simplexPointsQ[1] - m_simplexPointsQ[0]);
 					m_cachedV = m_cachedP1 - m_cachedP2;
-
+					
 					reduceVertices(m_cachedBC.m_usedVertices);
 
 					m_cachedValidClosest = m_cachedBC.isValid();
@@ -346,17 +331,9 @@ bool	btVoronoiSimplexSolver::closestPtPointTriangle(const btVector3& p, const bt
     btVector3 ab = b - a;
     btVector3 ac = c - a;
     btVector3 ap = p - a;
-    // VC9 (MMD 0x4EDC90) evaluates every dot in this function with the
-    // grouping (z*z + y*y) + x*x; replicate it for d1..d6.
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	// MMD x64 RVA 0x105270 uses the standard left-to-right dot products.
-	btScalar d1 = ab.dot(ap);
-	btScalar d2 = ac.dot(ap);
-#else
-	btScalar d1 = (ab.z()*ap.z() + ab.y()*ap.y()) + ab.x()*ap.x();
-    btScalar d2 = (ac.z()*ap.z() + ac.y()*ap.y()) + ac.x()*ap.x();
-#endif
-	if (d1 <= btScalar(0.0) && d2 <= btScalar(0.0))
+    btScalar d1 = ab.dot(ap);
+    btScalar d2 = ac.dot(ap);
+    if (d1 <= btScalar(0.0) && d2 <= btScalar(0.0)) 
 	{
 		result.m_closestPointOnSimplex = a;
 		result.m_usedVertices.usedVertexA = true;
@@ -366,14 +343,9 @@ bool	btVoronoiSimplexSolver::closestPtPointTriangle(const btVector3& p, const bt
 
     // Check if P in vertex region outside B
     btVector3 bp = p - b;
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar d3 = ab.dot(bp);
-	btScalar d4 = ac.dot(bp);
-#else
-	btScalar d3 = (ab.z()*bp.z() + ab.y()*bp.y()) + ab.x()*bp.x();
-    btScalar d4 = (ac.z()*bp.z() + ac.y()*bp.y()) + ac.x()*bp.x();
-#endif
-	if (d3 >= btScalar(0.0) && d4 <= d3)
+    btScalar d3 = ab.dot(bp);
+    btScalar d4 = ac.dot(bp);
+    if (d3 >= btScalar(0.0) && d4 <= d3) 
 	{
 		result.m_closestPointOnSimplex = b;
 		result.m_usedVertices.usedVertexB = true;
@@ -395,14 +367,9 @@ bool	btVoronoiSimplexSolver::closestPtPointTriangle(const btVector3& p, const bt
 
     // Check if P in vertex region outside C
     btVector3 cp = p - c;
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar d5 = ab.dot(cp);
-	btScalar d6 = ac.dot(cp);
-#else
-	btScalar d5 = (ab.z()*cp.z() + ab.y()*cp.y()) + ab.x()*cp.x();
-    btScalar d6 = (ac.z()*cp.z() + ac.y()*cp.y()) + ac.x()*cp.x();
-#endif
-	if (d6 >= btScalar(0.0) && d5 <= d6)
+    btScalar d5 = ab.dot(cp);
+    btScalar d6 = ac.dot(cp);
+    if (d6 >= btScalar(0.0) && d5 <= d6) 
 	{
 		result.m_closestPointOnSimplex = c;
 		result.m_usedVertices.usedVertexC = true;
@@ -460,16 +427,8 @@ int btVoronoiSimplexSolver::pointOutsideOfPlane(const btVector3& p, const btVect
 {
 	btVector3 normal = (b-a).cross(c-a);
 
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar signp = (p - a).dot(normal);
-	btScalar signd = (d - a).dot(normal);
-#else
-	// VC9 (MMD 0x4EE360) groups both plane dots as (z*z + x*x) + y*y.
-    btScalar signp = ((p.z()-a.z())*normal.z() + (p.x()-a.x())*normal.x())
-        + (p.y()-a.y())*normal.y(); // [AP AB AC]
-    btScalar signd = ((d.z()-a.z())*normal.z() + (d.x()-a.x())*normal.x())
-        + (d.y()-a.y())*normal.y(); // [AD AB AC]
-#endif
+    btScalar signp = (p - a).dot(normal); // [AP AB AC]
+    btScalar signd = (d - a).dot( normal); // [AD AB AC]
 
 #ifdef CATCH_DEGENERATE_TETRAHEDRON
 #ifdef BT_USE_DOUBLE_PRECISION
@@ -526,15 +485,9 @@ bool	btVoronoiSimplexSolver::closestPtPointTetrahedron(const btVector3& p, const
 	{
         closestPtPointTriangle(p, a, b, c,tempResult);
 		btVector3 q = tempResult.m_closestPointOnSimplex;
-
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-		// MMD x64 RVA 0x1059C0 accumulates X/Y before Z.
-		btScalar sqDist = (q - p).length2();
-#else
-		btScalar sqDist = ((q.z()-p.z())*(q.z()-p.z()) + (q.y()-p.y())*(q.y()-p.y()))
-			+ (q.x()-p.x())*(q.x()-p.x());
-#endif
-		// Update best closest point if (squared) distance is less than current best
+		
+        btScalar sqDist = (q - p).dot( q - p);
+        // Update best closest point if (squared) distance is less than current best
         if (sqDist < bestSqDist) {
 			bestSqDist = sqDist;
 			finalResult.m_closestPointOnSimplex = q;
@@ -561,14 +514,8 @@ bool	btVoronoiSimplexSolver::closestPtPointTetrahedron(const btVector3& p, const
 		btVector3 q = tempResult.m_closestPointOnSimplex;
 		//convert result bitmask!
 
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-		// MMD x64 RVA 0x1059C0 accumulates X/Y before Z.
-		btScalar sqDist = (q - p).length2();
-#else
-		btScalar sqDist = ((q.z()-p.z())*(q.z()-p.z()) + (q.y()-p.y())*(q.y()-p.y()))
-			+ (q.x()-p.x())*(q.x()-p.x());
-#endif
-		if (sqDist < bestSqDist)
+        btScalar sqDist = (q - p).dot( q - p);
+        if (sqDist < bestSqDist) 
 		{
 			bestSqDist = sqDist;
 			finalResult.m_closestPointOnSimplex = q;
@@ -595,14 +542,8 @@ bool	btVoronoiSimplexSolver::closestPtPointTetrahedron(const btVector3& p, const
 		btVector3 q = tempResult.m_closestPointOnSimplex;
 		//convert result bitmask!
 
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-		// MMD x64 RVA 0x1059C0 accumulates X/Y before Z.
-		btScalar sqDist = (q - p).length2();
-#else
-		btScalar sqDist = ((q.z()-p.z())*(q.z()-p.z()) + (q.y()-p.y())*(q.y()-p.y()))
-			+ (q.x()-p.x())*(q.x()-p.x());
-#endif
-		if (sqDist < bestSqDist)
+        btScalar sqDist = (q - p).dot( q - p);
+        if (sqDist < bestSqDist) 
 		{
 			bestSqDist = sqDist;
 			finalResult.m_closestPointOnSimplex = q;
@@ -628,14 +569,8 @@ bool	btVoronoiSimplexSolver::closestPtPointTetrahedron(const btVector3& p, const
         closestPtPointTriangle(p, b, d, c,tempResult);
 		btVector3 q = tempResult.m_closestPointOnSimplex;
 		//convert result bitmask!
-#if defined(_M_X64) && !defined(BT_USE_DOUBLE_PRECISION)
-		// MMD x64 RVA 0x1059C0 accumulates X/Y before Z.
-		btScalar sqDist = (q - p).length2();
-#else
-		btScalar sqDist = ((q.z()-p.z())*(q.z()-p.z()) + (q.y()-p.y())*(q.y()-p.y()))
-			+ (q.x()-p.x())*(q.x()-p.x());
-#endif
-		if (sqDist < bestSqDist)
+        btScalar sqDist = (q - p).dot( q - p);
+        if (sqDist < bestSqDist) 
 		{
 			bestSqDist = sqDist;
 			finalResult.m_closestPointOnSimplex = q;

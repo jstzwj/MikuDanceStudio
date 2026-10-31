@@ -15,6 +15,9 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "mikudancestudio/mmd_math.hpp"
+#endif
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -26,7 +29,6 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
-#include "LinearMath/btMmdMath.h"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/scene_cpu_frame.hpp"
 #include "mikudancestudio/model_cpu_bridge.hpp"
@@ -138,7 +140,7 @@ void Blend3(float out[3], const float a[3], const float b[3], float wa) {
 
 float EdgeComponent(float position, float normal, float amount) {
 #if defined(_M_IX86)
-    return btMmdMath::edgeComponent(position, normal, amount);
+    return mikudancestudio::mmd_math::edgeComponent(position, normal, amount);
 #else
     return position + normal * amount;
 #endif
@@ -147,7 +149,7 @@ float EdgeComponent(float position, float normal, float amount) {
 float PmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
                        float materialSize) {
 #if defined(_M_IX86)
-    return btMmdMath::pmxEdgeComponent(position, normal, frameScale, vertexScale, materialSize);
+    return mikudancestudio::mmd_math::pmxEdgeComponent(position, normal, frameScale, vertexScale, materialSize);
 #else
     float amount = frameScale * normal;
     amount *= vertexScale;
@@ -180,7 +182,7 @@ void SkinPmxBdef1(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, in
 float BlendTransformComponent(const float* input, const float* matrix0, const float* matrix1,
                               int component, float weight0, bool position) {
 #if defined(_M_IX86)
-    return btMmdMath::blendTransformComponent(input, matrix0, matrix1, component, weight0,
+    return mikudancestudio::mmd_math::blendTransformComponent(input, matrix0, matrix1, component, weight0,
                                               position);
 #else
     const float weight1 = 1.0f - weight0;
@@ -525,7 +527,7 @@ float CpuModelEdgeDistance(mdl::ModelRecord* model, const float frameWorld[16],
     const float dz = worldPoint[2] - camera[2];
     const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
 #if defined(_M_IX86)
-    return btMmdMath::edgeDistanceScale(distance, fov, record.edgeScale);
+    return mmd_math::edgeDistanceScale(distance, fov, record.edgeScale);
 #else
     return distance * 0.00004500000068219379f * (fov * 0.6000000238418579f + 1.0f) *
            record.edgeScale;

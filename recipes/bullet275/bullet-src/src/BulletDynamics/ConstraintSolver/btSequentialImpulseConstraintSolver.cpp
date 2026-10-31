@@ -33,340 +33,6 @@ subject to the following restrictions:
 #include "btSolverConstraint.h"
 #include "LinearMath/btAlignedObjectArray.h"
 #include <string.h> //for memset
-#if defined(_MSC_VER) && defined(_M_IX86)
-#include <xmmintrin.h>
-#endif
-
-// OpenMMD task#8: env-gated solver event trace for bit-exact alignment with
-// the original exe. Set OPENMMD_DUMP_RESOLVE=<file> to record one JSON
-// object per solver event of the first solveGroup call (mirrors
-// scripts/ida_trace_solver_seq.py on the original side); without the
-// variable the cost is one cached-bool branch per event.
-#include <cstdlib>
-#include <cstdio>
-namespace {
-FILE* g_openmmdLog = 0;
-bool g_openmmdDisabled = false;
-int g_openmmdSeq = 0;
-int g_openmmdSolveCount = 0;
-unsigned openmmdBits(float value) {
-	unsigned bits; memcpy(&bits, &value, 4); return bits;
-}
-void openmmdHex3(FILE* f, const btVector3& v) {
-	fprintf(f, "[\"%08X\",\"%08X\",\"%08X\"]",
-	        openmmdBits(v.getX()), openmmdBits(v.getY()),
-	        openmmdBits(v.getZ()));
-}
-int openmmdBodyId(const btRigidBody* body) {
-	return body ? body->m_debugBodyId : -1;
-}
-int openmmdSolveLimit() {
-	static int limit = -2;
-	if (limit == -2) {
-		const char* text = getenv("OPENMMD_DUMP_SOLVES");
-		limit = (text && *text) ? atoi(text) : 1;
-	}
-	return limit;
-}
-bool openmmdLogOpen() {
-	if (g_openmmdDisabled) return false;
-	if (!g_openmmdLog) {
-		const char* path = getenv("OPENMMD_DUMP_RESOLVE");
-		if (!path || !*path) { g_openmmdDisabled = true; return false; }
-		g_openmmdLog = fopen(path, "wb");
-		if (!g_openmmdLog) { g_openmmdDisabled = true; return false; }
-	}
-	return true;
-}
-void openmmdLogResolve(const char* kind, int iter, int idx,
-                       const btSolverBody& b1, const btSolverBody& b2,
-                       const btSolverConstraint& c) {
-	if (g_openmmdSolveCount > openmmdSolveLimit() || !openmmdLogOpen()) return;
-	float push; memcpy(&push, &c.m_appliedPushImpulse, 4);
-	float applied; memcpy(&applied, &c.m_appliedImpulse, 4);
-	++g_openmmdSeq;
-	fprintf(g_openmmdLog,
-	        "{\"n\":%d,\"kind\":\"%s\",\"iter\":%d,\"j\":%d,"
-	        "\"id_a\":%d,\"id_b\":%d,"
-	        "\"a_dlin\":", g_openmmdSeq, kind, iter, idx,
-	        openmmdBodyId(b1.m_originalBody),
-	        openmmdBodyId(b2.m_originalBody));
-	openmmdHex3(g_openmmdLog, b1.m_deltaLinearVelocity);
-	fprintf(g_openmmdLog, ",\"a_dang\":");
-	openmmdHex3(g_openmmdLog, b1.m_deltaAngularVelocity);
-	fprintf(g_openmmdLog, ",\"b_dlin\":");
-	openmmdHex3(g_openmmdLog, b2.m_deltaLinearVelocity);
-	fprintf(g_openmmdLog, ",\"b_dang\":");
-	openmmdHex3(g_openmmdLog, b2.m_deltaAngularVelocity);
-	fprintf(g_openmmdLog,
-	        ",\"push\":\"%08X\",\"applied\":\"%08X\","
-	        "\"friction\":\"%08X\",\"jac\":\"%08X\","
-	        "\"frictionIndex\":%d,\"cidA\":%d,\"cidB\":%d,"
-	        "\"rhs\":\"%08X\",\"cfm\":\"%08X\","
-	        "\"lower\":\"%08X\",\"upper\":\"%08X\",",
-	        openmmdBits(push), openmmdBits(applied),
-	        openmmdBits(c.m_friction), openmmdBits(c.m_jacDiagABInv),
-	        c.m_frictionIndex, c.m_solverBodyIdA, c.m_solverBodyIdB,
-	        openmmdBits(c.m_rhs), openmmdBits(c.m_cfm),
-	        openmmdBits(c.m_lowerLimit), openmmdBits(c.m_upperLimit));
-	fprintf(g_openmmdLog, ",");
-	openmmdHex3(g_openmmdLog, c.m_relpos1CrossNormal);
-	fprintf(g_openmmdLog, ",");
-	openmmdHex3(g_openmmdLog, c.m_contactNormal);
-	fprintf(g_openmmdLog, ",");
-	openmmdHex3(g_openmmdLog, c.m_relpos2CrossNormal);
-	fprintf(g_openmmdLog, ",");
-	openmmdHex3(g_openmmdLog, c.m_angularComponentA);
-	fprintf(g_openmmdLog, ",");
-	openmmdHex3(g_openmmdLog, c.m_angularComponentB);
-	fprintf(g_openmmdLog, "\n");
-}
-void openmmdLogJoint(int iter, int idx, const btTypedConstraint* constraint,
-                     const btSolverBody& b1, const btSolverBody& b2) {
-	if (g_openmmdSolveCount > openmmdSolveLimit() || !openmmdLogOpen()) return;
-	const btRigidBody& ra = constraint->getRigidBodyA();
-	const btRigidBody& rb = constraint->getRigidBodyB();
-	++g_openmmdSeq;
-	fprintf(g_openmmdLog,
-	        "{\"n\":%d,\"kind\":\"joint\",\"iter\":%d,\"j\":%d,"
-	        "\"id_a\":%d,\"id_b\":%d,"
-	        "\"a_vel\":", g_openmmdSeq, iter, idx,
-	        openmmdBodyId(&ra), openmmdBodyId(&rb));
-	openmmdHex3(g_openmmdLog, ra.getLinearVelocity());
-	fprintf(g_openmmdLog, ",\"a_avel\":");
-	openmmdHex3(g_openmmdLog, ra.getAngularVelocity());
-	fprintf(g_openmmdLog, ",\"b_vel\":");
-	openmmdHex3(g_openmmdLog, rb.getLinearVelocity());
-	fprintf(g_openmmdLog, ",\"b_avel\":");
-	openmmdHex3(g_openmmdLog, rb.getAngularVelocity());
-	fprintf(g_openmmdLog, ",\"a_dlin\":");
-	openmmdHex3(g_openmmdLog, b1.m_deltaLinearVelocity);
-	fprintf(g_openmmdLog, ",\"a_dang\":");
-	openmmdHex3(g_openmmdLog, b1.m_deltaAngularVelocity);
-	fprintf(g_openmmdLog, ",\"b_dlin\":");
-	openmmdHex3(g_openmmdLog, b2.m_deltaLinearVelocity);
-	fprintf(g_openmmdLog, ",\"b_dang\":");
-	openmmdHex3(g_openmmdLog, b2.m_deltaAngularVelocity);
-	fprintf(g_openmmdLog, "}\n");
-}
-void openmmdLogConvert(const btPersistentManifold* manifold, int j,
-                       const btManifoldPoint& cp,
-                       const btRigidBody* rb0, const btRigidBody* rb1,
-                       const btVector3& rel1, const btVector3& rel2,
-                       const btVector3& angCompA, const btVector3& angCompB,
-                       const btContactSolverInfo& info,
-                       const btSolverConstraint& sc) {
-	if (g_openmmdSolveCount > openmmdSolveLimit() || !openmmdLogOpen()) return;
-	++g_openmmdSeq;
-	fprintf(g_openmmdLog,
-	        "{\"n\":%d,\"kind\":\"conv\",\"j\":%d,"
-	        "\"normal\":", g_openmmdSeq, j);
-	openmmdHex3(g_openmmdLog, cp.m_normalWorldOnB);
-	fprintf(g_openmmdLog, ",\"rel1\":");
-	openmmdHex3(g_openmmdLog, rel1);
-	fprintf(g_openmmdLog, ",\"rel2\":");
-	openmmdHex3(g_openmmdLog, rel2);
-	fprintf(g_openmmdLog, ",\"angCompA\":");
-	openmmdHex3(g_openmmdLog, angCompA);
-	fprintf(g_openmmdLog, ",\"angCompB\":");
-	openmmdHex3(g_openmmdLog, angCompB);
-	fprintf(g_openmmdLog, ",\"angCompA2\":");
-	openmmdHex3(g_openmmdLog, sc.m_angularComponentA);
-	fprintf(g_openmmdLog, ",\"angCompB2\":");
-	openmmdHex3(g_openmmdLog, sc.m_angularComponentB);
-	fprintf(g_openmmdLog, ",\"rcn1\":");
-	openmmdHex3(g_openmmdLog, sc.m_relpos1CrossNormal);
-	fprintf(g_openmmdLog, ",\"rcn2\":");
-	openmmdHex3(g_openmmdLog, sc.m_relpos2CrossNormal);
-	fprintf(g_openmmdLog,
-	        ",\"invMass0\":\"%08X\",\"invMass1\":\"%08X\","
-	        "\"dist\":\"%08X\",\"slop\":\"%08X\","
-	        "\"erp\":\"%08X\",\"dt\":\"%08X\","
-	        "\"restitution\":\"%08X\",\"friction\":\"%08X\","
-	        "\"lifetime\":%d,\"jac\":\"%08X\",\"rhs\":\"%08X\"}\n",
-	        openmmdBits(rb0 ? rb0->getInvMass() : 0.f),
-	        openmmdBits(rb1 ? rb1->getInvMass() : 0.f),
-	        openmmdBits(cp.getDistance()),
-	        openmmdBits(info.m_linearSlop),
-	        openmmdBits(info.m_erp),
-	        openmmdBits(info.m_timeStep),
-	        openmmdBits(cp.m_combinedRestitution),
-	        openmmdBits(cp.m_combinedFriction),
-	        cp.m_lifeTime,
-	        openmmdBits(sc.m_jacDiagABInv),
-	        openmmdBits(sc.m_rhs));
-	if (rb0) { openmmdHex3(g_openmmdLog, rb0->getLinearVelocity()); openmmdHex3(g_openmmdLog, rb0->getAngularVelocity()); }
-	else { fprintf(g_openmmdLog, "[0,0,0][0,0,0]"); }
-	if (rb1) { openmmdHex3(g_openmmdLog, rb1->getLinearVelocity()); openmmdHex3(g_openmmdLog, rb1->getAngularVelocity()); }
-	else { fprintf(g_openmmdLog, "[0,0,0][0,0,0]"); }
-	fprintf(g_openmmdLog, "\n");
-}
-void openmmdLogWriteback(const btSolverBody& b) {
-	if (g_openmmdSolveCount > openmmdSolveLimit() || !openmmdLogOpen()) return;
-	++g_openmmdSeq;
-	fprintf(g_openmmdLog,
-	        "{\"n\":%d,\"kind\":\"writeback\",\"id\":%d,\"dlin\":",
-	        g_openmmdSeq, openmmdBodyId(b.m_originalBody));
-	openmmdHex3(g_openmmdLog, b.m_deltaLinearVelocity);
-	fprintf(g_openmmdLog, ",\"dang\":");
-	openmmdHex3(g_openmmdLog, b.m_deltaAngularVelocity);
-	fprintf(g_openmmdLog, "}\n");
-}
-}  // namespace
-
-#if defined(_MSC_VER) && defined(_M_IX86)
-static SIMD_FORCE_INLINE btScalar mmdSolverDot120(
-	btScalar a0, btScalar b0, btScalar a1, btScalar b1,
-	btScalar a2, btScalar b2)
-{
-	__m128 sum = _mm_add_ss(
-		_mm_mul_ss(_mm_set_ss(a1), _mm_set_ss(b1)),
-		_mm_mul_ss(_mm_set_ss(a2), _mm_set_ss(b2)));
-	sum = _mm_add_ss(sum, _mm_mul_ss(_mm_set_ss(a0), _mm_set_ss(b0)));
-	return _mm_cvtss_f32(sum);
-}
-
-static SIMD_FORCE_INLINE btScalar mmdSolverMul(btScalar a, btScalar b)
-{
-	return _mm_cvtss_f32(_mm_mul_ss(_mm_set_ss(a), _mm_set_ss(b)));
-}
-
-static SIMD_FORCE_INLINE btScalar mmdSolverAdd(btScalar a, btScalar b)
-{
-	return _mm_cvtss_f32(_mm_add_ss(_mm_set_ss(a), _mm_set_ss(b)));
-}
-
-static SIMD_FORCE_INLINE btScalar mmdSolverSub(btScalar a, btScalar b)
-{
-	return _mm_cvtss_f32(_mm_sub_ss(_mm_set_ss(a), _mm_set_ss(b)));
-}
-
-static SIMD_FORCE_INLINE btScalar mmdSolverDot012(
-	btScalar a0, btScalar b0, btScalar a1, btScalar b1,
-	btScalar a2, btScalar b2)
-{
-	btScalar sum = mmdSolverAdd(
-		mmdSolverMul(a0, b0), mmdSolverMul(a1, b1));
-	return mmdSolverAdd(sum, mmdSolverMul(a2, b2));
-}
-
-static SIMD_FORCE_INLINE btScalar mmdSolverDot210(
-	btScalar a0, btScalar b0, btScalar a1, btScalar b1,
-	btScalar a2, btScalar b2)
-{
-	btScalar sum = mmdSolverAdd(
-		mmdSolverMul(a2, b2), mmdSolverMul(a1, b1));
-	return mmdSolverAdd(sum, mmdSolverMul(a0, b0));
-}
-
-static btVector3 mmdSolverAngularComponentVc9(
-	const btMatrix3x3& matrix, const btVector3& axis,
-	const btVector3& angularFactor)
-{
-	return btVector3(
-		mmdSolverMul(mmdSolverDot120(
-			matrix[0][0], axis[0], matrix[0][1], axis[1], matrix[0][2], axis[2]),
-			angularFactor[0]),
-		mmdSolverMul(mmdSolverDot120(
-			matrix[1][0], axis[0], matrix[1][1], axis[1], matrix[1][2], axis[2]),
-			angularFactor[1]),
-		mmdSolverMul(mmdSolverDot120(
-			matrix[2][0], axis[0], matrix[2][1], axis[1], matrix[2][2], axis[2]),
-			angularFactor[2]));
-}
-
-// OpenMMD (MMD 0x4FD380 @0x4FD950): convertContact's angular components
-// sum each matrix row as (m[i][2]*t.z + m[i][1]*t.y) + m[i][0]*t.x - the
-// (z+y)+x lane order, unlike the joint-setup helper above (y+z)+x.
-static btVector3 mmdSolverAngularComponent210(
-	const btMatrix3x3& matrix, const btVector3& axis,
-	const btVector3& angularFactor)
-{
-	return btVector3(
-		mmdSolverMul(mmdSolverDot210(
-			matrix[0][0], axis[0], matrix[0][1], axis[1], matrix[0][2], axis[2]),
-			angularFactor[0]),
-		mmdSolverMul(mmdSolverDot210(
-			matrix[1][0], axis[0], matrix[1][1], axis[1], matrix[1][2], axis[2]),
-			angularFactor[1]),
-		mmdSolverMul(mmdSolverDot210(
-			matrix[2][0], axis[0], matrix[2][1], axis[1], matrix[2][2], axis[2]),
-			angularFactor[2]));
-}
-
-static btScalar mmdSolverJacDiagVc9(
-	const btMatrix3x3& inertiaA, btScalar inverseMassA,
-	const btMatrix3x3& inertiaB, btScalar inverseMassB,
-	const btVector3& normal, const btVector3& relpos1,
-	const btVector3& relpos2)
-{
-	const btVector3 angularA(
-		mmdSolverDot012(inertiaA[0][0], relpos1[0], inertiaA[0][1], relpos1[1], inertiaA[0][2], relpos1[2]),
-		mmdSolverDot012(inertiaA[1][0], relpos1[0], inertiaA[1][1], relpos1[1], inertiaA[1][2], relpos1[2]),
-		mmdSolverDot012(inertiaA[2][0], relpos1[0], inertiaA[2][1], relpos1[1], inertiaA[2][2], relpos1[2]));
-	const btVector3 angularB(
-		mmdSolverDot012(inertiaB[0][0], relpos2[0], inertiaB[0][1], relpos2[1], inertiaB[0][2], relpos2[2]),
-		mmdSolverDot012(inertiaB[1][0], relpos2[0], inertiaB[1][1], relpos2[1], inertiaB[1][2], relpos2[2]),
-		mmdSolverDot210(inertiaB[2][0], relpos2[0], inertiaB[2][1], relpos2[1], inertiaB[2][2], relpos2[2]));
-	const btVector3 linearA(
-		mmdSolverMul(normal[0], inverseMassA),
-		mmdSolverMul(normal[1], inverseMassA),
-		mmdSolverMul(normal[2], inverseMassA));
-	const btVector3 linearB(
-		mmdSolverMul(normal[0], inverseMassB),
-		mmdSolverMul(normal[1], inverseMassB),
-		mmdSolverMul(normal[2], inverseMassB));
-
-	// Exact addss chain at MMD 0x4FF9E4..0x4FFAAE.  VC9 flattened
-	// the four source-level dot products and scheduled their terms as below.
-	btScalar sum = mmdSolverMul(normal[1], linearA[1]);
-	sum = mmdSolverAdd(sum, mmdSolverMul(normal[2], linearA[2]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(normal[0], linearA[0]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(relpos1[1], angularA[1]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(relpos1[2], angularA[2]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(relpos1[0], angularA[0]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(normal[1], linearB[1]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(normal[2], linearB[2]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(normal[0], linearB[0]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(relpos2[0], angularB[0]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(relpos2[2], angularB[2]));
-	sum = mmdSolverAdd(sum, mmdSolverMul(relpos2[1], angularB[1]));
-	return _mm_cvtss_f32(_mm_div_ss(_mm_set_ss(btScalar(1.)), _mm_set_ss(sum)));
-}
-
-
-static btScalar mmdSolverRhsVc9(
-	const btRigidBody& rbA, const btRigidBody& rbB,
-	const btVector3& normal, const btVector3& relpos1,
-	const btVector3& relpos2, btScalar jacobian, btScalar positionalRhs)
-{
-	const btVector3& linearA = rbA.getLinearVelocity();
-	const btVector3& angularA = rbA.getAngularVelocity();
-	const btVector3& linearB = rbB.getLinearVelocity();
-	const btVector3& angularB = rbB.getAngularVelocity();
-
-	// Exact scalar instruction order at MMD 0x4FFAB7..0x4FFB7F.
-	btScalar relVelocity = mmdSolverMul(angularB[2], relpos2[2]);
-	relVelocity = mmdSolverSub(relVelocity, mmdSolverMul(normal[2], linearB[2]));
-	relVelocity = mmdSolverSub(relVelocity, mmdSolverMul(normal[1], linearB[1]));
-	relVelocity = mmdSolverAdd(relVelocity, mmdSolverMul(angularB[1], relpos2[1]));
-	relVelocity = mmdSolverSub(relVelocity, mmdSolverMul(normal[0], linearB[0]));
-	relVelocity = mmdSolverAdd(relVelocity, mmdSolverMul(angularB[0], relpos2[0]));
-
-	btScalar bodyA = mmdSolverMul(angularA[0], relpos1[0]);
-	bodyA = mmdSolverAdd(bodyA, mmdSolverMul(angularA[1], relpos1[1]));
-	bodyA = mmdSolverAdd(bodyA, mmdSolverMul(angularA[2], relpos1[2]));
-	bodyA = mmdSolverAdd(bodyA, mmdSolverMul(linearA[0], normal[0]));
-	bodyA = mmdSolverAdd(bodyA, mmdSolverMul(linearA[1], normal[1]));
-	bodyA = mmdSolverAdd(bodyA, mmdSolverMul(linearA[2], normal[2]));
-	relVelocity = mmdSolverAdd(relVelocity, bodyA);
-
-	const btScalar velocityImpulse = mmdSolverMul(
-		mmdSolverSub(-btScalar(0.), relVelocity), jacobian);
-	const btScalar penetrationImpulse = mmdSolverMul(jacobian, positionalRhs);
-	return mmdSolverAdd(velocityImpulse, penetrationImpulse);
-}
-#endif
 
 int		gNumSplitImpulseRecoveries = 0;
 
@@ -386,9 +52,7 @@ btSequentialImpulseConstraintSolver::~btSequentialImpulseConstraintSolver()
 static inline __m128 _vmathVfDot3( __m128 vec0, __m128 vec1 )
 {
 	__m128 result = _mm_mul_ps( vec0, vec1);
-	// OpenMMD (MMD 0x4FB790/0x4FBC00): VC9 sums the product lanes as
-	// (z + y) + x, not (x + y) + z.
-	return _mm_add_ps( _mm_add_ps( vec_splat( result, 2 ), vec_splat( result, 1 ) ), vec_splat( result, 0 ) );
+	return _mm_add_ps( vec_splat( result, 0 ), _mm_add_ps( vec_splat( result, 1 ), vec_splat( result, 2 ) ) );
 }
 #endif//USE_SIMD
 
@@ -689,48 +353,17 @@ btSolverConstraint&	btSequentialImpulseConstraintSolver::addFrictionConstraint(c
 	{
 		btVector3 ftorqueAxis1 = rel_pos1.cross(solverConstraint.m_contactNormal);
 		solverConstraint.m_relpos1CrossNormal = ftorqueAxis1;
-#if defined(_MSC_VER) && defined(_M_IX86)
-		// MMD 0x4FCA40: rows fold (z+y)+x, same as the contact path.
-		solverConstraint.m_angularComponentA = body0 ? mmdSolverAngularComponent210(body0->getInvInertiaTensorWorld(), ftorqueAxis1, body0->getAngularFactor()) : btVector3(0,0,0);
-#else
 		solverConstraint.m_angularComponentA = body0 ? body0->getInvInertiaTensorWorld()*ftorqueAxis1*body0->getAngularFactor() : btVector3(0,0,0);
-#endif
 	}
 	{
 		btVector3 ftorqueAxis1 = rel_pos2.cross(-solverConstraint.m_contactNormal);
 		solverConstraint.m_relpos2CrossNormal = ftorqueAxis1;
-#if defined(_MSC_VER) && defined(_M_IX86)
-		solverConstraint.m_angularComponentB = body1 ? mmdSolverAngularComponent210(body1->getInvInertiaTensorWorld(), ftorqueAxis1, body1->getAngularFactor()) : btVector3(0,0,0);
-#else
 		solverConstraint.m_angularComponentB = body1 ? body1->getInvInertiaTensorWorld()*ftorqueAxis1*body1->getAngularFactor() : btVector3(0,0,0);
-#endif
 	}
 
 #ifdef COMPUTE_IMPULSE_DENOM
 	btScalar denom0 = rb0->computeImpulseDenominator(pos1,solverConstraint.m_contactNormal);
 	btScalar denom1 = rb1->computeImpulseDenominator(pos2,solverConstraint.m_contactNormal);
-#elif defined(_MSC_VER) && defined(_M_IX86)
-	// MMD 0x4FCA40 (VC9): same grouping as the contact path - the dot
-	// sums as ((n.z*cz + n.y*cy) + n.x*cx) and invMass joins LAST.
-	btScalar denom0 = 0.f;
-	btScalar denom1 = 0.f;
-	if (body0)
-	{
-		const btVector3& a = solverConstraint.m_angularComponentA;
-		const btScalar crossX = mmdSolverSub(mmdSolverMul(a.getY(), rel_pos1.getZ()), mmdSolverMul(a.getZ(), rel_pos1.getY()));
-		const btScalar crossY = mmdSolverSub(mmdSolverMul(a.getZ(), rel_pos1.getX()), mmdSolverMul(a.getX(), rel_pos1.getZ()));
-		const btScalar crossZ = mmdSolverSub(mmdSolverMul(a.getX(), rel_pos1.getY()), mmdSolverMul(a.getY(), rel_pos1.getX()));
-		denom0 = mmdSolverAdd(mmdSolverDot210(normalAxis.getX(), crossX, normalAxis.getY(), crossY, normalAxis.getZ(), crossZ), body0->getInvMass());
-	}
-	if (body1)
-	{
-		const btVector3& b2c = solverConstraint.m_angularComponentB;
-		const btVector3 a(mmdSolverSub(btScalar(0), b2c.getX()), mmdSolverSub(btScalar(0), b2c.getY()), mmdSolverSub(btScalar(0), b2c.getZ()));
-		const btScalar crossX = mmdSolverSub(mmdSolverMul(a.getY(), rel_pos2.getZ()), mmdSolverMul(a.getZ(), rel_pos2.getY()));
-		const btScalar crossY = mmdSolverSub(mmdSolverMul(a.getZ(), rel_pos2.getX()), mmdSolverMul(a.getX(), rel_pos2.getZ()));
-		const btScalar crossZ = mmdSolverSub(mmdSolverMul(a.getX(), rel_pos2.getY()), mmdSolverMul(a.getY(), rel_pos2.getX()));
-		denom1 = mmdSolverAdd(mmdSolverDot210(normalAxis.getX(), crossX, normalAxis.getY(), crossY, normalAxis.getZ(), crossZ), body1->getInvMass());
-	}
 #else
 	btVector3 vec;
 	btScalar denom0 = 0.f;
@@ -763,38 +396,10 @@ btSolverConstraint&	btSequentialImpulseConstraintSolver::addFrictionConstraint(c
 
 	{
 		btScalar rel_vel;
-#if defined(_MSC_VER) && defined(_M_IX86)
-		// MMD 0x4FCA40: same interleaved chains as the contact path.
-		btScalar vel1Dotn;
-		btScalar vel2Dotn;
-		{
-			const btVector3& l0 = body0 ? body0->getLinearVelocity() : btVector3(0,0,0);
-			const btVector3& a0 = body0 ? body0->getAngularVelocity() : btVector3(0,0,0);
-			const btVector3& l1 = body1 ? body1->getLinearVelocity() : btVector3(0,0,0);
-			const btVector3& a1 = body1 ? body1->getAngularVelocity() : btVector3(0,0,0);
-			const btVector3& nv = solverConstraint.m_contactNormal;
-			const btVector3& r1 = solverConstraint.m_relpos1CrossNormal;
-			const btVector3& r2 = solverConstraint.m_relpos2CrossNormal;
-			// MMD 0x4FCA40: the FRICTION path folds the linear terms first -
-			// n.z*l.z + n.y*l.y + a.z*r.z + a.y*r.y + r.x*a.x + n.x*l.x -
-			// unlike the contact path's angular-first interleave.
-			const btScalar v1a = mmdSolverAdd(mmdSolverMul(nv.getZ(), l0.getZ()), mmdSolverMul(nv.getY(), l0.getY()));
-			const btScalar v1b = mmdSolverAdd(v1a, mmdSolverMul(a0.getZ(), r1.getZ()));
-			const btScalar v1c = mmdSolverAdd(v1b, mmdSolverMul(a0.getY(), r1.getY()));
-			const btScalar v1d = mmdSolverAdd(v1c, mmdSolverMul(r1.getX(), a0.getX()));
-			vel1Dotn = mmdSolverAdd(v1d, mmdSolverMul(nv.getX(), l0.getX()));
-			const btScalar v2a = mmdSolverSub(mmdSolverMul(r2.getZ(), a1.getZ()), mmdSolverMul(nv.getZ(), l1.getZ()));
-			const btScalar v2b = mmdSolverSub(v2a, mmdSolverMul(nv.getY(), l1.getY()));
-			const btScalar v2c = mmdSolverAdd(v2b, mmdSolverMul(r2.getY(), a1.getY()));
-			const btScalar v2d = mmdSolverSub(v2c, mmdSolverMul(nv.getX(), l1.getX()));
-			vel2Dotn = mmdSolverAdd(v2d, mmdSolverMul(a1.getX(), r2.getX()));
-		}
-#else
-		btScalar vel1Dotn = solverConstraint.m_contactNormal.dot(body0?body0->getLinearVelocity():btVector3(0,0,0))
+		btScalar vel1Dotn = solverConstraint.m_contactNormal.dot(body0?body0->getLinearVelocity():btVector3(0,0,0)) 
 			+ solverConstraint.m_relpos1CrossNormal.dot(body0?body0->getAngularVelocity():btVector3(0,0,0));
-		btScalar vel2Dotn = -solverConstraint.m_contactNormal.dot(body1?body1->getLinearVelocity():btVector3(0,0,0))
+		btScalar vel2Dotn = -solverConstraint.m_contactNormal.dot(body1?body1->getLinearVelocity():btVector3(0,0,0)) 
 			+ solverConstraint.m_relpos2CrossNormal.dot(body1?body1->getAngularVelocity():btVector3(0,0,0));
-#endif
 
 		rel_vel = vel1Dotn+vel2Dotn;
 
@@ -895,18 +500,9 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 				solverConstraint.m_originalContactPoint = &cp;
 
 				btVector3 torqueAxis0 = rel_pos1.cross(cp.m_normalWorldOnB);
-#if defined(_MSC_VER) && defined(_M_IX86)
-				// MMD 0x4FD380 @0x4FD950: rows fold (z+y)+x, see helper.
-				solverConstraint.m_angularComponentA = rb0 ? mmdSolverAngularComponent210(rb0->getInvInertiaTensorWorld(), torqueAxis0, rb0->getAngularFactor()) : btVector3(0,0,0);
-#else
 				solverConstraint.m_angularComponentA = rb0 ? rb0->getInvInertiaTensorWorld()*torqueAxis0*rb0->getAngularFactor() : btVector3(0,0,0);
-#endif
 				btVector3 torqueAxis1 = rel_pos2.cross(cp.m_normalWorldOnB);		
-#if defined(_MSC_VER) && defined(_M_IX86)
-				solverConstraint.m_angularComponentB = rb1 ? mmdSolverAngularComponent210(rb1->getInvInertiaTensorWorld(), btVector3(-torqueAxis1.getX(), -torqueAxis1.getY(), -torqueAxis1.getZ()), rb1->getAngularFactor()) : btVector3(0,0,0);
-#else
 				solverConstraint.m_angularComponentB = rb1 ? rb1->getInvInertiaTensorWorld()*-torqueAxis1*rb1->getAngularFactor() : btVector3(0,0,0);
-#endif
 				{
 #ifdef COMPUTE_IMPULSE_DENOM
 					btScalar denom0 = rb0->computeImpulseDenominator(pos1,cp.m_normalWorldOnB);
@@ -915,27 +511,6 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 					btVector3 vec;
 					btScalar denom0 = 0.f;
 					btScalar denom1 = 0.f;
-#if defined(_MSC_VER) && defined(_M_IX86)
-					// MMD 0x4FD380 (VC9): n.(angComp x rel) sums as
-					// ((n.z*cz + n.y*cy) + n.x*cx) and the inverse mass joins LAST.
-					if (rb0)
-					{
-						const btVector3& a = solverConstraint.m_angularComponentA;
-						const btScalar crossX = mmdSolverSub(mmdSolverMul(a.getY(), rel_pos1.getZ()), mmdSolverMul(a.getZ(), rel_pos1.getY()));
-						const btScalar crossY = mmdSolverSub(mmdSolverMul(a.getZ(), rel_pos1.getX()), mmdSolverMul(a.getX(), rel_pos1.getZ()));
-						const btScalar crossZ = mmdSolverSub(mmdSolverMul(a.getX(), rel_pos1.getY()), mmdSolverMul(a.getY(), rel_pos1.getX()));
-						denom0 = mmdSolverAdd(mmdSolverDot210(cp.m_normalWorldOnB.getX(), crossX, cp.m_normalWorldOnB.getY(), crossY, cp.m_normalWorldOnB.getZ(), crossZ), rb0->getInvMass());
-					}
-					if (rb1)
-					{
-						const btVector3& b2c = solverConstraint.m_angularComponentB;
-						const btVector3 a(mmdSolverSub(btScalar(0), b2c.getX()), mmdSolverSub(btScalar(0), b2c.getY()), mmdSolverSub(btScalar(0), b2c.getZ()));
-						const btScalar crossX = mmdSolverSub(mmdSolverMul(a.getY(), rel_pos2.getZ()), mmdSolverMul(a.getZ(), rel_pos2.getY()));
-						const btScalar crossY = mmdSolverSub(mmdSolverMul(a.getZ(), rel_pos2.getX()), mmdSolverMul(a.getX(), rel_pos2.getZ()));
-						const btScalar crossZ = mmdSolverSub(mmdSolverMul(a.getX(), rel_pos2.getY()), mmdSolverMul(a.getY(), rel_pos2.getX()));
-						denom1 = mmdSolverAdd(mmdSolverDot210(cp.m_normalWorldOnB.getX(), crossX, cp.m_normalWorldOnB.getY(), crossY, cp.m_normalWorldOnB.getZ(), crossZ), rb1->getInvMass());
-					}
-#else
 					if (rb0)
 					{
 						vec = ( solverConstraint.m_angularComponentA).cross(rel_pos1);
@@ -946,7 +521,6 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 						vec = ( -solverConstraint.m_angularComponentB).cross(rel_pos2);
 						denom1 = rb1->getInvMass() + cp.m_normalWorldOnB.dot(vec);
 					}
-#endif
 #endif //COMPUTE_IMPULSE_DENOM		
 
 					btScalar denom = relaxation/(denom0+denom1);
@@ -963,12 +537,7 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 
 				vel  = vel1 - vel2;
 
-#if defined(_MSC_VER) && defined(_M_IX86)
-				// MMD 0x4FD380: (n.z*v.z + n.y*v.y) + n.x*v.x.
-				rel_vel = mmdSolverDot210(cp.m_normalWorldOnB.getX(), vel.getX(), cp.m_normalWorldOnB.getY(), vel.getY(), cp.m_normalWorldOnB.getZ(), vel.getZ());
-#else
 				rel_vel = cp.m_normalWorldOnB.dot(vel);
-#endif
 
 				btScalar penetration = cp.getDistance()+infoGlobal.m_linearSlop;
 
@@ -1006,72 +575,19 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 				solverConstraint.m_appliedPushImpulse = 0.f;
 
 				{
-
 					btScalar rel_vel;
-					btScalar vel1Dotn;
-					btScalar vel2Dotn;
-#if defined(_MSC_VER) && defined(_M_IX86)
-					// MMD 0x4FD380 (VC9): the velocity dots sum as (z+y)+x
-					// (same lane order as the SIMD resolve dots).
-					{
-						const btVector3& l0 = rb0 ? rb0->getLinearVelocity() : btVector3(0,0,0);
-						const btVector3& a0 = rb0 ? rb0->getAngularVelocity() : btVector3(0,0,0);
-						const btVector3& l1 = rb1 ? rb1->getLinearVelocity() : btVector3(0,0,0);
-						const btVector3& a1 = rb1 ? rb1->getAngularVelocity() : btVector3(0,0,0);
-						const btVector3& nv = solverConstraint.m_contactNormal;
-						const btVector3& r1 = solverConstraint.m_relpos1CrossNormal;
-						const btVector3& r2 = solverConstraint.m_relpos2CrossNormal;
-						// MMD 0x4FD380 @0x4FE3E8/0x4FE4B6 (VC9): interleaved
-						// left-assoc chains exactly as the instructions sum
-						// them: v1 = a.z*r.z + a.y*r.y + n.z*l.z + n.y*l.y +
-						// a.x*r.x + l.x*n.x;  v2 = r.z*a.z - n.z*l.z -
-						// n.y*l.y + r.y*a.y - n.x*l.x + a.x*r.x.
-						const btScalar v1a = mmdSolverAdd(mmdSolverMul(a0.getZ(), r1.getZ()), mmdSolverMul(a0.getY(), r1.getY()));
-						const btScalar v1b = mmdSolverAdd(v1a, mmdSolverMul(nv.getZ(), l0.getZ()));
-						const btScalar v1c = mmdSolverAdd(v1b, mmdSolverMul(nv.getY(), l0.getY()));
-						const btScalar v1d = mmdSolverAdd(v1c, mmdSolverMul(a0.getX(), r1.getX()));
-						vel1Dotn = mmdSolverAdd(v1d, mmdSolverMul(l0.getX(), nv.getX()));
-						const btScalar v2a = mmdSolverSub(mmdSolverMul(r2.getZ(), a1.getZ()), mmdSolverMul(nv.getZ(), l1.getZ()));
-						const btScalar v2b = mmdSolverSub(v2a, mmdSolverMul(nv.getY(), l1.getY()));
-						const btScalar v2c = mmdSolverAdd(v2b, mmdSolverMul(r2.getY(), a1.getY()));
-						const btScalar v2d = mmdSolverSub(v2c, mmdSolverMul(nv.getX(), l1.getX()));
-						vel2Dotn = mmdSolverAdd(v2d, mmdSolverMul(a1.getX(), r2.getX()));
-					}
-#else
-					vel1Dotn = solverConstraint.m_contactNormal.dot(rb0?rb0->getLinearVelocity():btVector3(0,0,0))
+					btScalar vel1Dotn = solverConstraint.m_contactNormal.dot(rb0?rb0->getLinearVelocity():btVector3(0,0,0)) 
 						+ solverConstraint.m_relpos1CrossNormal.dot(rb0?rb0->getAngularVelocity():btVector3(0,0,0));
-					vel2Dotn = -solverConstraint.m_contactNormal.dot(rb1?rb1->getLinearVelocity():btVector3(0,0,0))
+					btScalar vel2Dotn = -solverConstraint.m_contactNormal.dot(rb1?rb1->getLinearVelocity():btVector3(0,0,0)) 
 						+ solverConstraint.m_relpos2CrossNormal.dot(rb1?rb1->getAngularVelocity():btVector3(0,0,0));
-#endif
+
 					rel_vel = vel1Dotn+vel2Dotn;
+
 					btScalar positionalError = 0.f;
-				#if defined(_MSC_VER) && defined(_M_IX86)
-					// MMD 0x4FD380 @0x4FE4B6 (VC9): ((-1/dt)*erp)*penetration,
-					// a different (and for some penetrations 1-ULP-different)
-					// tree than (-pen)*erp/dt.
-					positionalError = mmdSolverMul(mmdSolverMul((btScalar)((-1.0) / (double)infoGlobal.m_timeStep), infoGlobal.m_erp), penetration);
-#elif defined(_M_X64)
-					// MMD x64 RVA 0x113450: round penetration*erp before
-					// multiplying by the rounded negative reciprocal timestep.
-					positionalError =
-						btScalar(-1.0 / infoGlobal.m_timeStep) * (penetration * infoGlobal.m_erp);
-#else
 					positionalError = -penetration * infoGlobal.m_erp/infoGlobal.m_timeStep;
-#endif
 					btScalar	velocityError = restitution - rel_vel;// * damping;
 					btScalar  penetrationImpulse = positionalError*solverConstraint.m_jacDiagABInv;
 					btScalar velocityImpulse = velocityError *solverConstraint.m_jacDiagABInv;
-					if (g_openmmdSolveCount <= openmmdSolveLimit() && openmmdLogOpen()) {
-						fprintf(g_openmmdLog,
-							"{\"n\":%d,\"kind\":\"conv2\",\"vel1\":\"%08X\",\"vel2\":\"%08X\","
-							"\"relvel\":\"%08X\",\"posErr\":\"%08X\",\"velErr\":\"%08X\","
-							"\"rest2\":\"%08X\",\"pen\":\"%08X\",\"pi\":\"%08X\",\"vi\":\"%08X\"}\n",
-							++g_openmmdSeq, openmmdBits(vel1Dotn), openmmdBits(vel2Dotn),
-							openmmdBits(rel_vel), openmmdBits(positionalError),
-							openmmdBits(velocityError), openmmdBits(restitution),
-							openmmdBits(penetration), openmmdBits(penetrationImpulse),
-							openmmdBits(velocityImpulse));
-					}
 					if (!infoGlobal.m_splitImpulse || (penetration > infoGlobal.m_splitImpulsePenetrationThreshold))
 					{
 						//combine position and velocity into rhs
@@ -1087,10 +603,6 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 					solverConstraint.m_lowerLimit = 0;
 					solverConstraint.m_upperLimit = 1e10f;
 				}
-				openmmdLogConvert(manifold, j, cp, rb0, rb1, rel_pos1, rel_pos2,
-				                  solverConstraint.m_angularComponentA,
-				                  solverConstraint.m_angularComponentB,
-				                  infoGlobal, solverConstraint);
 
 
 				/////setup the friction constraints
@@ -1106,20 +618,7 @@ void	btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
 						btScalar lat_rel_vel = cp.m_lateralFrictionDir1.length2();
 						if (!(infoGlobal.m_solverMode & SOLVER_DISABLE_VELOCITY_DEPENDENT_FRICTION_DIRECTION) && lat_rel_vel > SIMD_EPSILON)
 						{
-#if defined(_MSC_VER) && defined(_M_IX86)
-							// MMD 0x4FD380 (VC9): the direction scales by the
-							// x87 EXTENDED reciprocal 1/sqrt(L2), each
-							// component rounded once (not v /= sqrt(L2)).
-							{
-								const double mmdInv = 1.0 / sqrt((double)lat_rel_vel);
-								cp.m_lateralFrictionDir1.setValue(
-									(btScalar)((double)cp.m_lateralFrictionDir1.getX() * mmdInv),
-									(btScalar)((double)cp.m_lateralFrictionDir1.getY() * mmdInv),
-									(btScalar)((double)cp.m_lateralFrictionDir1.getZ() * mmdInv));
-							}
-#else
 							cp.m_lateralFrictionDir1 /= btSqrt(lat_rel_vel);
-#endif
 							if((infoGlobal.m_solverMode & SOLVER_USE_2_FRICTION_DIRECTIONS))
 							{
 								cp.m_lateralFrictionDir2 = cp.m_lateralFrictionDir1.cross(cp.m_normalWorldOnB);
@@ -1323,34 +822,14 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlySetup(btCol
 
 						{
 							const btVector3& ftorqueAxis1 = solverConstraint.m_relpos1CrossNormal;
-#if defined(_MSC_VER) && defined(_M_IX86)
-							solverConstraint.m_angularComponentA = mmdSolverAngularComponentVc9(
-								constraint->getRigidBodyA().getInvInertiaTensorWorld(),
-								ftorqueAxis1, constraint->getRigidBodyA().getAngularFactor());
-#else
 							solverConstraint.m_angularComponentA = constraint->getRigidBodyA().getInvInertiaTensorWorld()*ftorqueAxis1*constraint->getRigidBodyA().getAngularFactor();
-#endif
 						}
 						{
 							const btVector3& ftorqueAxis2 = solverConstraint.m_relpos2CrossNormal;
-#if defined(_MSC_VER) && defined(_M_IX86)
-							solverConstraint.m_angularComponentB = mmdSolverAngularComponentVc9(
-								constraint->getRigidBodyB().getInvInertiaTensorWorld(),
-								ftorqueAxis2, constraint->getRigidBodyB().getAngularFactor());
-#else
 							solverConstraint.m_angularComponentB = constraint->getRigidBodyB().getInvInertiaTensorWorld()*ftorqueAxis2*constraint->getRigidBodyB().getAngularFactor();
-#endif
 						}
 
 						{
-#if defined(_MSC_VER) && defined(_M_IX86)
-							solverConstraint.m_jacDiagABInv = mmdSolverJacDiagVc9(
-								rbA.getInvInertiaTensorWorld(), rbA.getInvMass(),
-								rbB.getInvInertiaTensorWorld(), rbB.getInvMass(),
-								solverConstraint.m_contactNormal,
-								solverConstraint.m_relpos1CrossNormal,
-								solverConstraint.m_relpos2CrossNormal);
-#else
 							btVector3 iMJlA = solverConstraint.m_contactNormal*rbA.getInvMass();
 							btVector3 iMJaA = rbA.getInvInertiaTensorWorld()*solverConstraint.m_relpos1CrossNormal;
 							btVector3 iMJlB = solverConstraint.m_contactNormal*rbB.getInvMass();//sign of normal?
@@ -1362,22 +841,12 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlySetup(btCol
 							sum += iMJaB.dot(solverConstraint.m_relpos2CrossNormal);
 
 							solverConstraint.m_jacDiagABInv = btScalar(1.)/sum;
-#endif
 						}
 
 
 						///fix rhs
 						///todo: add force/torque accelerators
 						{
-#if defined(_MSC_VER) && defined(_M_IX86)
-							solverConstraint.m_rhs = mmdSolverRhsVc9(
-								rbA, rbB, solverConstraint.m_contactNormal,
-								solverConstraint.m_relpos1CrossNormal,
-								solverConstraint.m_relpos2CrossNormal,
-								solverConstraint.m_jacDiagABInv,
-								solverConstraint.m_rhs);
-							solverConstraint.m_appliedImpulse = 0.f;
-#else
 							btScalar rel_vel;
 							btScalar vel1Dotn = solverConstraint.m_contactNormal.dot(rbA.getLinearVelocity()) + solverConstraint.m_relpos1CrossNormal.dot(rbA.getAngularVelocity());
 							btScalar vel2Dotn = -solverConstraint.m_contactNormal.dot(rbB.getLinearVelocity()) + solverConstraint.m_relpos2CrossNormal.dot(rbB.getAngularVelocity());
@@ -1391,7 +860,7 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlySetup(btCol
 							btScalar	velocityImpulse = velocityError *solverConstraint.m_jacDiagABInv;
 							solverConstraint.m_rhs = penetrationImpulse+velocityImpulse;
 							solverConstraint.m_appliedImpulse = 0.f;
-#endif
+
 						}
 					}
 				}
@@ -1478,9 +947,7 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlyIterations(
 				for (j=0;j<m_tmpSolverNonContactConstraintPool.size();j++)
 				{
 					btSolverConstraint& constraint = m_tmpSolverNonContactConstraintPool[j];
-					openmmdLogResolve("noncontact", iteration, j, m_tmpSolverBodyPool[constraint.m_solverBodyIdA],m_tmpSolverBodyPool[constraint.m_solverBodyIdB],constraint);
 					resolveSingleConstraintRowGenericSIMD(m_tmpSolverBodyPool[constraint.m_solverBodyIdA],m_tmpSolverBodyPool[constraint.m_solverBodyIdB],constraint);
-					openmmdLogResolve("postnc", iteration, j, m_tmpSolverBodyPool[constraint.m_solverBodyIdA],m_tmpSolverBodyPool[constraint.m_solverBodyIdB],constraint);
 				}
 
 				for (j=0;j<numConstraints;j++)
@@ -1489,7 +956,6 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlyIterations(
 					int bodyBid = getOrInitSolverBody(constraints[j]->getRigidBodyB());
 					btSolverBody& bodyA = m_tmpSolverBodyPool[bodyAid];
 					btSolverBody& bodyB = m_tmpSolverBodyPool[bodyBid];
-					openmmdLogJoint(iteration, j, constraints[j], bodyA, bodyB);
 					constraints[j]->solveConstraintObsolete(bodyA,bodyB,infoGlobal.m_timeStep);
 				}
 
@@ -1498,9 +964,7 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlyIterations(
 				for (j=0;j<numPoolConstraints;j++)
 				{
 					const btSolverConstraint& solveManifold = m_tmpSolverContactConstraintPool[m_orderTmpConstraintPool[j]];
-					openmmdLogResolve("contact", iteration, j, m_tmpSolverBodyPool[solveManifold.m_solverBodyIdA],m_tmpSolverBodyPool[solveManifold.m_solverBodyIdB],solveManifold);
 					resolveSingleConstraintRowLowerLimitSIMD(m_tmpSolverBodyPool[solveManifold.m_solverBodyIdA],m_tmpSolverBodyPool[solveManifold.m_solverBodyIdB],solveManifold);
-					openmmdLogResolve("postct", iteration, j, m_tmpSolverBodyPool[solveManifold.m_solverBodyIdA],m_tmpSolverBodyPool[solveManifold.m_solverBodyIdB],solveManifold);
 
 				}
 				///solve all friction constraints, using SIMD, if available
@@ -1515,7 +979,6 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlyIterations(
 						solveManifold.m_lowerLimit = -(solveManifold.m_friction*totalImpulse);
 						solveManifold.m_upperLimit = solveManifold.m_friction*totalImpulse;
 
-						openmmdLogResolve("friction", iteration, j, m_tmpSolverBodyPool[solveManifold.m_solverBodyIdA],	m_tmpSolverBodyPool[solveManifold.m_solverBodyIdB],solveManifold);
 						resolveSingleConstraintRowGenericSIMD(m_tmpSolverBodyPool[solveManifold.m_solverBodyIdA],	m_tmpSolverBodyPool[solveManifold.m_solverBodyIdB],solveManifold);
 					}
 				}
@@ -1621,22 +1084,6 @@ btScalar btSequentialImpulseConstraintSolver::solveGroup(btCollisionObject** bod
 	btAssert(bodies);
 	btAssert(numBodies);
 
-	// OpenMMD task#8: the event trace covers the first OPENMMD_DUMP_SOLVES
-	// solveGroup calls (default 1).
-	static int openmmdSolveLimit = -2;
-	if (openmmdSolveLimit == -2) {
-		const char* limitText = getenv("OPENMMD_DUMP_SOLVES");
-		openmmdSolveLimit = (limitText && *limitText) ? atoi(limitText) : 1;
-	}
-	++g_openmmdSolveCount;
-	if (g_openmmdSolveCount > openmmdSolveLimit && g_openmmdLog)
-	{
-		fflush(g_openmmdLog);
-		fclose(g_openmmdLog);
-		g_openmmdLog = 0;
-		g_openmmdDisabled = true;
-	}
-
 	int i;
 
 	solveGroupCacheFriendlySetup( bodies, numBodies, manifoldPtr,  numManifolds,constraints, numConstraints,infoGlobal,debugDrawer, stackAlloc);
@@ -1662,17 +1109,15 @@ btScalar btSequentialImpulseConstraintSolver::solveGroup(btCollisionObject** bod
 	}
 
 	if (infoGlobal.m_splitImpulse)
-	{
+	{		
 		for ( i=0;i<m_tmpSolverBodyPool.size();i++)
 		{
-			openmmdLogWriteback(m_tmpSolverBodyPool[i]);
 			m_tmpSolverBodyPool[i].writebackVelocity(infoGlobal.m_timeStep);
 		}
 	} else
 	{
 		for ( i=0;i<m_tmpSolverBodyPool.size();i++)
 		{
-			openmmdLogWriteback(m_tmpSolverBodyPool[i]);
 			m_tmpSolverBodyPool[i].writebackVelocity();
 		}
 	}

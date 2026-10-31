@@ -69,6 +69,7 @@ public:
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE SetLight(DWORD, const D3DLIGHT9*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE LightEnable(DWORD, BOOL) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE SetViewport(const D3DVIEWPORT9*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE CreateVertexBuffer(UINT length, DWORD usage, DWORD fvf, D3DPOOL pool,
                                                  IDirect3DVertexBuffer9** result,

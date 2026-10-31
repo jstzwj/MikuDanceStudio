@@ -133,14 +133,15 @@ void TestAccessoryPlaybackStorage(MMDApp& app, MMDApp& other) {
         app.AccessoryTrackActive(slot) = 1;
     }
     for (int slot = 0; slot < mdl::kAccessorySlotCount; ++slot) {
-        Check(app.AccessoryTrackActive(slot) == 1 && app.AccessoryTrackCursor(slot) == 1000 + slot,
+        Check(app.AccessoryTrackActive(slot) == 1 && app.AccessoryTrackCursor(slot) == 1000 + slot &&
+                  &app.AccessoryTrackCursor(slot) == &app.state.accessoryTrackCursor[slot],
               "All 255 playback cursors and flags have independent storage");
         Check(!other.AccessoryTrackActive(slot) && !other.AccessoryTrackCursor(slot),
               "Accessory playback state is isolated between applications");
     }
     Check(app.ViewportRect().left == 7 && app.ViewportRect().right == 640 &&
-              app.state.accessoryTrackCursor[0] == 0,
-          "Playback cursors cannot overwrite the recovered ABI or viewport state");
+              app.state.accessoryTrackCursor[0] == 1000,
+          "Playback cursors use the recovered ABI storage without overwriting viewport state");
 }
 } // namespace
 

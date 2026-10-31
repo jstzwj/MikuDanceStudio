@@ -26,17 +26,6 @@ subject to the following restrictions:
 /* SVN $Revision$ on $Date$ from http://bullet.googlecode.com*/
 #define BT_BULLET_VERSION 275
 
-// MikuDanceStudio: retain the compatibility helpers' noinline boundary on
-// each supported compiler without a Microsoft-only declaration.
-#if defined(_MSC_VER)
-#define BT_NOINLINE __declspec(noinline)
-#elif defined(__GNUC__) || defined(__clang__)
-#define BT_NOINLINE __attribute__((noinline))
-#else
-#define BT_NOINLINE
-#endif
-
-
 inline int	btGetVersion()
 {
 	return BT_BULLET_VERSION;

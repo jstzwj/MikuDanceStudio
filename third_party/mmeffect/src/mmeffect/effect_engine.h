@@ -7,6 +7,7 @@
 //   - FUN_18000BC90: per-file effect loader. Logs "Loading effect file: <path>",
 //     switches the CWD to the effect directory for the duration of the load
 //     (getcwd/_chdir pair, big-C 11258-11327), then D3DXCreateEffectFromFileW
+//     on x64 (d3dx9_43); x86 0.37 uses A (d3dx9_32, call 0x1000CD10)
 //     with the preprocessor defines {"_INDEX", "PSIZE15"} plus "MME_MIPMAP"
 //     when the engine mip filter is available (0x1800b3b68/70/78, big-C
 //     11296-11317). On failure exactly one segment is appended to the error
@@ -57,7 +58,7 @@ struct LoadedEffect {
     std::shared_ptr<const MmeLegacyProgram> legacyImport;
     std::string legacyImportReason;
     bool assigned = false;  // first assignment uses the freshly compiled instance
-    ID3DXEffect*  effect = nullptr;   // created by D3DXCreateEffectFromFileW
+    ID3DXEffect*  effect = nullptr;   // created by D3DXCreateEffectFromFileA/W
     std::string   path;               // narrow (CP 0) path as requested
     std::string   errorText;          // last load error (logged by the apply path)
     unsigned long fileStamp = 0;      // FUN_18000B7F0 validity token (0 = invalid)

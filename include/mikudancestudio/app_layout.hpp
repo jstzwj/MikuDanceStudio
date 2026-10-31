@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/bone_binding.hpp"
 #include "mikudancestudio/path_workspace.hpp"
@@ -163,7 +164,7 @@ struct MMDAppState {
     void* lightKeyTrack;                           // x64 pin 984
     void* selfShadowKeyTrack;                      // x64 pin 992
     void* gravityKeyTrack;                         // x64 pin 1000
-    void* accKeyTracks[255];                       // x64 pin 1008
+    void* accKeyTracks[mdl::kAccessorySlotCount];   // x64 pin 1008
     mdl::ModelRecord* modelSlots[kModelSlotCount]; // x86 pin 1920 / x64 pin 3048
     unsigned char slotIdx;                         // x64 pin 5088
     RawPad<3> pad54;
@@ -232,7 +233,7 @@ struct MMDAppState {
     std::int32_t jointLineMap[200]; // x64 pin 648480
     // 255-entry display-object list (was buf9ddx): AccessoryRecord slots
     // plus model-timeline-selected objects (x64 pin 649280)
-    void* objectSlots[255];
+    void* objectSlots[mdl::kAccessorySlotCount];
     std::uint32_t lastRegisteredFrame; // x64 pin 651320
     // shared accessory/model-display list selection byte (was
     // selLightAccSlotOrUint32)
@@ -304,10 +305,10 @@ struct MMDAppState {
     float playbackStartSeconds;
     float playbackEndSeconds;
     // Track-key cursors (0x9E65C..): the camera/light/self-shadow/gravity
-    // play-cursor dwords with their active bytes, then the 55 accessory
-    // track cursors, then the 55 accessory active bytes.  In-blob on both
-    // arches (x64 pins: camera cursor 0x9F550, accessory cursors 0x9F570,
-    // accessory active bytes 0x9F96C).
+    // play-cursor dwords with their active bytes, then all 255 accessory
+    // track cursors. Accessory active bytes live in AppRuntimeState.
+    // x64 pins: camera cursor 0x9F550, accessory cursors 0x9F570,
+    // historical accessory active bytes 0x9F96C.
     std::uint32_t cameraTrackCursor; // +0x9E65C / x64 pin 652624
     std::uint8_t cameraTrackActive;  // +0x9E660
     RawPad<3> pad153a;
@@ -320,21 +321,16 @@ struct MMDAppState {
     std::uint32_t gravityTrackCursor; // +0x9E674
     std::uint8_t gravityTrackActive;  // +0x9E678
     RawPad<3> pad153d;
-    std::uint32_t accessoryTrackCursor[55];        // +0x9E67C..0x9E938 / x64 652656
-    RawPad<800> pad153e;                           // 0x9E938..0x9EA78 / x64 ..0x9F96C
-    std::uint8_t reservedAccessoryTrackActive[55]; // +0x9EA78 / x64 pin 653676
-#if defined(_M_X64)
-    RawPad<199> pad153; // ..up to the 0x9FA6A snapshot
-#else
-    RawPad<200> pad153; // ..0x9ED97
-#endif
+    // The former 800-byte pad holds the remaining 200 cursors, not unknown state.
+    std::uint32_t accessoryTrackCursor[mdl::kAccessorySlotCount]; // +0x9E67C / x64 652656
+    std::uint8_t reservedAccessoryTrackActive[mdl::kAccessorySlotCount]; // x64 0x9F96C..0x9FA6A
     // IsWindowEnabled snapshots of the 7 main-window playback controls
     // (0x1F1/0x1F2/0x1AF/0x1A5/0x1A6/0x190/0x191), restored after playback
-    unsigned char playbackEnabledSnapshot[7]; // x64 pin 653930 (0x9FA6A)
-    unsigned char characterTransparentMode;   // x64 653937
-    unsigned char blinkPhase;                 // x64 pin 653938 (0x9FA72)
+    unsigned char playbackEnabledSnapshot[7]; // x64 pin 653931 (0x9FA6B)
+    unsigned char characterTransparentMode;   // x64 653938 (0x9FA72)
+    unsigned char blinkPhase;                 // x64 pin 653939 (0x9FA73)
 #if defined(_M_X64)
-    RawPad<5> pad155; // captureTexture is the next 8-aligned slot
+    RawPad<4> pad155; // captureTexture is the next 8-aligned slot
 #endif
     void* captureTexture; // x64 pin 653944 (0x9FA78)
     std::uint32_t captureMode;

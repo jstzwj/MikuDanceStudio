@@ -4,3 +4,4 @@ include(default)
 
 [settings]
 arch=x86_64
+compiler.cppstd=17

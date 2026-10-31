@@ -16,10 +16,6 @@ subject to the following restrictions:
 
 #include "btConvexInternalShape.h"
 
-// MMD reciprocal-multiply normalize for the virtual support entry
-// (defined in btConvexShape.cpp, next to the other mmd helpers).
-void mmdVirtualSupportNormalize(btVector3& vecnorm);
-
 
 
 btConvexInternalShape::btConvexInternalShape()
@@ -68,10 +64,11 @@ btVector3	btConvexInternalShape::localGetSupportingVertex(const btVector3& vec)c
 	if ( getMargin()!=btScalar(0.) )
 	{
 		btVector3 vecnorm = vec;
-		// MMD 0x4D0840: reciprocal-multiply normalize (see
-		// mmdVirtualSupportNormalize in btConvexShape.cpp) instead of the
-		// stock component-wise division.
-		mmdVirtualSupportNormalize(vecnorm);
+		if (vecnorm .length2() < (SIMD_EPSILON*SIMD_EPSILON))
+		{
+			vecnorm.setValue(btScalar(-1.),btScalar(-1.),btScalar(-1.));
+		} 
+		vecnorm.normalize();
 		supVertex+= getMargin() * vecnorm;
 	}
 	return supVertex;

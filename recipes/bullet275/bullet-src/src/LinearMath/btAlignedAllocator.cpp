@@ -157,22 +157,6 @@ void    btAlignedFreeInternal   (void* ptr,int line,char* filename)
 
 #else //BT_DEBUG_MEMORY_ALLOCATIONS
 
-// ---- OpenMMD debug instrumentation (env-gated, zero cost when off) --------
-// BULLET_ALLOC_LOG=1 appends "A ptr real size" / "F ptr real" lines to
-// bullet_alloc.log so heap-corruption hunts can pair allocations with the
-// frees that read the hidden base pointer at ptr[-1].
-#include <stdio.h>
-#include <stdlib.h>
-static FILE* btAllocLog(void)
-{
-	static FILE* s_log = (FILE*)-1;
-	if (s_log == (FILE*)-1) {
-		s_log = getenv("BULLET_ALLOC_LOG")
-		    ? fopen("bullet_alloc.log", "wt") : NULL;
-	}
-	return s_log;
-}
-
 void*	btAlignedAllocInternal	(size_t size, int alignment)
 {
 	gNumAlignedAllocs++;
@@ -192,10 +176,7 @@ void*	btAlignedAllocInternal	(size_t size, int alignment)
     ptr = (void *)(real);
   }
 #endif  // defined (BT_HAS_ALIGNED_ALLOCATOR) || defined(__CELLOS_LV2__)
-	{
-		FILE* f = btAllocLog();
-		if (f) { fprintf(f, "A %p %p %d\n", ptr, ptr ? *((void**)ptr-1) : 0, (int)size); fflush(f); }
-	}
+//	printf("btAlignedAllocInternal %d, %x\n",size,ptr);
 	return ptr;
 }
 
@@ -207,10 +188,7 @@ void	btAlignedFreeInternal	(void* ptr)
 	}
 
 	gNumAlignedFree++;
-	{
-		FILE* f = btAllocLog();
-		if (f) { fprintf(f, "F %p %p\n", ptr, *((void**)ptr-1)); fflush(f); }
-	}
+//	printf("btAlignedFreeInternal %x\n",ptr);
 #if defined (BT_HAS_ALIGNED_ALLOCATOR) || defined(__CELLOS_LV2__)
 	sAlignedFreeFunc(ptr);
 #else

@@ -141,7 +141,7 @@ void	btCapsuleShape::calculateLocalInertia(btScalar mass,btVector3& inertia) con
 	const btScalar x2 = lx*lx;
 	const btScalar y2 = ly*ly;
 	const btScalar z2 = lz*lz;
-	const btScalar scaledmass = mass * btScalar(0.083333328f);
+	const btScalar scaledmass = mass * btScalar(.08333333);
 
 	inertia[0] = scaledmass * (y2+z2);
 	inertia[1] = scaledmass * (x2+z2);

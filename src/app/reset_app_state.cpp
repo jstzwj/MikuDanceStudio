@@ -1,12 +1,16 @@
 // ===========================================================================
-// VA 0x0044E540 - ResetAppState  (original: sub_44E540, 0x2AA0 bytes)
+// ResetAppState - original x64 sub_7FF7CB492F90 (0x2110 bytes).
+// x86 source-recovery reference: sub_44E540 (0x1AB4 bytes).
 // ===========================================================================
-// "New scene" (menu 0xCD): restores every default cluster, tears down the
+// "New scene" (menu 0xCC): restores every default cluster, tears down the
 // models/accessories/AVI handles, rebuilds the four global keyframe track
 // arrays (camera 0x374 / light 0x378 / shadow 0x37C / physics 0x380) and
 // the 255 accessory key-track blocks, resets the D3D light (D3DLIGHT9 at
 // 0x9E180) and the menu/combo/edit state, then runs the standard refresh
 // tail.  Field order verbatim from the decompilation; offsets decimal.
+// Original x64 sub_7FF7CB492F90 synchronizes all 17 button states with
+// BM_SETCHECK (0xF1). Resetting must not send BM_CLICK/BN_CLICKED, which
+// would re-enter the command handlers and toggle the defaults just written.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -156,7 +160,7 @@ void ResetAppState(MMDApp* app) {
     if (app->CameraMode() == 0) {
         SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_RESETCONTENT, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_RESETCONTENT, 0, 0);
-        SendMessageA(GetDlgItem(hwnd, panel::kModelVisibleCheckbox), BM_CLICK, 0, 0);
+        SendMessageA(GetDlgItem(hwnd, panel::kModelVisibleCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
         RebuildCameraModePanel(app); // 0x44E88F
         app->CameraMode() = 1;
         PostModelReload2(app); // 0x40D940
@@ -252,9 +256,10 @@ void ResetAppState(MMDApp* app) {
                          reinterpret_cast<LPARAM>(name));
     }
     SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_SETCURSEL, 3, 0);
-    SendMessageA(GetDlgItem(hwnd, panel::kShadowCheckbox), BM_CLICK, 0, 0);
-    SendMessageA(GetDlgItem(hwnd, panel::kAddBlendCheckbox), BM_CLICK, 0, 0);
-    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryAddBlendCheckbox), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kShadowCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kAddBlendCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryAddBlendCheckbox), BM_SETCHECK, BST_UNCHECKED,
+                 0);
     ReplaceEditText(hwnd, panel::kCurrentFrameEdit, "0"); // 0x44F01D
     static const int kDisable[] = {panel::kCurveCopyButton,
                                    panel::kUndoButton,
@@ -292,10 +297,10 @@ void ResetAppState(MMDApp* app) {
     for (std::uint32_t entry : kChecks)
         CheckMenuItem(GetMenu(hwnd), entry & 0xFFFu, entry >> 12);
     app->EditMode() = ViewportEditMode::None;
-    static const int kClicks[] = {panel::kBoneSelectRadio, panel::kBoxSelectRadio,
-                                  panel::kBoneMoveRadio, panel::kBoneRotateRadio};
-    for (int id : kClicks)
-        SendMessageA(GetDlgItem(hwnd, id), BM_CLICK, 0, 0);
+    static const int kEditModeButtons[] = {panel::kBoneSelectRadio, panel::kBoxSelectRadio,
+                                           panel::kBoneMoveRadio, panel::kBoneRotateRadio};
+    for (int id : kEditModeButtons)
+        SendMessageA(GetDlgItem(hwnd, id), BM_SETCHECK, BST_UNCHECKED, 0);
     static const std::uint32_t kGray[] = {
         MDS_CMD_ACCESSORY_SETTINGS, MDS_CMD_PASTE_AT_DIFFERENT_FRAME, MDS_CMD_MODEL_DRAW_ORDER,
         MDS_CMD_MODEL_CALCULATION_ORDER};
@@ -321,12 +326,12 @@ void ResetAppState(MMDApp* app) {
     CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_INFORMATION, 0u);
     SendMessageA(GetDlgItem(app->FloatingWindow() != nullptr ? app->FloatingWindow() : hwnd,
                             panel::kInfoCheckbox),
-                 BM_CLICK, 0, 0);
+                 BM_SETCHECK, BST_UNCHECKED, 0);
     app->state.groundGridEnabled = 1;
     CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_COORDINATE_AXIS, 8u);
     SendMessageA(GetDlgItem(app->FloatingWindow() != nullptr ? app->FloatingWindow() : hwnd,
                             panel::kCoordAxisCheckbox),
-                 BM_CLICK, 1, 0);
+                 BM_SETCHECK, BST_CHECKED, 0);
     app->state.groundShadowEnabled = 1;
     CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_GROUND_SHADOW, 8u);
 
@@ -419,22 +424,22 @@ void ResetAppState(MMDApp* app) {
     app->PanelExpanded(UiPanel::Morph) = 1;
     app->PanelExpanded(UiPanel::SelfShadow) = 1;
     app->CameraPerspective() = 0;
-    SendMessageA(GetDlgItem(hwnd, panel::kPerspectiveCheckbox), BM_CLICK, 1, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kPerspectiveCheckbox), BM_SETCHECK, BST_CHECKED, 0);
     app->CameraPosition()[0] = 0.0f;
     app->CameraPosition()[1] = 10.0f;
     app->CameraPosition()[2] = 0.0f;
     app->state.v32c = 0;
     app->CameraReferenceMode() = CameraAttachmentReference::None;
-    SendMessageA(GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_CLICK, 0, 0);
-    SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
     app->PlaybackLoopEnabled() = 0;
-    SendMessageA(GetDlgItem(hwnd, panel::kPlaybackLoopCheckbox), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kPlaybackLoopCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
     app->state.playbackReturnsToStartFrame = 0;
-    SendMessageA(GetDlgItem(hwnd, panel::kPlaybackReturnCheckbox), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kPlaybackReturnCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
     app->state.viewportToolHovered = 0;
     app->CameraFov() = 45.0f;
-    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryShadowCheckbox), BM_CLICK, 0, 0);
-    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryVisibleCheckbox), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryShadowCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryVisibleCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
     app->FpsLimit() = 60.0f;
 
     // ---- light-accessory edit echoes ---------------------------------------
@@ -500,7 +505,7 @@ void ResetAppState(MMDApp* app) {
     {
         MENUITEMINFOA mii; // 0x44FF64
         std::memset(&mii, 0, sizeof mii);
-        mii.cbSize = 48;
+        mii.cbSize = sizeof mii; // original x64: 80 bytes; x86: 48 bytes
         mii.fMask = MIIM_STATE;
         mii.fState = MFS_DISABLED | MFS_GRAYED;
         SetMenuItemInfoA(GetSubMenu(GetMenu(hwnd), 7), 2u, TRUE,

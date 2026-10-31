@@ -10,8 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
+#include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/dialog_order_arrays.hpp"
 #include "mikudancestudio/path_workspace.hpp"
 #include "mikudancestudio/openni_api.hpp"
@@ -118,9 +118,6 @@ struct AppRuntimeState {
     PlatformRuntimeState platform;
     CaptureRuntimeState capture;
     PathResolutionWorkspace paths{};
-    // Playback visits all 255 slots. The recovered ABI's partial 55-entry
-    // cursor region must never back process-local per-accessory state.
-    std::uint32_t accessoryTrackCursor[mdl::kAccessorySlotCount]{};
     std::uint8_t accessoryTrackActive[mdl::kAccessorySlotCount]{};
 };
 

@@ -23,9 +23,6 @@ http://gimpact.sf.net
 #include "BulletDynamics/Dynamics/btRigidBody.h"
 #include "LinearMath/btTransformUtil.h"
 #include "LinearMath/btTransformUtil.h"
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <new>
 
 
@@ -82,30 +79,15 @@ bool	matrixToEulerXYZ(const btMatrix3x3& mat,btVector3& xyz)
 	{
 		if (fi > btScalar(-1.0f))
 		{
-/* Original x86 0x501200 uses double atan2/asin with one float
-               store. The x64 RVA 0x116F00 instead calls atan2f/asinf.
-               The spring chain amplifies changes to these rounding stages. */
-#if defined(_M_X64)
-			xyz[0] = ::atan2f(-btGetMatrixElem(mat, 5), btGetMatrixElem(mat, 8));
-			xyz[1] = ::asinf(btGetMatrixElem(mat, 2));
-			xyz[2] = ::atan2f(-btGetMatrixElem(mat, 1), btGetMatrixElem(mat, 0));
-#else
-			xyz[0] =
-				(float)::atan2((double)-btGetMatrixElem(mat, 5), (double)btGetMatrixElem(mat, 8));
-			xyz[1] = (float)::asin((double)btGetMatrixElem(mat,2));
-			xyz[2] = (float)::atan2((double)-btGetMatrixElem(mat,1),(double)btGetMatrixElem(mat,0));
-#endif
+			xyz[0] = btAtan2(-btGetMatrixElem(mat,5),btGetMatrixElem(mat,8));
+			xyz[1] = btAsin(btGetMatrixElem(mat,2));
+			xyz[2] = btAtan2(-btGetMatrixElem(mat,1),btGetMatrixElem(mat,0));
 			return true;
 		}
 		else
 		{
 			// WARNING.  Not unique.  XA - ZA = -atan2(r10,r11)
-#if defined(_M_X64)
-			xyz[0] = -::atan2f(btGetMatrixElem(mat, 3), btGetMatrixElem(mat, 4));
-#else
-			xyz[0] =
-				(float)-::atan2((double)btGetMatrixElem(mat, 3), (double)btGetMatrixElem(mat, 4));
-#endif
+			xyz[0] = -btAtan2(btGetMatrixElem(mat,3),btGetMatrixElem(mat,4));
 			xyz[1] = -SIMD_HALF_PI;
 			xyz[2] = btScalar(0.0);
 			return false;
@@ -114,11 +96,7 @@ bool	matrixToEulerXYZ(const btMatrix3x3& mat,btVector3& xyz)
 	else
 	{
 		// WARNING.  Not unique.  XAngle + ZAngle = atan2(r10,r11)
-#if defined(_M_X64)
-		xyz[0] = ::atan2f(btGetMatrixElem(mat, 3), btGetMatrixElem(mat, 4));
-#else
-		xyz[0] = (float)::atan2((double)btGetMatrixElem(mat, 3), (double)btGetMatrixElem(mat, 4));
-#endif
+		xyz[0] = btAtan2(btGetMatrixElem(mat,3),btGetMatrixElem(mat,4));
 		xyz[1] = SIMD_HALF_PI;
 		xyz[2] = 0.0;
 	}
@@ -366,64 +344,7 @@ btScalar btTranslationalLimitMotor::solveLinearAxis(
 
 void btGeneric6DofConstraint::calculateAngleInfo()
 {
-	/* The original 0x502930 computes the whole relative-frame chain in
-	   scalar SSE with per-operation rounding - identical to the stock
-	   inverse/multiply - EXCEPT the determinant's addition grouping:
-	   (co2*A02 + A01*co1) + A00*co0 instead of the stock left-associative
-	   (A00*co0 + A01*co1) + A02*co2.  That 1-ULP difference in 1/det
-	   shifts the relative frame and the extracted angles (proven offline
-	   on the (5,6) joint's frame-2 state: det 3F7FFFFB vs 3F7FFFFC gives
-	   the original's ang0 BCB92D7E instead of the stock BCB92D7F). */
-	const btMatrix3x3& A = m_calculatedTransformA.getBasis();
-	const btMatrix3x3& B = m_calculatedTransformB.getBasis();
-	btMatrix3x3 invA;
-	{
-		const btScalar co0 = A[1][1]*A[2][2] - A[1][2]*A[2][1];
-		const btScalar co1 = A[2][0]*A[1][2] - A[1][0]*A[2][2];
-		const btScalar co2 = A[1][0]*A[2][1] - A[2][0]*A[1][1];
-#if defined(_M_X64)
-		// x64 RVA 0x118542: the first two products are co1*A01 and co0*A00.
-		const btScalar det = (co1 * A[0][1] + co0 * A[0][0]) + co2 * A[0][2];
-#else
-		const btScalar det = (co2*A[0][2] + A[0][1]*co1) + A[0][0]*co0;
-#endif
-		const btScalar s = btScalar(1.0)/det;
-		invA.setValue(
-			co0*s,
-			(A[0][2]*A[2][1] - A[0][1]*A[2][2])*s,
-			(A[0][1]*A[1][2] - A[0][2]*A[1][1])*s,
-			co1*s,
-			(A[0][0]*A[2][2] - A[0][2]*A[2][0])*s,
-			(A[0][2]*A[1][0] - A[0][0]*A[1][2])*s,
-			co2*s,
-			(A[0][1]*A[2][0] - A[0][0]*A[2][1])*s,
-			(A[0][0]*A[1][1] - A[0][1]*A[1][0])*s);
-	}
-	/* Relative-frame multiply with the original's per-element addition
-	   groupings (0x502930 codegen): column 0 folds left-associative,
-	   columns 1/2 of rows 0-1 fold (p0+p2)+p1, and row 2 folds
-	   (p0+p1)+p2 for column 1 but (p1+p2)+p0 for column 2.  Verified
-	   offline against both observed divergent samples ((5,6) and (7,8)
-	   joints, all four angle words each). */
-	btMatrix3x3 relative_frame;
-#if defined(_M_X64)
-	// x64 RVA 0x1185E2..0x11871C folds every relative-frame dot product left.
-	for (int row = 0; row < 3; ++row)
-		for (int column = 0; column < 3; ++column)
-			relative_frame[row][column] =
-				(invA[row][0] * B[0][column] + invA[row][1] * B[1][column]) +
-				invA[row][2] * B[2][column];
-#else
-	relative_frame[0][0] = (invA[0][0]*B[0][0] + invA[0][1]*B[1][0]) + invA[0][2]*B[2][0];
-	relative_frame[0][1] = (invA[0][0]*B[0][1] + invA[0][2]*B[2][1]) + invA[0][1]*B[1][1];
-	relative_frame[0][2] = (invA[0][0]*B[0][2] + invA[0][2]*B[2][2]) + invA[0][1]*B[1][2];
-	relative_frame[1][0] = (invA[1][0]*B[0][0] + invA[1][1]*B[1][0]) + invA[1][2]*B[2][0];
-	relative_frame[1][1] = (invA[1][0]*B[0][1] + invA[1][2]*B[2][1]) + invA[1][1]*B[1][1];
-	relative_frame[1][2] = (invA[1][0]*B[0][2] + invA[1][2]*B[2][2]) + invA[1][1]*B[1][2];
-	relative_frame[2][0] = (invA[2][0]*B[0][0] + invA[2][1]*B[1][0]) + invA[2][2]*B[2][0];
-	relative_frame[2][1] = (invA[2][0]*B[0][1] + invA[2][1]*B[1][1]) + invA[2][2]*B[2][1];
-	relative_frame[2][2] = (invA[2][1]*B[1][2] + invA[2][2]*B[2][2]) + invA[2][0]*B[0][2];
-#endif
+	btMatrix3x3 relative_frame = m_calculatedTransformA.getBasis().inverse()*m_calculatedTransformB.getBasis();
 	matrixToEulerXYZ(relative_frame,m_calculatedAxisAngleDiff);
 	// in euler angle mode we do not actually constrain the angular velocity
 	// along the axes axis[0] and axis[2] (although we do use axis[1]) :
@@ -439,40 +360,16 @@ void btGeneric6DofConstraint::calculateAngleInfo()
 	// GetInfo1 then take the derivative. to prove this for angle[2] it is
 	// easier to take the euler rate expression for d(angle[2])/dt with respect
 	// to the components of w and set that to 0.
-	/* Axes transcribed at instruction level from 0x502930's tail: the
-	   cross products are pure SSE (per-op float rounding), but each
-	   normalization computes x^2+y^2+z^2, sqrt and the reciprocal on the
-	   x87 stack (exact products, single rounding of the stored
-	   reciprocal) and multiplies per component with mulss.  The earlier
-	   all-extended and all-SSE attempts each missed one half of this. */
-	{
-		const btMatrix3x3& Ax = m_calculatedTransformA.getBasis();
-		const btMatrix3x3& Bx = m_calculatedTransformB.getBasis();
-		const float a1x = Ax[1][2]*Bx[2][0] - Ax[2][2]*Bx[1][0];
-		const float a1y = Ax[2][2]*Bx[0][0] - Bx[2][0]*Ax[0][2];
-		const float a1z = Bx[1][0]*Ax[0][2] - Ax[1][2]*Bx[0][0];
-		const float a0x = Ax[2][2]*a1y - Ax[1][2]*a1z;
-		const float a0y = Ax[0][2]*a1z - Ax[2][2]*a1x;
-		const float a0z = Ax[1][2]*a1x - Ax[0][2]*a1y;
-		const float a2x = Bx[1][0]*a1z - Bx[2][0]*a1y;
-		const float a2y = Bx[2][0]*a1x - a1z*Bx[0][0];
-		const float a2z = a1y*Bx[0][0] - Bx[1][0]*a1x;
-		typedef long double ld;
-#if defined(_M_X64)
-		// MMD x64 RVA 0x118430: mulss/addss, sqrtss, then divss.
-		// The x86 reference instead keeps the norm on the x87 stack.
-		const float n0 = 1.0f / sqrtf((a0x * a0x + a0y * a0y) + a0z * a0z);
-		const float n1 = 1.0f / sqrtf((a1x * a1x + a1y * a1y) + a1z * a1z);
-		const float n2 = 1.0f / sqrtf((a2x * a2x + a2y * a2y) + a2z * a2z);
-#else
-		const float n0 = (float)(1.0L / sqrtl((ld)a0x*a0x + (ld)a0y*a0y + (ld)a0z*a0z));
-		const float n1 = (float)(1.0L / sqrtl((ld)a1x*a1x + (ld)a1y*a1y + (ld)a1z*a1z));
-		const float n2 = (float)(1.0L / sqrtl((ld)a2x*a2x + (ld)a2y*a2y + (ld)a2z*a2z));
-#endif
-		m_calculatedAxis[0].setValue(n0*a0x, n0*a0y, n0*a0z);
-		m_calculatedAxis[1].setValue(n1*a1x, n1*a1y, n1*a1z);
-		m_calculatedAxis[2].setValue(n2*a2x, n2*a2y, n2*a2z);
-	}
+	btVector3 axis0 = m_calculatedTransformB.getBasis().getColumn(0);
+	btVector3 axis2 = m_calculatedTransformA.getBasis().getColumn(2);
+
+	m_calculatedAxis[1] = axis2.cross(axis0);
+	m_calculatedAxis[0] = m_calculatedAxis[1].cross(axis2);
+	m_calculatedAxis[2] = axis0.cross(m_calculatedAxis[1]);
+
+	m_calculatedAxis[0].normalize();
+	m_calculatedAxis[1].normalize();
+	m_calculatedAxis[2].normalize();
 
 }
 
@@ -483,74 +380,8 @@ void btGeneric6DofConstraint::calculateTransforms()
 
 void btGeneric6DofConstraint::calculateTransforms(const btTransform& transA,const btTransform& transB)
 {
-#if defined(_M_X64)
-	// x64 RVA 0x1197F0 uses (x+y)+z for every basis and origin component.
-	const btTransform *bodies[] = {&transA, &transB};
-	const btTransform *frames[] = {&m_frameInA, &m_frameInB};
-	btTransform *results[] = {&m_calculatedTransformA, &m_calculatedTransformB};
-	for (int side = 0; side < 2; ++side) {
-		const btMatrix3x3 &basis = bodies[side]->getBasis();
-		const btMatrix3x3 &frame = frames[side]->getBasis();
-		const btVector3 &offset = frames[side]->getOrigin();
-		for (int row = 0; row < 3; ++row) {
-			for (int column = 0; column < 3; ++column)
-				results[side]->getBasis()[row][column] =
-					(basis[row][0] * frame[0][column] + basis[row][1] * frame[1][column]) +
-					basis[row][2] * frame[2][column];
-			results[side]->getOrigin()[row] =
-				((basis[row][0] * offset[0] + basis[row][1] * offset[1]) +
-				 basis[row][2] * offset[2]) +
-				bodies[side]->getOrigin()[row];
-		}
-	}
-#else
-	/* The original's VC9 codegen (0x503DC0) folds the body x frame matrix
-	   product with a per-row addition order that differs from the stock
-	   left-associative chain: row 0 accumulates (p0+p1)+p2 like stock, but
-	   rows 1 and 2 (and the y/z components of the transformed origin)
-	   accumulate (p1+p2)+p0.  With otherwise bit-identical body transforms
-	   and joint frames, that fold order alone shifts the calculated
-	   transform basis by 1-2 ULP, which the 6DOF spring equilibrium chain
-	   then amplifies into a visible frame-4 drift.  Replicated verbatim. */
-	const btMatrix3x3& BA = transA.getBasis();
-	const btMatrix3x3& FA = m_frameInA.getBasis();
-	const btVector3& oFA = m_frameInA.getOrigin();
-	const btVector3& oA = transA.getOrigin();
-	btMatrix3x3& RA = m_calculatedTransformA.getBasis();
-	btVector3& oRA = m_calculatedTransformA.getOrigin();
-	RA[0][0] = (FA[0][0]*BA[0][0] + FA[1][0]*BA[0][1]) + FA[2][0]*BA[0][2];
-	RA[0][1] = (FA[0][1]*BA[0][0] + FA[1][1]*BA[0][1]) + FA[2][1]*BA[0][2];
-	RA[0][2] = (FA[0][2]*BA[0][0] + FA[1][2]*BA[0][1]) + FA[2][2]*BA[0][2];
-	RA[1][0] = (FA[1][0]*BA[1][1] + FA[2][0]*BA[1][2]) + FA[0][0]*BA[1][0];
-	RA[1][1] = (FA[1][1]*BA[1][1] + FA[2][1]*BA[1][2]) + FA[0][1]*BA[1][0];
-	RA[1][2] = (FA[1][2]*BA[1][1] + FA[2][2]*BA[1][2]) + FA[0][2]*BA[1][0];
-	RA[2][0] = (FA[1][0]*BA[2][1] + FA[2][0]*BA[2][2]) + FA[0][0]*BA[2][0];
-	RA[2][1] = (FA[1][1]*BA[2][1] + FA[2][1]*BA[2][2]) + FA[0][1]*BA[2][0];
-	RA[2][2] = (FA[1][2]*BA[2][1] + FA[2][2]*BA[2][2]) + FA[0][2]*BA[2][0];
-	oRA[0] = ((BA[0][0]*oFA[0] + BA[0][1]*oFA[1]) + BA[0][2]*oFA[2]) + oA[0];
-	oRA[1] = ((BA[1][1]*oFA[1] + BA[1][2]*oFA[2]) + BA[1][0]*oFA[0]) + oA[1];
-	oRA[2] = ((BA[2][1]*oFA[1] + BA[2][2]*oFA[2]) + BA[2][0]*oFA[0]) + oA[2];
-
-	const btMatrix3x3& BB = transB.getBasis();
-	const btMatrix3x3& FB = m_frameInB.getBasis();
-	const btVector3& oFB = m_frameInB.getOrigin();
-	const btVector3& oB = transB.getOrigin();
-	btMatrix3x3& RB = m_calculatedTransformB.getBasis();
-	btVector3& oRB = m_calculatedTransformB.getOrigin();
-	RB[0][0] = (FB[0][0]*BB[0][0] + FB[1][0]*BB[0][1]) + FB[2][0]*BB[0][2];
-	RB[0][1] = (FB[0][1]*BB[0][0] + FB[1][1]*BB[0][1]) + FB[2][1]*BB[0][2];
-	RB[0][2] = (FB[0][2]*BB[0][0] + FB[1][2]*BB[0][1]) + FB[2][2]*BB[0][2];
-	RB[1][0] = (FB[1][0]*BB[1][1] + FB[2][0]*BB[1][2]) + FB[0][0]*BB[1][0];
-	RB[1][1] = (FB[1][1]*BB[1][1] + FB[2][1]*BB[1][2]) + FB[0][1]*BB[1][0];
-	RB[1][2] = (FB[1][2]*BB[1][1] + FB[2][2]*BB[1][2]) + FB[0][2]*BB[1][0];
-	RB[2][0] = (FB[1][0]*BB[2][1] + FB[2][0]*BB[2][2]) + FB[0][0]*BB[2][0];
-	RB[2][1] = (FB[1][1]*BB[2][1] + FB[2][1]*BB[2][2]) + FB[0][1]*BB[2][0];
-	RB[2][2] = (FB[1][2]*BB[2][1] + FB[2][2]*BB[2][2]) + FB[0][2]*BB[2][0];
-	oRB[0] = ((BB[0][0]*oFB[0] + BB[0][1]*oFB[1]) + BB[0][2]*oFB[2]) + oB[0];
-	oRB[1] = ((BB[1][1]*oFB[1] + BB[1][2]*oFB[2]) + BB[1][0]*oFB[0]) + oB[1];
-	oRB[2] = ((BB[2][1]*oFB[1] + BB[2][2]*oFB[2]) + BB[2][0]*oFB[0]) + oB[2];
-
-#endif
+	m_calculatedTransformA = transA * m_frameInA;
+	m_calculatedTransformB = transB * m_frameInB;
 	calculateLinearInfo();
 	calculateAngleInfo();
 }
@@ -913,58 +744,8 @@ void btGeneric6DofConstraint::calcAnchorPos(void)
 
 void btGeneric6DofConstraint::calculateLinearInfo()
 {
-	/* Verbatim transcription of the original's linear projection
-	   (0x503980 second half): the inverse entries and the projection
-	   products round exactly where the VC9 build rounds them, with its
-	   per-row addition grouping - row 0 folds (p1+p2)+p3 with dz*inv
-	   operand orders, rows 1/2 use the adjugate slots the scheduler
-	   picked.  With bit-identical calculated transforms this chain is
-	   what shifts m_calculatedLinearDiff (and every locked-linear-axis
-	   row error) by 1 ULP against the stock inverse()*diff. */
 	m_calculatedLinearDiff = m_calculatedTransformB.getOrigin() - m_calculatedTransformA.getOrigin();
-	{
-		const btMatrix3x3& A = m_calculatedTransformA.getBasis();
-		const btScalar dx = m_calculatedLinearDiff[0];
-		const btScalar dy = m_calculatedLinearDiff[1];
-		const btScalar dz = m_calculatedLinearDiff[2];
-		// adjugate intermediates exactly as spilled at 0x503980
-		const btScalar v6 = A[1][1]*A[2][2] - A[1][2]*A[2][1];
-		const btScalar v7 = A[2][0]*A[1][2] - A[1][0]*A[2][2];
-		const btScalar v8 = A[1][0]*A[2][1] - A[2][0]*A[1][1];
-#if defined(_M_X64)
-		// x64 RVA 0x1193D0: the inverse determinant and every projected
-		// coordinate use the same single-precision (x+y)+z reductions.
-		const btScalar inverseDet = 1.0f / ((v7 * A[0][1] + v6 * A[0][0]) + v8 * A[0][2]);
-		const btScalar inverse[3][3] = {
-			{v6 * inverseDet, (A[0][2] * A[2][1] - A[0][1] * A[2][2]) * inverseDet,
-			 (A[0][1] * A[1][2] - A[0][2] * A[1][1]) * inverseDet},
-			{v7 * inverseDet, (A[0][0] * A[2][2] - A[0][2] * A[2][0]) * inverseDet,
-			 (A[0][2] * A[1][0] - A[0][0] * A[1][2]) * inverseDet},
-			{v8 * inverseDet, (A[0][1] * A[2][0] - A[0][0] * A[2][1]) * inverseDet,
-			 (A[0][0] * A[1][1] - A[0][1] * A[1][0]) * inverseDet}};
-		for (int row = 0; row < 3; ++row)
-			m_calculatedLinearDiff[row] =
-				(dx * inverse[row][0] + dy * inverse[row][1]) + dz * inverse[row][2];
-#else
-		const btScalar v9 = btScalar(1.0) /
-			((A[0][1]*v7 + v8*A[0][2]) + v6*A[0][0]);
-		const btScalar v12 = (A[0][1]*A[2][0] - A[0][0]*A[2][1]) * v9;
-		const btScalar v29 = (A[0][2]*A[1][0] - A[0][0]*A[1][2]) * v9;
-		const btScalar v30 = (A[0][0]*A[2][2] - A[0][2]*A[2][0]) * v9;
-		const btScalar v31 = v8 * v9;
-		const btScalar v32 = (A[0][0]*A[1][1] - A[0][1]*A[1][0]) * v9;
-		// row 0's dz term multiplies the PRE-SCALED cofactor slot
-		// (dz*(c01*v9)), exactly like rows 1/2 use v29/v30/v32 - the
-		// left-associative (dz*c01)*v9 rounds differently and misses
-		// the original on 49 of 800 sampled calls (e.g. uid21 solve-7
-		// diff[0] BD2FBAAA vs BD2FBAAC, the last 1-ULP rhs divergence).
-		m_calculatedLinearDiff[0] =
-			((v6*v9)*dx + dz*((A[0][1]*A[1][2] - A[0][2]*A[1][1])*v9))
-			+ ((A[0][2]*A[2][1] - A[0][1]*A[2][2])*v9)*dy;
-		m_calculatedLinearDiff[1] = ((v7*v9)*dx + dz*v29) + v30*dy;
-		m_calculatedLinearDiff[2] = (v31*dx + dz*v32) + v12*dy;
-#endif
-	}
+	m_calculatedLinearDiff = m_calculatedTransformA.getBasis().inverse() * m_calculatedLinearDiff;
 	for(int i = 0; i < 3; i++)
 	{
 		m_linearLimits.m_currentLinearDiff[i] = m_calculatedLinearDiff[i];
@@ -982,20 +763,6 @@ int btGeneric6DofConstraint::get_limit_motor_info2(
     int srow = row * info->rowskip;
     int powered = limot->m_enableMotor;
     int limit = limot->m_currentLimit;
-    // Env-gated (OPENMMD_DUMP_ROWS=<path>) per-row trace of the limit/motor
-    // row inputs and the assembled rhs - used to pin the exact constraint
-    // and axis behind a 1-ULP rhs divergence against the original.
-    static FILE* rowLog = []() -> FILE* {
-        const char* path = getenv("OPENMMD_DUMP_ROWS");
-        return path ? fopen(path, "w") : nullptr;
-    }();
-    unsigned rowLo, rowHi, rowErr, rowErp, rowTv, rowFps, rowAx[3];
-    if (rowLog) {
-        memcpy(&rowLo, &limot->m_loLimit, 4); memcpy(&rowHi, &limot->m_hiLimit, 4);
-        memcpy(&rowErr, &limot->m_currentLimitError, 4); memcpy(&rowErp, &limot->m_ERP, 4);
-        memcpy(&rowTv, &limot->m_targetVelocity, 4); memcpy(&rowFps, &info->fps, 4);
-        memcpy(&rowAx[0], &ax1[0], 4); memcpy(&rowAx[1], &ax1[1], 4); memcpy(&rowAx[2], &ax1[2], 4);
-    }
     if (powered || limit)
     {   // if the joint is powered, or has joint limits, add in the extra row
         btScalar *J1 = rotational ? info->m_J1angularAxis : info->m_J1linearAxis;
@@ -1077,26 +844,21 @@ int btGeneric6DofConstraint::get_limit_motor_info2(
                 // deal with bounce
                 if (limot->m_bounce > 0)
                 {
-                    // calculate joint velocity.  Original 0x5021xx folds the
-                    // A-side dot in (y+z)+x lanes and subtracts the B side as
-                    // A - (B.x + (B.y+B.z)) - unlike the stock two separate
-                    // left-associative dots this rounds differently by 1 ULP,
-                    // which is exactly the first divergent solver row
-                    // (rhs BDD9D669 vs BDD9D66A, solve 2, body-9 row).
+                    // calculate joint velocity
                     btScalar vel;
                     if (rotational)
                     {
-                        vel = (angVelA.y()*ax1[1] + angVelA.z()*ax1[2])
-                            + angVelA.x()*ax1[0];
-                        vel -= angVelB.x()*ax1[0]
-                            + (angVelB.y()*ax1[1] + angVelB.z()*ax1[2]);
+                        vel = angVelA.dot(ax1);
+//make sure that if no body -> angVelB == zero vec
+//                        if (body1)
+                            vel -= angVelB.dot(ax1);
                     }
                     else
                     {
-                        vel = (linVelA.y()*ax1[1] + linVelA.z()*ax1[2])
-                            + linVelA.x()*ax1[0];
-                        vel -= linVelB.x()*ax1[0]
-                            + (linVelB.y()*ax1[1] + linVelB.z()*ax1[2]);
+                        vel = linVelA.dot(ax1);
+//make sure that if no body -> angVelB == zero vec
+//                        if (body1)
+                            vel -= linVelB.dot(ax1);
                     }
                     // only apply bounce if the velocity is incoming, and if the
                     // resulting c[] exceeds what we already have.
@@ -1120,17 +882,6 @@ int btGeneric6DofConstraint::get_limit_motor_info2(
                     }
                 }
             }
-        }
-        if (rowLog) {
-            unsigned rhsB, loOut, hiOut;
-            memcpy(&rhsB, &info->m_constraintError[srow], 4);
-            memcpy(&loOut, &info->m_lowerLimit[srow], 4);
-            memcpy(&hiOut, &info->m_upperLimit[srow], 4);
-            fprintf(rowLog, "row uid=%d rot=%d ax=%08X %08X %08X lo=%08X hi=%08X err=%08X erp=%08X tv=%08X fps=%08X pw=%d lim=%d rhs=%08X lo_out=%08X hi_out=%08X\n",
-                    getUid(), rotational, rowAx[0], rowAx[1], rowAx[2],
-                    rowLo, rowHi, rowErr, rowErp, rowTv, rowFps, powered, limit,
-                    rhsB, loOut, hiOut);
-            fflush(rowLog);
         }
         return 1;
     }

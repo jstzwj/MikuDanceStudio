@@ -30,7 +30,6 @@
 #include <new>
 
 #include "btBulletDynamicsCommon.h"
-#include "BulletDynamics/ConstraintSolver/btGeneric6DofSpringConstraint.h"
 
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/model_cpu_preview.hpp"
@@ -66,13 +65,8 @@ void ReleasePhysConstraint(PhysicsScene* physics, int constraintId) {
         btTypedConstraint* const item = world->getConstraint(i);
         if (item != nullptr && item->getUid() == constraintId) {
             world->removeConstraint(item);
-            // CreatePhysJoint allocates this exact type with scalar new. The
-            // Bullet 2.75 x86 virtual deleting destructor corrupts the CRT
-            // heap here; dispatch the destructor explicitly and pair it with
-            // the scalar allocator used at construction.
-            auto* spring = static_cast<btGeneric6DofSpringConstraint*>(item);
-            spring->~btGeneric6DofSpringConstraint();
-            ::operator delete(static_cast<void*>(spring));
+            // Match Bullet's C++17 over-aligned allocation and virtual deletion.
+            delete item;
             return;
         }
     }

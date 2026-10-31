@@ -569,6 +569,7 @@ DBVT_INLINE int			Select(	const btDbvtAabbMm& o,
 #if	DBVT_SELECT_IMPL == DBVT_IMPL_SSE
 	static ATTRIBUTE_ALIGNED16(const unsigned __int32)	mask[]={0x7fffffff,0x7fffffff,0x7fffffff,0x7fffffff};
 	///@todo: the intrinsic version is 11% slower
+#if DBVT_USE_INTRINSIC_SSE
 
 	union btSSEUnion ///NOTE: if we use more intrinsics, move btSSEUnion into the LinearMath directory
 	{
@@ -598,7 +599,37 @@ DBVT_INLINE int			Select(	const btDbvtAabbMm& o,
 	tmp.ssereg = _mm_cmple_ss(bmi,ami);
 	return tmp.ints[0]&1;
 
-
+#else
+	ATTRIBUTE_ALIGNED16(__int32	r[1]);
+	__asm
+	{
+		mov		eax,o
+			mov		ecx,a
+			mov		edx,b
+			movaps	xmm0,[eax]
+		movaps	xmm5,mask
+			addps	xmm0,[eax+16]	
+		movaps	xmm1,[ecx]
+		movaps	xmm2,[edx]
+		addps	xmm1,[ecx+16]
+		addps	xmm2,[edx+16]
+		subps	xmm1,xmm0
+			subps	xmm2,xmm0
+			andps	xmm1,xmm5
+			andps	xmm2,xmm5
+			movhlps	xmm3,xmm1
+			movhlps	xmm4,xmm2
+			addps	xmm1,xmm3
+			addps	xmm2,xmm4
+			pshufd	xmm3,xmm1,1
+			pshufd	xmm4,xmm2,1
+			addss	xmm1,xmm3
+			addss	xmm2,xmm4
+			cmpless	xmm2,xmm1
+			movss	r,xmm2
+	}
+	return(r[0]&1);
+#endif
 #else
 	return(Proximity(o,a)<Proximity(o,b)?0:1);
 #endif

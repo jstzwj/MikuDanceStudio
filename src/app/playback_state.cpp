@@ -227,7 +227,7 @@ void InitGlobalTracks(MMDApp* app, float frame) {
 }
 
 void InitAccessoryTracks(MMDApp* app, float frame) {
-    for (int i = 0; i < 255; ++i) {
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i) {
         app->AccessoryTrackActive(i) = 0;
         mdl::AccessoryRecord* accessory = app->AccessorySlot(i);
         if (accessory == nullptr)
@@ -389,8 +389,13 @@ void StopPlayback(MMDApp* app) {
     if (app->state.playbackReturnsToStartFrame != 0) {
         if (activeModel != nullptr)
             SavePlaybackUndoSnapshot(app, activeModel);
+#if defined(_M_X64)
+        // Original x64 RVA 0x6B137 truncates the float seconds * 30 product.
+        const int frame = static_cast<int>(app->PlaybackCursorSeconds() * 30.0f);
+#else
         const int frame =
             static_cast<int>(static_cast<double>(app->PlaybackCursorSeconds()) * kFrameRate);
+#endif
         app->state.currentFrame = frame;
         app->state.timelineStartFrame = frame > 6 ? frame - 6 : 0;
         char text[50];
@@ -441,7 +446,7 @@ void StopPlayback(MMDApp* app) {
         app->state.modelReloadPending = 1;
     }
 
-    for (int i = 0; i < 255; ++i)
+    for (int i = 0; i < mdl::kAccessorySlotCount; ++i)
         if (app->AccessorySlot(i) != nullptr)
             ApplyAccessoryTrack(app, i);
     SyncAccessoryEditPanel(app);

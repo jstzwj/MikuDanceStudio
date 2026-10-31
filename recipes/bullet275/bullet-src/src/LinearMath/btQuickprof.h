@@ -88,6 +88,7 @@ public:
 
 		typedef uint64_t  ClockSize;
 		ClockSize newTime;
+		//__asm __volatile__( "mftb %0" : "=r" (newTime) : : "memory");
 		SYS_TIMEBASE_GET( newTime );
 		mStartTime = newTime;
 #else
@@ -142,6 +143,7 @@ public:
 		typedef uint64_t  ClockSize;
 		ClockSize newTime;
 		SYS_TIMEBASE_GET( newTime );
+		//__asm __volatile__( "mftb %0" : "=r" (newTime) : : "memory");
 
 		return (unsigned long int)((double(newTime-mStartTime)) / dFreq);
 #else
@@ -198,6 +200,7 @@ public:
 		double dFreq=((double) freq)/ 1000000.0;
 		typedef uint64_t  ClockSize;
 		ClockSize newTime;
+		//__asm __volatile__( "mftb %0" : "=r" (newTime) : : "memory");
 		SYS_TIMEBASE_GET( newTime );
 
 		return (unsigned long int)((double(newTime-mStartTime)) / dFreq);

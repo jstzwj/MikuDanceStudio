@@ -324,9 +324,8 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     // [big-C 11227-11229] "Loading effect file: <path>"
     MmeLogWrite(("Loading effect file: " + pathAnsi).c_str(), 0);
 
-    // [big-C 11239-11240] the wide path for D3DXCreateEffectFromFileW
-    // (FUN_180006610 = CP 0 ansi->wide, same as MmeAnsiToWide).
-    std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
+    // Snapshot the same source revision for portable import on both architectures.
+    const std::wstring pathWide = MmeAnsiToWide(pathAnsi.c_str());
     const auto sourcePath = MmeWideToAnsi(std::filesystem::absolute(pathWide).c_str());
     {
         std::ifstream source(std::filesystem::path(pathWide), std::ios::binary | std::ios::ate);
@@ -376,8 +375,17 @@ static std::shared_ptr<LoadedEffect> LoadCachedEffectFile(IDirect3DDevice9* devi
     }
 
     ID3DXBuffer* errors = nullptr;
+#if defined(_M_X64)
+    // Original x64: CP_ACP conversion (sub_180006610), then the W import
+    // from d3dx9_43 at 0x18000C16A. The x86 loader does not convert the path.
     HRESULT hr = D3DXCreateEffectFromFileW(device, pathWide.c_str(), defines, nullptr, loadFlags,
                                            g_effectPool, &entry->effect, &errors);
+#else
+    // Original x86 0.37: d3dx9_32 A import at 0x1000CD10. Its W compiler
+    // path mixes UTF-8 filenames with ANSI file opens under legacy ACPs.
+    HRESULT hr = D3DXCreateEffectFromFileA(device, pathAnsi.c_str(), defines, nullptr, loadFlags,
+                                           g_effectPool, &entry->effect, &errors);
+#endif
     if (SUCCEEDED(hr) && entry->originalSource) {
         // Includes are resolved once, alongside the actual native load. A
         // later RHI device replacement must not read a different disk revision.
