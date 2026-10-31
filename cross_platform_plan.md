@@ -1,6 +1,8 @@
 # MikuDanceStudio 跨平台移植计划
 
-更新时间：2026-10-31。代码基线：`next@ef89b0b`，已合入 `main@35d99c7`（v10.15）。
+更新时间：2026-11-01。初始审计基线：`next@ef89b0b`，已合入 `main@35d99c7`（v10.15）。
+
+实施状态：**P0 已完成**。三平台基础构建、两轮精确文件／数值回归、统一 Bullet 包装与分配／销毁验证、macOS 无窗口 Vulkan 探测均已执行；Windows x64／x86 编辑器构建通过。能力表、最低环境决策、依赖图、证据和仍未覆盖的范围见 [P0 实施与验收记录](docs/CROSS_PLATFORM_P0.md)。下一阶段为 P1，当前不宣称 macOS／Linux 完整编辑器可用。
 
 本文是后续实施与验收计划。除“当前状态”明确列出的能力外，目标模块、接口、构建选项和里程碑均为规划，不代表已经实现。现有三平台 CI 配置也不代表完整编辑器已在三平台构建或运行通过。
 
@@ -50,7 +52,7 @@ C1 可先交付，已完成的 C2 效果可以随版本启用；完整 Ray 不�
 
 当前完整 Ray 仍使用 DX9 回退；已通过的 Ray MaterialMap 子效果不代表根效果、光照、子效果链和最终合成已全部支持。具体范围见 [Ray 材质记录](docs/RHI_MME_RAY_MATERIAL.md)。
 
-构建入口有一项应优先处理的漂移：`cmake/cpu-simulation-tests/CMakeLists.txt` 仍设置 `/Zc:alignedNew-`，且直接使用上游历史 CMake；主工程和当前 Bullet 配方使用 `/Zc:alignedNew` 与外部构建包装。P0 应统一依赖构建和使用要求，并重新验证，不能把已有工作流配置视为该问题已解决。
+初始审计发现一项构建漂移：`cmake/cpu-simulation-tests/CMakeLists.txt` 设置 `/Zc:alignedNew-`，且直接使用上游历史 CMake；主工程和 Bullet 配方使用 `/Zc:alignedNew` 与外部构建包装。P0 已统一包装、C++17 及其公共使用要求，并重新执行三平台分配／销毁测试；结果见实施记录，不能仅把工作流配置视为验证。
 
 ## 3. 目标架构与依赖规则
 

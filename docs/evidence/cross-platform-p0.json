@@ -1,0 +1,455 @@
+{
+  "schema": 1,
+  "recorded_date": "2026-11-01",
+  "source_commit": "9a0a77385f994fa7eb4a83ba9bd4ee4fd52a637b",
+  "foundation_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41217386848",
+  "bullet_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41217288923",
+  "public_baseline": "tests/data/portable_baseline_v1.json",
+  "platforms": [
+    {
+      "id": "windows-x64",
+      "commit": "9a0a77385f994fa7eb4a83ba9bd4ee4fd52a637b",
+      "dirty": false,
+      "host": {
+        "system": "Windows",
+        "release": "2022Server",
+        "macos_version": "",
+        "architecture": "AMD64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 8,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35229.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 49,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 49,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "gpu_probe": {
+        "schema": 1,
+        "scope": "P0 inventory and transfer only; no shaders or presentation",
+        "status": "unavailable_or_failed",
+        "reason": "vulkan_library_unavailable",
+        "partial_inventory": ""
+      },
+      "numeric": {
+        "translation_bits": [
+          1040522936,
+          2147483648,
+          0
+        ],
+        "profile": "separate-float32"
+      },
+      "public_files": {
+        "generated.pmd": {
+          "bytes": 2131,
+          "sha256": "5451aa7b80fdf1fe3340f5f8908cb6fbd714e0ab73f06a0d87838f99f2519a01"
+        },
+        "generated.pmx": {
+          "bytes": 484,
+          "sha256": "b43f6f0f55e567234280c0167bc08e2157480f706be1afe2f4d191a7ee007ada"
+        },
+        "generated.vmd": {
+          "bytes": 208,
+          "sha256": "fe101b7c60467f53a7d5687facb3176fee4604174edfd7c9cc07b5733e1a11f9"
+        },
+        "generated.vpd": {
+          "bytes": 204,
+          "sha256": "a062921fb166a3aef6d498871cf70f4c039f1b654b21fbb3e43bd4d151303aaf"
+        }
+      }
+    },
+    {
+      "id": "windows-x86",
+      "commit": "9a0a77385f994fa7eb4a83ba9bd4ee4fd52a637b",
+      "dirty": false,
+      "host": {
+        "system": "Windows",
+        "release": "2022Server",
+        "macos_version": "",
+        "architecture": "AMD64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 4,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35229.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 49,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 49,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "gpu_probe": {
+        "schema": 1,
+        "scope": "P0 inventory and transfer only; no shaders or presentation",
+        "status": "unavailable_or_failed",
+        "reason": "vulkan_library_unavailable",
+        "partial_inventory": ""
+      },
+      "numeric": {
+        "translation_bits": [
+          1040522937,
+          2147483648,
+          0
+        ],
+        "profile": "vc9-x87"
+      },
+      "public_files": {
+        "generated.pmd": {
+          "bytes": 2131,
+          "sha256": "5451aa7b80fdf1fe3340f5f8908cb6fbd714e0ab73f06a0d87838f99f2519a01"
+        },
+        "generated.pmx": {
+          "bytes": 484,
+          "sha256": "b43f6f0f55e567234280c0167bc08e2157480f706be1afe2f4d191a7ee007ada"
+        },
+        "generated.vmd": {
+          "bytes": 208,
+          "sha256": "fe101b7c60467f53a7d5687facb3176fee4604174edfd7c9cc07b5733e1a11f9"
+        },
+        "generated.vpd": {
+          "bytes": 204,
+          "sha256": "a062921fb166a3aef6d498871cf70f4c039f1b654b21fbb3e43bd4d151303aaf"
+        }
+      }
+    },
+    {
+      "id": "linux",
+      "commit": "9a0a77385f994fa7eb4a83ba9bd4ee4fd52a637b",
+      "dirty": false,
+      "host": {
+        "system": "Linux",
+        "release": "6.8.0-1070-azure",
+        "macos_version": "",
+        "architecture": "x86_64",
+        "python": "3.12.15"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Linux",
+        "processor": "x86_64",
+        "pointer_bytes": 8,
+        "compiler": "GNU",
+        "compiler_version": "11.4.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 48,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 48,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "gpu_probe": {
+        "schema": 1,
+        "scope": "P0 inventory and transfer only; no shaders or presentation",
+        "status": "passed",
+        "reason": "",
+        "loader_version": "1.3.204",
+        "portability_enumeration": false,
+        "devices": [
+          {
+            "name": "llvmpipe (LLVM 15.0.7, 256 bits)",
+            "api": "1.3.255",
+            "driver": "llvmpipe",
+            "driver_info": "Mesa 23.2.1-1ubuntu3.1~22.04.4 (LLVM 15.0.7)",
+            "software": true,
+            "rhi13_feature_requirements": true,
+            "dynamic_rendering": true,
+            "synchronization2": true,
+            "shader_demote": true,
+            "timeline_semaphore": true,
+            "signed_zero_inf_nan_float32": true,
+            "anisotropy": true,
+            "max_color_attachments": 8,
+            "max_sampled_images": 1000000,
+            "max_samplers": 1000000,
+            "formats": [
+              {
+                "format": "rgba8",
+                "render": true,
+                "sample": true,
+                "linear_filter": true,
+                "blend": true,
+                "transfer_src": true,
+                "transfer_dst": true
+              },
+              {
+                "format": "rgba16f",
+                "render": true,
+                "sample": true,
+                "linear_filter": true,
+                "blend": true,
+                "transfer_src": true,
+                "transfer_dst": true
+              }
+            ],
+            "raw_clear_readback": true
+          }
+        ]
+      },
+      "numeric": {
+        "translation_bits": [
+          1040522936,
+          2147483648,
+          0
+        ],
+        "profile": "separate-float32"
+      },
+      "public_files": {
+        "generated.pmd": {
+          "bytes": 2131,
+          "sha256": "5451aa7b80fdf1fe3340f5f8908cb6fbd714e0ab73f06a0d87838f99f2519a01"
+        },
+        "generated.pmx": {
+          "bytes": 484,
+          "sha256": "b43f6f0f55e567234280c0167bc08e2157480f706be1afe2f4d191a7ee007ada"
+        },
+        "generated.vmd": {
+          "bytes": 208,
+          "sha256": "fe101b7c60467f53a7d5687facb3176fee4604174edfd7c9cc07b5733e1a11f9"
+        },
+        "generated.vpd": {
+          "bytes": 204,
+          "sha256": "a062921fb166a3aef6d498871cf70f4c039f1b654b21fbb3e43bd4d151303aaf"
+        }
+      }
+    },
+    {
+      "id": "macos",
+      "commit": "9a0a77385f994fa7eb4a83ba9bd4ee4fd52a637b",
+      "dirty": false,
+      "host": {
+        "system": "Darwin",
+        "release": "24.6.0",
+        "macos_version": "15.8.2",
+        "architecture": "arm64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Darwin",
+        "processor": "arm64",
+        "pointer_bytes": 8,
+        "compiler": "AppleClang",
+        "compiler_version": "17.0.0.17000013",
+        "cmake_version": "4.4.4",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 48,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 48,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "gpu_probe": {
+        "schema": 1,
+        "scope": "P0 inventory and transfer only; no shaders or presentation",
+        "status": "passed",
+        "reason": "",
+        "loader_version": "1.4.357",
+        "portability_enumeration": false,
+        "devices": [
+          {
+            "name": "Apple Paravirtual device",
+            "api": "1.3.357",
+            "driver": "MoltenVK",
+            "driver_info": "1.4.2",
+            "software": false,
+            "rhi13_feature_requirements": true,
+            "dynamic_rendering": true,
+            "synchronization2": true,
+            "shader_demote": true,
+            "timeline_semaphore": true,
+            "signed_zero_inf_nan_float32": true,
+            "anisotropy": true,
+            "max_color_attachments": 8,
+            "max_sampled_images": 256,
+            "max_samplers": 16,
+            "formats": [
+              {
+                "format": "rgba8",
+                "render": true,
+                "sample": true,
+                "linear_filter": true,
+                "blend": true,
+                "transfer_src": true,
+                "transfer_dst": true
+              },
+              {
+                "format": "rgba16f",
+                "render": true,
+                "sample": true,
+                "linear_filter": true,
+                "blend": true,
+                "transfer_src": true,
+                "transfer_dst": true
+              }
+            ],
+            "raw_clear_readback": true
+          }
+        ]
+      },
+      "numeric": {
+        "translation_bits": [
+          1040522936,
+          2147483648,
+          0
+        ],
+        "profile": "separate-float32"
+      },
+      "public_files": {
+        "generated.pmd": {
+          "bytes": 2131,
+          "sha256": "5451aa7b80fdf1fe3340f5f8908cb6fbd714e0ab73f06a0d87838f99f2519a01"
+        },
+        "generated.pmx": {
+          "bytes": 484,
+          "sha256": "b43f6f0f55e567234280c0167bc08e2157480f706be1afe2f4d191a7ee007ada"
+        },
+        "generated.vmd": {
+          "bytes": 208,
+          "sha256": "fe101b7c60467f53a7d5687facb3176fee4604174edfd7c9cc07b5733e1a11f9"
+        },
+        "generated.vpd": {
+          "bytes": 204,
+          "sha256": "a062921fb166a3aef6d498871cf70f4c039f1b654b21fbb3e43bd4d151303aaf"
+        }
+      }
+    }
+  ],
+  "local_windows_gpu": {
+    "schema": 1,
+    "scope": "P0 inventory and transfer only; no shaders or presentation",
+    "status": "passed",
+    "reason": "",
+    "loader_version": "1.4.341",
+    "portability_enumeration": true,
+    "devices": [
+      {
+        "name": "NVIDIA TITAN Xp",
+        "api": "1.4.303",
+        "driver": "NVIDIA",
+        "driver_info": "576.88",
+        "software": false,
+        "rhi13_feature_requirements": true,
+        "dynamic_rendering": true,
+        "synchronization2": true,
+        "shader_demote": true,
+        "timeline_semaphore": true,
+        "signed_zero_inf_nan_float32": true,
+        "anisotropy": true,
+        "max_color_attachments": 8,
+        "max_sampled_images": 1048576,
+        "max_samplers": 1048576,
+        "formats": [
+          {
+            "format": "rgba8",
+            "render": true,
+            "sample": true,
+            "linear_filter": true,
+            "blend": true,
+            "transfer_src": true,
+            "transfer_dst": true
+          },
+          {
+            "format": "rgba16f",
+            "render": true,
+            "sample": true,
+            "linear_filter": true,
+            "blend": true,
+            "transfer_src": true,
+            "transfer_dst": true
+          }
+        ],
+        "raw_clear_readback": true
+      }
+    ]
+  },
+  "limitations": [
+    "Mac uses Apple Paravirtual GPU, not a physical consumer Mac certification",
+    "Linux probe uses llvmpipe software Vulkan",
+    "Windows hosted CI has no Vulkan runtime; local x64 device probe passed",
+    "Private PMM sample omitted; the external fixture test is the only allowed skip",
+    "No shader, full RHI frame, MME or window presentation certification in P0"
+  ],
+  "bullet_upstream": {
+    "version": "2.75",
+    "archive": "bullet-2.75.zip",
+    "archive_sha256": "fe2e369593b034c00a1245676edd8417a58c8030a94e061220f0c228ca61fe8f",
+    "normalization": "CRLF to LF",
+    "source_file_count": 382
+  },
+  "local_windows_application": {
+    "configuration": "Release",
+    "conan_recipe_revision": "24ec7d7ba765cd130d766874741d1cef",
+    "x64": {
+      "build": "passed",
+      "focused_tests_passed": 4
+    },
+    "x86": {
+      "build": "passed",
+      "focused_tests_passed": 5,
+      "includes": "mmd_math"
+    }
+  }
+}
