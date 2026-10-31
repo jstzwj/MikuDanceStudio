@@ -587,6 +587,8 @@ if(BUILD_TESTING)
     set_tests_properties(scene_roundtrip PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     add_executable(physics_trajectory_test tests/physics_trajectory_test.cpp)
     target_link_libraries(physics_trajectory_test PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
+    add_executable(physics_tolerance_test tests/physics_tolerance_test.cpp)
+    add_test(NAME physics_tolerance COMMAND physics_tolerance_test)
     add_test(NAME physics_trajectory COMMAND physics_trajectory_test --reference-prefix 0)
     set_tests_properties(physics_trajectory PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -595,9 +597,26 @@ if(BUILD_TESTING)
         if(MIKUDANCESTUDIO_STRICT_PHYSICS_PARITY)
             add_test(NAME bullet_kernel_parity COMMAND physics_trajectory_test --kernels 1)
             set_tests_properties(bullet_kernel_parity PROPERTIES TIMEOUT 30 LABELS strict_physics_parity)
-            add_test(NAME physics_trajectory_reference_digest COMMAND physics_trajectory_test)
+            add_test(NAME physics_trajectory_reference_digest COMMAND physics_trajectory_test --reference-prefix 1)
             set_tests_properties(physics_trajectory_reference_digest PROPERTIES
                 SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS strict_physics_parity)
+        endif()
+        if(MDS_ORIGINAL_MMD_EXE)
+            foreach(dispatch native amd)
+                add_test(NAME physics_reference_${dispatch} COMMAND physics_trajectory_test
+                    --original ${MDS_ORIGINAL_MMD_EXE} --d3dx-dispatch ${dispatch}
+                    --report ${CMAKE_CURRENT_BINARY_DIR}/Testing/physics-reference-${dispatch}.json)
+                set_tests_properties(physics_reference_${dispatch} PROPERTIES
+                    SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS physics_reference)
+                if(MDS_NATIVE_PMX_FILE)
+                    add_test(NAME physics_reference_pmx_${dispatch} COMMAND physics_trajectory_test
+                        --original ${MDS_ORIGINAL_MMD_EXE} --model ${MDS_NATIVE_PMX_FILE}
+                        --d3dx-dispatch ${dispatch}
+                        --report ${CMAKE_CURRENT_BINARY_DIR}/Testing/physics-reference-pmx-${dispatch}.json)
+                    set_tests_properties(physics_reference_pmx_${dispatch} PROPERTIES
+                        SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS physics_reference)
+                endif()
+            endforeach()
         endif()
     endif()
     add_executable(pmd_save_test tests/pmd_save_test.cpp)
@@ -898,7 +917,7 @@ if(BUILD_TESTING)
         COMMAND embedded_mme_resources_test $<TARGET_FILE:MikuDanceStudio>)
     # These tests do not create windows, devices or modal dialogs. Safe while
     # the interactive desktop is in use: ctest -L cpu_no_windows.
-    set_tests_properties(bullet_allocation bullet_upstream_sources bullet_simulation
+    set_tests_properties(bullet_allocation bullet_upstream_sources bullet_simulation physics_tolerance
         mme_technique_validation scene_comparison_inputs
         gui_export_comparison mme_effect_mapping mme_emm_save mme_initialization_test
         mme_host_object_cache embedded_mme_resources PROPERTIES LABELS cpu_no_windows)

@@ -14,6 +14,8 @@ on:
       - 'tests/mmd_math*'
       - 'tests/bullet_allocation_test.cpp'
       - 'tests/bullet_simulation_test.cpp'
+      - 'tests/physics_tolerance*'
+      - 'tests/physics_trajectory_test.cpp'
   push:
     paths:
       - '.github/workflows/bullet.yml'
@@ -27,6 +29,8 @@ on:
       - 'tests/mmd_math*'
       - 'tests/bullet_allocation_test.cpp'
       - 'tests/bullet_simulation_test.cpp'
+      - 'tests/physics_tolerance*'
+      - 'tests/physics_trajectory_test.cpp'
   workflow_dispatch:
 
 permissions:
@@ -69,13 +73,13 @@ jobs:
           cmake -S . -B out/bullet/build -G "Visual Studio 17 2022" -A $platform -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/out/bullet/build/generators/conan_toolchain.cmake" -DBUILD_TESTING=ON -DMIKUDANCESTUDIO_DIAG=OFF
       - name: Build regression tests
         run: |
-          $targets = @('bullet_allocation_test', 'bullet_simulation_test')
+          $targets = @('bullet_allocation_test', 'bullet_simulation_test', 'physics_tolerance_test')
           if ('${{ matrix.arch }}' -eq 'x86') { $targets += 'mmd_math_test' }
           cmake --build out/bullet/build --config ${{ matrix.configuration }} --target $targets --parallel 4
       - name: Check upstream sources, simulation, allocation and application math
         run: >-
           ctest --test-dir out/bullet/build -C ${{ matrix.configuration }}
-          -R "^(bullet_allocation|bullet_simulation|bullet_upstream_sources|mmd_math)$" --output-on-failure
+          -R "^(bullet_allocation|bullet_simulation|bullet_upstream_sources|mmd_math|physics_tolerance)$" --output-on-failure
           --timeout 90 --no-tests=error
           --output-junit "$env:GITHUB_WORKSPACE/out/bullet/build/bullet-tests.xml"
       - uses: actions/upload-artifact@v4

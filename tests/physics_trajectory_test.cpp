@@ -1,5 +1,6 @@
 #include "scene_fixture.hpp"
 #include "original_physics_module.hpp"
+#include "physics_tolerance.hpp"
 #include "mikudancestudio/menu_commands.h"
 #include "mikudancestudio/math_runtime.hpp"
 #include "btBulletDynamicsCommon.h"
@@ -36,9 +37,14 @@ btVector3 FixtureGravity() {
 }
 
 struct Sample {
+    struct ObservedPose {
+        std::string field;
+        physics_test::Pose pose;
+    };
     std::vector<float> values;
     std::vector<int> flags;
     std::vector<std::pair<std::size_t, std::string>> sections;
+    std::vector<ObservedPose> poses;
     void Section(std::string name) { sections.emplace_back(values.size(), std::move(name)); }
     std::string Field(std::size_t index) const {
         for (auto it = sections.rbegin(); it != sections.rend(); ++it)
@@ -54,6 +60,23 @@ struct Sample {
         for (int i = 0; i < 3; ++i)
             Vector(t.getBasis()[i]);
         Vector(t.getOrigin());
+    }
+    void ObserveRigidPose(std::string field, const btTransform& transform) {
+        std::array<double, 9> rotation;
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                rotation[row * 3 + column] = transform.getBasis()[row][column];
+        const auto& p = transform.getOrigin();
+        poses.push_back(
+            {std::move(field), physics_test::FromMatrix(rotation, {p.x(), p.y(), p.z()})});
+    }
+    void ObserveBonePose(std::string field, const float* matrix) {
+        std::array<double, 9> rotation;
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                rotation[row * 3 + column] = matrix[column * 4 + row]; // D3DX row vectors.
+        poses.push_back({std::move(field),
+                         physics_test::FromMatrix(rotation, {matrix[12], matrix[13], matrix[14]})});
     }
 };
 std::uint64_t TrajectoryDigest(const std::vector<Sample>& trajectory, std::size_t count) {
@@ -222,6 +245,7 @@ Sample Capture(mdl::ModelRecord& model, bool original = false) {
         sample.Section("rigid[" + std::to_string(i) + "]");
         const auto& rigid = model.rigidTable[i];
         auto& body = *rigid.body;
+        sample.ObserveRigidPose("rigid[" + std::to_string(i) + "]", body.getWorldTransform());
         sample.Transform(body.getWorldTransform());
         sample.Transform(body.getInterpolationWorldTransform());
         sample.Vector(body.getLinearVelocity());
@@ -242,6 +266,7 @@ Sample Capture(mdl::ModelRecord& model, bool original = false) {
     for (unsigned i = 0; i < model.boneCount; ++i) {
         sample.Section("bone[" + std::to_string(i) + "]");
         const auto& bone = model.boneTable[i];
+        sample.ObserveBonePose("bone[" + std::to_string(i) + "]", bone.matInit);
         sample.Floats(bone.matInit, 16);
         sample.Floats(bone.matLocal, 16);
         sample.Floats(bone.ikBackup, 7);
@@ -351,13 +376,28 @@ struct TrajectoryComparison {
         int frame = -1;
         std::string field;
     };
+    struct PoseMetric {
+        double maxPosition = 0, maxRotation = 0, positionSquared = 0, rotationSquared = 0;
+        std::uint64_t samples = 0, outside = 0;
+        int positionFrame = -1, rotationFrame = -1;
+        std::string positionField, rotationField;
+    };
+    struct PoseDivergence {
+        int frame;
+        std::string field;
+        physics_test::PoseDifference difference;
+    };
     std::optional<Difference> first, firstOutsideTolerance;
     std::map<std::string, Metric> metrics;
+    std::optional<PoseDivergence> firstPoseOutsideTolerance;
+    std::map<std::string, PoseMetric> poseMetrics;
+    physics_test::PoseTolerance tolerance;
     int flagDifferences = 0;
-    static constexpr float tolerance = .00002f;
+    static constexpr float rawTolerance = .00002f; // Historical diagnostic, not pose acceptance.
     void Add(const Sample& port, const Sample& reference, int frame) {
         Check(port.values.size() == reference.values.size() &&
-                  port.flags.size() == reference.flags.size(),
+                  port.flags.size() == reference.flags.size() &&
+                  port.poses.size() == reference.poses.size(),
               "reference trajectory sample shape");
         for (std::size_t i = 0; i < port.flags.size(); ++i)
             if (port.flags[i] != reference.flags[i])
@@ -370,7 +410,7 @@ struct TrajectoryComparison {
             const auto field = port.Field(i);
             if (!first)
                 first = Difference{frame, field, a, b};
-            if (delta > tolerance && !firstOutsideTolerance)
+            if (delta > rawTolerance && !firstOutsideTolerance)
                 firstOutsideTolerance = Difference{frame, field, a, b};
             std::string category = field.substr(0, field.find('['));
             if (category == "rigid") {
@@ -401,14 +441,41 @@ struct TrajectoryComparison {
             const auto x = ordered(a), y = ordered(b);
             metric.maxUlp = (std::max)(metric.maxUlp, std::uint64_t(x > y ? x - y : y - x));
         }
+        for (std::size_t i = 0; i < port.poses.size(); ++i) {
+            const auto& pose = port.poses[i];
+            Check(pose.field == reference.poses[i].field, "reference pose identity differs");
+            const auto difference = physics_test::Difference(pose.pose, reference.poses[i].pose);
+            Check(difference.finite, "reference pose contains an invalid position or rotation");
+            const bool within = difference.Within(tolerance);
+            if (!within && !firstPoseOutsideTolerance)
+                firstPoseOutsideTolerance = PoseDivergence{frame, pose.field, difference};
+            auto& metric = poseMetrics[pose.field.substr(0, pose.field.find('['))];
+            ++metric.samples;
+            metric.outside += !within;
+            metric.positionSquared += difference.position * difference.position;
+            metric.rotationSquared += difference.rotationDegrees * difference.rotationDegrees;
+            if (difference.position > metric.maxPosition || metric.positionField.empty()) {
+                metric.maxPosition = difference.position;
+                metric.positionFrame = frame;
+                metric.positionField = pose.field;
+            }
+            if (difference.rotationDegrees > metric.maxRotation || metric.rotationField.empty()) {
+                metric.maxRotation = difference.rotationDegrees;
+                metric.rotationFrame = frame;
+                metric.rotationField = pose.field;
+            }
+        }
     }
-    bool Passed() const { return !firstOutsideTolerance && flagDifferences == 0; }
+    bool Passed() const { return !firstPoseOutsideTolerance && flagDifferences == 0; }
     void Report(const std::filesystem::path& path, int frames) const {
         std::ostringstream output;
-        output << std::setprecision(9) << "{\n  \"frames\": " << frames
-               << ",\n  \"oracle_math\": \"original_vc90\",\n  \"absolute_tolerance\": "
-               << tolerance << ",\n  \"within_tolerance\": " << (Passed() ? "true" : "false")
-               << ",\n  \"flag_differences\": " << flagDifferences;
+        output
+            << std::setprecision(9) << "{\n  \"frames\": " << frames
+            << ",\n  \"oracle_math\": \"original_vc90\",\n  \"pose_tolerance\": {\"position_units\":"
+            << tolerance.position << ",\"rotation_degrees\":" << tolerance.rotationDegrees << "}"
+            << ",\n  \"within_tolerance\": " << (Passed() ? "true" : "false")
+            << ",\n  \"raw_absolute_tolerance\": " << rawTolerance
+            << ",\n  \"flag_differences\": " << flagDifferences;
         const auto writeFirst = [&](const char* name, const auto& difference) {
             output << ",\n  \"" << name << "\": ";
             if (!difference) {
@@ -420,7 +487,33 @@ struct TrajectoryComparison {
                    << ",\"original\":" << difference->reference << "}";
         };
         writeFirst("first_difference", first);
-        writeFirst("first_outside_tolerance", firstOutsideTolerance);
+        writeFirst("first_outside_raw_tolerance", firstOutsideTolerance);
+        output << ",\n  \"first_pose_outside_tolerance\": ";
+        if (firstPoseOutsideTolerance) {
+            const auto& firstPose = *firstPoseOutsideTolerance;
+            output << "{\"frame\":" << firstPose.frame << ",\"field\":\"" << firstPose.field
+                   << "\",\"position_distance\":" << firstPose.difference.position
+                   << ",\"rotation_degrees\":" << firstPose.difference.rotationDegrees << "}";
+        } else
+            output << "null";
+        output << ",\n  \"pose_metrics\": {";
+        bool poseComma = false;
+        for (const auto& entry : poseMetrics) {
+            if (poseComma)
+                output << ",";
+            poseComma = true;
+            const auto& m = entry.second;
+            output << "\n    \"" << entry.first << "\": {\"samples\":" << m.samples
+                   << ",\"outside_tolerance\":" << m.outside
+                   << ",\"max_position_distance\":" << m.maxPosition
+                   << ",\"rms_position_distance\":" << std::sqrt(m.positionSquared / m.samples)
+                   << ",\"position_frame\":" << m.positionFrame << ",\"position_field\":\""
+                   << m.positionField << "\",\"max_rotation_degrees\":" << m.maxRotation
+                   << ",\"rms_rotation_degrees\":" << std::sqrt(m.rotationSquared / m.samples)
+                   << ",\"rotation_frame\":" << m.rotationFrame << ",\"rotation_field\":\""
+                   << m.rotationField << "\"}";
+        }
+        output << "\n  }";
         output << ",\n  \"metrics\": {";
         bool comma = false;
         for (const auto& entry : metrics) {
@@ -958,7 +1051,8 @@ struct ReferenceScene {
 std::vector<Sample> Run(const std::filesystem::path& externalModel,
                         const std::filesystem::path& original, int frames, bool stages,
                         const std::filesystem::path& report = {}, bool* matched = nullptr,
-                        bool referencePrefix = true) {
+                        bool referencePrefix = false,
+                        const physics_test::PoseTolerance& tolerance = {}) {
     Fixture f(true);
     Check(f.ready, "D3D9 fixture unavailable");
     const auto modelPath = externalModel.empty() ? f.directory / L"physics.pmx" : externalModel;
@@ -981,6 +1075,7 @@ std::vector<Sample> Run(const std::filesystem::path& externalModel,
     SeedMotion(model);
     std::vector<Sample> trajectory;
     TrajectoryComparison comparison;
+    comparison.tolerance = tolerance;
 #if defined(_M_X64)
     std::unique_ptr<OriginalPhysicsModule> binary;
     std::unique_ptr<ReferenceScene> reference;
@@ -988,7 +1083,10 @@ std::vector<Sample> Run(const std::filesystem::path& externalModel,
         binary = std::make_unique<OriginalPhysicsModule>(original);
         reference = std::make_unique<ReferenceScene>(*binary, f, modelPath);
         SeedMotion(*reference->model);
-        Compare(Capture(model), Capture(*reference->model, true), -1, "load", stages ? 0 : .00002f);
+        if (stages)
+            Compare(Capture(model), Capture(*reference->model, true), -1, "load", 0);
+        else
+            comparison.Add(Capture(model), Capture(*reference->model, true), -1);
     }
 #else
     Check(original.empty(), "the x64 reference must be run by the x64 fixture");
@@ -1250,9 +1348,16 @@ int main(int argc, char** argv) {
     SetWindowsHookExA(WH_CBT, CloseUnexpectedDialog, nullptr, GetCurrentThreadId());
     std::filesystem::path model, original, report;
     int frames = 600;
-    bool stages = false, kernels = false, referencePrefix = true;
+    bool stages = false, kernels = false, referencePrefix = false;
+    physics_test::PoseTolerance tolerance;
     std::string dispatch = "native";
     try {
+        const auto number = [](const char* text) {
+            std::size_t consumed = 0;
+            const double value = std::stod(text, &consumed);
+            Check(text[consumed] == '\0', "invalid physics tolerance value");
+            return value;
+        };
         for (int i = 1; i < argc; i += 2) {
             Check(i + 1 < argc, "missing option value");
             if (std::strcmp(argv[i], "--model") == 0)
@@ -1269,6 +1374,10 @@ int main(int argc, char** argv) {
                 stages = std::stoi(argv[i + 1]) != 0;
             else if (std::strcmp(argv[i], "--reference-prefix") == 0)
                 referencePrefix = std::stoi(argv[i + 1]) != 0;
+            else if (std::strcmp(argv[i], "--position-tolerance") == 0)
+                tolerance.position = number(argv[i + 1]);
+            else if (std::strcmp(argv[i], "--rotation-tolerance-degrees") == 0)
+                tolerance.rotationDegrees = number(argv[i + 1]);
             else if (std::strcmp(argv[i], "--d3dx-dispatch") == 0)
                 dispatch = argv[i + 1];
             else
@@ -1287,11 +1396,14 @@ int main(int argc, char** argv) {
         Check(!kernels, "collision oracle digest is x64 only");
 #endif
         Check(frames > 0, "frame count must be positive");
+        Check(tolerance.Valid(),
+              "position tolerance must be finite and nonnegative; rotation must be 0..180 degrees");
         Check(!stages || !original.empty(), "stage comparison requires --original");
         Check(report.empty() || !original.empty(), "comparison report requires --original");
         bool matched = true;
-        const auto first = Run(model, original, frames, stages, report, &matched, referencePrefix);
-        const auto second = Run(model, {}, frames, false, {}, nullptr, referencePrefix);
+        const auto first =
+            Run(model, original, frames, stages, report, &matched, referencePrefix, tolerance);
+        const auto second = Run(model, {}, frames, false, {}, nullptr, referencePrefix, tolerance);
         for (int i = 0; i < frames; ++i)
             Compare(first[i], second[i], i, "fresh reload", 0);
         CheckLifecycle();
