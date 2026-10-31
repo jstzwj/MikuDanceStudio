@@ -40,7 +40,7 @@ bool Equal(const runtime::SceneRuntime& a, const runtime::SceneRuntime& b) {
     return true;
 }
 int main(int argc, char** argv) {
-    CHECK(argc == 2);
+    CHECK(argc == 2 || (argc == 3 && std::string(argv[2]) == "--session-only"));
     std::ifstream stream(std::filesystem::u8path(argv[1]), std::ios::binary);
     format::ModelDocument document;
     CHECK(stream && format::ReadModelDocument(Read, &stream, document));
@@ -60,6 +60,12 @@ int main(int argc, char** argv) {
         encoded = *target;
     }
     const auto bone = std::size_t(target - names.begin());
+    if (argc == 3) {
+        CHECK(cpu_scene_fixture::RoundTrip(document, *a.Resource(0), bone, reason));
+        std::cout
+            << "real model: generated PMM animation, seek, playback, save/reload and reset passed\n";
+        return 0;
+    }
     format::VmdDocument motion;
     for (unsigned frame : {0u, 30u, 60u}) {
         format::VmdBoneKey key;

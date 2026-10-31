@@ -239,8 +239,11 @@ inline bool RoundTrip(const mikudancestudio::format::ModelDocument& model,
     const auto run = [&](runtime::SceneRuntime& scene) {
         for (unsigned frame : {30u, 10u, 0u})
             if (!scene.Seek(frame, reason) ||
-                (frame == 30 && scene.Snapshot(0)->bones[animatedBone].translation[1] != 2.f))
+                (frame == 30 && scene.Snapshot(0)->bones[animatedBone].translation[1] != 2.f)) {
+                if (reason.empty())
+                    reason = "carrier-animated-bone-seek-mismatch";
                 return false;
+            }
         if (!scene.StartPlayback(reason))
             return false;
         for (unsigned n = 1; n <= 30; ++n)
@@ -252,24 +255,40 @@ inline bool RoundTrip(const mikudancestudio::format::ModelDocument& model,
     if (!run(before))
         return false;
     std::ostringstream saved(std::ios::binary);
-    if (!before.Session()->Save(write, &saved))
+    if (!before.Session()->Save(write, &saved)) {
+        reason = "carrier-save-failed";
         return false;
+    }
     format::SceneSession sessionAfter;
     std::istringstream reloaded(saved.str(), std::ios::binary);
     runtime::SceneRuntime after;
     if (!format::SceneSession::Load(read, &reloaded, resolve,
-                                    const_cast<format::ModelDocument*>(&model), sessionAfter) ||
+                                    const_cast<format::ModelDocument*>(&model), sessionAfter)) {
+        reason = "carrier-reload-session-read-failed";
+        return false;
+    }
+    if (sessionAfter.Pose().frame != before.Session()->Pose().frame) {
+        reason = "carrier-reload-current-frame-mismatch";
+        return false;
+    }
+    // PMM saves the current frame and tracks, not the transient Bullet world.
+    // Recreate both worlds at the same initial document frame before replay.
+    if (!sessionAfter.Seek(session.Pose().frame) ||
         !after.Load(sessionAfter, {{0, model}}, reason) || !run(after))
         return false;
     const auto* a = before.Snapshot(0);
     const auto* b = after.Snapshot(0);
-    if (before.Bodies(0) != after.Bodies(0) || a->vertices.size() != b->vertices.size())
+    if (before.Bodies(0) != after.Bodies(0) || a->vertices.size() != b->vertices.size()) {
+        reason = "carrier-reload-body-or-vertex-count-mismatch";
         return false;
+    }
     for (std::size_t n = 0; n < a->vertices.size(); ++n)
         if (a->vertices[n].position != b->vertices[n].position ||
             a->vertices[n].normal != b->vertices[n].normal ||
-            a->vertices[n].uv != b->vertices[n].uv)
+            a->vertices[n].uv != b->vertices[n].uv) {
+            reason = "carrier-reload-vertex-mismatch:" + std::to_string(n);
             return false;
+        }
     return before.Reset(reason) && after.Reset(reason);
 }
 } // namespace cpu_scene_fixture
