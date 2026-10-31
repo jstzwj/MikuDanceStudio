@@ -466,5 +466,33 @@
     "IK, SDEF, physics, append/external parents, other morph kinds and global tracks explicitly rejected",
     "No portable editor, rendering, MME or presentation certification",
     "Only the existing external private PMM sample test was skipped"
-  ]
+  ],
+  "revalidation": {
+    "commit": "e23dc9cdfdfeb97d5c12c10d6155402cec2fcd2f",
+    "foundation_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41220885182",
+    "status": "success",
+    "jobs": [
+      {
+        "name": "foundation (windows-2022, Win32, Visual Studio 17 2022)",
+        "conclusion": "success"
+      },
+      {
+        "name": "foundation (windows-2022, x64, Visual Studio 17 2022)",
+        "conclusion": "success"
+      },
+      {
+        "name": "foundation (macos-15, arm64, Unix Makefiles)",
+        "conclusion": "success"
+      },
+      {
+        "name": "foundation (ubuntu-22.04, x64, Unix Makefiles)",
+        "conclusion": "success"
+      }
+    ],
+    "regression": "singular relative pivots; two-sided float inverse residual <=2e-5; failed inverse retains output including aliases",
+    "windows_local_math_and_d3dx": [
+      "x64 Release passed",
+      "x86 Release passed"
+    ]
+  }
 }

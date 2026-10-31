@@ -1,0 +1,773 @@
+{
+  "schema": 1,
+  "stage": "P2",
+  "status": "complete",
+  "recorded_date": "2026-11-01",
+  "source_commit": "fe150dc8638cc44d52dcf5d0d2980ebf45db147c",
+  "implementation_commits": [
+    "8d77ee1a981b9648d4ecaeb2cc53b60b5f8cd97a",
+    "5081e20400131455ae454cd4e302f7fa49f1c077",
+    "24b572893f71fd60e0e9990b9dd8b2d0db69e7f1",
+    "6d4a3cbbd54f3c613ce69f6de17926e6d08e1cf2",
+    "fe150dc8638cc44d52dcf5d0d2980ebf45db147c"
+  ],
+  "foundation_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41230055318",
+  "jobs": [
+    {
+      "name": "foundation (ubuntu-22.04, x64, Unix Makefiles)",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41230055318/job/124622208164"
+    },
+    {
+      "name": "foundation (windows-2022, x64, Visual Studio 17 2022)",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41230055318/job/124622208343"
+    },
+    {
+      "name": "foundation (windows-2022, Win32, Visual Studio 17 2022)",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41230055318/job/124622208379"
+    },
+    {
+      "name": "foundation (macos-15, arm64, Unix Makefiles)",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41230055318/job/124622208392"
+    }
+  ],
+  "numeric_contract": "2e-5 * max(1, abs(reference)); exact independent-process repeats",
+  "frozen_baselines": [
+    {
+      "path": "tests/data/p1_model_v1.json",
+      "canonical_git_blob_sha256": "c6e924f24a56dae8547f57c2e46ba21c5e808862c71581c6643b50d051a30607",
+      "unchanged_since": "d2f7490",
+      "note": "Checkout CRLF/LF may change file byte hashes; Git blob unchanged."
+    },
+    {
+      "path": "tests/data/p2_scene_v1.json",
+      "canonical_git_blob_sha256": "a79ddc51d3444ecb3b2462862afd8780361eaae51ee23b7099c292b711ca104c",
+      "unchanged_since": "5081e20",
+      "note": "Checkout CRLF/LF may change file byte hashes; Git blob unchanged."
+    }
+  ],
+  "platforms": [
+    {
+      "id": "p0-macos-15-arm64",
+      "commit": "fe150dc8638cc44d52dcf5d0d2980ebf45db147c",
+      "dirty": false,
+      "host": {
+        "system": "Darwin",
+        "release": "24.6.0",
+        "macos_version": "15.8.2",
+        "architecture": "arm64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Darwin",
+        "processor": "arm64",
+        "pointer_bytes": 8,
+        "compiler": "AppleClang",
+        "compiler_version": "17.0.0.17000013",
+        "cmake_version": "4.4.4",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 60,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 60,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P2",
+          "supported": [
+            "pmd-runtime",
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "cp932-motion-name-decoding",
+            "vmd-model-and-ik-tracks",
+            "vpd-pose",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "sdef",
+            "vertex-morph",
+            "bone-group-uv-material-morph",
+            "append-or-fixed-axis-bones",
+            "scene-ik-physics",
+            "pmm-camera-light-shadow-gravity",
+            "external-parent",
+            "static-x-text-binary-mszip"
+          ],
+          "unsupported": [
+            "qdef",
+            "pmx-2.1",
+            "pmx-utf8",
+            "animated-or-framed-x",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "scene_runtime": {
+        "schema": 1,
+        "stage": "P2",
+        "status": "passed",
+        "cases": 31,
+        "strict_relative_tolerance": 2e-05,
+        "maximum_absolute_error": 5.6030000000095725e-05,
+        "reference_sha256": "a79ddc51d3444ecb3b2462862afd8780361eaae51ee23b7099c292b711ca104c",
+        "checks": [
+          "public PMD/PMX, IK, SDEF, physics modes 0..3, external parents, accessories",
+          "load, seek, playback, reset, PMM save/reload",
+          "independent-process exact repeats",
+          "CP932 references in Unicode directories"
+        ]
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "BULLET275::BULLET275",
+          "BulletCollision",
+          "BulletDynamics",
+          "LinearMath",
+          "mds_cpu_scene_cli",
+          "mds_cpu_simulation",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime",
+          "mikudancestudio_scene_runtime"
+        ],
+        "binary_dependencies": [
+          "\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)",
+          "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)"
+        ],
+        "vendor_platform_headers": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h",
+            "header": "windows.h",
+            "purpose": "conditional upstream profiling timer"
+          }
+        ],
+        "vendor_include_aliases": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp",
+            "include": "LinearMath/btQuickProf.h",
+            "actual": "LinearMath/btQuickprof.h",
+            "purpose": "upstream DBVT_ENABLE_BENCHMARK include spelling"
+          }
+        ]
+      },
+      "project_include_closure_files": 354,
+      "maximum_scaled_component_error": 1.6279850366031173e-05,
+      "audit_report_sha256": "2359b5f7fc083b731b1fa817e93ddce393dc728385f79dc4905592118ce4b702",
+      "raw_scene_snapshots_sha256": "955159b0e1e3716cc66472899152514536e6bcdc4993e2d81297467eccfdc75c"
+    },
+    {
+      "id": "p0-ubuntu-22.04-x64",
+      "commit": "fe150dc8638cc44d52dcf5d0d2980ebf45db147c",
+      "dirty": false,
+      "host": {
+        "system": "Linux",
+        "release": "6.8.0-1070-azure",
+        "macos_version": "",
+        "architecture": "x86_64",
+        "python": "3.12.15"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Linux",
+        "processor": "x86_64",
+        "pointer_bytes": 8,
+        "compiler": "GNU",
+        "compiler_version": "11.4.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 60,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 60,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P2",
+          "supported": [
+            "pmd-runtime",
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "cp932-motion-name-decoding",
+            "vmd-model-and-ik-tracks",
+            "vpd-pose",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "sdef",
+            "vertex-morph",
+            "bone-group-uv-material-morph",
+            "append-or-fixed-axis-bones",
+            "scene-ik-physics",
+            "pmm-camera-light-shadow-gravity",
+            "external-parent",
+            "static-x-text-binary-mszip"
+          ],
+          "unsupported": [
+            "qdef",
+            "pmx-2.1",
+            "pmx-utf8",
+            "animated-or-framed-x",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "scene_runtime": {
+        "schema": 1,
+        "stage": "P2",
+        "status": "passed",
+        "cases": 31,
+        "strict_relative_tolerance": 2e-05,
+        "maximum_absolute_error": 5.6030000000095725e-05,
+        "reference_sha256": "a79ddc51d3444ecb3b2462862afd8780361eaae51ee23b7099c292b711ca104c",
+        "checks": [
+          "public PMD/PMX, IK, SDEF, physics modes 0..3, external parents, accessories",
+          "load, seek, playback, reset, PMM save/reload",
+          "independent-process exact repeats",
+          "CP932 references in Unicode directories"
+        ]
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "BULLET275::BULLET275",
+          "BulletCollision",
+          "BulletDynamics",
+          "LinearMath",
+          "mds_cpu_scene_cli",
+          "mds_cpu_simulation",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime",
+          "mikudancestudio_scene_runtime"
+        ],
+        "binary_dependencies": [
+          "\tlinux-vdso.so.1 (0x00007ffe9b771000)",
+          "\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007f262c600000)",
+          "\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f262c519000)",
+          "\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f262c846000)",
+          "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f262c200000)",
+          "\t/lib64/ld-linux-x86-64.so.2 (0x00007f262c9df000)"
+        ],
+        "vendor_platform_headers": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h",
+            "header": "windows.h",
+            "purpose": "conditional upstream profiling timer"
+          }
+        ],
+        "vendor_include_aliases": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp",
+            "include": "LinearMath/btQuickProf.h",
+            "actual": "LinearMath/btQuickprof.h",
+            "purpose": "upstream DBVT_ENABLE_BENCHMARK include spelling"
+          }
+        ]
+      },
+      "project_include_closure_files": 354,
+      "maximum_scaled_component_error": 1.6279850366031173e-05,
+      "audit_report_sha256": "a1f15830b3af8a5aea035d4682828ac0c78fa394d207c8084fa074639a81112c",
+      "raw_scene_snapshots_sha256": "955159b0e1e3716cc66472899152514536e6bcdc4993e2d81297467eccfdc75c"
+    },
+    {
+      "id": "p0-windows-2022-Win32",
+      "commit": "fe150dc8638cc44d52dcf5d0d2980ebf45db147c",
+      "dirty": false,
+      "host": {
+        "system": "Windows",
+        "release": "2022Server",
+        "macos_version": "",
+        "architecture": "AMD64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 4,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35229.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 62,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 62,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P2",
+          "supported": [
+            "pmd-runtime",
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "cp932-motion-name-decoding",
+            "vmd-model-and-ik-tracks",
+            "vpd-pose",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "sdef",
+            "vertex-morph",
+            "bone-group-uv-material-morph",
+            "append-or-fixed-axis-bones",
+            "scene-ik-physics",
+            "pmm-camera-light-shadow-gravity",
+            "external-parent",
+            "static-x-text-binary-mszip"
+          ],
+          "unsupported": [
+            "qdef",
+            "pmx-2.1",
+            "pmx-utf8",
+            "animated-or-framed-x",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "scene_runtime": {
+        "schema": 1,
+        "stage": "P2",
+        "status": "passed",
+        "cases": 31,
+        "strict_relative_tolerance": 2e-05,
+        "maximum_absolute_error": 5.6030000000095725e-05,
+        "reference_sha256": "3c9cbde42b1f1f1e086d0b0548d8148ceb440528fd94d723992a912f1a118e2a",
+        "checks": [
+          "public PMD/PMX, IK, SDEF, physics modes 0..3, external parents, accessories",
+          "load, seek, playback, reset, PMM save/reload",
+          "independent-process exact repeats",
+          "CP932 references in Unicode directories"
+        ]
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "BULLET275::BULLET275",
+          "BulletCollision",
+          "BulletDynamics",
+          "LinearMath",
+          "mds_cpu_scene_cli",
+          "mds_cpu_simulation",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_math",
+          "mikudancestudio_model_runtime",
+          "mikudancestudio_scene_runtime"
+        ],
+        "binary_dependencies": [
+          "KERNEL32.dll",
+          "MSVCP140.dll",
+          "VCRUNTIME140.dll",
+          "api-ms-win-crt-runtime-l1-1-0.dll",
+          "api-ms-win-crt-heap-l1-1-0.dll",
+          "api-ms-win-crt-stdio-l1-1-0.dll",
+          "api-ms-win-crt-filesystem-l1-1-0.dll",
+          "api-ms-win-crt-math-l1-1-0.dll",
+          "api-ms-win-crt-string-l1-1-0.dll",
+          "api-ms-win-crt-locale-l1-1-0.dll"
+        ],
+        "vendor_platform_headers": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h",
+            "header": "windows.h",
+            "purpose": "conditional upstream profiling timer"
+          }
+        ],
+        "vendor_include_aliases": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp",
+            "include": "LinearMath/btQuickProf.h",
+            "actual": "LinearMath/btQuickprof.h",
+            "purpose": "upstream DBVT_ENABLE_BENCHMARK include spelling"
+          }
+        ]
+      },
+      "project_include_closure_files": 355,
+      "maximum_scaled_component_error": 1.6279850366031173e-05,
+      "audit_report_sha256": "fd636c4f3d87e81f2535b6275cad4b72fe2cdab03716b8595fe6d98c9ddf1302",
+      "raw_scene_snapshots_sha256": "9bd22af7f2b75e100929c314302505ad17597a02bd3f41c7b334a0d87f5fea41"
+    },
+    {
+      "id": "p0-windows-2022-x64",
+      "commit": "fe150dc8638cc44d52dcf5d0d2980ebf45db147c",
+      "dirty": false,
+      "host": {
+        "system": "Windows",
+        "release": "2022Server",
+        "macos_version": "",
+        "architecture": "AMD64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 8,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35229.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 62,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 62,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P2",
+          "supported": [
+            "pmd-runtime",
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "cp932-motion-name-decoding",
+            "vmd-model-and-ik-tracks",
+            "vpd-pose",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "sdef",
+            "vertex-morph",
+            "bone-group-uv-material-morph",
+            "append-or-fixed-axis-bones",
+            "scene-ik-physics",
+            "pmm-camera-light-shadow-gravity",
+            "external-parent",
+            "static-x-text-binary-mszip"
+          ],
+          "unsupported": [
+            "qdef",
+            "pmx-2.1",
+            "pmx-utf8",
+            "animated-or-framed-x",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "scene_runtime": {
+        "schema": 1,
+        "stage": "P2",
+        "status": "passed",
+        "cases": 31,
+        "strict_relative_tolerance": 2e-05,
+        "maximum_absolute_error": 5.6030000000095725e-05,
+        "reference_sha256": "3c9cbde42b1f1f1e086d0b0548d8148ceb440528fd94d723992a912f1a118e2a",
+        "checks": [
+          "public PMD/PMX, IK, SDEF, physics modes 0..3, external parents, accessories",
+          "load, seek, playback, reset, PMM save/reload",
+          "independent-process exact repeats",
+          "CP932 references in Unicode directories"
+        ]
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "BULLET275::BULLET275",
+          "BulletCollision",
+          "BulletDynamics",
+          "LinearMath",
+          "mds_cpu_scene_cli",
+          "mds_cpu_simulation",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime",
+          "mikudancestudio_scene_runtime"
+        ],
+        "binary_dependencies": [
+          "KERNEL32.dll",
+          "MSVCP140.dll",
+          "VCRUNTIME140.dll",
+          "VCRUNTIME140_1.dll",
+          "api-ms-win-crt-runtime-l1-1-0.dll",
+          "api-ms-win-crt-heap-l1-1-0.dll",
+          "api-ms-win-crt-stdio-l1-1-0.dll",
+          "api-ms-win-crt-filesystem-l1-1-0.dll",
+          "api-ms-win-crt-string-l1-1-0.dll",
+          "api-ms-win-crt-math-l1-1-0.dll",
+          "api-ms-win-crt-locale-l1-1-0.dll"
+        ],
+        "vendor_platform_headers": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h",
+            "header": "windows.h",
+            "purpose": "conditional upstream profiling timer"
+          }
+        ],
+        "vendor_include_aliases": [
+          {
+            "source": "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp",
+            "include": "LinearMath/btQuickProf.h",
+            "actual": "LinearMath/btQuickprof.h",
+            "purpose": "upstream DBVT_ENABLE_BENCHMARK include spelling"
+          }
+        ]
+      },
+      "project_include_closure_files": 354,
+      "maximum_scaled_component_error": 1.6279850366031173e-05,
+      "audit_report_sha256": "79ea609459599a0d7c9ab7fa6e9548ff7958567724d1d1ded7c3876ae541e100",
+      "raw_scene_snapshots_sha256": "f578037300ea15a336424927eb22b44efcc1b88586c37032784c7707a21d9a27"
+    }
+  ],
+  "windows_local": {
+    "x64": {
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 8,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35225.0",
+        "cmake_version": "4.0.3",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "editor_release_build": {
+        "status": "passed",
+        "path": "out/p2-final-native-build.log",
+        "sha256": "7675c6db84e23001db0169321f8c7d829b41c9109ef956b7c1e8db2b4de5e47c"
+      },
+      "native_cpu_regressions": {
+        "status": "passed",
+        "tests": 8,
+        "scene_checkpoints": 324,
+        "no_window_or_device": true,
+        "path": "out/p2-native-check-final.log",
+        "sha256": "252b9c21df1b7f1a1b97fd23cde59fde894b9489004f91e19c2999eb155641d7"
+      }
+    },
+    "x86": {
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 4,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35225.0",
+        "cmake_version": "4.0.3",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "editor_release_build": {
+        "status": "passed",
+        "path": "out/p2-final-native-x86-build.log",
+        "sha256": "c5240f1bfe0c24d8e48192c2827ddbc8ab7aca1d5ea34f20d5c6c42649a1e6e6"
+      },
+      "native_cpu_regressions": {
+        "status": "passed",
+        "tests": 7,
+        "scene_checkpoints": 324,
+        "no_window_or_device": true,
+        "path": "out/p2-native-check-x86-final.log",
+        "sha256": "14e73f102e7506d5dfe1ed7b8b5c528e35a8fc87380033cea9e374a5fdb196ea"
+      }
+    }
+  },
+  "limits": [
+    "Full editor and GPU presentation portability belong to P3/P4; P2 is the CPU runtime.",
+    "QDEF, PMX 2.1/UTF-8, framed/animated X, rendering and MME remain explicit unsupported capabilities.",
+    "PMM contains document/track/current-frame state, not transient Bullet simulation state.",
+    "PMM track-topology editing and relocated Save As path rewriting remain P4 work.",
+    "Real Sour Miku dynamic D3DX comparison is measurement only; no strict parity claim or relaxed threshold.",
+    "Real asset validation ran on Windows x64 only; CI on other systems uses redistributable generated models."
+  ],
+  "corrected_first_ci": {
+    "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41228239901",
+    "issues": [
+      "Pinned Bullet include spelling/case in audit",
+      "CPU-dependent reciprocal-root estimate moved one Win32 IK checkpoint beyond frozen tolerance"
+    ],
+    "resolution": "Audited exact vendor include alias; double reciprocal square root rounded to float. No numeric baseline rerecording or tolerance increase."
+  },
+  "real_model": {
+    "asset": "Sour Miku / miku.pmx",
+    "sha256": "4542728612d1055186dc500bfc897cf458ce5530a87bb2c84de1dfeffeb6e5fa",
+    "private_bytes_committed": false,
+    "platform": "Windows x64 Release",
+    "animated_frames_per_mode": 600,
+    "physics_modes": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "status": "passed",
+    "log": {
+      "path": "out/p2-sour-acceptance.log",
+      "sha256": "2b7571e3a1156e5ef1dd4465368faee4567c082c945156c4fb381ccced69a02d"
+    },
+    "output": [
+      "mode=0 600-frame animated finite/exact-repeat trajectory passed",
+      "mode=1 600-frame animated finite/exact-repeat trajectory passed",
+      "mode=2 600-frame animated finite/exact-repeat trajectory passed",
+      "mode=3 600-frame animated finite/exact-repeat trajectory passed",
+      "real model: generated PMM animation, seek, playback, save/reload and reset passed",
+      "real model: load, seeks, four physics modes, pause, reset, unload/reload and retained immutable resource passed"
+    ],
+    "native_kinematic_comparison": {
+      "status": "passed",
+      "relative_tolerance": 2e-05,
+      "path": "out/p2-final-sour-native.log",
+      "sha256": "2e63107bf5f5df877a5662c71e4cbe4d12b0a06f914af6870e66f444a44db399"
+    },
+    "native_dynamic_measurement": {
+      "status": "known-difference",
+      "frames": 30,
+      "maximum_vertex_component_error_mmd_units": 0.383911,
+      "maximum_normal_component_error": 0.152594,
+      "acceptance_threshold_changed": false
+    }
+  }
+}
