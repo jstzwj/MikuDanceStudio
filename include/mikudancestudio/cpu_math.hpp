@@ -18,6 +18,10 @@ bool Inverse(const Matrix&, Matrix& output);
 bool Normalize(const Vec3&, Vec3& output);
 bool Normalize(const Quaternion&, Quaternion& output);
 Matrix RotationQuaternion(const Quaternion&); // Like D3DX, does not normalize.
+Matrix RotationX(float);
+Matrix RotationY(float);
+Matrix RotationZ(float);
+Quaternion QuaternionFromMatrix(const Matrix&); // row-vector rotation convention
 // Hamilton product a*b; deliberately distinct from D3DX's reversed arguments.
 Quaternion HamiltonProduct(const Quaternion& a, const Quaternion& b);
 Vec3 TransformPoint(const Vec3&, const Matrix&); // affine, no perspective divide

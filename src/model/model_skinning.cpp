@@ -146,7 +146,8 @@ float EdgeComponent(float position, float normal, float amount) {
 float PmxEdgeComponent(float position, float normal, float frameScale, float vertexScale,
                        float materialSize) {
 #if defined(_M_IX86)
-    return mikudancestudio::mmd_math::pmxEdgeComponent(position, normal, frameScale, vertexScale, materialSize);
+    return mikudancestudio::mmd_math::pmxEdgeComponent(position, normal, frameScale, vertexScale,
+                                                       materialSize);
 #else
     float amount = frameScale * normal;
     amount *= vertexScale;
@@ -179,10 +180,11 @@ void SkinPmxBdef1(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, in
 float BlendTransformComponent(const float* input, const float* matrix0, const float* matrix1,
                               int component, float weight0, bool position) {
 #if defined(_M_IX86)
-    return mikudancestudio::mmd_math::blendTransformComponent(input, matrix0, matrix1, component, weight0,
-                                              position);
+    return mikudancestudio::mmd_math::blendTransformComponent(input, matrix0, matrix1, component,
+                                                              weight0, position);
 #else
-    return cpu_deform::BlendTransformComponent(input, matrix0, matrix1, component, weight0, position);
+    return cpu_deform::BlendTransformComponent(input, matrix0, matrix1, component, weight0,
+                                               position);
 #endif
 }
 
@@ -225,40 +227,7 @@ void SkinPmxBdef4(const mdl::PmxVertex& source, const mdl::BoneRecord* bones, in
 // x64 helper RVA 0xC2D20: SDEF rotates through a blended quaternion that
 // the original builds with a dot-sign-corrected normalized lerp (not a
 // true slerp). `t` reaches 1 - weight0, so weight0 = 1 keeps q0.
-void BlendSdefQuaternions(float out[4], const float from[4], const float to[4], float t) {
-    const float dot = ((to[0] * from[0] + to[3] * from[3]) + to[1] * from[1]) + to[2] * from[2];
-    float delta[4];
-    if (dot >= 0.0f) {
-        delta[0] = to[0] - from[0];
-        delta[1] = to[1] - from[1];
-        delta[2] = to[2] - from[2];
-        delta[3] = to[3] - from[3];
-    } else {
-        t = -t;
-        delta[0] = to[0] + from[0];
-        delta[1] = to[1] + from[1];
-        delta[2] = to[2] + from[2];
-        delta[3] = to[3] + from[3];
-    }
-    out[0] = delta[0] * t + from[0];
-    out[1] = delta[1] * t + from[1];
-    out[2] = delta[2] * t + from[2];
-    out[3] = delta[3] * t + from[3];
-    const float length =
-        std::sqrt(((out[0] * out[0] + out[1] * out[1]) + out[2] * out[2]) + out[3] * out[3]);
-    if (length <= 0.0f) {
-        out[0] = 0.0f;
-        out[1] = 0.0f;
-        out[2] = 0.0f;
-        out[3] = 1.0f;
-        return;
-    }
-    const float inverse = 1.0f / length;
-    out[0] *= inverse;
-    out[1] *= inverse;
-    out[2] *= inverse;
-    out[3] *= inverse;
-}
+using cpu_deform::BlendSdefQuaternions;
 
 // x64 PMX worker 0x140120285. The loader has already rebased R0/R1 onto the
 // weighted SDEF midpoint, which makes the blend stable at the bind pose.
@@ -274,39 +243,18 @@ void SkinPmxSdef(d3dx::Api& d3dxApi, const mdl::PmxVertex& source, const mdl::Bo
                  int boneCount, mdl::SkinnedVertexBase& destination) {
     const float* matrix0 = PmxSkinMatrix(bones, boneCount, source.bone[0]);
     const float* matrix1 = PmxSkinMatrix(bones, boneCount, source.bone[1]);
-    const float weight0 = source.weight[0];
-    const float weight1 = 1.0f - weight0;
-    const float* center = source.sdef.center;
-    const float* r0 = source.sdef.r0Offset;
-    const float* r1 = source.sdef.r1Offset;
-
-    float pivot[3];
-    for (int component = 0; component < 3; ++component) {
-        const float blendedCenter = TransformComponent(center, matrix0, component, true) * weight0 +
-                                    TransformComponent(center, matrix1, component, true) * weight1;
-        const float blendedArms = TransformComponent(r0, matrix0, component, false) * weight0 +
-                                  TransformComponent(r1, matrix1, component, false) * weight1;
-        pivot[component] = ((blendedArms + blendedCenter) + blendedCenter) * 0.5f;
-    }
-
-    float quaternion0[4];
-    float quaternion1[4];
-    float quaternion[4];
-    d3dxApi.quatFromMatrix(quaternion0, reinterpret_cast<const d3dx::D3DXMATRIXF*>(matrix0));
-    d3dxApi.quatFromMatrix(quaternion1, reinterpret_cast<const d3dx::D3DXMATRIXF*>(matrix1));
-    BlendSdefQuaternions(quaternion, quaternion0, quaternion1, weight1);
-    d3dx::D3DXMATRIXF blended;
-    d3dxApi.matrixRotationQuaternion(&blended, quaternion);
-    const float* rotation = &blended.m[0][0];
-
-    const float delta[3] = {source.position[0] - center[0], source.position[1] - center[1],
-                            source.position[2] - center[2]};
-    for (int component = 0; component < 3; ++component) {
-        destination.position[component] =
-            TransformComponent(delta, rotation, component, false) + pivot[component];
-        destination.normal[component] =
-            TransformComponent(source.normal, rotation, component, false);
-    }
+    struct Ops {
+        d3dx::Api& api;
+        void QuatFromMatrix(float* q, const float* m) {
+            api.quatFromMatrix(q, reinterpret_cast<const d3dx::D3DXMATRIXF*>(m));
+        }
+        void RotationMatrix(float* m, const float* q) {
+            api.matrixRotationQuaternion(reinterpret_cast<d3dx::D3DXMATRIXF*>(m), q);
+        }
+    } ops{d3dxApi};
+    cpu_deform::Sdef(destination.position, destination.normal, source.position, source.normal,
+                     source.sdef.center, source.sdef.r0Offset, source.sdef.r1Offset, matrix0,
+                     matrix1, source.weight[0], ops);
 }
 
 // x64 PMX common tail 0x140120A01/0x140120A9C: both branches truncate the

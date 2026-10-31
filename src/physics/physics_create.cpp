@@ -40,10 +40,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <cstring>
 
 #include "btBulletDynamicsCommon.h"
+#include "mikudancestudio/cpu_physics_create.hpp"
 #include "BulletDynamics/ConstraintSolver/btGeneric6DofSpringConstraint.h"
 
 #include "mikudancestudio/d3dx_dyn.hpp"
@@ -223,58 +225,37 @@ float JointRadiusBound(const float limits[6], float distA, float distB) {
 // out.id receives the Bullet debug ID; out.body receives the owned btRigidBody*.
 // The scene world is built by SceneConstruct (0x4032B0) during UI creation
 // (0x466D20), so it is always live here like in the original.
+
+namespace {
+#ifdef MIKUDANCESTUDIO_DIAG
+static FILE* JointArgStream() {
+    static FILE* stream = []() -> FILE* {
+        const char* path = std::getenv("MIKUDANCESTUDIO_DUMP_JOINTARGS");
+        return path ? std::fopen(path, "w") : nullptr;
+    }();
+    return stream;
+}
+#endif
+struct NativeCreationOps {
+    void QuatFromMatrix(float* q, const float* m) { mikudancestudio::QuatFromMatrix(q, m); }
+    void SetRotation(float* b, const float* q) { SetRotationOriginal(b, q); }
+    void DumpRigid(int s, int m, const float* mat, const float* q, const btRigidBody* b) {
+        DumpRigidCreateState(s, m, mat, q, b);
+    }
+    void DumpJointFrames(const btTransform&, const btTransform&);
+    void DumpConstraint(int id, btGeneric6DofSpringConstraint* con) {
+        DumpConstraintCreateState(id, con);
+    }
+};
+using NativeCreation =
+    cpu_physics::Creation<PhysicsScene, RigidBodyCreationResult, NativeCreationOps>;
+}
 void CreateRigidBody(PhysicsScene* scene, RigidBodyCreationResult& out, int shape, float sx,
                      float sy, float sz, const float* mat16, int mode, float mass, float dampLin,
                      float dampAng, float restitution, float friction, char grp,
                      std::uint16_t mask) {
-    btDiscreteDynamicsWorld* world = scene->world;
-    btCollisionShape* colShape = nullptr;
-    if (shape == 0) {
-        colShape = new btSphereShape(sx); // 0x406531
-    } else if (shape == 1) {
-        colShape = new btBoxShape(btVector3(sx, sy, sz)); // 0x40657F
-    } else if (shape == 2) {
-        colShape = new btCapsuleShape(sx, sy); // 0x4065CF
-    } else {
-        out.id = -1; // 0x4068A4
-        out.body = nullptr;
-        return;
-    }
-
-    // 0x406607..0x40676D: start transform = matrix translation + basis
-    // rebuilt through the D3DX quaternion round-trip (sub_401000 =
-    // btMatrix3x3::setRotation).
-    btTransform startTrans;
-    startTrans.setIdentity();
-    startTrans.setOrigin(btVector3(mat16[12], mat16[13], mat16[14]));
-    float q[4];
-    QuatFromMatrix(q, mat16);
-    SetRotationOriginal(reinterpret_cast<float*>(&startTrans.getBasis()), q);
-
-    // 0x406777: mass zero for kinematic bodies; inertia from the shape
-    // (virtual calculateLocalInertia, vtable slot 7).
-    const float useMass = mode ? mass : 0.0f;
-    btVector3 inertia(0.0f, 0.0f, 0.0f);
-    colShape->calculateLocalInertia(useMass, inertia);
-
-    btDefaultMotionState* motionState = new btDefaultMotionState(startTrans); // 0x4067B5
-    btRigidBody::btRigidBodyConstructionInfo ci(                              // 0x4067EF
-        useMass, motionState, colShape, inertia);
-    btRigidBody* body = new btRigidBody(ci); // 0x406803
-
-    world->addRigidBody(body, 1 << grp, mask); // 0x406857
-    body->setDamping(dampLin, dampAng);        // 0x40686B
-    body->setRestitution(restitution);         // 0x406875
-    body->setFriction(friction);               // 0x40687E
-    if (mode == 0)
-        body->setCollisionFlags( // 0x406886
-            body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
-    body->setActivationState(DISABLE_DEACTIVATION); // 0x406891
-
-    DumpRigidCreateState(shape, mode, mat16, q, body);
-
-    out.id = body->m_debugBodyId; // 0x406899
-    out.body = body;
+    NativeCreation::CreateRigidBody(scene, out, shape, sx, sy, sz, mat16, mode, mass, dampLin,
+                                    dampAng, restitution, friction, grp, mask);
 }
 
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -295,6 +276,20 @@ static std::string WordsHex(const float* values, int count) {
 }
 #endif
 
+namespace {
+void NativeCreationOps::DumpJointFrames(const btTransform& frameA, const btTransform& frameB) {
+#ifdef MIKUDANCESTUDIO_DIAG
+    FILE* jointArgLog = JointArgStream();
+    if (jointArgLog) {
+        std::fprintf(jointArgLog, "frm A=%s B=%s\n",
+                     WordsHex(reinterpret_cast<const float*>(&frameA), 16).c_str(),
+                     WordsHex(reinterpret_cast<const float*>(&frameB), 16).c_str());
+        std::fflush(jointArgLog);
+    }
+#endif
+}
+}
+
 // VA 0x00406010 - build one 6DOF spring joint between two rigid bodies.
 // Returns the constraint id assigned from the scene counter (scene+56);
 // the btGeneric6DofSpringConstraint pointer is retained by the world.
@@ -305,15 +300,11 @@ int CreatePhysJoint(PhysicsScene* scene, btRigidBody* rbA, btRigidBody* rbB, flo
                     float linLower2, float angUpper0, float angUpper1, float angUpper2,
                     float angLower0, float angLower1, float angLower2, float spring0, float spring1,
                     float spring2, float spring3, float spring4, float spring5) {
-    btDiscreteDynamicsWorld* world = scene->world;
 #ifdef MIKUDANCESTUDIO_DIAG
     // Env-gated (MIKUDANCESTUDIO_DUMP_JOINTARGS=<path>) creation-argument trace -
     // the original receives the very same 32 floats on the stack at
     // 0x406010, so a probe there yields a directly comparable record.
-    static FILE* jointArgLog = []() -> FILE* {
-        const char* path = std::getenv("MIKUDANCESTUDIO_DUMP_JOINTARGS");
-        return path ? std::fopen(path, "w") : nullptr;
-    }();
+    FILE* jointArgLog = JointArgStream();
     if (jointArgLog) {
         std::fprintf(jointArgLog,
                      "jnt a=%08X %08X %08X qa=%08X %08X %08X %08X "
@@ -327,59 +318,10 @@ int CreatePhysJoint(PhysicsScene* scene, btRigidBody* rbA, btRigidBody* rbB, flo
         std::fflush(jointArgLog);
     }
 #endif
-    btTransform frameA, frameB;
-    frameA.setIdentity();
-    frameA.setOrigin(btVector3(ax, ay, az));
-    const float qa[4] = {aq0, aq1, aq2, aq3};
-    SetRotationOriginal(reinterpret_cast<float*>(&frameA.getBasis()), qa);
-    frameB.setIdentity();
-    frameB.setOrigin(btVector3(bx, by, bz));
-    const float qb[4] = {bq0, bq1, bq2, bq3};
-    SetRotationOriginal(reinterpret_cast<float*>(&frameB.getBasis()), qb);
-#ifdef MIKUDANCESTUDIO_DIAG
-    if (jointArgLog) {
-        std::fprintf(jointArgLog, "frm A=%s B=%s\n",
-                     WordsHex(reinterpret_cast<const float*>(&frameA), 16).c_str(),
-                     WordsHex(reinterpret_cast<const float*>(&frameB), 16).c_str());
-        std::fflush(jointArgLog);
-    }
-#endif
-
-    auto* con = new btGeneric6DofSpringConstraint( // 0x406048
-        *rbA, *rbB, frameA, frameB, true);
-
-    con->setLinearLowerLimit( // 0x4062xx
-        btVector3(linLower0, linLower1, linLower2));
-    con->setLinearUpperLimit(btVector3(linUpper0, linUpper1, linUpper2));
-    // VC9's __CIfmod path in sub_401260/sub_4012E0 canonicalizes a signed
-    // zero result to +0.  The modern fmodf inline preserves -0, which is
-    // visible in the rotational motor limit bits.
-    const auto canonicalZero = [](float value) { return value == 0.0f ? 0.0f : value; };
-    con->setAngularLowerLimit( // sub_401260
-        btVector3(canonicalZero(angLower0), canonicalZero(angLower1), canonicalZero(angLower2)));
-    con->setAngularUpperLimit( // sub_4012E0
-        btVector3(canonicalZero(angUpper0), canonicalZero(angUpper1), canonicalZero(angUpper2)));
-
-    world->addConstraint(con, false); // 0x4064xx
-
-    if (spring0 > 0.0f || spring1 > 0.0f || spring2 > 0.0f || spring3 > 0.0f || spring4 > 0.0f ||
-        spring5 > 0.0f) {
-        const float springs[6] = {spring0, spring1, spring2, spring3, spring4, spring5};
-        for (int axis = 0; axis < 6; ++axis) {
-            if (springs[axis] > 0.0f) {
-                con->enableSpring(axis, true);          // sub_5008D0
-                con->setStiffness(axis, springs[axis]); // sub_500910
-            }
-        }
-        con->setEquilibriumPoint(); // sub_500930
-    }
-
-    int& counter = scene->constraintId; // 0x4064xx
-    // Stock Bullet 2.75 exposes the solver UID through its user constraint ID.
-    // Keep the application's monotonically increasing ID through that API.
-    con->setUserConstraintId(counter);
-    DumpConstraintCreateState(counter, con);
-    return counter++;
+    return NativeCreation::CreatePhysJoint(
+        scene, rbA, rbB, ax, ay, az, aq0, aq1, aq2, aq3, bx, by, bz, bq0, bq1, bq2, bq3, linUpper0,
+        linUpper1, linUpper2, linLower0, linLower1, linLower2, angUpper0, angUpper1, angUpper2,
+        angLower0, angLower1, angLower2, spring0, spring1, spring2, spring3, spring4, spring5);
 }
 
 // VA 0x004A9220 - select each bone's pose source and propagate transforms.

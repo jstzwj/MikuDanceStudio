@@ -11,7 +11,9 @@ using namespace cpu_math;
 bool Equal(const float* a,const float* b,unsigned count,float tolerance=4e-6f) {
     for(unsigned n=0;n<count;++n)
         if(!std::isfinite(a[n]) || !std::isfinite(b[n]) ||
-           std::abs(a[n]-b[n])>tolerance*std::max(1.f,std::abs(b[n]))) return false;
+           std::abs(a[n]-b[n])>tolerance*std::max(1.f,std::abs(b[n]))) {
+            std::fprintf(stderr,"component=%u portable=%.9g D3DX=%.9g\n",n,a[n],b[n]);return false;
+        }
     return true;
 }
 int main() {
@@ -21,6 +23,19 @@ int main() {
         d3dx::D3DXMATRIXF nativeRotation, nativeA, nativeB, nativeProduct;
         d3dx::Get().matrixRotationQuaternion(&nativeRotation,q.data());
         CHECK(Equal(rotation.data(),&nativeRotation.m[0][0],16));
+        Quaternion nativeQuaternion;
+        d3dx::Get().quatFromMatrix(nativeQuaternion.data(),&nativeRotation);
+        CHECK(Equal(QuaternionFromMatrix(rotation).data(),nativeQuaternion.data(),4));
+        const float angle=.1f*sample;
+        for (int axis=0;axis<3;++axis) {
+            const auto portable=axis==0?RotationX(angle):axis==1?RotationY(angle):RotationZ(angle);
+            if(axis==0)d3dx::Get().rotX(&nativeRotation,angle);
+            else if(axis==1)d3dx::Get().rotY(&nativeRotation,angle);
+            else d3dx::Get().rotZ(&nativeRotation,angle);
+            CHECK(Equal(portable.data(),&nativeRotation.m[0][0],16));
+            d3dx::Get().quatFromMatrix(nativeQuaternion.data(),&nativeRotation);
+            CHECK(Equal(QuaternionFromMatrix(portable).data(),nativeQuaternion.data(),4));
+        }
         auto a=Multiply(rotation,Translation({.25f*sample,-2,3}));
         auto b=Multiply(Translation({1,3,-2}),RotationQuaternion({.5f,0,0,.8660254f}));
         std::memcpy(&nativeA,a.data(),64); std::memcpy(&nativeB,b.data(),64);
@@ -35,6 +50,9 @@ int main() {
         d3dx::Get().quatMultiply(referenceProduct.data(),other.data(),q.data());
         CHECK(Equal(HamiltonProduct(q,other).data(),referenceProduct.data(),4));
     }
+    d3dx::D3DXMATRIXF zero{};Quaternion nativeZero;
+    d3dx::Get().quatFromMatrix(nativeZero.data(),&zero);
+    CHECK(Equal(QuaternionFromMatrix(Matrix{}).data(),nativeZero.data(),4));
     std::puts("64 portable matrix/quaternion cases agree with independent D3DX CPU imports");
     return 0;
 }

@@ -94,6 +94,7 @@
 #include <cstdlib>
 
 #include "btBulletDynamicsCommon.h"
+#include "mikudancestudio/cpu_model_physics.hpp"
 
 #include "../app/cpu_simulation_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -110,45 +111,6 @@ namespace {
 
 // Use the imported D3DX math functions for the bone-follow chain.
 namespace {
-// sub_0x401400 - transpose the body's raw transform into a D3DX matrix.
-// The btTransform basis stores rows; the D3DX matrix gets the transpose,
-// origin copied verbatim (matches 0x401400 byte for byte).
-void TransformToMatrix(float out[16], const btTransform& t) {
-    const btMatrix3x3& b = t.getBasis();
-    const btVector3& o = t.getOrigin();
-    out[0] = b[0].x();
-    out[1] = b[1].x();
-    out[2] = b[2].x();
-    out[3] = 0.0f;
-    out[4] = b[0].y();
-    out[5] = b[1].y();
-    out[6] = b[2].y();
-    out[7] = 0.0f;
-    out[8] = b[0].z();
-    out[9] = b[1].z();
-    out[10] = b[2].z();
-    out[11] = 0.0f;
-    out[12] = o.x();
-    out[13] = o.y();
-    out[14] = o.z();
-    out[15] = 1.0f;
-}
-
-// The reverse of the above (the raw writes at 0x4B25D0/0x4B3460 body+16):
-// basis rows = D3DX columns.
-void MatrixToBasis(btTransform* t, const float* m) {
-    t->getBasis().setValue(m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]);
-    t->setOrigin(btVector3(m[12], m[13], m[14]));
-}
-
-inline float F32(const unsigned char* p, std::size_t off) {
-    return *reinterpret_cast<const float*>(p + off);
-}
-
-inline float& F32R(unsigned char* p, std::size_t off) {
-    return *reinterpret_cast<float*>(p + off);
-}
-
 D3DXMATRIXF* D3dxRotX(D3DXMATRIXF* o, float a) {
     return d3dx::Get().rotX(o, a);
 }
@@ -160,9 +122,6 @@ D3DXMATRIXF* D3dxRotZ(D3DXMATRIXF* o, float a) {
 }
 D3DXMATRIXF* D3dxMul(D3DXMATRIXF* o, const D3DXMATRIXF* a, const D3DXMATRIXF* b) {
     return d3dx::Get().multiply(o, a, b);
-}
-float* D3dxVec3Normalize(float o[3], const float* src) {
-    return d3dx::Get().vec3Normalize(o, src);
 }
 D3DXMATRIXF* D3dxTranslation(D3DXMATRIXF* o, float x, float y, float z) {
     return d3dx::Get().translation(o, x, y, z);
@@ -177,64 +136,6 @@ float* D3dxQuatMul(float out[4], const float a[4], const float b[4]) {
     return d3dx::Get().quatMultiply(out, a, b);
 }
 } // namespace
-
-// Build the bone-follow matrix shared by 0x4B22F0 and 0x4B3460:
-//   Rz(rec+72) * Rx(rec+64) * Ry(rec+68) * T(rec+52..60)
-//   [ * T(bone+308..316) * boneMatrix(+52) when the bone link is valid ].
-// boneOverride >= 0 forces the bone index (0x4B3460 uses the center bone
-// for unlinkable records).
-void BuildFollowMatrix(float out[16], const mdl::ModelRecord* m, const mdl::RigidRecord& rigid,
-                       int boneOverride) {
-    mdl::BoneRecord* bones = m->boneTable;
-    D3DXMATRIXF t;
-    auto* o = reinterpret_cast<D3DXMATRIXF*>(out);
-    D3dxRotZ(o, rigid.rotation[2]);
-    D3dxRotX(&t, rigid.rotation[0]);
-    D3dxMul(o, o, &t);
-    D3dxRotY(&t, rigid.rotation[1]);
-    D3dxMul(o, o, &t);
-    D3dxTranslation(&t, rigid.position[0], rigid.position[1], rigid.position[2]);
-    D3dxMul(o, o, &t);
-    const int bone = boneOverride >= 0 ? boneOverride : rigid.boneIndex;
-    if (bone >= 0) {
-        const mdl::BoneRecord& bn = bones[bone];
-        D3dxTranslation(&t, bn.position[0], bn.position[1], bn.position[2]);
-        D3dxMul(o, o, &t);
-        D3dxMul(o, o, reinterpret_cast<const D3DXMATRIXF*>(bn.matInit));
-    }
-}
-
-// VA 0x004B3460 / x64 sub_7FF7CB4E45D0 - the settle reseat.  The x64 write
-// sequence (0x7FF7CB4E4856..0x7FF7CB4E4927) is:
-//   body+0x10..0x4F  <- follow transform (m_worldTransform, 4x16B rows)
-//   body+0x150 = 0   (m_linearVelocity, 16B)
-//   body+0x160 = 0   (m_angularVelocity, 16B)
-//   body+0x90  = 0   (m_interpolationLinearVelocity, 16B)
-//   body+0xA0  = 0   (m_interpolationAngularVelocity, 16B)
-// and NOTHING else: the interpolation world transform (+0x50) keeps its old
-// pose, clearForces is not called, the motion state is not written and the
-// body is not activated.  (The earlier "resets both the current and
-// interpolation transforms" claim came from the x86 notes and is wrong.)
-void ReseatRigidBody(btRigidBody* body, const btTransform& transform) {
-    const btVector3 zero(0.0f, 0.0f, 0.0f);
-    body->setWorldTransform(transform);
-    body->setLinearVelocity(zero);
-    body->setAngularVelocity(zero);
-    body->setInterpolationLinearVelocity(zero);
-    body->setInterpolationAngularVelocity(zero);
-}
-
-// The over-stretch teleport inside the readback (x64 sub_7FF7CB4E3470,
-// inline sequence 0x7FF7CB4E3798..0x7FF7CB4E384C) is a SMALLER reset: the
-// world transform rows (+0x10..0x40) are stored and only the current
-// velocity slots are zeroed (+0x150, +0x160).  The interpolation velocity
-// slots (+0x90/+0xA0) are left alone - this is NOT sub_7FF7CB4E45D0.
-void StopBodyAt(btRigidBody* body, const btTransform& transform) {
-    const btVector3 zero(0.0f, 0.0f, 0.0f);
-    body->setWorldTransform(transform);
-    body->setLinearVelocity(zero);
-    body->setAngularVelocity(zero);
-}
 
 #ifdef MIKUDANCESTUDIO_DIAG
 // ---- rigid-body state dumps under MIKUDANCESTUDIO_STATE_DUMP_DIR ---------
@@ -376,30 +277,31 @@ void DumpWorldSolverInfo(btDiscreteDynamicsWorld* world) {
 
 } // namespace
 
+struct NativePhysicsMath {
+    void rotX(D3DXMATRIXF* m, float a) { D3dxRotX(m, a); }
+    void rotY(D3DXMATRIXF* m, float a) { D3dxRotY(m, a); }
+    void rotZ(D3DXMATRIXF* m, float a) { D3dxRotZ(m, a); }
+    void mul(D3DXMATRIXF* o, const D3DXMATRIXF* a, const D3DXMATRIXF* b) { D3dxMul(o, a, b); }
+    void translation(D3DXMATRIXF* o, float x, float y, float z) { D3dxTranslation(o, x, y, z); }
+    bool inverse(D3DXMATRIXF* o, const D3DXMATRIXF* m) { return D3dxInverse(o, m) != nullptr; }
+    void quatFromMatrix(float* q, const D3DXMATRIXF* m) { D3dxQuatFromMatrix(q, m); }
+    void quatMultiply(float* o, const float* a, const float* b) { D3dxQuatMul(o, a, b); }
+};
+struct NativePhysicsTraits {
+    using Model = mdl::ModelRecord;
+    using Bone = mdl::BoneRecord;
+    using Rigid = mdl::RigidRecord;
+    using Joint = mdl::JointRecord;
+    using Matrix = D3DXMATRIXF;
+    using Math = NativePhysicsMath;
+};
+using NativePhysicsKernel = cpu_physics::Kernel<NativePhysicsTraits>;
 // VA 0x004B22F0 - push kinematic rigid bodies to the bones.
 // For every mode==0 record the bone-follow transform is written into the
 // body's motion state; btRigidBody::saveKinematicState (called from
 // stepSimulation) pulls it into m_worldTransform and derives velocities.
 void ModelKinematicSync(mdl::ModelRecord* m) {
-    const int count = m->rigidCount;
-    if (count <= 0)
-        return;
-    mdl::RigidRecord* rigids = m->rigidTable;
-    for (int i = 0; i < count; ++i) {
-        const mdl::RigidRecord& rec = rigids[i];
-        if (rec.mode != 0)
-            continue;
-        btRigidBody* body = rec.body;
-        if (body == nullptr)
-            continue; // port guard
-        float mat[16];
-        BuildFollowMatrix(mat, m, rec, -1);
-        btTransform tr;
-        tr.setIdentity();
-        MatrixToBasis(&tr, mat);
-        if (btMotionState* ms = body->getMotionState())
-            ms->setWorldTransform(tr);
-    }
+    NativePhysicsKernel::ModelKinematicSync(m);
 }
 
 // VA 0x004B3460 / x64 sub_7FF7CB4E45D0 - reseat dynamic rigid bodies onto
@@ -407,51 +309,36 @@ void ModelKinematicSync(mdl::ModelRecord* m) {
 // transform and stops it (current transform + the four velocity slots only;
 // see ReseatRigidBody for the exact x64 write set).
 void ModelDynamicReseat(mdl::ModelRecord* m) {
+#ifdef MIKUDANCESTUDIO_DIAG
     const int count = m->rigidCount;
-    if (count <= 0)
-        return;
-    mdl::RigidRecord* rigids = m->rigidTable;
-    const int centerBone = m->centerBone; // 0x4B3460
-#ifdef MIKUDANCESTUDIO_DIAG
-    static int reseatCalls = 0;
-    const bool traceReseat = getenv("MIKUDANCESTUDIO_TRACE_RESEAT") != nullptr;
-    if (traceReseat && reseatCalls < 12) {
-        int active = 0;
-        for (int i = 0; i < count; ++i)
-            if (static_cast<signed char>(rigids[i].mode) > 0)
-                ++active;
-        std::fprintf(stderr, "RESEAT call=%d count=%d active(rec80>0)=%d\n", reseatCalls, count,
-                     active);
-    }
-    ++reseatCalls;
-#endif
-    for (int i = 0; i < count; ++i) {
-        const mdl::RigidRecord& rec = rigids[i];
-        if (static_cast<signed char>(rec.mode) <= 0)
-            continue;
-        btRigidBody* body = rec.body;
-        if (body == nullptr)
-            continue; // port guard
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (traceReseat && reseatCalls <= 3) {
-            const int id = body->m_debugBodyId;
-            if (id == 3) {
-                unsigned bits;
-                const float ox = body->getWorldTransform().getOrigin().getX();
-                std::memcpy(&bits, &ox, 4);
-                std::fprintf(stderr, "RESEAT body3 iter=%d rec80=%d pre_origin=%08X\n", reseatCalls,
-                             (int)rec.mode, bits);
-            }
+    if (count > 0) {
+        auto* rigids = m->rigidTable;
+        static int reseatCalls = 0;
+        const bool traceReseat = std::getenv("MIKUDANCESTUDIO_TRACE_RESEAT") != nullptr;
+        if (traceReseat && reseatCalls < 12) {
+            int active = 0;
+            for (int i = 0; i < count; ++i)
+                if (static_cast<signed char>(rigids[i].mode) > 0)
+                    ++active;
+            std::fprintf(stderr, "RESEAT call=%d count=%d active(rec80>0)=%d\n", reseatCalls, count,
+                         active);
         }
-#endif
-        float mat[16];
-        const int link = rec.boneIndex;
-        BuildFollowMatrix(mat, m, rec, link < 0 ? centerBone : -1);
-        btTransform tr;
-        tr.setIdentity();
-        MatrixToBasis(&tr, mat);
-        ReseatRigidBody(body, tr);
+        ++reseatCalls;
+        if (traceReseat && reseatCalls <= 3)
+            for (int i = 0; i < count; ++i) {
+                const auto& rec = rigids[i];
+                auto* body = rec.body;
+                if (static_cast<signed char>(rec.mode) > 0 && body && body->m_debugBodyId == 3) {
+                    unsigned bits;
+                    const float x = body->getWorldTransform().getOrigin().getX();
+                    std::memcpy(&bits, &x, 4);
+                    std::fprintf(stderr, "RESEAT body3 iter=%d rec80=%d pre_origin=%08X\n",
+                                 reseatCalls, int(rec.mode), bits);
+                }
+            }
     }
+#endif
+    NativePhysicsKernel::ModelDynamicReseat(m);
 }
 
 // VA 0x004B25D0 - pull the simulation result back into the bones.
@@ -463,189 +350,7 @@ void ModelDynamicReseat(mdl::ModelRecord* m) {
 //          pose pos +0x188 / quat +0x194 derived from it, plus the
 //          type-5 and limit-flag corrections and the mode==2 collapse.
 void ModelPhysicsReadback(mdl::ModelRecord* m) {
-    mdl::BoneRecord* bones = m->boneTable;
-    mdl::RigidRecord* rigids = m->rigidTable;
-    const int rcount = m->rigidCount;
-    mdl::JointRecord* joints = m->jointTable;
-    const int jcount = m->jointCount;
-
-    // ---- part 1: joint overstretch clamp ------------------------------
-    for (int j = 0; j < jcount; ++j) {
-        const mdl::JointRecord& joint = joints[j];
-        const int ra = joint.rigidA;
-        const int rb = joint.rigidB;
-        if (ra < 0 || ra >= rcount || rb < 0 || rb >= rcount)
-            continue; // port guard
-        btRigidBody* bodyA = rigids[ra].body;
-        btRigidBody* bodyB = rigids[rb].body;
-        if (bodyA == nullptr || bodyB == nullptr)
-            continue; // port guard
-        float ma[16], mb[16];
-        TransformToMatrix(ma, bodyA->getWorldTransform());
-        TransformToMatrix(mb, bodyB->getWorldTransform());
-        // Original 0x4B26B5 / x64 0x7FF7CB4E3660..0x7FF7CB4E36D9: d2 =
-        // ((dy*dy + dx*dx) + dz*dz) and everything downstream runs single
-        // precision - sqrtf, the (dist - limit) comiss, divss limit/dist
-        // for k, and the (mb-ma)*k products as mulss into the translation.
-        const float dy = ma[13] - mb[13], dx = ma[12] - mb[12], dz = ma[14] - mb[14];
-        const float d2 = dy * dy + dx * dx + dz * dz;
-        const float dist = std::sqrt(d2);
-        const float limit = joint.radiusBound;
-        if (dist - limit < 2.0f)
-            continue;
-        const float k = limit / dist;
-        float t[16];
-        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), (mb[12] - ma[12]) * k,
-                        (mb[13] - ma[13]) * k, (mb[14] - ma[14]) * k);
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(ma), reinterpret_cast<const D3DXMATRIXF*>(ma),
-                reinterpret_cast<const D3DXMATRIXF*>(t));
-        btTransform tr = bodyB->getWorldTransform();
-        tr.setOrigin(btVector3(ma[12], ma[13], ma[14]));
-        StopBodyAt(bodyB, tr); // x64 inline reset, see StopBodyAt
-    }
-
-    // ---- part 2: dynamic bodies drive the bone world matrices ---------
-    for (int i = 0; i < rcount; ++i) {
-        const mdl::RigidRecord& rec = rigids[i];
-        if (static_cast<signed char>(rec.mode) <= 0)
-            continue;
-        const int bone = rec.boneIndex;
-        if (bone < 0)
-            continue;
-        btRigidBody* body = rec.body;
-        if (body == nullptr)
-            continue; // port guard
-        float w[16];
-        TransformToMatrix(w, body->getWorldTransform());
-        // Original 0x4B29CE routes this through the real D3DXMatrixMultiply
-        // (x87, one rounding per element); an SSE float chain drifts 1-2 ULP
-        // into every physics bone.
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(m->boneTable[bone].matInit),
-                reinterpret_cast<const D3DXMATRIXF*>(rec.invTransform),
-                reinterpret_cast<const D3DXMATRIXF*>(w));
-    }
-
-    // ---- part 3: derive the per-bone physics pose ----------------------
-    for (int i = 0; i < rcount; ++i) {
-        const mdl::RigidRecord& rigid = rigids[i];
-        if (static_cast<signed char>(rigid.mode) <= 0)
-            continue;
-        const int bi = rigid.boneIndex;
-        if (bi < 0)
-            continue;
-        mdl::BoneRecord& bone = m->boneTable[bi];
-        float* world = bone.matInit;
-        float* local = bone.matLocal;
-        const int parent = bone.parent;
-        float inv[16];
-        bool haveLocal;
-        if (parent < 0) {
-            std::memcpy(local, world, 16 * sizeof(float));
-            haveLocal = true;
-        } else if (D3dxInverse(
-                       reinterpret_cast<D3DXMATRIXF*>(inv),
-                       reinterpret_cast<const D3DXMATRIXF*>(m->boneTable[parent].matInit))) {
-            D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local),
-                    reinterpret_cast<const D3DXMATRIXF*>(world),
-                    reinterpret_cast<const D3DXMATRIXF*>(inv));
-            haveLocal = true;
-        } else {
-            haveLocal = false;
-        }
-        if (!haveLocal) {
-            // singular parent world matrix: original falls straight through
-            // to the +244 copy below.
-            std::memcpy(bone.matExtra, bone.matInit,
-                        sizeof(bone.matExtra)); // 0x4B419x
-            continue;
-        }
-
-        float* q = bone.ikBackup + 3; // +0x194
-        D3dxQuatFromMatrix(q, reinterpret_cast<const D3DXMATRIXF*>(local));
-
-        // +0x188 position = translation of T(p) * local * T(-p); the
-        // T(p) * local product is kept for the mode==2 branch below.
-        float work[16], pos[16], t[16];
-        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), bone.position[0], bone.position[1],
-                        bone.position[2]);
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(work), reinterpret_cast<const D3DXMATRIXF*>(t),
-                reinterpret_cast<const D3DXMATRIXF*>(local));
-        D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), -bone.position[0], -bone.position[1],
-                        -bone.position[2]);
-        D3dxMul(reinterpret_cast<D3DXMATRIXF*>(pos), reinterpret_cast<const D3DXMATRIXF*>(work),
-                reinterpret_cast<const D3DXMATRIXF*>(t));
-        std::memcpy(bone.ikBackup, pos + 12, 3 * sizeof(float));
-
-        const int target = bone.tailIdx;
-        mdl::BoneRecord& tb = target >= 0 ? m->boneTable[target] : bone;
-
-        if (bone.type == mdl::BoneType::RotateGrant) { // tail type
-            float conj[4] = {-tb.physicsQuat[0], -tb.physicsQuat[1], -tb.physicsQuat[2],
-                             tb.physicsQuat[3]};
-            float out[4];
-            D3dxQuatMul(out, conj, q);
-            std::memcpy(q, out, sizeof out);
-        }
-        if ((bone.flags & mdl::kBoneFlagRotInherit) != 0) {
-            float limit[4];
-            D3dxQuatFromMatrix(limit, reinterpret_cast<const D3DXMATRIXF*>(tb.matLocal));
-            if (limit[3] > 1.0f)
-                limit[3] = 1.0f;
-            if (limit[3] < -1.0f)
-                limit[3] = -1.0f;
-            // x64 0x7FF7CB4E3C85: acosf (float CRT), then subss with the
-            // truncated-pi float 0x4048F5C3.
-            float angle = std::acos(limit[3]);
-            if (limit[3] < 0.0f)
-                angle -= 3.140000104904175f; // 0x529xxx
-            // Original 0x4B2CED / x64 0x7FF7CB4E3CD6: ((y*y + x*x) + z*z)
-            // through sqrtf.
-            const float axisLen =
-                std::sqrt(limit[1] * limit[1] + limit[0] * limit[0] + limit[2] * limit[2]);
-            if (angle != 0.0f && axisLen >= 0.00000011920929f) {
-                const float a = angle * bone.inheritRatio;
-                // x64 0x7FF7CB4E3D0E/0x7FF7CB4E3D5F: sinf/cosf and a
-                // divss sin/axisLen.
-                const float s = std::sin(a) / axisLen;
-                const float rot[4] = {-limit[0] * s, -limit[1] * s, -limit[2] * s, std::cos(a)};
-                // Multiplication order differs per unrolled original path:
-                // parent>=0 (0x4B2DB6) computes rot*q; parent<0 (0x4B3339)
-                // computes q*rot in place.
-                float out[4];
-                if (parent >= 0)
-                    D3dxQuatMul(out, rot, q);
-                else
-                    D3dxQuatMul(q, q, rot);
-                if (parent >= 0)
-                    std::memcpy(q, out, sizeof out);
-            }
-        }
-        if ((bone.flags & mdl::kBoneFlagTransInherit) != 0) {
-            for (int c = 0; c < 3; ++c)
-                bone.physicsOffset[c] -= tb.physicsOffset[c] * bone.inheritRatio;
-        }
-        if (rigid.mode == 2) {
-            // mode 2: collapse the physics pose onto the bone position and
-            // rebuild the local/world matrices around it.
-            std::memset(bone.trans, 0, sizeof(bone.trans));
-            std::memset(bone.ikBackup, 0, 3 * sizeof(float));
-            work[12] = work[13] = work[14] = 0.0f;
-            D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), -bone.position[0], -bone.position[1],
-                            -bone.position[2]);
-            D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local), reinterpret_cast<const D3DXMATRIXF*>(t),
-                    reinterpret_cast<const D3DXMATRIXF*>(work));
-            D3dxTranslation(reinterpret_cast<D3DXMATRIXF*>(t), bone.position[0], bone.position[1],
-                            bone.position[2]);
-            D3dxMul(reinterpret_cast<D3DXMATRIXF*>(local),
-                    reinterpret_cast<const D3DXMATRIXF*>(local),
-                    reinterpret_cast<const D3DXMATRIXF*>(t));
-            if (parent >= 0)
-                D3dxMul(reinterpret_cast<D3DXMATRIXF*>(world),
-                        reinterpret_cast<const D3DXMATRIXF*>(local),
-                        reinterpret_cast<const D3DXMATRIXF*>(m->boneTable[parent].matInit));
-        }
-        std::memcpy(bone.matExtra, bone.matInit, sizeof(bone.matExtra));
-    }
+    NativePhysicsKernel::ModelPhysicsReadback(m);
 }
 
 // Physics section of the FrameDriver (original 0x46F0D0..0x46FEB8 core).

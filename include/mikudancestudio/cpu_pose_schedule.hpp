@@ -12,6 +12,7 @@ struct ModelRecord;
 struct CpuModelSlots {
     mdl::ModelRecord* const* data;
     std::size_t count;
+    void* context = nullptr; // independent runtime adapter; legacy slot storage may be empty
 };
 enum class CpuPosePhase : std::uint8_t {
     BeforePhysics,

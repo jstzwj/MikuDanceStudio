@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 
 // Extracted from model_skinning.cpp's measured PMX workers. Keep expression
 // order and float stores: BDEF2 accumulates bone 1 first; BDEF4's position and
@@ -51,5 +52,63 @@ inline void AccumulateVertexMorph(float position[3], const float offset[3], floa
     position[0] += offset[0] * weight * referenceWeight;
     position[1] += offset[1] * weight * referenceWeight;
     position[2] += offset[2] * weight * referenceWeight;
+}inline void BlendSdefQuaternions(float out[4], const float from[4], const float to[4], float t) {
+    const float dot = ((to[0] * from[0] + to[3] * from[3]) + to[1] * from[1]) + to[2] * from[2];
+    float delta[4];
+    if (dot >= 0.0f) {
+        delta[0] = to[0] - from[0];
+        delta[1] = to[1] - from[1];
+        delta[2] = to[2] - from[2];
+        delta[3] = to[3] - from[3];
+    } else {
+        t = -t;
+        delta[0] = to[0] + from[0];
+        delta[1] = to[1] + from[1];
+        delta[2] = to[2] + from[2];
+        delta[3] = to[3] + from[3];
+    }
+    out[0] = delta[0] * t + from[0];
+    out[1] = delta[1] * t + from[1];
+    out[2] = delta[2] * t + from[2];
+    out[3] = delta[3] * t + from[3];
+    const float length =
+        std::sqrt(((out[0] * out[0] + out[1] * out[1]) + out[2] * out[2]) + out[3] * out[3]);
+    if (length <= 0.0f) {
+        out[0] = 0.0f;
+        out[1] = 0.0f;
+        out[2] = 0.0f;
+        out[3] = 1.0f;
+        return;
+    }
+    const float inverse = 1.0f / length;
+    out[0] *= inverse;
+    out[1] *= inverse;
+    out[2] *= inverse;
+    out[3] *= inverse;
 }
+
+
+template<class Ops>
+void Sdef(float position[3],float normal[3],const float input[3],const float direction[3],
+          const float center[3],const float r0[3],const float r1[3],const float* matrix0,
+          const float* matrix1,float weight0,Ops& ops) {
+    const float weight1=1.f-weight0;
+    float pivot[3];
+    for(int c=0;c<3;++c) {
+        const float blendedCenter=TransformComponent(center,matrix0,c,true)*weight0+
+                                  TransformComponent(center,matrix1,c,true)*weight1;
+        const float blendedArms=TransformComponent(r0,matrix0,c,false)*weight0+
+                                TransformComponent(r1,matrix1,c,false)*weight1;
+        pivot[c]=((blendedArms+blendedCenter)+blendedCenter)*.5f;
+    }
+    float q0[4],q1[4],q[4],rotation[16];
+    ops.QuatFromMatrix(q0,matrix0);ops.QuatFromMatrix(q1,matrix1);
+    BlendSdefQuaternions(q,q0,q1,weight1);ops.RotationMatrix(rotation,q);
+    const float delta[]{input[0]-center[0],input[1]-center[1],input[2]-center[2]};
+    for(int c=0;c<3;++c) {
+        position[c]=TransformComponent(delta,rotation,c,false)+pivot[c];
+        normal[c]=TransformComponent(direction,rotation,c,false);
+    }
+}
+
 }

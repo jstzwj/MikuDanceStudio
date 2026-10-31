@@ -19,6 +19,7 @@ void Step(const CpuSimulationContext& c, const CpuSimulationState& s, CpuSimulat
     Observe(h, s, e, index, dt);
     c.world->stepSimulation(dt, 10, kStep);
 }
+int Random(const CpuSimulationContext& c){return c.ops.randomFromContext?c.ops.randomFromContext(c.models.context):c.ops.random();}
 void Gravity(CpuSimulationState& s, const CpuSimulationContext& c, float delta) {
     if (s.physicsMode <= 0)
         return;
@@ -26,24 +27,24 @@ void Gravity(CpuSimulationState& s, const CpuSimulationContext& c, float delta) 
         s.gravityNoiseTimer = s.gravityNoiseTimer + delta;
         if (s.gravityNoiseTimer > 0.5f) {
 #if defined(_M_IX86)
-            const int rStrength = c.ops.random(), rX = c.ops.random(), rY = c.ops.random(),
-                      rZ = c.ops.random();
+            const int rStrength = Random(c), rX = Random(c), rY = Random(c),
+                      rZ = Random(c);
             float result[3];
             mmd_math::gravityNoise(rStrength, rX, rY, rZ, s.gravityNoise, s.gravityMagnitude,
                                     s.gravityDirection.data(), result);
             const float e0 = result[0], e1 = result[1], e2 = result[2];
 #else
-            const int rStrength = c.ops.random();
+            const int rStrength = Random(c);
             const float noise = static_cast<float>(s.gravityNoise);
             const float strength =
                 ((static_cast<float>(rStrength) * 10.0f) / 32767.0f) * noise + s.gravityMagnitude;
-            const float e0 = ((static_cast<float>(c.ops.random()) * 0.2f) / 32767.0f - 0.1f +
+            const float e0 = ((static_cast<float>(Random(c)) * 0.2f) / 32767.0f - 0.1f +
                               s.gravityDirection[0]) *
                              strength;
-            const float e1 = ((static_cast<float>(c.ops.random()) * 0.2f) / 32767.0f - 0.1f +
+            const float e1 = ((static_cast<float>(Random(c)) * 0.2f) / 32767.0f - 0.1f +
                               s.gravityDirection[1]) *
                              strength;
-            const float e2 = ((static_cast<float>(c.ops.random()) * 0.2f) / 32767.0f - 0.1f +
+            const float e2 = ((static_cast<float>(Random(c)) * 0.2f) / 32767.0f - 0.1f +
                               s.gravityDirection[2]) *
                              strength;
 #endif
@@ -92,7 +93,7 @@ bool RunCpuSimulationCatchup(CpuSimulationState& s, const CpuSimulationContext& 
 bool RunCpuSimulationFrame(CpuSimulationState& s, const CpuSimulationContext& c,
                            const CpuSimulationFrame& f, CpuSimulationHooks h) {
     if (!Valid(c) ||
-        (s.physicsMode > 0 && (!c.ops.normalize || (s.gravityNoiseEnabled && !c.ops.random))))
+        (s.physicsMode > 0 && (!c.ops.normalize || (s.gravityNoiseEnabled && !c.ops.random && !c.ops.randomFromContext))))
         return false;
     if (!f.enabled)
         return true;

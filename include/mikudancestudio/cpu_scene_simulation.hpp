@@ -24,6 +24,7 @@ struct CpuSimulationOps {
     void (*physics)(CpuModelSlots, CpuPhysicsModelPhase, CpuSlotOrder, int skipSlot) = nullptr;
     void (*normalize)(float out[3], const float in[3]) = nullptr;
     int (*random)() = nullptr; // legacy rand(): integer in [0,32767]
+    int (*randomFromContext)(void*) = nullptr;
 };
 struct CpuSimulationContext {
     CpuModelSlots models{nullptr, 0};
