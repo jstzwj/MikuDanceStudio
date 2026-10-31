@@ -51,6 +51,25 @@ def pe_imports(program):
     return result
 
 
+def check_binary_dependencies(libraries, platform):
+    for library in libraries:
+        body = library.strip()
+        if platform == 'darwin':
+            body = body.split(' (compatibility version', 1)[0]
+        elif platform != 'win32':
+            # ASLR addresses are metadata, not library names. A legitimate
+            # libm address such as 0x00007f9fd3d19000 must not match "d3d".
+            body = re.sub(r'\s+\(0x[0-9a-fA-F]+\)$', '', body)
+            if re.search(r'=>\s*not found\s*$', body):
+                raise RuntimeError(f'unresolved binary dependency: {library}')
+        # Check both the requested soname and resolved filename. Parent
+        # directory names and loader metadata do not identify a dependency.
+        names = [part.strip().replace('\\', '/').rsplit('/', 1)[-1]
+                 for part in body.split('=>')]
+        if any(word in name.lower() for name in names for word in FORBIDDEN_LIBRARIES):
+            raise RuntimeError(f'forbidden binary dependency: {library}')
+
+
 def audit(program, manifest, stage='P1'):
     graph = json.loads(manifest.read_text(encoding='utf-8'))
     expected = {'mds_model_cli', 'mikudancestudio_model_runtime', 'mikudancestudio_cpu_math',
@@ -127,9 +146,7 @@ def audit(program, manifest, stage='P1'):
         command = ['otool', '-L', str(program)] if sys.platform == 'darwin' else ['ldd', str(program)]
         lines = subprocess.check_output(command, text=True).splitlines()
         libraries = lines[1:] if sys.platform == 'darwin' else lines
-    for library in libraries:
-        if any(word in library.lower() for word in FORBIDDEN_LIBRARIES):
-            raise RuntimeError(f'forbidden binary dependency: {library}')
+    check_binary_dependencies(libraries, sys.platform)
     return {'schema': 1, 'status': 'passed', 'targets': sorted(visited),
             'vendor_platform_headers': vendor_platform_headers,
             'vendor_include_aliases': vendor_include_aliases,

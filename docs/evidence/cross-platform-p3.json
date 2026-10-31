@@ -671,5 +671,18 @@
     "P5 independent FX9/MME frontend",
     "P6 complete media services",
     "P7 physical GPU/driver/package qualification"
-  ]
+  ],
+  "dependency_audit_regression": {
+    "parser_tests": 4,
+    "status": "passed",
+    "actual_windows_p1_p2_binary_audits": "passed",
+    "forbidden_library_list": "unchanged",
+    "coverage": [
+      "ASLR address containing d3d is metadata",
+      "requested and resolved forbidden library filenames rejected",
+      "missing library rejected",
+      "macOS compatibility metadata parsed separately",
+      "Windows runtime imports accepted"
+    ]
+  }
 }

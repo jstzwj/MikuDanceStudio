@@ -67,6 +67,8 @@ RGBA16F 的可精确表示写入值逐值比较，HDR 合成保留一个 binary1
 
 依赖固定为 Vulkan-Headers v1.3.296、MoltenVK 1.4.2，以及官方 DXC v1.8.2505.1 的校验和固定二进制／源码修订 `b106a961d09221b3c5bdb37be45b679257da08b8`。本地 Windows 使用 Vulkan SDK 1.4.341.1。编译选项和工具定位可在 `.github/workflows/portable-render.yml`、`tools/fetch_dxc.py` 与 `cmake/VulkanShaders.cmake` 复现。
 
+收尾复核修正了 P1／P2 二进制依赖审计的既有偶发误报：`ldd` 的 ASLR 地址可能恰含 `d3d`，现在只检查请求库名与解析后的库文件名，同时明确拒绝未解析依赖。禁用库清单不变，新增 Linux 地址、macOS 元数据、真实 GPU／UI 库及缺失库的回归；四列基础 CI 都执行该检查。
+
 ## 真实模型与性能基线
 
 本地 Sour Miku 模型 SHA-256 为 `4542728612d1055186dc500bfc897cf458ce5530a87bb2c84de1dfeffeb6e5fa`。模型、纹理和私有输出只保存在忽略目录，不上传仓库或 CI。
