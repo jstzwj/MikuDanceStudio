@@ -1,4 +1,5 @@
 #include "mikudancestudio/scene_runtime.hpp"
+#include "cpu_scene_session_fixture.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -101,6 +102,9 @@ int main(int argc, char** argv) {
     CHECK(!a.Snapshot(0) && !b.Snapshot(0) && retained);
     CHECK(a.Tick(.1f, reason) && b.Tick(.1f, reason));
     CHECK(a.LoadModel(document, reason) && b.LoadModel(document, reason) && Equal(a, b));
+    CHECK(cpu_scene_fixture::RoundTrip(document, *retained, bone, reason));
+    std::cout
+        << "real model: generated PMM animation, seek, playback, save/reload and reset passed\n";
     std::cout
         << "real model: load, seeks, four physics modes, pause, reset, unload/reload and retained immutable resource passed\n";
 }

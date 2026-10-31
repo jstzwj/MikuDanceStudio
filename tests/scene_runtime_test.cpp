@@ -1,5 +1,6 @@
 #include "mikudancestudio/scene_runtime.hpp"
 #include "mikudancestudio/scene_resources.hpp"
+#include "cpu_scene_session_fixture.hpp"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -46,6 +47,10 @@ int Run(int argc, char** argv) {
         runtime::SceneRuntime scene;
         std::cout << "load " << std::flush;
         CHECK(scene.Load(session, models, reason));
+        if (std::string(name) == "pmx.pmm") {
+            CHECK(cpu_scene_fixture::RoundTrip(models.begin()->second,
+                                               *scene.Resource(models.begin()->first), 0, reason));
+        }
         std::cout << "loaded\n" << std::flush;
         for (const auto& accessory : session.Document().accessories) {
             std::ifstream source(root / "bound.x", std::ios::binary);
