@@ -22,5 +22,5 @@ target_compile_options(mikudancestudio_math PRIVATE
     /arch:IA32 /fp:precise /O2 /Ob2 /Oi /GL-)
 
 target_compile_features(mikudancestudio_math PUBLIC cxx_std_17)
-target_include_directories(mikudancestudio_math PUBLIC "${PROJECT_SOURCE_DIR}/include")
+target_include_directories(mikudancestudio_math PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../../include")
 target_link_libraries(mikudancestudio_math PUBLIC BULLET275::BULLET275)

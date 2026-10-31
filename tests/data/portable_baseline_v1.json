@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "description": "Public generated fixtures; PMD/PMX parsing and VMD/VPD writers, no runtime assets",
+  "files": {
+    "generated.pmd": {
+      "bytes": 2131,
+      "sha256": "5451aa7b80fdf1fe3340f5f8908cb6fbd714e0ab73f06a0d87838f99f2519a01"
+    },
+    "generated.pmx": {
+      "bytes": 484,
+      "sha256": "b43f6f0f55e567234280c0167bc08e2157480f706be1afe2f4d191a7ee007ada"
+    },
+    "generated.vmd": {
+      "bytes": 208,
+      "sha256": "fe101b7c60467f53a7d5687facb3176fee4604174edfd7c9cc07b5733e1a11f9"
+    },
+    "generated.vpd": {
+      "bytes": 204,
+      "sha256": "a062921fb166a3aef6d498871cf70f4c039f1b654b21fbb3e43bd4d151303aaf"
+    }
+  },
+  "numeric_profiles": {
+    "separate-float32": [
+      1040522936,
+      2147483648,
+      0
+    ],
+    "vc9-x87": [
+      1040522937,
+      2147483648,
+      0
+    ]
+  }
+}

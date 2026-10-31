@@ -4,48 +4,70 @@ on:
   push:
     branches: [next, 'validation/rhi-resources-*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  cpu-simulation:
+  foundation:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-22.04
+            arch: x64
+            generator: Unix Makefiles
+          - os: macos-14
+            arch: arm64
+            generator: Unix Makefiles
+          - os: windows-2022
+            arch: x64
+            generator: Visual Studio 17 2022
+          - os: windows-2022
+            arch: Win32
+            generator: Visual Studio 17 2022
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Configure CPU simulation tests
-        run: cmake -S cmake/cpu-simulation-tests -B build-cpu-simulation -DBUILD_TESTING=ON
-      - name: Build
-        run: cmake --build build-cpu-simulation --config Release --parallel 2
-      - name: Test CPU simulation
-        run: ctest --test-dir build-cpu-simulation -C Release --output-on-failure
-  formats:
-    if: ${{ !startsWith(github.ref_name, 'validation/rhi-resources-') }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/checkout@v4
-      - name: Configure
-        run: cmake -S . -B build-portable -DMIKUDANCESTUDIO_FORMATS_ONLY=ON -DBUILD_TESTING=ON -DMIKUDANCESTUDIO_RHI_D3D9=${{ runner.os == 'Windows' && 'ON' || 'OFF' }}
-      - name: Build
-        run: cmake --build build-portable --config Release --parallel 2
-      - name: Test
-        run: ctest --test-dir build-portable -C Release --output-on-failure
-  resources:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure resource lifecycle tests
-        run: cmake -S cmake/rhi-resource-tests -B build-resources -DBUILD_TESTING=ON
-      - name: Build
-        run: cmake --build build-resources --config Release --parallel 2
-      - name: Test resource lifecycle
-        run: ctest --test-dir build-resources -C Release --output-on-failure
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: v1.3.296
+          path: out/vulkan-headers
+      - name: Install Linux probe runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - name: Fetch pinned macOS probe runtime
+        if: runner.os == 'macOS'
+        run: python tools/fetch_moltenvk_probe.py --output out/moltenvk
+      - name: Build and repeat foundation tests (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          python tools/run_portable_baseline.py --build-dir out/p0
+          --generator '${{ matrix.generator }}' --vulkan-include out/vulkan-headers/include
+          --require-device
+      - name: Build and repeat foundation tests (macOS hardware)
+        if: runner.os == 'macOS'
+        run: >-
+          python tools/run_portable_baseline.py --build-dir out/p0
+          --generator '${{ matrix.generator }}' --vulkan-include out/vulkan-headers/include
+          --vulkan-library out/moltenvk/libMoltenVK.dylib --require-hardware
+      - name: Build and repeat foundation tests (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          python tools/run_portable_baseline.py --build-dir out/p0
+          --generator '${{ matrix.generator }}' --architecture '${{ matrix.arch }}'
+          --vulkan-include out/vulkan-headers/include --probe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p0-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            out/p0/evidence/
+            out/p0/environment-*.json
+            out/p0/baseline/
+          if-no-files-found: error

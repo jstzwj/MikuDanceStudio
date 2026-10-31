@@ -3,10 +3,14 @@
 
 #include <cstdio>
 #include <memory>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 int main() {
+#ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#endif
     btRigidBody::btRigidBodyConstructionInfo info(0, nullptr, nullptr);
     btRigidBody first(info), second(info);
     btTransform frame;

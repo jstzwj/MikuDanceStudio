@@ -55,3 +55,5 @@ class Bullet275Conan(ConanFile):
             self.cpp_info.cxxflags = ["/fp:precise", "/Zc:alignedNew"]
             if self.settings.arch == "x86":
                 self.cpp_info.cxxflags.append("/arch:IA32")
+        else:
+            self.cpp_info.cxxflags = ["-ffp-contract=off"]

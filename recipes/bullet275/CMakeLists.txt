@@ -7,6 +7,7 @@ foreach(component LinearMath BulletCollision BulletDynamics)
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/bullet-src/src/${component}/*.cpp")
     add_library(${component} STATIC ${sources})
+    target_compile_features(${component} PUBLIC cxx_std_17)
     target_include_directories(${component} PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/bullet-src/src")
     set_target_properties(${component} PROPERTIES
@@ -21,8 +22,16 @@ foreach(component LinearMath BulletCollision BulletDynamics)
         if(BULLET275_ASAN)
             target_compile_options(${component} PRIVATE /fsanitize=address)
         endif()
+    else()
+        # Bullet exposes arithmetic in headers: consumers need this too.
+        target_compile_options(${component} PUBLIC -ffp-contract=off)
     endif()
 endforeach()
 
 target_link_libraries(BulletCollision PUBLIC LinearMath)
 target_link_libraries(BulletDynamics PUBLIC BulletCollision)
+
+# Same public dependency boundary as the Conan package, for offline builds.
+add_library(bullet275 INTERFACE)
+target_link_libraries(bullet275 INTERFACE BulletDynamics BulletCollision LinearMath)
+add_library(BULLET275::BULLET275 ALIAS bullet275)

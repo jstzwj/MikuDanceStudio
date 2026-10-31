@@ -30,7 +30,9 @@ if (MSVC)
     # including over-aligned classes without a class-specific allocator.
     add_compile_options(/Zc:alignedNew)
 else()
-    add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+    # The compatibility formulas require separate multiply/add rounding on
+    # arm64 as well as x64. Do not contract them into an FMA implicitly.
+    add_compile_options(-Wall -Wextra -Wno-unused-parameter -ffp-contract=off)
 endif()
 
 if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT MIKUDANCESTUDIO_FORMATS_ONLY)
