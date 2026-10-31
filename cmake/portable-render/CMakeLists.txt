@@ -33,7 +33,7 @@ add_test(NAME p3_scene_frame_contract COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(p3_scene_frame_contract PROPERTIES LABELS "p3;headless" TIMEOUT 120)
 add_executable(portable_presentation_test "${MDS_SOURCE}/tests/portable_presentation_test.cpp")
 target_include_directories(portable_presentation_test PRIVATE "${MDS_SOURCE}/tests")
-target_link_libraries(portable_presentation_test PRIVATE mikudancestudio_rhi)
+target_link_libraries(portable_presentation_test PRIVATE mikudancestudio_scene_render)
 if(APPLE)
     enable_language(OBJCXX)
     target_sources(portable_presentation_test PRIVATE "${MDS_SOURCE}/tests/native_surface_host.mm")
@@ -64,4 +64,8 @@ endif()
 if(NOT UNIX OR APPLE)
     add_test(NAME p3_presentation COMMAND portable_presentation_test ${MDS_P3_DRIVER})
     set_tests_properties(p3_presentation PROPERTIES LABELS "p3;presentation" TIMEOUT 120 RUN_SERIAL TRUE)
+    add_test(NAME p3_scene_presentation COMMAND ${Python3_EXECUTABLE}
+        "${MDS_SOURCE}/tests/test_runtime_cpu_scene.py" --passes $<TARGET_FILE:portable_presentation_test>
+        --assets "${MDS_SOURCE}/res/assets")
+    set_tests_properties(p3_scene_presentation PROPERTIES LABELS "p3;presentation" TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

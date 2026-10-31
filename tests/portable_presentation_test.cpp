@@ -4,16 +4,54 @@
 #include "mikudancestudio/rhi_scene_preview.hpp"
 #include "mikudancestudio/rhi_post_process.hpp"
 #include "mikudancestudio/rhi_vulkan.hpp"
+#include "mikudancestudio/scene_frame_producer.hpp"
+#include <fstream>
 #include <cstdio>
 #include <stdexcept>
 using namespace mikudancestudio::rhi;
+using namespace mikudancestudio;
 #define CHECK(x)                                                                                   \
     do {                                                                                           \
         if (!(x))                                                                                  \
             throw std::runtime_error(std::string(#x) + ": " + controller.Reason());                \
     } while (0)
 int main(int argc, char** argv) try {
-    const std::string argument = argc > 1 ? argv[1] : "native";
+    const bool cpuScene = argc == 3;
+    const char* hostArgument = std::getenv("MDS_P3_PRESENTATION_ARGUMENT");
+    const std::string argument = hostArgument            ? hostArgument
+                                 : !cpuScene && argc > 1 ? argv[1]
+                                                         : "native";
+    runtime::SceneRuntime scene;
+    render::SceneFrameProducer producer;
+    if (cpuScene) {
+        format::ModelDocument document;
+        const auto path = std::filesystem::path(argv[1]) / "triangle.pmx";
+        std::ifstream file(path, std::ios::binary);
+        auto read = [](void* state, void* data, std::size_t bytes) {
+            auto& source = *static_cast<std::ifstream*>(state);
+            source.read(static_cast<char*>(data), bytes);
+            return int(source.gcount());
+        };
+        std::string reason;
+        if (!file || !format::ReadModelDocument(read, &file, document) ||
+            !scene.LoadModel(document, reason) || !scene.SetPhysicsMode(0, reason))
+            throw std::runtime_error("presentation scene import: " + reason);
+        render::SceneRenderSources sources;
+        sources.models.emplace(0, path);
+        FileAssetSource assets(argv[2]);
+        format::VmdDocument motion;
+        format::VmdBoneKey key;
+        key.name[0] = 'B';
+        key.frame = 20;
+        key.position[0] = 1;
+        key.rotation[3] = 1;
+        motion.bones.push_back(key);
+        std::shared_ptr<const runtime::MotionClip> clip;
+        if (!runtime::MotionClip::Create(scene.Resource(0), motion, clip, reason) ||
+            !scene.BindMotion(0, clip, reason) || !scene.Seek(0, reason) ||
+            !producer.Load(scene, sources, assets, reason) || !scene.StartPlayback(reason))
+            throw std::runtime_error("presentation scene prepare: " + reason);
+    }
     std::weak_ptr<NativeSurfaceHost> lifetime;
     {
         auto host = CreateTestSurfaceHost(argument.find("wayland") != std::string::npos ? "wayland"
@@ -50,8 +88,22 @@ int main(int argc, char** argv) try {
             CHECK(host->width == width && host->height == height);
             CHECK(controller.Resize(host->width, host->height) &&
                   controller.State() == PreviewState::Ready);
-            auto frame = sampling_fixture::Fixture(2, SamplerFilter::Linear, 1,
-                                                   SamplerAddress::Wrap, 3.37f, true, true);
+            RenderFrame frame;
+            if (cpuScene) {
+                if (i)
+                    CHECK(scene.Advance(float(i) / 30, 1.f / 30, reason));
+                const auto beforeUpdate = scene.Counters().frames;
+                render::SceneRenderSettings settings;
+                settings.width = host->width;
+                settings.height = host->height;
+                settings.shadow.mode = 1;
+                settings.shadow.mapSize = 32;
+                settings.postProcessCopy = false;
+                CHECK(producer.Build(scene, settings, frame, reason) &&
+                      scene.Counters().frames == beforeUpdate && scene.Snapshot(0)->frame == i);
+            } else
+                frame = sampling_fixture::Fixture(2, SamplerFilter::Linear, 1, SamplerAddress::Wrap,
+                                                  3.37f, true, true);
             for (auto& t : frame.targets)
                 if (t.id == 1 || t.id == 2) {
                     t.description.width = host->width;
@@ -103,6 +155,8 @@ int main(int argc, char** argv) try {
         throw std::runtime_error("native_surface_lease_leaked");
     std::puts(
         "native presentation/odd resize/suspend/replacement/unload/no-readback/lifetime passed");
+    if (cpuScene)
+        std::puts("P2 CPU animation -> shared scene frame -> native presentation passed");
     return 0;
 } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());

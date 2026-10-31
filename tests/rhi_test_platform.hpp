@@ -6,6 +6,8 @@ inline void ConfigureVulkanTest(mikudancestudio::rhi::BackendOptions& options,
                                 const std::string& argument) {
     if (argument.find("software") != std::string::npos)
         options.driver = mikudancestudio::rhi::BackendDriver::Software;
+    if (argument.find("debug") != std::string::npos)
+        options.debugLayer = true;
     if (const char* library = std::getenv("MDS_TEST_VULKAN_LIBRARY"))
         options.vulkanLibrary = library;
 }

@@ -56,7 +56,9 @@ jobs:
           cmake --build out/p3 --parallel 3
           ctest --test-dir out/p3 -L p3 --output-on-failure --output-junit p3.xml
       - name: X11 presentation in an isolated virtual display
-        run: xvfb-run -a out/p3/portable_presentation_test xcb-software
+        run: |
+          xvfb-run -a out/p3/portable_presentation_test xcb-software
+          xvfb-run -a env MDS_P3_PRESENTATION_ARGUMENT=xcb-software python tests/test_runtime_cpu_scene.py --passes out/p3/portable_presentation_test --assets res/assets
       - name: Wayland presentation in an isolated compositor
         run: |
           export XDG_RUNTIME_DIR="$(mktemp -d)"
@@ -67,6 +69,7 @@ jobs:
           for attempt in $(seq 1 50); do test -S "$XDG_RUNTIME_DIR/mds-p3" && break; sleep 0.1; done
           export WAYLAND_DISPLAY=mds-p3
           out/p3/portable_presentation_test wayland-software
+          MDS_P3_PRESENTATION_ARGUMENT=wayland-software python tests/test_runtime_cpu_scene.py --passes out/p3/portable_presentation_test --assets res/assets
       - uses: actions/upload-artifact@v4
         if: always()
         with:
