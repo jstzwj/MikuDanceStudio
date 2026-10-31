@@ -31,6 +31,7 @@ def main():
     report = {
         "schema": 1, "stage": "P0", "status": "failed",
         "host": {"system": platform.system(), "release": platform.release(),
+                 "macos_version": platform.mac_ver()[0],
                  "architecture": platform.machine(), "python": platform.python_version()},
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),

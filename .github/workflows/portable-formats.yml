@@ -18,7 +18,7 @@ jobs:
           - os: ubuntu-22.04
             arch: x64
             generator: Unix Makefiles
-          - os: macos-14
+          - os: macos-15
             arch: arm64
             generator: Unix Makefiles
           - os: windows-2022
