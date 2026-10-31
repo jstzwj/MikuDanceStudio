@@ -1342,3 +1342,24 @@ GJK／EPA 内还有需要区分的两类差异：`btGjkEpa2.cpp:679` 的重心�
 使用当前配方强制执行 `conan create recipes/bullet275 --profile:all profiles/x86 -s compiler.cppstd=17 -s build_type=Debug --build="bullet275/*" --lockfile=""`，从源码重建、打包成功；包 ID 与报告中相同，均为 `1c9358749f6e4858a67bd26e02f6a45e064610d1`，配方修订已更新。当前 Bullet 三个库的生成项目均为 `Optimization=Disabled`、`BasicRuntimeChecks=EnableFastChecks`，即保留 Debug 的 `/RTC1` 且没有强加 `/O2`；原先的 `btMmdMath.cpp` 已不在 Bullet 原始源码树或依赖目标中，因此报告的 D8016 冲突不再复现。
 
 应用独立的 `mikudancestudio_math` Debug 目标保留 `Optimization=MaxSpeed`，但局部设置 `BasicRuntimeChecks=Default`，不会同时传入 `/O2` 与 `/RTC1`，也不使用无效的 `/RTC-`。随后在新目录安装刚重建的 Conan 包、配置并构建 x86 Debug 消费者，`bullet_allocation`、`bullet_simulation`、`bullet_upstream_sources`、`mmd_math`、`physics_tolerance` 共 5/5 通过。原始归档的 382 文件校验、修改测试文件的格式检查和 `git diff --check` 通过；未运行全量 CTest。日志及命令脚本位于 `out/issue8/final-push/`。
+
+## 2026-10-31：新建场景的控件状态恢复（Issue #10）
+
+通过 IDA MCP 核对原版 `MikuMikuDanceE_v932x64/MikuMikuDance.exe`（SHA-256 `07516fd3bf1e6b1339836b6773a156f61bdd6f848eeb621fdda012375df313a1`）。当前 IDB 基址为 `0x7FF7CB420000`；“新建”分支在确认对话框返回 `IDOK` 后，于 `0x7FF7CB46DE52` 调用 `sub_7FF7CB492F90`（RVA `0x72F90`）。
+
+| 重置项目 | 内部状态写入 | 菜单状态 | 控件消息调用位置与参数 |
+|---|---|---|---|
+| 信息显示 | `app+0x356 = 0` | `0xD3` 取消勾选 | `0x7FF7CB4942ED`：控件 551，`SendMessageA(..., 0xF1, 0, 0)` |
+| 坐标轴显示 | `app+0x355 = 1` | `0xD7` 勾选 | `0x7FF7CB494348`：控件 557，`SendMessageA(..., 0xF1, 1, 0)` |
+
+`0xF1` 是 `BM_SETCHECK`；原版按浮动窗口存在与否选择控件父窗口，直接同步勾选状态。用户点击的独立分支位于 `0x7FF7CB470F2A`（551）和 `0x7FF7CB470EDF`（557），会反转内部状态并更新菜单。重置时不应使用 `BM_CLICK`（`0xF5`）进入这些分支。
+
+重置函数涉及的 17 个按钮消息全部为 `BM_SETCHECK`；对应控件 ID、状态值及调用顺序也与原版 x86 的 `sub_44E540` 一致。端口原先 14 处 `BM_CLICK`（其中一处循环涉及 4 个按钮）均恢复为直接设置状态，保留原版调用顺序、条件分支与控件归属；使用 `BST_CHECKED`／`BST_UNCHECKED` 表达状态值。
+
+同一函数的菜单重置也保留了 x86 常量 `MENUITEMINFOA.cbSize = 48`，导致 x64 的 `SetMenuItemInfoA` 无法禁用第 7 个子菜单的第 2 项（索引均从 0 开始）。原版在 `0x7FF7CB494FE6` 写入 80，随后于 `0x7FF7CB494FFE` 调用 `SetMenuItemInfoA`。端口改用 `sizeof mii`，使 x86 为 48、x64 为 80。新增的菜单断言已先在未修复的 x64 实现上确认失败。
+
+新增 `scene_reset` 回归调用完整生产 `ResetAppState`，使用真实 Win32 按钮与菜单，覆盖主窗口／浮动窗口、信息与坐标轴的四种初始组合、模型模式退出及连续两次新建。验证全部 17 个按钮、内部默认值和菜单一致，指定子菜单项被禁用，重置不产生 `BN_CLICKED`，真实按钮点击仍经生产命令处理同步状态。测试可用现有场景夹具的 CPU 设备回退，不因 GPU 不可用跳过；它不验证最终渲染像素。
+
+IDA 反编译、关键汇编及逐项消息对照位于 `out/issue10/mmd932-x64-ida-reset.c`、`mmd932-x64-ida-evidence.asm`、`mmd932-x64-ida-message-audit.json`。
+
+刷新两架构的 Conan 依赖至当前原始 Bullet 配方后，完整 Release 构建成功，全量 CTest 为 x64 **101/101**、x86 **97/97**，无失败或跳过。补入菜单结构大小修复后，再次构建两架构主程序与 `scene_reset_test`，并重跑包含菜单断言的 `scene_reset`，均通过。JUnit 结果位于 `out/issue10/test-current-full-{x64,x86}.xml` 和 `test-final-reset-{x64,x86}.xml`。
