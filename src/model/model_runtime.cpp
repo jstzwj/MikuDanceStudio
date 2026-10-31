@@ -204,6 +204,8 @@ bool ModelResource::Create(const format::ModelDocument& source,
                        resource->boneNames_, resource->skeleton_, resource->chains_, reason))
         return false;
     resource->sourceKind_ = source.kind;
+    if (source.kind == format::ModelKind::Pmd)
+        resource->pmdToonNames_ = source.pmd.toonNames;
     resource->document_ = model;
     for (auto& vertex : resource->document_.vertices)
         if (vertex.weightType == 3) {

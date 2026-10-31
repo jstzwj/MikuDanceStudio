@@ -43,7 +43,7 @@ add_custom_command(OUTPUT "${MDS_SPIRV_HEADER}"
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/embed_spirv.py"
         --output "${MDS_SPIRV_HEADER}" ${MDS_SPIRV_MODULES}
     DEPENDS ${MDS_SPIRV_FILES} "${PROJECT_SOURCE_DIR}/tools/embed_spirv.py" VERBATIM)
-target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_vulkan.cpp src/platform/vulkan_surface.cpp src/render/shader_compiler.cpp "${MDS_SPIRV_HEADER}")
+target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_vulkan.cpp src/platform/vulkan_surface.cpp "${MDS_SPIRV_HEADER}")
 target_include_directories(mikudancestudio_rhi PRIVATE "${MDS_VULKAN_INCLUDE}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(mikudancestudio_rhi PUBLIC MIKUDANCESTUDIO_RHI_VULKAN=1)
 target_link_libraries(mikudancestudio_rhi PRIVATE ${CMAKE_DL_LIBS})

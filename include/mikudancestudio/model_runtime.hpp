@@ -40,6 +40,7 @@ public:
     const std::vector<std::string>& BoneNames() const { return boneNames_; }
     const std::vector<std::string>& MorphNames() const { return morphNames_; }
     format::ModelKind SourceKind() const { return sourceKind_; }
+    const std::array<std::array<char, 100>, 10>& PmdToonNames() const { return pmdToonNames_; }
 
 private:
     friend class ModelInstance;
@@ -48,6 +49,7 @@ private:
     friend class ModelEvaluation;
     format::PmxDocument document_;
     format::ModelKind sourceKind_ = format::ModelKind::Pmx;
+    std::array<std::array<char, 100>, 10> pmdToonNames_{};
     std::vector<cpu_model::Bone> skeleton_;
     std::vector<cpu_model::IkChain> chains_;
     std::vector<std::string> boneNames_, morphNames_;

@@ -14,6 +14,8 @@ function(mds_add_scene_runtime physics_target)
     else()
         target_compile_options(mikudancestudio_scene_runtime PRIVATE -ffp-contract=off)
     endif()
+    include("${mds_root}/cmake/SceneRender.cmake")
+    mds_add_scene_render()
     # Capture the complete offline production graph, including the pinned
     # Bullet libraries. Conan builds use the same sources through its recipe;
     # the portable CI entry point audits those sources and the final executable.
