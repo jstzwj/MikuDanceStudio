@@ -78,10 +78,25 @@ int main(int argc, char** argv) {
     const auto color = d.CreateRenderTexture(description);
     CHECK(color);
     auto depthDescription = description;
-    depthDescription.format = TextureFormat::Depth24Stencil8;
+    depthDescription.format = TextureFormat::DepthStencil;
     depthDescription.access = unsigned(TextureAccess::DepthStencilAttachment);
     const auto depth = d.CreateRenderTexture(depthDescription);
     CHECK(depth);
+    CHECK(d.FormatFeatures(TextureFormat::DepthStencil).render &&
+          !d.FormatFeatures(TextureFormat::DepthStencil).readback &&
+          !d.FormatFeatures(TextureFormat::DepthStencil).sampled);
+    auto unavailable = depthDescription;
+    unavailable.access |= unsigned(TextureAccess::CopySource);
+    CHECK(!d.CreateRenderTexture(unavailable));
+    unavailable = depthDescription;
+    unavailable.format = TextureFormat::Depth24Stencil8;
+    const auto exact = d.CreateRenderTexture(unavailable);
+    CHECK(bool(exact) == d.FormatFeatures(TextureFormat::Depth24Stencil8).render);
+    if (exact)
+        CHECK(d.Destroy(exact));
+    std::printf("depth attachment: %s; exact D24S8 supported: %d\n",
+                d.FormatFeatures(TextureFormat::Depth24Stencil8).render ? "D24S8" : "D32FS8",
+                int(d.FormatFeatures(TextureFormat::Depth24Stencil8).render));
     RenderPassDesc pass;
     pass.color = PassAttachment{color};
     pass.color->clear = {0, 0, 1, 1};

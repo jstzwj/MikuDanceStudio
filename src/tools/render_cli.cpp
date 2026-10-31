@@ -152,10 +152,12 @@ int Run(const std::vector<std::string>& args) {
     if (frames > 1)
         Require(scene.StartPlayback(reason), reason);
     double updateMs = 0, produceMs = 0, prepareMs = 0, submitMs = 0, readMs = 0;
+    double coldMs = 0, warmMs = 0;
     unsigned replacements = 0;
     AttachmentReadback actual, main, shadow;
     const auto originalWidth = settings.width, originalHeight = settings.height;
     for (unsigned i = 0; i < frames; ++i) {
+        const auto frameStart = Clock::now();
         auto start = Clock::now();
         if (i)
             Require(scene.Tick(1.f / 30, reason), reason);
@@ -190,6 +192,10 @@ int Run(const std::vector<std::string>& args) {
         Require(bool(result), result.reason);
         Require(renderer.Collect(), "collect");
         submitMs += Ms(start);
+        if (!i)
+            coldMs = Ms(frameStart);
+        else
+            warmMs += Ms(frameStart);
         if (i + 1 == frames) {
             start = Clock::now();
             Require(bool(renderer.ReadTarget(1, frame.finalColor, actual)), "final_color_readback");
@@ -219,6 +225,7 @@ int Run(const std::vector<std::string>& args) {
     if (options.backend == Backend::Vulkan) {
         vk = QueryVulkanStats(*native.device);
         Require(vk.validationErrors == 0, "vulkan_validation_errors");
+        Require(vk.readbacks == (settings.shadow.mode ? 3u : 2u), "unexpected_frame_readback");
     }
 #endif
     Require(renderer.Unload(1) && renderer.Detach(), "render_unload");
@@ -235,11 +242,16 @@ int Run(const std::vector<std::string>& args) {
            << ",\"height\":" << actual.description.height << ",\"frames\":" << frames
            << ",\"cpu_updates\":" << scene.Counters().frames - initial.frames
            << ",\"device_replacements\":" << replacements << ",\"uploads\":" << stats.uploads
+           << ",\"buffer_creations\":" << stats.bufferCreations
+           << ",\"buffer_reuses\":" << stats.bufferReuses
+           << ",\"buffer_waits\":" << stats.bufferWaits << ",\"upload_bytes\":" << stats.uploadBytes
            << ",\"vulkan_readbacks\":" << vk.readbacks
            << ",\"validation_errors\":" << vk.validationErrors
            << ",\"milliseconds\":{\"cpu_update\":" << updateMs
            << ",\"frame_production\":" << produceMs << ",\"prepare\":" << prepareMs
-           << ",\"submit_collect\":" << submitMs << ",\"explicit_readback\":" << readMs << "}}\n";
+           << ",\"submit_collect\":" << submitMs << ",\"explicit_readback\":" << readMs
+           << ",\"cold_frame\":" << coldMs
+           << ",\"warm_frame_mean\":" << (frames > 1 ? warmMs / (frames - 1) : 0) << "}}\n";
     Require(bool(report), "report_write");
     std::cout << "P3 scene rendered: " << adapter << ", frames=" << frames << '\n';
     return 0;

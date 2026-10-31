@@ -48,10 +48,10 @@ RenderFrame Fixture(unsigned size) {
     f.targets = {{1, {size, size, TextureFormat::R32Float, access}},
                  {2, {size, size, TextureFormat::Rgba8, access}},
                  {3,
-                  {size, size, TextureFormat::Depth24Stencil8,
+                  {size, size, TextureFormat::DepthStencil,
                    std::uint32_t(TextureAccess::DepthStencilAttachment)}},
                  {4,
-                  {size, size, TextureFormat::Depth24Stencil8,
+                  {size, size, TextureFormat::DepthStencil,
                    std::uint32_t(TextureAccess::DepthStencilAttachment)}}};
     for (unsigned n = 0; n < 2; ++n) {
         auto vertices = Quad(n ? .15f : .95f, n ? .2f : .8f);
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
         auto shadow = color;
         shadow.format = TextureFormat::R32Float;
         auto depth = color;
-        depth.format = TextureFormat::Depth24Stencil8;
+        depth.format = TextureFormat::DepthStencil;
         depth.access = std::uint32_t(TextureAccess::DepthStencilAttachment);
         const auto map = d.CreateRenderTexture(shadow), mapDepth = d.CreateRenderTexture(depth);
         const auto main = d.CreateRenderTexture(color), mainDepth = d.CreateRenderTexture(depth);

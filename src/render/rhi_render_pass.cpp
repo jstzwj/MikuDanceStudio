@@ -24,6 +24,8 @@ unsigned TexturePixelBytes(TextureFormat f) {
     case TextureFormat::R32Float:
     case TextureFormat::Depth24Stencil8:
         return 4;
+    case TextureFormat::DepthStencil:
+        return 0; // Native storage is negotiated, and cannot be transferred.
     }
     return 0;
 }
@@ -37,13 +39,14 @@ bool ValidRenderTextureDesc(const RenderTextureDesc& d) {
     if (d.mips > 1 &&
         (d.mips != levels || d.format != TextureFormat::Rgba8 || !Has(d, TextureAccess::Sampled)))
         return false;
-    const bool depth = d.format == TextureFormat::Depth24Stencil8;
+    const bool depth = IsDepthStencil(d.format);
     if (!depth && d.format != TextureFormat::Rgba8 && d.format != TextureFormat::R32Float &&
         d.format != TextureFormat::Rgba16Float)
         return false;
     if (depth)
         return Has(d, TextureAccess::DepthStencilAttachment) &&
-               !Has(d, TextureAccess::ColorAttachment) && !Has(d, TextureAccess::Sampled);
+               !Has(d, TextureAccess::ColorAttachment) && !Has(d, TextureAccess::Sampled) &&
+               (d.format != TextureFormat::DepthStencil || !Has(d, TextureAccess::CopySource));
     return Has(d, TextureAccess::ColorAttachment) && !Has(d, TextureAccess::DepthStencilAttachment);
 }
 bool EqualRenderTextureDesc(const RenderTextureDesc& a, const RenderTextureDesc& b) {

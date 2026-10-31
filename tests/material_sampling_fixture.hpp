@@ -15,8 +15,7 @@ inline RenderFrame Fixture(unsigned pattern, SamplerFilter filter, unsigned anis
         TextureAccess::ColorAttachment | TextureAccess::Sampled | TextureAccess::CopySource;
     f.targets = {
         {1, {96, 64, TextureFormat::Rgba8, access}},
-        {2,
-         {96, 64, TextureFormat::Depth24Stencil8, unsigned(TextureAccess::DepthStencilAttachment)}},
+        {2, {96, 64, TextureFormat::DepthStencil, unsigned(TextureAccess::DepthStencilAttachment)}},
         {3, {32, 32, TextureFormat::R32Float, access}}};
     Vertex vertices[] = {{-.95f, .9f, .5f, 0, 0, -1, -.37f, -.13f},
                          {.91f, .87f, .5f, 0, 0, -1, scale, -.13f},

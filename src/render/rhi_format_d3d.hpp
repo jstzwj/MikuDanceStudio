@@ -11,6 +11,7 @@ inline DXGI_FORMAT DxgiFormat(TextureFormat f) {
     case TextureFormat::Rgba16Float:
         return DXGI_FORMAT_R16G16B16A16_FLOAT;
     case TextureFormat::Depth24Stencil8:
+    case TextureFormat::DepthStencil:
         return DXGI_FORMAT_D24_UNORM_S8_UINT;
     }
     return DXGI_FORMAT_UNKNOWN;

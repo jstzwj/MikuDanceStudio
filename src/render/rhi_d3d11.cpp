@@ -72,12 +72,12 @@ public:
         UINT flags = 0;
         if (!native || FAILED(native->CheckFormatSupport(detail::DxgiFormat(f), &flags)))
             return {};
-        const bool depth = f == TextureFormat::Depth24Stencil8;
+        const bool depth = IsDepthStencil(f);
         return {bool(flags & (depth ? D3D11_FORMAT_SUPPORT_DEPTH_STENCIL
                                     : D3D11_FORMAT_SUPPORT_RENDER_TARGET)),
                 !depth && bool(flags & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE),
                 !depth && bool(flags & D3D11_FORMAT_SUPPORT_BLENDABLE),
-                bool(flags & D3D11_FORMAT_SUPPORT_TEXTURE2D),
+                f != TextureFormat::DepthStencil && bool(flags & D3D11_FORMAT_SUPPORT_TEXTURE2D),
                 f == TextureFormat::Rgba8 && bool(flags & D3D11_FORMAT_SUPPORT_MIP_AUTOGEN)};
     }
     const char* ShaderDiagnostic() const override { return genericError.c_str(); }
@@ -364,8 +364,8 @@ public:
         if (d.mips > 1)
             t.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
         t.Format = detail::DxgiFormat(d.format);
-        t.BindFlags = d.format == TextureFormat::Depth24Stencil8 ? D3D11_BIND_DEPTH_STENCIL
-                                                                 : D3D11_BIND_RENDER_TARGET;
+        t.BindFlags =
+            IsDepthStencil(d.format) ? D3D11_BIND_DEPTH_STENCIL : D3D11_BIND_RENDER_TARGET;
         if (d.access & std::uint32_t(TextureAccess::Sampled))
             t.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
         Resource r;
@@ -373,7 +373,7 @@ public:
         lastError = native->CreateTexture2D(&t, nullptr, &r.texture);
         if (SUCCEEDED(lastError))
             lastError =
-                d.format == TextureFormat::Depth24Stencil8
+                IsDepthStencil(d.format)
                     ? native->CreateDepthStencilView(r.texture.Get(), nullptr, &r.depthView)
                     : native->CreateRenderTargetView(r.texture.Get(), nullptr, &r.renderView);
         if (SUCCEEDED(lastError) && (d.access & std::uint32_t(TextureAccess::Sampled)))

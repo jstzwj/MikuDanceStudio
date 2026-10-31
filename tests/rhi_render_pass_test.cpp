@@ -21,6 +21,15 @@ int main() {
     const auto a = d->CreateRenderTexture(color), b = d->CreateRenderTexture(color),
                z = d->CreateRenderTexture(depth);
     CHECK(a && b && z);
+    auto portableDepth = depth;
+    portableDepth.format = TextureFormat::DepthStencil;
+    CHECK(!d->CreateRenderTexture(portableDepth)); // No defined transfer representation.
+    portableDepth.access = unsigned(TextureAccess::DepthStencilAttachment);
+    const auto portableZ = d->CreateRenderTexture(portableDepth);
+    CHECK(portableZ && d->FormatFeatures(portableDepth.format).render &&
+          !d->FormatFeatures(portableDepth.format).readback);
+    portableDepth.access |= unsigned(TextureAccess::Sampled);
+    CHECK(!d->CreateRenderTexture(portableDepth) && d->Destroy(portableZ));
     auto invalid = color;
     invalid.samples = 4;
     CHECK(!d->CreateRenderTexture(invalid));

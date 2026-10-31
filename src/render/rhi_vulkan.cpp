@@ -137,7 +137,7 @@ struct Frame {
     std::uint64_t completion = 0;
     unsigned draws = 0;
 };
-VkFormat Format(TextureFormat f) {
+VkFormat ExactFormat(TextureFormat f) {
     if (f == TextureFormat::Rgba16Float)
         return VK_FORMAT_R16G16B16A16_SFLOAT;
     return f == TextureFormat::Rgba8      ? VK_FORMAT_R8G8B8A8_UNORM
@@ -145,7 +145,7 @@ VkFormat Format(TextureFormat f) {
                                           : VK_FORMAT_D24_UNORM_S8_UINT;
 }
 VkImageAspectFlags Aspect(const Resource& r) {
-    return r.format == VK_FORMAT_D24_UNORM_S8_UINT
+    return (r.format == VK_FORMAT_D24_UNORM_S8_UINT || r.format == VK_FORMAT_D32_SFLOAT_S8_UINT)
                ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
                : VK_IMAGE_ASPECT_COLOR_BIT;
 }
@@ -178,6 +178,10 @@ public:
     PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessengerEXT = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
+    VkFormat attachmentDepthFormat = VK_FORMAT_UNDEFINED;
+    VkFormat Format(TextureFormat f) const {
+        return f == TextureFormat::DepthStencil ? attachmentDepthFormat : ExactFormat(f);
+    }
     VkDevice native = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
@@ -216,12 +220,12 @@ public:
         return caps;
     }
     TextureFormatCapabilities FormatFeatures(TextureFormat f) const override {
-        if (!physical || !TexturePixelBytes(f))
+        if (!physical || !TexturePixelBytes(f) && f != TextureFormat::DepthStencil)
             return {};
         VkFormatProperties data{};
         vkGetPhysicalDeviceFormatProperties(physical, Format(f), &data);
         const auto flags = data.optimalTilingFeatures;
-        const bool depth = f == TextureFormat::Depth24Stencil8;
+        const bool depth = IsDepthStencil(f);
         return {bool(flags & (depth ? VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
                                     : VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)),
                 !depth && bool(flags & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
@@ -848,7 +852,7 @@ public:
     Handle CreateRenderTexture(const RenderTextureDesc& d) override {
         if (!Live() || inFrame || !QueryShaderTextureSupport(*this, d))
             return {};
-        const bool depth = d.format == TextureFormat::Depth24Stencil8;
+        const bool depth = IsDepthStencil(d.format);
         VkImageUsageFlags usage = depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
                                         : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         if (d.access & unsigned(TextureAccess::Sampled))
@@ -910,13 +914,13 @@ public:
             return true;
         Resource color, depth;
         color.texture = {d.width, d.height, TextureFormat::Rgba8};
-        depth.texture = {d.width, d.height, TextureFormat::Depth24Stencil8};
+        depth.texture = {d.width, d.height, TextureFormat::DepthStencil};
         if (!AllocateImage(d.width, d.height, VK_FORMAT_R8G8B8A8_UNORM, 1,
                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                            color))
             return false;
-        if (!AllocateImage(d.width, d.height, VK_FORMAT_D24_UNORM_S8_UINT, 1,
+        if (!AllocateImage(d.width, d.height, attachmentDepthFormat, 1,
                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth) ||
             !Idle()) {
             Release(color);
@@ -1268,8 +1272,7 @@ public:
     bool ReadRenderTexture(Handle h, AttachmentReadback& out) override {
         auto* r = Find(h);
         const auto* d = passes.Description(h);
-        if (!Live() || inFrame || !r || !d || d->format == TextureFormat::Depth24Stencil8 ||
-            !passes.CanRead(h))
+        if (!Live() || inFrame || !r || !d || IsDepthStencil(d->format) || !passes.CanRead(h))
             return false;
         AttachmentReadback next;
         next.description = *d;
@@ -1839,6 +1842,20 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
                                               : "vulkan_1_3_features_unavailable";
     if (!physical)
         return false;
+    // D24S8 is optional (notably on Apple GPUs). Negotiate only the portable
+    // attachment contract; exact Depth24Stencil8 queries still use D24S8.
+    for (auto format : {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
+        VkFormatProperties support{};
+        vkGetPhysicalDeviceFormatProperties(physical, format, &support);
+        if (support.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            attachmentDepthFormat = format;
+            break;
+        }
+    }
+    if (attachmentDepthFormat == VK_FORMAT_UNDEFINED) {
+        reason = "depth_stencil_attachment_unavailable";
+        return false;
+    }
     vkGetPhysicalDeviceMemoryProperties(physical, &memoryProperties);
     float priority = 1;
     VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -1892,13 +1909,14 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     }
 #undef LOAD_DEVICE
     vkGetDeviceQueue(native, family, 0, &queue);
-    reason = "device_resources_failed";
+    reason = "timeline_creation_failed";
     VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
     type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
     VkSemaphoreCreateInfo sem{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     sem.pNext = &type;
     if (!Check(vkCreateSemaphore(native, &sem, nullptr, &timeline)))
         return false;
+    reason = "descriptor_layout_creation_failed";
     VkDescriptorSetLayoutBinding bindings[] = {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
@@ -1930,6 +1948,7 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         a.commandBufferCount = 1;
         return Check(vkAllocateCommandBuffers(native, &a, &cmd));
     };
+    reason = "frame_resources_failed";
     if (!commands(transferPool, transfer))
         return false;
     for (auto& frame : frames) {
@@ -1952,6 +1971,7 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         if (!Check(vkCreateDescriptorPool(native, &p, nullptr, &frame.descriptors)))
             return false;
     }
+    reason = "builtin_shader_modules_failed";
     auto module = [&](const auto& words, VkShaderModule& out) {
         VkShaderModuleCreateInfo m{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         m.codeSize = sizeof(words);
@@ -1963,6 +1983,7 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         !module(spirv::outline_vertex, outlineVs) || !module(spirv::shadow_pixel, shadowPs) ||
         !module(spirv::post_vertex, postVs) || !module(spirv::post_pixel, postPs))
         return false;
+    reason = "fallback_texture_failed";
     white.texture = {1, 1, TextureFormat::Rgba8};
     if (!AllocateImage(1, 1, VK_FORMAT_R8G8B8A8_UNORM, 1,
                        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, white) ||
@@ -1971,6 +1992,7 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     HistoryDesc target;
     target.width = w;
     target.height = h;
+    reason = "legacy_targets_failed";
     if (!EnsureModelTarget(target))
         return false;
     if (window && RebuildSurface(*window) != RebuildResult::Success) {

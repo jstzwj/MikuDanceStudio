@@ -136,7 +136,7 @@ public:
         if (!native ||
             FAILED(native->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &data, sizeof(data))))
             return {};
-        const bool depth = f == TextureFormat::Depth24Stencil8;
+        const bool depth = IsDepthStencil(f);
         return {bool(data.Support1 & (depth ? D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL
                                             : D3D12_FORMAT_SUPPORT1_RENDER_TARGET)),
                 !depth && bool(data.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE),
@@ -168,15 +168,18 @@ public:
     bool SamplerTable(const D3D12_SAMPLER_DESC* descriptions, unsigned count,
                       D3D12_GPU_DESCRIPTOR_HANDLE& gpu) {
         auto& f = frames[frameIndex];
-        const std::string key(reinterpret_cast<const char*>(descriptions), count * sizeof(*descriptions));
+        const std::string key(reinterpret_cast<const char*>(descriptions),
+                              count * sizeof(*descriptions));
         auto found = f.samplerTables.find(key);
         if (found == f.samplerTables.end()) {
-            if (f.samplerCount + count > 2048) return false;
+            if (f.samplerCount + count > 2048)
+                return false;
             const auto offset = f.samplerCount;
             auto cpu = f.samplers->GetCPUDescriptorHandleForHeapStart();
             cpu.ptr += SIZE_T(offset) * samplerStride;
             for (unsigned n = 0; n < count; ++n) {
-                native->CreateSampler(&descriptions[n], cpu); cpu.ptr += samplerStride;
+                native->CreateSampler(&descriptions[n], cpu);
+                cpu.ptr += samplerStride;
             }
             f.samplerCount += count;
             found = f.samplerTables.emplace(key, offset).first;
@@ -251,7 +254,8 @@ public:
         auto gpuViews = f.views->GetGPUDescriptorHandleForHeapStart(),
              gpuSamplers = f.samplers->GetGPUDescriptorHandleForHeapStart();
         gpuViews.ptr += UINT64(offset) * viewStride;
-        if (!SamplerTable(samplerSet, GraphicsTextureSlots, gpuSamplers)) return false;
+        if (!SamplerTable(samplerSet, GraphicsTextureSlots, gpuSamplers))
+            return false;
         f.commands->SetGraphicsRootDescriptorTable(4, gpuViews);
         f.commands->SetGraphicsRootDescriptorTable(5, gpuSamplers);
         ++f.drawCount;
@@ -361,7 +365,7 @@ public:
     Handle CreateRenderTexture(const RenderTextureDesc& d) override {
         if (!Live() || inFrame || !QueryShaderTextureSupport(*this, d))
             return {};
-        const bool isDepth = d.format == TextureFormat::Depth24Stencil8;
+        const bool isDepth = IsDepthStencil(d.format);
         const auto format = detail::DxgiFormat(d.format);
         if (d.mips > 1 && !PrepareMipPipeline())
             return {};
@@ -495,7 +499,7 @@ public:
         // Read() copies format-sized texels without color conversion. Native
         // D24S8 is planar in DX12 and deliberately not exposed by this path.
         const auto d = *passes.Description(h);
-        if (d.format == TextureFormat::Depth24Stencil8)
+        if (IsDepthStencil(d.format))
             return false;
         RgbaImage bytes;
         auto& r = *Find(h);
@@ -1260,7 +1264,8 @@ public:
         auto gpuViews = f.views->GetGPUDescriptorHandleForHeapStart(),
              gpuSamplers = f.samplers->GetGPUDescriptorHandleForHeapStart();
         gpuViews.ptr += UINT64(offset) * viewStride;
-        if (!SamplerTable(samplerDescriptions.data(), 4, gpuSamplers)) return false;
+        if (!SamplerTable(samplerDescriptions.data(), 4, gpuSamplers))
+            return false;
         f.commands->SetGraphicsRootDescriptorTable(3, gpuViews);
         f.commands->SetGraphicsRootDescriptorTable(4, gpuSamplers);
         ++f.drawCount;

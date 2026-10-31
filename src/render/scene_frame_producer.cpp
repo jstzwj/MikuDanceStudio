@@ -188,10 +188,10 @@ bool SceneFrameProducer::Load(const runtime::SceneRuntime& scene, const SceneRen
             model->resource = resource;
             const auto& doc = resource->Document();
             const bool pmd = resource->SourceKind() == format::ModelKind::Pmd;
-        if (doc.vertices.empty()) {
-            next->models.emplace(std::uint8_t(slot),std::move(model));
-            continue;
-        }
+            if (doc.vertices.empty()) {
+                next->models.emplace(std::uint8_t(slot), std::move(model));
+                continue;
+            }
             model->geometry = std::make_unique<ModelGeometry>(id, unsigned(doc.vertices.size()));
             if (!model->geometry->SetIndices(IndexFormat::UInt32, doc.indices.data(),
                                              doc.indices.size() * sizeof(std::int32_t)))
@@ -361,7 +361,7 @@ bool SceneFrameProducer::Build(const runtime::SceneRuntime& scene,
         TextureAccess::ColorAttachment | TextureAccess::Sampled | TextureAccess::CopySource;
     result.targets = {{1, {settings.width, settings.height, TextureFormat::Rgba8, access}},
                       {2,
-                       {settings.width, settings.height, TextureFormat::Depth24Stencil8,
+                       {settings.width, settings.height, TextureFormat::DepthStencil,
                         unsigned(TextureAccess::DepthStencilAttachment)}}};
     FramePass main;
     main.name = "scene";
@@ -377,7 +377,7 @@ bool SceneFrameProducer::Build(const runtime::SceneRuntime& scene,
              {settings.shadow.mapSize, settings.shadow.mapSize, TextureFormat::R32Float, access}});
         result.targets.push_back(
             {4,
-             {settings.shadow.mapSize, settings.shadow.mapSize, TextureFormat::Depth24Stencil8,
+             {settings.shadow.mapSize, settings.shadow.mapSize, TextureFormat::DepthStencil,
               unsigned(TextureAccess::DepthStencilAttachment)}});
         cast.color = FrameAttachment{3};
         cast.color->clear = {1, 1, 1, 1};

@@ -286,8 +286,7 @@ ShaderResult ValidateShaderTargetSupport(const Device& d, const ShaderPipeline& 
 ShaderResult QueryShaderTextureSupport(const Device& d, const RenderTextureDesc& desc) {
     if (!d.ShaderFeatures().programs)
         return Fail("shader_programs_not_supported");
-    if (desc.format == TextureFormat::Depth24Stencil8 &&
-        (desc.access & unsigned(TextureAccess::Sampled)))
+    if (IsDepthStencil(desc.format) && (desc.access & unsigned(TextureAccess::Sampled)))
         return Fail("depth_sampling_not_supported");
     if (!ValidRenderTextureDesc(desc))
         return Fail("invalid_render_texture_description");

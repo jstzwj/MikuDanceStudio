@@ -28,10 +28,10 @@ public:
         return c;
     }
     TextureFormatCapabilities FormatFeatures(TextureFormat f) const override {
-        if (!TexturePixelBytes(f))
+        if (!TexturePixelBytes(f) && f != TextureFormat::DepthStencil)
             return {};
-        const bool color = f != TextureFormat::Depth24Stencil8;
-        return {true, color, color, true, f == TextureFormat::Rgba8};
+        const bool color = !IsDepthStencil(f);
+        return {true, color, color, f != TextureFormat::DepthStencil, f == TextureFormat::Rgba8};
     }
     bool PrepareShaderPipeline(const ShaderPipeline& p) override {
         const auto result = ValidateShaderTargetSupport(*this, p);
@@ -93,7 +93,8 @@ public:
             return {};
         Resource r;
         r.alive = r.texture = true;
-        r.bytes.resize(std::size_t(d.width) * d.height * TexturePixelBytes(d.format));
+        r.bytes.resize(std::size_t(d.width) * d.height *
+                       (IsDepthStencil(d.format) ? 4 : TexturePixelBytes(d.format)));
         const auto h = Insert(std::move(r));
         return passes_.Register(h, d) ? h : Handle{};
     }
@@ -123,7 +124,7 @@ public:
             std::uint32_t value = 0;
             if (d.format == TextureFormat::R32Float)
                 std::memcpy(&value, &a->clear.red, 4);
-            else if (d.format == TextureFormat::Depth24Stencil8)
+            else if (IsDepthStencil(d.format))
                 value = std::uint32_t(std::round(double(a->clearDepth) * 16777215.0)) |
                         (std::uint32_t(a->clearStencil) << 24);
             else {

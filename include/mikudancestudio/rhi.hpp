@@ -94,8 +94,15 @@ enum class TextureFormat {
     Rgba8,
     Depth24Stencil8,
     R32Float,
-    Rgba16Float
+    Rgba16Float,
+    // Attachment-only depth [0,1] and 8-bit stencil. The backend negotiates
+    // D24_UNORM_S8 or D32_FLOAT_S8; no packed representation, sampling or
+    // readback is promised. Depth24Stencil8 retains its exact format contract.
+    DepthStencil
 };
+inline bool IsDepthStencil(TextureFormat f) {
+    return f == TextureFormat::Depth24Stencil8 || f == TextureFormat::DepthStencil;
+}
 unsigned TexturePixelBytes(TextureFormat);
 struct TextureFormatCapabilities {
     bool render = false, sampled = false, blend = false, readback = false;
