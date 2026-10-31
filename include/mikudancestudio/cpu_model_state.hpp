@@ -6,9 +6,6 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
-#if defined(_M_X64) || defined(_M_IX86) || defined(__SSE__)
-#include <xmmintrin.h>
-#endif
 class btRigidBody;
 
 namespace mikudancestudio::cpu_model {
@@ -155,15 +152,10 @@ struct Math {
         const float squared = in[0] * in[0] + in[1] * in[1] + in[2] * in[2];
         float inverse = 0;
         if (squared > 0) {
-#if defined(_M_X64) || defined(_M_IX86) || defined(__SSE__)
-            // The legacy CPU runtime uses the SSE reciprocal-root estimate
-            // with one Newton step. Preserve this rounding on SSE machines;
-            // other CPUs use the scalar path under the scene numeric budget.
-            const float estimate = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(squared)));
-            inverse = (3.f - (estimate * squared) * estimate) * (estimate * .5f);
-#else
-            inverse = 1.f / std::sqrt(squared);
-#endif
+            // Reciprocal-root estimates vary across CPU vendors and amplify
+            // into different IK trajectories. Use the same scalar operation
+            // on every architecture; preserve the frozen scene error budget.
+            inverse = float(1.0 / std::sqrt(double(squared)));
         }
         const float v[]{in[0] * inverse, in[1] * inverse, in[2] * inverse};
         std::memcpy(out, v, 12);

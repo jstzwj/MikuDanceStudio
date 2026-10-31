@@ -140,7 +140,9 @@ int Run(int argc, char** argv) {
         for (unsigned n = 1; n <= 600; ++n) {
             const float t = float(n) / 30;
             CHECK(a.Advance(t, 1.f / 30, reason) && b.Advance(t, 1.f / 30, reason));
+            CHECK(a.Session()->Pose().frame == n);
             for (const auto& pair : models) {
+                CHECK(a.Snapshot(pair.first)->frame == n);
                 CHECK(a.Bodies(pair.first) == b.Bodies(pair.first));
                 const auto& av = a.Snapshot(pair.first)->vertices;
                 const auto& bv = b.Snapshot(pair.first)->vertices;
@@ -152,6 +154,8 @@ int Run(int argc, char** argv) {
                 }
             }
         }
+        const auto count = a.Counters().frames;
+        CHECK(!a.Advance(100000.f, .01f, reason) && a.Counters().frames == count);
     }
     // Global VMD imports reuse the PMM seek/playback evaluators and preserve
     // the existing PMM serialization guard when key topology changes.

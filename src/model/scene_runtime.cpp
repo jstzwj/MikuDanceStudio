@@ -324,7 +324,13 @@ struct SceneRuntime::Impl {
     }
     static void AdvanceTracks(void* context, CpuSimulationState& state, bool substep) {
         auto& self = *static_cast<Impl*>(context);
-        self.frame = std::uint32_t(double(state.cursorSeconds) * 30.0);
+        double evaluatedFrame;
+        if (!format::PmmPlaybackFrame(state.cursorSeconds, evaluatedFrame)) {
+            self.failed = true;
+            self.failure = "invalid-scene-playback-cursor";
+            return;
+        }
+        self.frame = std::uint32_t(evaluatedFrame);
         if (self.session && !self.session->Advance(state.cursorSeconds)) {
             self.failed = true;
             self.failure = "scene-track-advance-failed";
@@ -470,7 +476,9 @@ bool SceneRuntime::Reset(std::string& reason) {
     return Seek(0, reason);
 }
 bool SceneRuntime::StartPlayback(std::string& reason) {
-    if (!impl_ || impl_->failed) {
+    double evaluatedFrame;
+    if (!impl_ || impl_->failed ||
+        !format::PmmPlaybackFrame(impl_->simulation.cursorSeconds, evaluatedFrame)) {
         reason = "scene-not-ready";
         return false;
     }
@@ -492,9 +500,10 @@ void SceneRuntime::Pause() {
         impl_->playing = false;
 }
 bool SceneRuntime::Advance(float target, float delta, std::string& reason) {
+    double evaluatedFrame;
     if (!impl_ || impl_->failed || !impl_->playing || !std::isfinite(target) ||
         !std::isfinite(delta) || delta < 0 || target < impl_->simulation.cursorSeconds ||
-        double(target) * 30 > std::numeric_limits<int>::max()) {
+        !format::PmmPlaybackFrame(target, evaluatedFrame)) {
         reason = "invalid-scene-advance";
         return false;
     }

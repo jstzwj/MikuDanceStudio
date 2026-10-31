@@ -1,4 +1,4 @@
-"""Audit the actual P1 link graph, project include closure and binary dependencies."""
+"""Audit the actual CPU runtime link graph, include closure and binary dependencies."""
 import argparse
 import json
 from pathlib import Path
@@ -82,6 +82,7 @@ def audit(program, manifest, stage='P1'):
         sources += [source for source in graph[name]['sources'] if source]
     scanned = set()
     vendor_platform_headers = []
+    vendor_include_aliases = []
     pending = [ROOT / source for source in sources]
     while pending:
         path = pending.pop().resolve()
@@ -94,7 +95,8 @@ def audit(program, manifest, stage='P1'):
         for delimiter, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"\n]+)[>"]', source, re.M):
             if name.lower() in FORBIDDEN_HEADERS:
                 if (stage == 'P2' and name.lower() == 'windows.h' and
-                        path == ROOT / 'recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h'):
+                        path.relative_to(ROOT).as_posix().lower() ==
+                        'recipes/bullet275/bullet-src/src/linearmath/btquickprof.h'):
                     # Pinned upstream profiling clock, behind WIN32/_WIN32.
                     # No project runtime code or public semantic API uses it.
                     vendor_platform_headers.append({'source': str(path.relative_to(ROOT)).replace('\\', '/'),
@@ -103,6 +105,17 @@ def audit(program, manifest, stage='P1'):
                 raise RuntimeError(f'forbidden project dependency: {path.name} -> {name}')
             candidates = [path.parent / name, ROOT / 'include' / name,
                           ROOT / 'recipes/bullet275/bullet-src/src' / name]
+            if (stage == 'P2' and
+                    path.relative_to(ROOT).as_posix().lower() ==
+                    'recipes/bullet275/bullet-src/src/bulletcollision/broadphasecollision/btdbvt.cpp' and
+                    name == 'LinearMath/btQuickProf.h'):
+                # Pinned upstream has this spelling in the disabled benchmark
+                # branch. Follow the real file conservatively on case-sensitive
+                # hosts, without treating unresolved project headers as safe.
+                candidates = [ROOT / 'recipes/bullet275/bullet-src/src/LinearMath/btQuickprof.h']
+                vendor_include_aliases.append({'source': str(path.relative_to(ROOT)).replace('\\', '/'),
+                                               'include': name, 'actual': 'LinearMath/btQuickprof.h',
+                                               'purpose': 'upstream DBVT_ENABLE_BENCHMARK include spelling'})
             local = next((p for p in candidates if p.is_file()), None)
             if local:
                 pending.append(local)
@@ -119,6 +132,7 @@ def audit(program, manifest, stage='P1'):
             raise RuntimeError(f'forbidden binary dependency: {library}')
     return {'schema': 1, 'status': 'passed', 'targets': sorted(visited),
             'vendor_platform_headers': vendor_platform_headers,
+            'vendor_include_aliases': vendor_include_aliases,
             'project_files': sorted(str(p.relative_to(ROOT)).replace('\\', '/') for p in scanned),
             'binary_dependencies': libraries}
 

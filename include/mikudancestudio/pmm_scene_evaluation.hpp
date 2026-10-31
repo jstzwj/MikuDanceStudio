@@ -68,6 +68,9 @@ struct PmmScenePlaybackState {
 // Call Start again to restart or seek backward. Does not model physics,
 // runtime bone-type gates, or external-parent transforms.
 bool StartPmmScenePlayback(const PmmSceneDocument& scene, PmmScenePlaybackState& state);
+// Legacy milliframe rounding and checked cursor range, shared with model
+// snapshot metadata. Failure leaves output unchanged.
+bool PmmPlaybackFrame(float cursorSeconds, double& output);
 bool AdvancePmmScenePlayback(const PmmSceneDocument& scene, float cursorSeconds,
                              PmmScenePlaybackState& state);
 bool EvaluatePmmAccessoryTrack(const PmmKeyTrack<PmmAccessoryKey>& track, std::uint8_t slot,

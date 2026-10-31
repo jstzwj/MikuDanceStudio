@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <cmath>
+#include <algorithm>
 using namespace mikudancestudio;
 std::string reason;
 #define CHECK(x)                                                                                   \
@@ -45,9 +46,38 @@ int main(int argc, char** argv) {
     runtime::SceneRuntime a, b;
     CHECK(a.LoadModel(document, reason) && b.LoadModel(document, reason));
     CHECK(Equal(a, b));
+    const auto& names = a.Resource(0)->BoneNames();
+    auto target = std::find(names.begin(), names.end(), u8"\u30bb\u30f3\u30bf\u30fc");
+    std::string encoded = "\x83\x5a\x83\x93\x83\x5e\x81\x5b";
+    if (target == names.end()) {
+        target = std::find_if(names.begin(), names.end(), [](const auto& name) {
+            return name.size() <= 15 && std::all_of(name.begin(), name.end(), [](unsigned char c) {
+                       return c > 0 && c < 128;
+                   });
+        });
+        CHECK(target != names.end());
+        encoded = *target;
+    }
+    const auto bone = std::size_t(target - names.begin());
+    format::VmdDocument motion;
+    for (unsigned frame : {0u, 30u, 60u}) {
+        format::VmdBoneKey key;
+        std::copy(encoded.begin(), encoded.end(), key.name.begin());
+        key.frame = frame;
+        key.rotation[3] = 1;
+        key.position[1] = frame == 30 ? 2.f : 0.f;
+        motion.bones.push_back(key);
+    }
+    std::shared_ptr<const runtime::MotionClip> firstMotion, secondMotion;
+    CHECK(runtime::MotionClip::Create(a.Resource(0), motion, firstMotion, reason));
+    CHECK(runtime::MotionClip::Create(b.Resource(0), motion, secondMotion, reason));
+    CHECK(firstMotion->Warnings().empty() && secondMotion->Warnings().empty());
+    CHECK(a.BindMotion(0, firstMotion, reason) && b.BindMotion(0, secondMotion, reason));
     for (unsigned frame : {3u, 30u, 10u, 0u}) {
         CHECK(a.Seek(frame, reason) && b.Seek(frame, reason));
         CHECK(Equal(a, b));
+        if (frame == 30)
+            CHECK(a.Snapshot(0)->bones[bone].translation[1] == 2.f);
     }
     for (unsigned mode : {0u, 1u, 2u, 3u}) {
         CHECK(a.SetPhysicsMode(mode, reason) && b.SetPhysicsMode(mode, reason));
@@ -62,7 +92,8 @@ int main(int argc, char** argv) {
         b.Pause();
         CHECK(a.Tick(1.f / 60, reason) && b.Tick(1.f / 60, reason) && Equal(a, b));
         CHECK(a.Reset(reason) && b.Reset(reason) && Equal(a, b));
-        std::cout << "mode=" << mode << " 600-frame finite/exact-repeat trajectory passed\n"
+        std::cout << "mode=" << mode
+                  << " 600-frame animated finite/exact-repeat trajectory passed\n"
                   << std::flush;
     }
     const auto retained = a.Resource(0);

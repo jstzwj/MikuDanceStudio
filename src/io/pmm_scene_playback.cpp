@@ -239,6 +239,19 @@ bool StartPmmScenePlayback(const PmmSceneDocument& scene, PmmScenePlaybackState&
     return true;
 }
 
+bool PmmPlaybackFrame(float cursorSeconds, double& output) {
+    if (!std::isfinite(cursorSeconds) || cursorSeconds < 0.0f)
+        return false;
+    double frame = static_cast<double>(cursorSeconds) * 30.0;
+    const double scaled = frame * 1000.0;
+    if (scaled >= static_cast<double>(std::numeric_limits<int>::max()))
+        return false;
+    if (scaled - static_cast<double>(static_cast<int>(scaled)) >= 0.5)
+        frame = static_cast<double>(static_cast<int>(scaled) + 1) / 1000.0;
+    output = frame;
+    return true;
+}
+
 bool AdvancePmmScenePlayback(const PmmSceneDocument& scene, float cursorSeconds,
                              PmmScenePlaybackState& state) {
     if (!state.initialized || !std::isfinite(cursorSeconds) || cursorSeconds < 0.0f ||
@@ -247,12 +260,9 @@ bool AdvancePmmScenePlayback(const PmmSceneDocument& scene, float cursorSeconds,
         state.accessories.size() != scene.accessories.size() ||
         state.pose.accessories.size() != scene.accessories.size())
         return false;
-    double frame = static_cast<double>(cursorSeconds) * 30.0;
-    if (frame * 1000.0 >= static_cast<double>(std::numeric_limits<int>::max()))
+    double frame;
+    if (!PmmPlaybackFrame(cursorSeconds, frame))
         return false;
-    const double scaled = frame * 1000.0;
-    if (scaled - static_cast<double>(static_cast<int>(scaled)) >= 0.5)
-        frame = static_cast<double>(static_cast<int>(scaled) + 1) / 1000.0;
     if (frame < state.frame)
         return false;
     PmmScenePlaybackState next = state;
