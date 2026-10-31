@@ -20,3 +20,48 @@ add_executable(shader_compiler_test "${MDS_SOURCE}/tests/shader_compiler_test.cp
 target_link_libraries(shader_compiler_test PRIVATE mikudancestudio_rhi)
 add_test(NAME p3_shader_compiler COMMAND shader_compiler_test)
 set_tests_properties(p3_shader_compiler PROPERTIES LABELS "p3;headless" TIMEOUT 120)
+add_test(NAME p3_cpu_scene_render COMMAND ${Python3_EXECUTABLE}
+    "${MDS_SOURCE}/tools/check_render_scenes.py" --program $<TARGET_FILE:mds_render_cli>
+    --assets "${MDS_SOURCE}/res/assets" --output "${CMAKE_CURRENT_BINARY_DIR}/scene-evidence"
+    --driver ${MDS_P3_DRIVER})
+set_tests_properties(p3_cpu_scene_render PROPERTIES LABELS "p3;offscreen" TIMEOUT 240 RUN_SERIAL TRUE)
+add_executable(scene_frame_producer_test "${MDS_SOURCE}/tests/scene_frame_producer_test.cpp")
+target_link_libraries(scene_frame_producer_test PRIVATE mikudancestudio_scene_render)
+add_test(NAME p3_scene_frame_contract COMMAND ${Python3_EXECUTABLE}
+    "${MDS_SOURCE}/tests/test_runtime_cpu_scene.py" --passes $<TARGET_FILE:scene_frame_producer_test>
+    --assets "${MDS_SOURCE}/res/assets")
+set_tests_properties(p3_scene_frame_contract PROPERTIES LABELS "p3;headless" TIMEOUT 120)
+add_executable(portable_presentation_test "${MDS_SOURCE}/tests/portable_presentation_test.cpp")
+target_include_directories(portable_presentation_test PRIVATE "${MDS_SOURCE}/tests")
+target_link_libraries(portable_presentation_test PRIVATE mikudancestudio_rhi)
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(portable_presentation_test PRIVATE "${MDS_SOURCE}/tests/native_surface_host.mm")
+    set_target_properties(portable_presentation_test PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED YES)
+    target_compile_options(portable_presentation_test PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    target_link_libraries(portable_presentation_test PRIVATE "-framework Cocoa" "-framework QuartzCore")
+elseif(WIN32)
+    target_sources(portable_presentation_test PRIVATE "${MDS_SOURCE}/tests/native_surface_host.cpp")
+    target_link_libraries(portable_presentation_test PRIVATE user32)
+else()
+    enable_language(C)
+    find_program(MDS_WAYLAND_SCANNER wayland-scanner REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MDS_XCB REQUIRED IMPORTED_TARGET xcb)
+    pkg_check_modules(MDS_WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
+    pkg_get_variable(MDS_PROTOCOLS wayland-protocols pkgdatadir)
+    set(protocol "${MDS_PROTOCOLS}/stable/xdg-shell/xdg-shell.xml")
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-client-protocol.h" "${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.c"
+        COMMAND "${MDS_WAYLAND_SCANNER}" client-header "${protocol}" "${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-client-protocol.h"
+        COMMAND "${MDS_WAYLAND_SCANNER}" private-code "${protocol}" "${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.c"
+        DEPENDS "${protocol}" VERBATIM)
+    target_sources(portable_presentation_test PRIVATE "${MDS_SOURCE}/tests/native_surface_host.cpp"
+        "${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.c" "${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-client-protocol.h")
+    target_include_directories(portable_presentation_test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_link_libraries(portable_presentation_test PRIVATE PkgConfig::MDS_XCB PkgConfig::MDS_WAYLAND)
+endif()
+# Linux runs these explicitly under an isolated X server / Wayland compositor.
+if(NOT UNIX OR APPLE)
+    add_test(NAME p3_presentation COMMAND portable_presentation_test ${MDS_P3_DRIVER})
+    set_tests_properties(p3_presentation PROPERTIES LABELS "p3;presentation" TIMEOUT 120 RUN_SERIAL TRUE)
+endif()

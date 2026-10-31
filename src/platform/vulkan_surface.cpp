@@ -104,8 +104,10 @@ CreateNativeVulkanSurface(NativeWindow window, std::uintptr_t display, std::shar
                               std::uint64_t& out) {
         VkSurfaceKHR surface = VK_NULL_HANDLE;
         const auto result = create(reinterpret_cast<VkInstance>(instance), lookup, surface);
-        if (result == VK_SUCCESS)
+        if (result == VK_SUCCESS) {
+            out = 0;
             std::memcpy(&out, &surface, sizeof surface);
+        }
         return std::int32_t(result);
     };
     reason.clear();

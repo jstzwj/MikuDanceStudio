@@ -1322,8 +1322,8 @@ public:
 
 bool VulkanDevice::ValidSurface(const SwapchainDesc& d) const {
     if (surfaceSource)
-        return ValidSwapchainDesc(d) && surfaceSource->create && surfaceSource->health &&
-               surfaceSource->window.system == d.window.system &&
+        return ValidSwapchainDesc(d) && surfaceSource->lease && surfaceSource->create &&
+               surfaceSource->health && surfaceSource->window.system == d.window.system &&
                surfaceSource->window.handle == d.window.handle && d.windowed && d.width <= 4096 &&
                d.height <= 4096 && d.color == SurfaceColor::Rgba8 &&
                d.depth == SurfaceDepth::Depth24Stencil8 && d.samples == 1 && !d.quality &&

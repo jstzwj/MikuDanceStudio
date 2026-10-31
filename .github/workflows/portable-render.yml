@@ -55,6 +55,18 @@ jobs:
           cmake -S cmake/portable-render -B out/p3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DMDS_VULKAN_INCLUDE="$PWD/out/vulkan-headers/include" -DMDS_DXC="$PWD/out/dxc/bin/dxc" -DMDS_P3_DRIVER=software
           cmake --build out/p3 --parallel 3
           ctest --test-dir out/p3 -L p3 --output-on-failure --output-junit p3.xml
+      - name: X11 presentation in an isolated virtual display
+        run: xvfb-run -a out/p3/portable_presentation_test xcb-software
+      - name: Wayland presentation in an isolated compositor
+        run: |
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --use-pixman --socket=mds-p3 --width=800 --height=600 --idle-time=0 >out/p3/weston.log 2>&1 &
+          compositor=$!
+          trap 'kill "$compositor"; rm -rf "$XDG_RUNTIME_DIR"' EXIT
+          for attempt in $(seq 1 50); do test -S "$XDG_RUNTIME_DIR/mds-p3" && break; sleep 0.1; done
+          export WAYLAND_DISPLAY=mds-p3
+          out/p3/portable_presentation_test wayland-software
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -62,6 +74,8 @@ jobs:
           path: |
             out/p3/p3.xml
             out/p3/Testing/Temporary/
+            out/p3/scene-evidence/
+            out/p3/weston.log
   macos:
     needs: mac-compiler
     runs-on: macos-15
@@ -95,3 +109,4 @@ jobs:
           path: |
             out/p3/p3.xml
             out/p3/Testing/Temporary/
+            out/p3/scene-evidence/
