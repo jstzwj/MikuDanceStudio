@@ -70,4 +70,7 @@ jobs:
             out/p0/evidence/
             out/p0/environment-*.json
             out/p0/baseline/
+            out/p0/resources/portable/p1/
+            out/p0/resources/portable/p1-dependencies.json
+            out/p0/resources/portable/generated/model_runtime_targets.json
           if-no-files-found: error

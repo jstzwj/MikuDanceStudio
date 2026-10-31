@@ -74,6 +74,24 @@ target_link_libraries(mikudancestudio_model_runtime PUBLIC mikudancestudio_forma
 if(MSVC)
     target_compile_options(mikudancestudio_model_runtime PRIVATE /fp:precise)
 endif()
+add_executable(mds_model_cli src/tools/model_runtime_cli.cpp)
+target_link_libraries(mds_model_cli PRIVATE mikudancestudio_model_runtime)
+set(MDS_RUNTIME_GRAPH "{")
+foreach(MDS_RUNTIME_TARGET IN ITEMS mds_model_cli mikudancestudio_model_runtime mikudancestudio_cpu_math mikudancestudio_formats)
+    get_target_property(MDS_RUNTIME_SOURCES ${MDS_RUNTIME_TARGET} SOURCES)
+    get_target_property(MDS_RUNTIME_LINKS ${MDS_RUNTIME_TARGET} LINK_LIBRARIES)
+    if(NOT MDS_RUNTIME_LINKS)
+        set(MDS_RUNTIME_LINKS "")
+    endif()
+    string(REPLACE ";" "\",\"" MDS_RUNTIME_SOURCES "${MDS_RUNTIME_SOURCES}")
+    string(REPLACE ";" "\",\"" MDS_RUNTIME_LINKS "${MDS_RUNTIME_LINKS}")
+    if(NOT MDS_RUNTIME_GRAPH STREQUAL "{")
+        string(APPEND MDS_RUNTIME_GRAPH ",")
+    endif()
+    string(APPEND MDS_RUNTIME_GRAPH "\"${MDS_RUNTIME_TARGET}\":{\"sources\":[\"${MDS_RUNTIME_SOURCES}\"],\"links\":[\"${MDS_RUNTIME_LINKS}\"]}")
+endforeach()
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/model_runtime_targets.json"
+    CONTENT "${MDS_RUNTIME_GRAPH}}\n")
 add_library(mikudancestudio_rhi STATIC
     src/render/rhi_null.cpp
     src/render/rhi_render_pass.cpp
@@ -155,6 +173,16 @@ if(BUILD_TESTING)
     target_link_libraries(model_runtime_test PRIVATE mikudancestudio_model_runtime)
     add_test(NAME model_runtime COMMAND model_runtime_test)
     set_tests_properties(model_runtime PROPERTIES LABELS "headless;portable;p1")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME model_runtime_cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_model_runtime.py
+        --program $<TARGET_FILE:mds_model_cli> --output ${CMAKE_CURRENT_BINARY_DIR}/p1)
+    add_test(NAME model_runtime_dependencies COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_model_runtime.py
+        --program $<TARGET_FILE:mds_model_cli>
+        --manifest ${CMAKE_CURRENT_BINARY_DIR}/generated/model_runtime_targets.json
+        --output ${CMAKE_CURRENT_BINARY_DIR}/p1-dependencies.json)
+    set_tests_properties(model_runtime_cli model_runtime_dependencies PROPERTIES LABELS "headless;portable;p1")
     add_executable(mme_legacy_source_test tests/mme_legacy_source_test.cpp third_party/mmeffect/src/mme_legacy_source.cpp)
     target_compile_definitions(mme_legacy_source_test PRIVATE MDS_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME mme_legacy_source COMMAND mme_legacy_source_test)
@@ -2017,6 +2045,21 @@ if(BUILD_TESTING)
     target_link_libraries(cpu_math_d3dx_test PRIVATE mikudancestudio_cpu_math D3DXRuntime)
     add_test(NAME cpu_math_d3dx COMMAND cpu_math_d3dx_test)
     set_tests_properties(cpu_math_d3dx PROPERTIES LABELS "cpu_no_windows;p1")
+    add_executable(model_runtime_native_test tests/model_runtime_native_test.cpp)
+    target_include_directories(model_runtime_native_test PRIVATE third_party/mmeffect/include)
+    target_compile_options(model_runtime_native_test PRIVATE /Gy)
+    target_link_options(model_runtime_native_test PRIVATE /OPT:REF)
+    target_link_libraries(model_runtime_native_test PRIVATE mikudancestudio_model_runtime
+        mikudancestudio_rhi D3DXRuntime BULLET275::BULLET275)
+    if(TARGET mikudancestudio_math)
+        target_link_libraries(model_runtime_native_test PRIVATE mikudancestudio_math)
+    endif()
+    add_test(NAME p1_native_fixture COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_p1_fixture.py --output ${CMAKE_CURRENT_BINARY_DIR}/p1-fixture)
+    set_tests_properties(p1_native_fixture PROPERTIES FIXTURES_SETUP p1_native_inputs LABELS "cpu_no_windows;p1")
+    add_test(NAME model_runtime_native COMMAND model_runtime_native_test
+        ${CMAKE_CURRENT_BINARY_DIR}/p1-fixture/public.pmx ${CMAKE_CURRENT_BINARY_DIR}/p1-fixture/public.vmd)
+    set_tests_properties(model_runtime_native PROPERTIES FIXTURES_REQUIRED p1_native_inputs LABELS "cpu_no_windows;p1")
     add_test(NAME d3dx_pe_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_d3dx_imports.py
         $<TARGET_FILE:MikuDanceStudio>)
