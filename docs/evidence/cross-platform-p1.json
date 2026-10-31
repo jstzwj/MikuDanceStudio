@@ -1,0 +1,470 @@
+{
+  "schema": 1,
+  "stage": "P1",
+  "status": "complete",
+  "recorded_date": "2026-11-01",
+  "implementation_commits": [
+    "26b3dadd54c7161d19cc72ad6839633d974d688e",
+    "f1eee29501613474249f83978557fbc1d65eef50",
+    "d2f74909c997ed2fef4ea9a8126eea1dbcfbf7b7"
+  ],
+  "foundation_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41219770957",
+  "bullet_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41219770975",
+  "numeric_baseline": "tests/data/p1_model_v1.json",
+  "platforms": [
+    {
+      "runner": "windows-2022-x64",
+      "commit": "d2f74909c997ed2fef4ea9a8126eea1dbcfbf7b7",
+      "dirty": false,
+      "host": {
+        "system": "Windows",
+        "release": "2022Server",
+        "macos_version": "",
+        "architecture": "AMD64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 8,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35229.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 53,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 53,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P1",
+          "supported": [
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "vmd-ascii-track-names",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "vertex-morph"
+          ],
+          "unsupported": [
+            "pmd-runtime",
+            "cp932-motion-name-decoding",
+            "ik",
+            "sdef",
+            "qdef",
+            "append-or-fixed-axis-bones",
+            "external-parent",
+            "physics",
+            "bone-group-uv-material-morph",
+            "global-camera-light-shadow-ik-tracks",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "mds_model_cli",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime"
+        ],
+        "project_file_count": 42,
+        "binary_dependencies": [
+          "MSVCP140.dll",
+          "VCRUNTIME140.dll",
+          "VCRUNTIME140_1.dll",
+          "api-ms-win-crt-runtime-l1-1-0.dll",
+          "api-ms-win-crt-heap-l1-1-0.dll",
+          "api-ms-win-crt-stdio-l1-1-0.dll",
+          "api-ms-win-crt-filesystem-l1-1-0.dll",
+          "api-ms-win-crt-string-l1-1-0.dll",
+          "api-ms-win-crt-math-l1-1-0.dll",
+          "api-ms-win-crt-locale-l1-1-0.dll",
+          "KERNEL32.dll"
+        ]
+      }
+    },
+    {
+      "runner": "windows-2022-Win32",
+      "commit": "d2f74909c997ed2fef4ea9a8126eea1dbcfbf7b7",
+      "dirty": false,
+      "host": {
+        "system": "Windows",
+        "release": "2022Server",
+        "macos_version": "",
+        "architecture": "AMD64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Windows",
+        "processor": "AMD64",
+        "pointer_bytes": 4,
+        "compiler": "MSVC",
+        "compiler_version": "19.44.35229.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 53,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 53,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P1",
+          "supported": [
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "vmd-ascii-track-names",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "vertex-morph"
+          ],
+          "unsupported": [
+            "pmd-runtime",
+            "cp932-motion-name-decoding",
+            "ik",
+            "sdef",
+            "qdef",
+            "append-or-fixed-axis-bones",
+            "external-parent",
+            "physics",
+            "bone-group-uv-material-morph",
+            "global-camera-light-shadow-ik-tracks",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "mds_model_cli",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime"
+        ],
+        "project_file_count": 42,
+        "binary_dependencies": [
+          "MSVCP140.dll",
+          "VCRUNTIME140.dll",
+          "api-ms-win-crt-runtime-l1-1-0.dll",
+          "api-ms-win-crt-heap-l1-1-0.dll",
+          "api-ms-win-crt-stdio-l1-1-0.dll",
+          "api-ms-win-crt-filesystem-l1-1-0.dll",
+          "api-ms-win-crt-math-l1-1-0.dll",
+          "api-ms-win-crt-locale-l1-1-0.dll",
+          "KERNEL32.dll"
+        ]
+      }
+    },
+    {
+      "runner": "ubuntu-22.04-x64",
+      "commit": "d2f74909c997ed2fef4ea9a8126eea1dbcfbf7b7",
+      "dirty": false,
+      "host": {
+        "system": "Linux",
+        "release": "6.8.0-1070-azure",
+        "macos_version": "",
+        "architecture": "x86_64",
+        "python": "3.12.15"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Linux",
+        "processor": "x86_64",
+        "pointer_bytes": 8,
+        "compiler": "GNU",
+        "compiler_version": "11.4.0",
+        "cmake_version": "3.31.6",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 52,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 52,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P1",
+          "supported": [
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "vmd-ascii-track-names",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "vertex-morph"
+          ],
+          "unsupported": [
+            "pmd-runtime",
+            "cp932-motion-name-decoding",
+            "ik",
+            "sdef",
+            "qdef",
+            "append-or-fixed-axis-bones",
+            "external-parent",
+            "physics",
+            "bone-group-uv-material-morph",
+            "global-camera-light-shadow-ik-tracks",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "mds_model_cli",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime"
+        ],
+        "project_file_count": 42,
+        "binary_dependencies": [
+          "linux-vdso.so.1",
+          "libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6",
+          "libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6",
+          "libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1",
+          "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6",
+          "/lib64/ld-linux-x86-64.so.2"
+        ]
+      }
+    },
+    {
+      "runner": "macos-15-arm64",
+      "commit": "d2f74909c997ed2fef4ea9a8126eea1dbcfbf7b7",
+      "dirty": false,
+      "host": {
+        "system": "Darwin",
+        "release": "24.6.0",
+        "macos_version": "15.8.2",
+        "architecture": "arm64",
+        "python": "3.12.10"
+      },
+      "environment": {
+        "schema": 1,
+        "system": "Darwin",
+        "processor": "arm64",
+        "pointer_bytes": 8,
+        "compiler": "AppleClang",
+        "compiler_version": "17.0.0.17000013",
+        "cmake_version": "4.4.4",
+        "configuration": "Release",
+        "cxx_standard": 17,
+        "numeric_policy": "separate-multiply-add",
+        "bullet_build": "recipes/bullet275/CMakeLists.txt"
+      },
+      "test_runs": [
+        {
+          "total": 52,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        },
+        {
+          "total": 52,
+          "skipped": [
+            "pmm_scene_session_external"
+          ]
+        }
+      ],
+      "model_runtime": {
+        "schema": 1,
+        "stage": "P1",
+        "status": "passed",
+        "input_sha256": {
+          "public.pmx": "b3c16b14a8efa768643cf1266e9f7391b5b84968527a4e6711d0e411449d4245",
+          "public.vmd": "8f962bc56ac31693f586f057f24fe1c86e4d834df24d2cb40403a208a7ca5d1c"
+        },
+        "frames": [
+          0,
+          4,
+          8,
+          12,
+          4,
+          0,
+          8
+        ],
+        "max_absolute_error": 0,
+        "numeric_threshold": "2e-5 * max(1, abs(reference)); identity exact",
+        "capabilities": {
+          "schema": 1,
+          "stage": "P1",
+          "supported": [
+            "pmx-2.0-utf16le",
+            "basic-bone-hierarchy",
+            "vmd-ascii-track-names",
+            "integer-frame-seek",
+            "bdef1",
+            "bdef2",
+            "bdef4",
+            "vertex-morph"
+          ],
+          "unsupported": [
+            "pmd-runtime",
+            "cp932-motion-name-decoding",
+            "ik",
+            "sdef",
+            "qdef",
+            "append-or-fixed-axis-bones",
+            "external-parent",
+            "physics",
+            "bone-group-uv-material-morph",
+            "global-camera-light-shadow-ik-tracks",
+            "rendering",
+            "mme"
+          ]
+        },
+        "repeatable": true,
+        "negative_cli_cases": 4
+      },
+      "dependencies": {
+        "status": "passed",
+        "targets": [
+          "mds_model_cli",
+          "mikudancestudio_cpu_math",
+          "mikudancestudio_formats",
+          "mikudancestudio_model_runtime"
+        ],
+        "project_file_count": 42,
+        "binary_dependencies": [
+          "/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)",
+          "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)"
+        ]
+      }
+    }
+  ],
+  "local_windows_reference": {
+    "x64": {
+      "application_build": "passed",
+      "focused_tests_passed": 7,
+      "d3dx_math_cases": 64,
+      "native_morph_bdef_seeks": 6
+    },
+    "x86": {
+      "application_build": "passed",
+      "focused_tests_passed": 6,
+      "d3dx_math_cases": 64,
+      "native_morph_bdef_seeks": 6
+    },
+    "scope": "CPU only, no windows or devices; D3DX composition and production PMX workers"
+  },
+  "limitations": [
+    "PMX 2.0 UTF-16LE models with basic bones and direct vertex morphs only",
+    "VMD track-name decoding is ASCII only; CP932 conversion is a P2 task",
+    "IK, SDEF, physics, append/external parents, other morph kinds and global tracks explicitly rejected",
+    "No portable editor, rendering, MME or presentation certification",
+    "Only the existing external private PMM sample test was skipped"
+  ]
+}
