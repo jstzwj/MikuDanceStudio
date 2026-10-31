@@ -1,3 +1,4 @@
+#include "rhi_test_platform.hpp"
 #include "mikudancestudio/rhi_backend.hpp"
 #include "mikudancestudio/rhi_vulkan.hpp"
 #include "mikudancestudio/rhi_render_pass.hpp"
@@ -18,6 +19,7 @@ int main(int argc, char** argv) {
     BackendOptions options;
     options.backend = Backend::Vulkan;
     options.debugLayer = validation;
+    ConfigureVulkanTest(options, argc > 1 ? argv[1] : "");
     CHECK(!CreateBackendDevice({}, options));
     CHECK(!CreateOffscreenBackendDevice(0, 32, options));
     auto unsupported = options;

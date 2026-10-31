@@ -1,3 +1,4 @@
+#include "rhi_test_platform.hpp"
 #include "mikudancestudio/rhi_backend.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/rhi_post_process.hpp"
@@ -21,6 +22,7 @@ int main(int argc, char** argv) try {
     options.debugLayer = api.find("debug") != std::string::npos;
     if (api.find("measured") != std::string::npos)
         options.model.compatibility = ModelCompatibility::Dx9Measured;
+    ConfigureVulkanTest(options, api);
     auto native = CreateOffscreenBackendDevice(96, 64, options);
     if (!native && options.debugLayer &&
         (native.reason == "validation_layer_unavailable" ||

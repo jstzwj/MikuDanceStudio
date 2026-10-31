@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <filesystem>
 #include <map>
 #include <sstream>
 #include <vector>
@@ -32,6 +33,7 @@ constexpr VkDeviceSize UniformBytes = 2 * 1024 * 1024;
 #define INSTANCE_FUNCTIONS(X) \
     X(DestroyInstance) \
     X(EnumeratePhysicalDevices) \
+    X(EnumerateDeviceExtensionProperties) \
     X(GetPhysicalDeviceProperties) \
     X(GetPhysicalDeviceFeatures2) \
     X(GetPhysicalDeviceProperties2) \
@@ -307,6 +309,7 @@ public:
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkSwapchainKHR chain = VK_NULL_HANDLE;
     SwapchainDesc presentation;
+    std::shared_ptr<const VulkanSurfaceSource> surfaceSource;
     std::vector<Resource> swapImages;
     std::vector<VkSemaphore> readyToPresent;
     unsigned activeImage = 0;
@@ -1169,6 +1172,7 @@ public:
         return true;
     }
     bool Read(Resource& r, std::vector<std::uint8_t>& bytes) {
+        ++stats.readbacks;
         if (!BeginTransfer())
             return false;
         Buffer staging;
@@ -1317,6 +1321,13 @@ public:
 };
 
 bool VulkanDevice::ValidSurface(const SwapchainDesc& d) const {
+    if (surfaceSource)
+        return ValidSwapchainDesc(d) && surfaceSource->create && surfaceSource->health &&
+               surfaceSource->window.system == d.window.system &&
+               surfaceSource->window.handle == d.window.handle && d.windowed && d.width <= 4096 &&
+               d.height <= 4096 && d.color == SurfaceColor::Rgba8 &&
+               d.depth == SurfaceDepth::Depth24Stencil8 && d.samples == 1 && !d.quality &&
+               d.swap == SurfaceSwap::Discard;
 #ifdef _WIN32
     return ValidSwapchainDesc(d) && d.window.system == WindowSystem::Win32 &&
            IsWindow(reinterpret_cast<HWND>(d.window.handle)) && d.windowed && d.width <= 4096 &&
@@ -1331,6 +1342,12 @@ bool VulkanDevice::ValidSurface(const SwapchainDesc& d) const {
 SurfaceHealth VulkanDevice::Health() const {
     if (lost || retired)
         return SurfaceHealth::Removed;
+    if (surfaceSource) {
+        const auto host = surfaceSource->health();
+        if (host != SurfaceHealth::Ready)
+            return host;
+        return surfaceHealth;
+    }
 #ifdef _WIN32
     if (!IsWindow(reinterpret_cast<HWND>(presentation.window.handle)))
         return SurfaceHealth::Removed;
@@ -1484,6 +1501,8 @@ bool VulkanDevice::Present() {
         Check(result);
         surfaceHealth = lost ? SurfaceHealth::Removed : SurfaceHealth::Unknown;
     }
+    if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
+        ++stats.presentations;
     return result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR;
 }
 class VulkanSwapchain final : public Swapchain {
@@ -1554,6 +1573,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT
 bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, VulkanOptions options,
                               const SwapchainDesc* window) {
     reason = "invalid_options";
+    surfaceSource = options.surface;
     if (!w || !h || w > 4096 || h > 4096 || (window && !ValidSurface(*window)) ||
         (driver != VulkanDriver::Hardware && driver != VulkanDriver::Software))
         return false;
@@ -1565,12 +1585,31 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     }
     reason = "vulkan_loader_unavailable";
 #ifdef _WIN32
-    library = LoadLibraryW(L"vulkan-1.dll");
+    library =
+        options.loaderPath.empty()
+            ? LoadLibraryW(L"vulkan-1.dll")
+            : LoadLibraryExW(std::filesystem::u8path(options.loaderPath).c_str(), nullptr,
+                             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (library)
         vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
             GetProcAddress(static_cast<HMODULE>(library), "vkGetInstanceProcAddr"));
 #else
-    library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+    if (!options.loaderPath.empty()) {
+        library = dlopen(options.loaderPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    } else {
+#ifdef __APPLE__
+        const char* candidates[] = {"@executable_path/../Frameworks/libMoltenVK.dylib",
+                                    "@executable_path/libvulkan.1.dylib", "libvulkan.1.dylib",
+                                    "libMoltenVK.dylib"};
+#else
+        const char* candidates[] = {"libvulkan.so.1"};
+#endif
+        for (const auto* path : candidates) {
+            library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (library)
+                break;
+        }
+    }
     if (library)
         vkGetInstanceProcAddr =
             reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library, "vkGetInstanceProcAddr"));
@@ -1636,18 +1675,43 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     app.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     create.pApplicationInfo = &app;
+    unsigned extensionCount = 0;
+    if (!Check(vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr)))
+        return false;
+    std::vector<VkExtensionProperties> instanceExtensions(extensionCount);
+    if (!Check(vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
+                                                      instanceExtensions.data())))
+        return false;
+    const auto supportsExtension = [&](const char* name) {
+        return std::any_of(instanceExtensions.begin(), instanceExtensions.end(),
+                           [&](const auto& p) { return std::strcmp(p.extensionName, name) == 0; });
+    };
     std::vector<const char*> enabledExtensions;
+    if (supportsExtension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+        enabledExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        create.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+    if (window && surfaceSource) {
+        for (const auto& name : surfaceSource->instanceExtensions)
+            enabledExtensions.push_back(name.c_str());
+    }
 #ifdef _WIN32
-    if (window) {
+    else if (window) {
         enabledExtensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
         enabledExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
     }
 #else
-    if (window) {
+    else if (window) {
         reason = "window_system_not_supported";
         return false;
     }
 #endif
+    for (const char* name : enabledExtensions) {
+        if (!supportsExtension(name)) {
+            reason = std::string("missing_instance_extension:") + name;
+            return false;
+        }
+    }
     if (options.validation) {
         create.enabledLayerCount = 1;
         create.ppEnabledLayerNames = &layer;
@@ -1655,6 +1719,13 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
                                  std::end(extensions));
         create.pNext = &validation;
     }
+    reason = "surface_instance_extension_unavailable";
+    std::sort(enabledExtensions.begin(), enabledExtensions.end(),
+              [](const char* a, const char* b) { return std::strcmp(a, b) < 0; });
+    enabledExtensions.erase(
+        std::unique(enabledExtensions.begin(), enabledExtensions.end(),
+                    [](const char* a, const char* b) { return std::strcmp(a, b) == 0; }),
+        enabledExtensions.end());
     create.enabledExtensionCount = unsigned(enabledExtensions.size());
     create.ppEnabledExtensionNames = enabledExtensions.data();
     reason = "instance_creation_failed";
@@ -1673,14 +1744,30 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         LOAD_INSTANCE(GetPhysicalDeviceSurfaceCapabilitiesKHR);
         LOAD_INSTANCE(GetPhysicalDeviceSurfaceFormatsKHR);
         LOAD_INSTANCE(GetPhysicalDeviceSurfacePresentModesKHR);
+        if (surfaceSource) {
+            std::uint64_t bits = 0;
+            const VulkanProcLookup lookup = [&](const char* name) {
+                return reinterpret_cast<void*>(vkGetInstanceProcAddr(instance, name));
+            };
+            if (!Check(VkResult(surfaceSource->create(reinterpret_cast<std::uintptr_t>(instance),
+                                                      lookup, bits))) ||
+                !bits) {
+                reason = "surface_creation_failed";
+                return false;
+            }
+            static_assert(sizeof surface <= sizeof bits);
+            std::memcpy(&surface, &bits, sizeof surface);
+        }
 #ifdef _WIN32
-        LOAD_INSTANCE(CreateWin32SurfaceKHR);
-        VkWin32SurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-        si.hwnd = reinterpret_cast<HWND>(window->window.handle);
-        si.hinstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(si.hwnd, GWLP_HINSTANCE));
-        if (!Check(vkCreateWin32SurfaceKHR(instance, &si, nullptr, &surface))) {
-            reason = "surface_creation_failed";
-            return false;
+        else {
+            LOAD_INSTANCE(CreateWin32SurfaceKHR);
+            VkWin32SurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+            si.hwnd = reinterpret_cast<HWND>(window->window.handle);
+            si.hinstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(si.hwnd, GWLP_HINSTANCE));
+            if (!Check(vkCreateWin32SurfaceKHR(instance, &si, nullptr, &surface))) {
+                reason = "surface_creation_failed";
+                return false;
+            }
         }
 #endif
     }
@@ -1770,11 +1857,22 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
     device.queueCreateInfoCount = 1;
     device.pQueueCreateInfos = &q;
     device.pEnabledFeatures = &features;
-    const char* swapExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-    if (window) {
-        device.enabledExtensionCount = 1;
-        device.ppEnabledExtensionNames = &swapExtension;
-    }
+    unsigned deviceExtensionCount = 0;
+    if (!Check(vkEnumerateDeviceExtensionProperties(physical, nullptr, &deviceExtensionCount,
+                                                    nullptr)))
+        return false;
+    std::vector<VkExtensionProperties> deviceExtensions(deviceExtensionCount);
+    if (!Check(vkEnumerateDeviceExtensionProperties(physical, nullptr, &deviceExtensionCount,
+                                                    deviceExtensions.data())))
+        return false;
+    std::vector<const char*> enabledDeviceExtensions;
+    if (window)
+        enabledDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    for (const auto& e : deviceExtensions)
+        if (std::strcmp(e.extensionName, "VK_KHR_portability_subset") == 0)
+            enabledDeviceExtensions.push_back("VK_KHR_portability_subset");
+    device.enabledExtensionCount = unsigned(enabledDeviceExtensions.size());
+    device.ppEnabledExtensionNames = enabledDeviceExtensions.data();
     reason = "device_creation_failed";
     if (!Check(vkCreateDevice(physical, &device, nullptr, &native)))
         return false;
@@ -1843,9 +1941,10 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
             if (!Check(vkCreateSemaphore(native, &binary, nullptr, &frame.acquired)))
                 return false;
         }
-        VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * MaxDraws},
-                                        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GraphicsTextureSlots * MaxDraws},
-                                        {VK_DESCRIPTOR_TYPE_SAMPLER, GraphicsTextureSlots * MaxDraws}};
+        VkDescriptorPoolSize sizes[] = {
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * MaxDraws},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GraphicsTextureSlots * MaxDraws},
+            {VK_DESCRIPTOR_TYPE_SAMPLER, GraphicsTextureSlots * MaxDraws}};
         VkDescriptorPoolCreateInfo p{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         p.maxSets = MaxDraws;
         p.poolSizeCount = 3;
@@ -2072,9 +2171,10 @@ bool VulkanDevice::PrepareShaderPipeline(const ShaderPipeline& p) {
         for (unsigned i = 0; i < 4 + 2 * GraphicsTextureSlots; ++i) {
             bindings[i].binding = i;
             bindings[i].descriptorCount = 1;
-            bindings[i].descriptorType = i < 4   ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                                         : i < 4 + GraphicsTextureSlots ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
-                                                 : VK_DESCRIPTOR_TYPE_SAMPLER;
+            bindings[i].descriptorType = i < 4 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                         : i < 4 + GraphicsTextureSlots
+                                             ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                             : VK_DESCRIPTOR_TYPE_SAMPLER;
             bindings[i].stageFlags = i < 4
                                          ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                                          : VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -2234,13 +2334,14 @@ bool VulkanDevice::BindGenericDescriptors() {
         w.dstSet = set;
         w.dstBinding = i;
         w.descriptorCount = 1;
-        w.descriptorType = i < 4   ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+        w.descriptorType = i < 4                          ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                            : i < 4 + GraphicsTextureSlots ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
-                                   : VK_DESCRIPTOR_TYPE_SAMPLER;
+                                                          : VK_DESCRIPTOR_TYPE_SAMPLER;
         if (i < 4)
             w.pBufferInfo = &buffers[i];
         else
-            w.pImageInfo = i < 4 + GraphicsTextureSlots ? &images[i - 4] : &sampling[i - 4 - GraphicsTextureSlots];
+            w.pImageInfo = i < 4 + GraphicsTextureSlots ? &images[i - 4]
+                                                        : &sampling[i - 4 - GraphicsTextureSlots];
     }
     vkUpdateDescriptorSets(native, 4 + 2 * GraphicsTextureSlots, writes, 0, nullptr);
     vkCmdBindDescriptorSets(f.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, genericPipelineLayout, 0,
@@ -2564,7 +2665,6 @@ bool ReadVulkanPresentation(Device& device, RgbaImage& out) {
     out = std::move(next);
     return true;
 }
-#ifdef _WIN32
 VulkanBundle CreateVulkanDevice(const SwapchainDesc& desc, VulkanDriver driver,
                                 VulkanOptions options) {
     VulkanBundle result;
@@ -2579,5 +2679,4 @@ VulkanBundle CreateVulkanDevice(const SwapchainDesc& desc, VulkanDriver driver,
     result.device = std::move(device);
     return result;
 }
-#endif
 } // namespace mikudancestudio::rhi

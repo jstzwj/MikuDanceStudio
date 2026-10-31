@@ -1,6 +1,7 @@
 #pragma once
 #include "rhi_model_pipeline.hpp"
 #include "rhi_swapchain.hpp"
+#include "vulkan_surface.hpp"
 #include <string>
 namespace mikudancestudio::rhi {
 enum class VulkanDriver {
@@ -10,6 +11,8 @@ enum class VulkanDriver {
 struct VulkanOptions {
     ModelOptions model;
     bool validation = false;
+    std::string loaderPath;
+    std::shared_ptr<const VulkanSurfaceSource> surface;
 };
 struct VulkanStats {
     std::uint64_t submissions = 0, completed = 0, pipelineCreations = 0, resourceUploads = 0;
@@ -20,6 +23,7 @@ struct VulkanStats {
     std::size_t retiringResources = 0, peakRetiringResources = 0;
     unsigned validationErrors = 0;
     std::int32_t lastError = 0;
+    std::uint64_t presentations = 0, readbacks = 0;
 };
 struct VulkanBundle {
     std::unique_ptr<Device> device;
@@ -41,9 +45,7 @@ VulkanStats QueryVulkanStats(Device&);
 // release does not submit work or wait; teardown always releases the gate.
 bool SetVulkanQueueBlockedForTest(Device&, bool blocked);
 bool ReadVulkanPresentation(Device&, RgbaImage&);
-#ifdef _WIN32
 VulkanBundle CreateVulkanDevice(const SwapchainDesc&, VulkanDriver = VulkanDriver::Hardware,
                                 VulkanOptions = {});
-#endif
 #endif
 }

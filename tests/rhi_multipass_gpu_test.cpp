@@ -1,3 +1,4 @@
+#include "rhi_test_platform.hpp"
 #include "mikudancestudio/rhi_d3d11.hpp"
 #include "mikudancestudio/rhi_d3d12.hpp"
 #include "mikudancestudio/rhi_backend.hpp"
@@ -94,6 +95,7 @@ int main(int argc, char** argv) {
     options.backend = vulkan ? Backend::Vulkan : dx12 ? Backend::D3D12 : Backend::D3D11;
     options.driver = warp ? BackendDriver::Software : BackendDriver::Hardware;
     options.debugLayer = debug;
+    ConfigureVulkanTest(options, arg);
     auto native = CreateOffscreenBackendDevice(64, 64, options);
     if (!native) {
         std::fprintf(stderr, "creation failed: %lld %s\n",

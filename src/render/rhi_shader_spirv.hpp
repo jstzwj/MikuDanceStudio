@@ -5,119 +5,13 @@
 #include <set>
 #include <stdexcept>
 #include <tuple>
-#ifdef _WIN32
-#include <unknwn.h>
-#include <oaidl.h>
-#include <dxc/dxcapi.h>
-#include <wrl/client.h>
-#endif
+#include "mikudancestudio/shader_compiler.hpp"
 namespace mikudancestudio::rhi::detail {
-#ifdef _WIN32
-inline DxcCreateInstanceProc DxcFactory() {
-    static const auto factory = []() -> DxcCreateInstanceProc {
-        DWORD previousMode = 0;
-        const bool changed = SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX,
-                                                &previousMode) != FALSE;
-        struct ErrorMode {
-            bool changed;
-            DWORD previous;
-            ~ErrorMode() {
-                if (changed)
-                    SetThreadErrorMode(previous, nullptr);
-            }
-        } restore{changed, previousMode};
-        auto module = LoadLibraryExW(L"dxcompiler.dll", nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-#ifdef MDS_DXC_LIBRARY_PATH
-        if (!module) {
-            const std::string path = MDS_DXC_LIBRARY_PATH;
-            const auto size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
-            std::wstring wide(size, 0);
-            MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide.data(), size);
-            module =
-                LoadLibraryExW(wide.c_str(), nullptr,
-                               LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        }
-#endif
-        return module ? reinterpret_cast<DxcCreateInstanceProc>(
-                            GetProcAddress(module, "DxcCreateInstance"))
-                      : nullptr;
-    }();
-    return factory;
-}
-#endif
 inline bool RuntimeSpirvCompilerAvailable() {
-#ifdef _WIN32
-    return DxcFactory() != nullptr;
-#else
-    return false;
-#endif
+    return DefaultSpirvCompiler()->Available();
 }
 inline bool CompileSpirv(const ShaderModule& source, SnapshotBytes& output, std::string& error) {
-    if (!source.spirv.empty()) {
-        output = source.spirv;
-        return true;
-    }
-#ifdef _WIN32
-    const auto factory = DxcFactory();
-    if (!factory) {
-        error = "runtime_spirv_compiler_unavailable";
-        return false;
-    }
-    Microsoft::WRL::ComPtr<IDxcCompiler3> compiler;
-    if (FAILED(factory(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler)))) {
-        error = "spirv_compiler_creation_failed";
-        return false;
-    }
-    const std::wstring entry(source.entry.begin(), source.entry.end());
-    const wchar_t* args[] = {L"-spirv",
-                             L"-fspv-target-env=vulkan1.3",
-                             L"-fvk-use-dx-layout",
-                             L"-fvk-stage-io-order=decl",
-                             L"-fvk-b-shift",
-                             L"0",
-                             L"0",
-                             L"-fvk-t-shift",
-                             L"4",
-                             L"0",
-                             L"-fvk-s-shift",
-                             L"20",
-                             L"0",
-                             L"-Zpr",
-                             L"-Ges",
-                             L"-Gis",
-                             L"-T",
-                             source.stage == ShaderStage::Vertex ? L"vs_6_0" : L"ps_6_0",
-                             L"-E",
-                             entry.c_str()};
-    DxcBuffer buffer{source.hlsl.data(), source.hlsl.size(), DXC_CP_UTF8};
-    Microsoft::WRL::ComPtr<IDxcResult> result;
-    if (FAILED(compiler->Compile(&buffer, args, UINT32(std::size(args)), nullptr,
-                                 IID_PPV_ARGS(&result)))) {
-        error = "spirv_compile_failed";
-        return false;
-    }
-    HRESULT status = E_FAIL;
-    result->GetStatus(&status);
-    if (FAILED(status)) {
-        Microsoft::WRL::ComPtr<IDxcBlobUtf8> errors;
-        result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
-        error = errors ? std::string(errors->GetStringPointer(), errors->GetStringLength())
-                       : "spirv_compile_failed";
-        return false;
-    }
-    Microsoft::WRL::ComPtr<IDxcBlob> binary;
-    if (FAILED(result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&binary), nullptr)) || !binary) {
-        error = "missing_spirv_object";
-        return false;
-    }
-    output.resize(binary->GetBufferSize());
-    std::memcpy(output.data(), binary->GetBufferPointer(), output.size());
-    output.Seal();
-    return true;
-#else
-    error = "runtime_spirv_compiler_unavailable";
-    return false;
-#endif
+    return DefaultSpirvCompiler()->Compile(source, output, error);
 }
 // Reflect the bounded graphics ABI before passing modules to the native driver.
 // Arbitrary storage resources, descriptor arrays/sets and MRT are not in this profile.

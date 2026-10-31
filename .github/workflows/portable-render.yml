@@ -1,0 +1,97 @@
+name: Portable rendering
+on:
+  push:
+    branches: [next, 'validation/p3-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mac-compiler:
+    runs-on: macos-15
+    steps:
+      - uses: actions/cache@v4
+        id: compiler
+        with:
+          path: out/dxc
+          key: dxc-b106a961-macos15-arm64-v1
+      - uses: actions/checkout@v4
+        if: steps.compiler.outputs.cache-hit != 'true'
+        with:
+          repository: microsoft/DirectXShaderCompiler
+          ref: b106a961d09221b3c5bdb37be45b679257da08b8
+          submodules: recursive
+          path: out/dxc-source
+      - name: Build pinned upstream DXC (native arm64)
+        if: steps.compiler.outputs.cache-hit != 'true'
+        run: |
+          cmake -S out/dxc-source -B out/dxc-build -G Ninja -C out/dxc-source/cmake/caches/PredefinedParams.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DHLSL_INCLUDE_TESTS=OFF -DSPIRV_BUILD_TESTS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_ENABLE_WERROR=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+          cmake --build out/dxc-build --target dxc --parallel 3
+          mkdir -p out/dxc/bin out/dxc/lib
+          cp out/dxc-build/bin/dxc out/dxc/bin/
+          cp -L out/dxc-build/lib/libdxcompiler*.dylib out/dxc/lib/
+          cp out/dxc-source/LICENSE.TXT out/dxc-source/ThirdPartyNotices.txt out/dxc/
+          out/dxc/bin/dxc --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p3-macos-dxc
+          path: out/dxc
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: v1.3.296
+          path: out/vulkan-headers
+      - run: sudo apt-get update -qq && sudo apt-get install -y ninja-build spirv-tools libvulkan1 mesa-vulkan-drivers libxcb1-dev libwayland-dev wayland-protocols xvfb weston
+      - run: python tools/fetch_dxc.py --output out/dxc
+      - name: Build production rendering modules
+        run: |
+          cmake -S cmake/portable-render -B out/p3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DMDS_VULKAN_INCLUDE="$PWD/out/vulkan-headers/include" -DMDS_DXC="$PWD/out/dxc/bin/dxc" -DMDS_P3_DRIVER=software
+          cmake --build out/p3 --parallel 3
+          ctest --test-dir out/p3 -L p3 --output-on-failure --output-junit p3.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p3-linux
+          path: |
+            out/p3/p3.xml
+            out/p3/Testing/Temporary/
+  macos:
+    needs: mac-compiler
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: v1.3.296
+          path: out/vulkan-headers
+      - uses: actions/download-artifact@v4
+        with:
+          name: p3-macos-dxc
+          path: out/dxc
+      - run: chmod +x out/dxc/bin/dxc && brew install spirv-tools
+      - run: python tools/fetch_moltenvk_probe.py --output out/moltenvk
+      - name: Build production rendering modules
+        env:
+          MDS_TEST_VULKAN_LIBRARY: ${{ github.workspace }}/out/moltenvk/libMoltenVK.dylib
+        run: |
+          cmake -S cmake/portable-render -B out/p3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 -DMDS_VULKAN_INCLUDE="$PWD/out/vulkan-headers/include" -DMDS_DXC="$PWD/out/dxc/bin/dxc"
+          cmake --build out/p3 --parallel 3
+          ctest --test-dir out/p3 -L p3 --output-on-failure --output-junit p3.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p3-macos
+          path: |
+            out/p3/p3.xml
+            out/p3/Testing/Temporary/

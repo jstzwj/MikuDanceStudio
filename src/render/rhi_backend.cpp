@@ -58,13 +58,12 @@ BackendDevice CreateBackendDevice(const SwapchainDesc& desc, const BackendOption
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_VULKAN
     case Backend::Vulkan:
-#ifdef _WIN32
     {
         auto native =
             CreateVulkanDevice(desc,
                                options.driver == BackendDriver::Software ? VulkanDriver::Software
                                                                          : VulkanDriver::Hardware,
-                               {options.model, options.debugLayer});
+                               {options.model, options.debugLayer, options.vulkanLibrary, options.surface});
         result.device = std::move(native.device);
         result.swapchain = std::move(native.swapchain);
         result.reason = std::move(native.creationReason);
@@ -72,10 +71,6 @@ BackendDevice CreateBackendDevice(const SwapchainDesc& desc, const BackendOption
         result.nativeError = native.creationError;
         break;
     }
-#else
-        result.reason = "presentation_not_supported";
-        break;
-#endif
 #endif
     default:
         result.reason = "backend_not_built";
@@ -123,7 +118,7 @@ OffscreenBackendDevice CreateOffscreenBackendDevice(std::uint32_t width, std::ui
                                                   options.driver == BackendDriver::Software
                                                       ? VulkanDriver::Software
                                                       : VulkanDriver::Hardware,
-                                                  {options.model, options.debugLayer});
+                                                  {options.model, options.debugLayer, options.vulkanLibrary, options.surface});
         result.device = std::move(native.device);
         result.reason = std::move(native.creationReason);
         result.adapter = std::move(native.adapterName);

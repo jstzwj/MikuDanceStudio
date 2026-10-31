@@ -1,3 +1,4 @@
+#include "rhi_test_platform.hpp"
 #include "mikudancestudio/rhi_backend.hpp"
 #include "mikudancestudio/rhi_scene_renderer.hpp"
 #include "mikudancestudio/rhi_vulkan.hpp"
@@ -18,6 +19,7 @@ int main(int argc, char** argv) try {
                       : api.find("dx12") == 0 ? Backend::D3D12
                                               : Backend::Vulkan;
     options.debugLayer = api.find("debug") != std::string::npos;
+    ConfigureVulkanTest(options, api);
     auto native = CreateOffscreenBackendDevice(48, 32, options);
     if (!native && options.debugLayer &&
         (native.reason == "validation_layer_unavailable" ||
