@@ -5,6 +5,7 @@ cbuffer PostProcess : register(b2) {
     float4 addColor;
     float4 sourceRect;
     uint4 options;
+    uint4 targetViewport;
 };
 struct Output { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
 Output post_vs(float3 position : POSITION, float2 uv : TEXCOORD0) {
@@ -22,9 +23,17 @@ float4 post_ps(Output input) : SV_TARGET {
                             destination.y>extent.y ? span.y*destination.y/(destination.y-1) : extent.y);
         uv=input.uv*(scale/dimensions)+sourceRect.zw;
     }
-    // Point loads preserve every UNORM byte for equal-sized identity copies.
+    // Full-rectangle point copies have an integer pixel-center contract.
+    // Interpolated UVs can fall on opposite sides of an exact texel boundary
+    // on different GPUs (e.g. 64 -> 17 at the middle destination pixel).
+    int2 texel=int2(uv*float2(width,height));
+    if(!options.y && all(sourceRect==float4(1,1,0,0)) && all(targetViewport.zw>0)) {
+        uint2 pixel=uint2(input.position.xy)-targetViewport.xy;
+        texel=int2(((2*pixel+1)*uint2(width,height))/(2*targetViewport.zw));
+    }
+    // Point loads preserve every UNORM byte, including Alpha.
     float4 color=options.y ? image.SampleLevel(imageSampler,uv,0) :
-        image.Load(int3(clamp(int2(uv*float2(width,height)),int2(0,0),int2(width,height)-1),0));
+        image.Load(int3(clamp(texel,int2(0,0),int2(width,height)-1),0));
     if(options.x==2) {
         precise float4 product=color*multiplyColor;
         color=product+addColor;

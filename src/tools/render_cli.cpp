@@ -149,6 +149,7 @@ int Run(const std::vector<std::string>& args) {
     PreparedModelFrame prepared;
     CompletionToken token;
     const auto initial = scene.Counters();
+    const auto initialSeconds = scene.Simulation().cursorSeconds;
     if (frames > 1)
         Require(scene.StartPlayback(reason), reason);
     double updateMs = 0, produceMs = 0, prepareMs = 0, submitMs = 0, readMs = 0;
@@ -160,7 +161,8 @@ int Run(const std::vector<std::string>& args) {
         const auto frameStart = Clock::now();
         auto start = Clock::now();
         if (i)
-            Require(scene.Tick(1.f / 30, reason), reason);
+            Require(scene.Advance(float(double(initialSeconds) + double(i) / 30), 1.f / 30, reason),
+                    reason);
         updateMs += Ms(start);
         settings.width = originalWidth + (resize && i % 2 ? 4 : 0);
         settings.height = originalHeight + (resize && i % 2 ? 2 : 0);
@@ -207,6 +209,10 @@ int Run(const std::vector<std::string>& args) {
         }
     }
     Require(scene.Counters().frames - initial.frames == frames - 1, "cpu_update_count");
+    unsigned timelineFrame = 0;
+    for (const auto& source : sources.models)
+        if (const auto* snapshot = scene.Snapshot(source.first))
+            timelineFrame = snapshot->frame;
     if (!output.parent_path().empty())
         std::filesystem::create_directories(output.parent_path());
     const auto write = [&](const char* suffix, const std::vector<std::uint8_t>& bytes) {
@@ -241,8 +247,8 @@ int Run(const std::vector<std::string>& args) {
            << ",\"width\":" << actual.description.width
            << ",\"height\":" << actual.description.height << ",\"frames\":" << frames
            << ",\"cpu_updates\":" << scene.Counters().frames - initial.frames
-           << ",\"device_replacements\":" << replacements << ",\"uploads\":" << stats.uploads
-           << ",\"buffer_creations\":" << stats.bufferCreations
+           << ",\"timeline_frame\":" << timelineFrame << ",\"device_replacements\":" << replacements
+           << ",\"uploads\":" << stats.uploads << ",\"buffer_creations\":" << stats.bufferCreations
            << ",\"buffer_reuses\":" << stats.bufferReuses
            << ",\"buffer_waits\":" << stats.bufferWaits << ",\"upload_bytes\":" << stats.uploadBytes
            << ",\"vulkan_readbacks\":" << vk.readbacks

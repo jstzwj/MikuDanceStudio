@@ -24,7 +24,7 @@ std::shared_ptr<const ShaderProgram> PostProcessProgram() {
         d.bindings = {{ShaderBindingKind::Constants,
                        2,
                        2,
-                       64,
+                       sizeof(detail::PostProcessConstants),
                        {{"multiplyColor", ShaderValueType::Float4, 0},
                         {"addColor", ShaderValueType::Float4, 16},
                         {"sourceRect", ShaderValueType::Float4, 32}}},

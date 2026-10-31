@@ -41,6 +41,7 @@ def main():
         report = json.loads(prefix.with_suffix(".json").read_text(encoding="utf-8"))
         pixels = prefix.with_suffix(".rgba").read_bytes()
         assert report["status"] == "passed" and report["cpu_updates"] == 5
+        assert report["timeline_frame"] == 8
         assert report["device_replacements"] == 1 and report["validation_errors"] == 0
         assert (report["width"], report["height"]) == (131, 97)
         assert len(pixels) == report["width"] * report["height"] * 4

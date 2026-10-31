@@ -6,6 +6,7 @@ namespace mikudancestudio::rhi::detail {
 struct PostProcessConstants {
     std::array<float, 4> multiply, add, uvRect;
     std::array<unsigned, 4> options;
+    std::array<unsigned, 4> viewport;
 };
 inline PostProcessConstants BuildPostProcessConstants(const ModelPipeline& p) {
     const auto& s = p.postProcess;
@@ -13,7 +14,9 @@ inline PostProcessConstants BuildPostProcessConstants(const ModelPipeline& p) {
             s.add,
             s.uvRect,
             {unsigned(s.mode), unsigned(s.linear), p.viewport ? p.viewport->width : 0,
-             p.viewport ? p.viewport->height : 0}};
+             p.viewport ? p.viewport->height : 0},
+            {p.viewport ? p.viewport->x : 0, p.viewport ? p.viewport->y : 0,
+             p.viewport ? p.viewport->width : 0, p.viewport ? p.viewport->height : 0}};
 }
 inline BuiltinShadowConstants BuildBuiltinShadowConstants(const ModelPipeline& p,
                                                           const ModelViewport& viewport) {
