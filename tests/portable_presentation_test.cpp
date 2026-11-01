@@ -105,6 +105,12 @@ int Benchmark(const std::string& argument, const char* output) {
             sum += value;
         std::sort(cpu.begin(), cpu.end());
         const auto p95 = cpu[85];
+        std::printf(
+            "profile %s: timestamp support=%u, samples=%llu, GPU ns=%llu, Draw p95=%g ms, wait mean=%g ms\n",
+            controller.Adapter().c_str(), unsigned(after.gpuTimingSupported),
+            static_cast<unsigned long long>(after.gpuFrames - before.gpuFrames),
+            static_cast<unsigned long long>(after.gpuNanoseconds - before.gpuNanoseconds), p95,
+            waitMs);
         CHECK(after.gpuTimingSupported && after.gpuFrames - before.gpuFrames == 90 && gpuMs > 0);
         CHECK(after.presentations - before.presentations == 90 &&
               after.readbacks == before.readbacks);
