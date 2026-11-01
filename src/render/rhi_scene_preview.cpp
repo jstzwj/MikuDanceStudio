@@ -164,6 +164,8 @@ bool ScenePreviewController::ReadyToDraw() {
         state == PreviewState::Blocked)
         return false;
     const auto health = backend.swapchain->Health();
+    if (health == SurfaceHealth::Removed)
+        return Fail("surface_removed_requires_replacement");
     if (health == SurfaceHealth::Suspended) {
         SuspendUnavailableSurface();
         return false;

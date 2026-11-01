@@ -59,6 +59,7 @@ jobs:
         run: |
           xvfb-run -a out/p3/portable_presentation_test xcb-software
           xvfb-run -a env MDS_P3_PRESENTATION_ARGUMENT=xcb-software python tests/test_runtime_cpu_scene.py --passes out/p3/portable_presentation_test --assets res/assets
+          xvfb-run -a out/p3/portable_presentation_test benchmark-xcb-software out/p3/p3-performance-xcb.json
       - name: Wayland presentation in an isolated compositor
         run: |
           export XDG_RUNTIME_DIR="$(mktemp -d)"
@@ -70,6 +71,7 @@ jobs:
           export WAYLAND_DISPLAY=mds-p3
           out/p3/portable_presentation_test wayland-software
           MDS_P3_PRESENTATION_ARGUMENT=wayland-software python tests/test_runtime_cpu_scene.py --passes out/p3/portable_presentation_test --assets res/assets
+          out/p3/portable_presentation_test benchmark-wayland-software out/p3/p3-performance-wayland.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +81,7 @@ jobs:
             out/p3/Testing/Temporary/
             out/p3/scene-evidence/
             out/p3/weston.log
+            out/p3/p3-performance*.json
   macos:
     needs: mac-compiler
     runs-on: macos-15
@@ -113,3 +116,4 @@ jobs:
             out/p3/p3.xml
             out/p3/Testing/Temporary/
             out/p3/scene-evidence/
+            out/p3/p3-performance*.json

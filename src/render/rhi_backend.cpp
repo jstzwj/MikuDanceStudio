@@ -57,13 +57,13 @@ BackendDevice CreateBackendDevice(const SwapchainDesc& desc, const BackendOption
     }
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_VULKAN
-    case Backend::Vulkan:
-    {
+    case Backend::Vulkan: {
         auto native =
             CreateVulkanDevice(desc,
                                options.driver == BackendDriver::Software ? VulkanDriver::Software
                                                                          : VulkanDriver::Hardware,
-                               {options.model, options.debugLayer, options.vulkanLibrary, options.surface});
+                               {options.model, options.debugLayer, options.vulkanLibrary,
+                                options.surface, options.profiling});
         result.device = std::move(native.device);
         result.swapchain = std::move(native.swapchain);
         result.reason = std::move(native.creationReason);
@@ -114,11 +114,12 @@ OffscreenBackendDevice CreateOffscreenBackendDevice(std::uint32_t width, std::ui
 #endif
 #ifdef MIKUDANCESTUDIO_RHI_VULKAN
     case Backend::Vulkan: {
-        auto native = CreateVulkanOffscreenDevice(width, height,
-                                                  options.driver == BackendDriver::Software
-                                                      ? VulkanDriver::Software
+        auto native = CreateVulkanOffscreenDevice(
+            width, height,
+            options.driver == BackendDriver::Software ? VulkanDriver::Software
                                                       : VulkanDriver::Hardware,
-                                                  {options.model, options.debugLayer, options.vulkanLibrary, options.surface});
+            {options.model, options.debugLayer, options.vulkanLibrary, options.surface,
+             options.profiling});
         result.device = std::move(native.device);
         result.reason = std::move(native.creationReason);
         result.adapter = std::move(native.adapterName);

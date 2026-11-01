@@ -13,6 +13,8 @@ struct VulkanOptions {
     bool validation = false;
     std::string loaderPath;
     std::shared_ptr<const VulkanSurfaceSource> surface;
+    // Opt-in acceptance telemetry. Ordinary rendering allocates no query pools.
+    bool profiling = false;
 };
 struct VulkanStats {
     std::uint64_t submissions = 0, completed = 0, pipelineCreations = 0, resourceUploads = 0;
@@ -24,6 +26,12 @@ struct VulkanStats {
     unsigned validationErrors = 0;
     std::int32_t lastError = 0;
     std::uint64_t presentations = 0, readbacks = 0;
+    bool gpuTimingSupported = false;
+    std::uint64_t gpuFrames = 0, gpuNanoseconds = 0;
+    std::uint64_t waitNanoseconds = 0, acquireNanoseconds = 0, presentNanoseconds = 0;
+    // Backend-owned VkDeviceMemory allocations, including host-visible staging;
+    // excludes driver-private allocations and swapchain images. Not total VRAM.
+    std::uint64_t allocatedBytes = 0, peakAllocatedBytes = 0;
 };
 struct VulkanBundle {
     std::unique_ptr<Device> device;
@@ -44,6 +52,13 @@ VulkanStats QueryVulkanStats(Device&);
 // Deterministic completion tests on an isolated offscreen device only. Host
 // release does not submit work or wait; teardown always releases the gate.
 bool SetVulkanQueueBlockedForTest(Device&, bool blocked);
+enum class VulkanSurfaceLossPoint {
+    Acquire,
+    Present
+};
+// One-shot driver-result injection; still tears down/recreates real native
+// surfaces in acceptance tests. Never used by an application rendering path.
+bool LoseVulkanSurfaceForTest(Device&, VulkanSurfaceLossPoint);
 bool ReadVulkanPresentation(Device&, RgbaImage&);
 VulkanBundle CreateVulkanDevice(const SwapchainDesc&, VulkanDriver = VulkanDriver::Hardware,
                                 VulkanOptions = {});

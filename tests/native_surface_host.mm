@@ -19,7 +19,13 @@ struct Host final : NativeSurfaceHost {
         if (!Resize(width,height)) throw std::runtime_error("cocoa_surface_creation");
         window = {mikudancestudio::rhi::WindowSystem::Cocoa, reinterpret_cast<std::uintptr_t>((__bridge void*)layer)};
     }
-    ~Host() override { [native orderOut:nil]; [native close]; }
+    ~Host() override { Remove(); }
+    void Remove() override {
+        [native orderOut:nil];
+        [native close];
+        native = nil;
+        removed = true;
+    }
     bool Resize(unsigned w, unsigned h) override {
         const auto scale = native.backingScaleFactor;
         [native setContentSize:NSMakeSize(w/scale,h/scale)];

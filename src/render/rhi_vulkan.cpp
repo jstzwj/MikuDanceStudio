@@ -24,11 +24,17 @@
 #include <map>
 #include <sstream>
 #include <vector>
+#include <chrono>
 
 namespace mikudancestudio::rhi {
 namespace {
 constexpr unsigned FrameCount = 3, MaxDraws = 512, MaxResources = 8192;
 constexpr VkDeviceSize UniformBytes = 2 * 1024 * 1024;
+using ProfileClock = std::chrono::steady_clock;
+std::uint64_t Nanoseconds(ProfileClock::time_point start) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(ProfileClock::now() - start)
+        .count();
+}
 // clang-format off
 #define INSTANCE_FUNCTIONS(X) \
     X(DestroyInstance) \
@@ -59,6 +65,11 @@ constexpr VkDeviceSize UniformBytes = 2 * 1024 * 1024;
     X(BeginCommandBuffer) \
     X(EndCommandBuffer) \
     X(CmdPipelineBarrier2) \
+    X(CreateQueryPool) \
+    X(DestroyQueryPool) \
+    X(GetQueryPoolResults) \
+    X(CmdResetQueryPool) \
+    X(CmdWriteTimestamp2) \
     X(CreateBuffer) \
     X(DestroyBuffer) \
     X(GetBufferMemoryRequirements) \
@@ -108,6 +119,7 @@ struct Buffer {
     VkBuffer native = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     void* mapped = nullptr;
+    VkDeviceSize allocationBytes = 0;
 };
 struct Resource {
     std::uint32_t generation = 1;
@@ -122,12 +134,15 @@ struct Resource {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    VkDeviceSize allocationBytes = 0;
     VkFormat format = VK_FORMAT_UNDEFINED;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
     VkPipelineStageFlags2 stage = VK_PIPELINE_STAGE_2_NONE;
     VkAccessFlags2 access = VK_ACCESS_2_NONE;
 };
 struct Frame {
+    VkQueryPool timing = VK_NULL_HANDLE;
+    std::uint64_t timingCompletion = 0;
     VkSemaphore acquired = VK_NULL_HANDLE;
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer commands = VK_NULL_HANDLE;
@@ -275,6 +290,8 @@ public:
          legacyInitialized = false, resetPrepared = false;
     std::atomic<unsigned> validationErrors{0};
     VulkanStats stats;
+    bool profiling = false;
+    unsigned timestampBits = 0;
     std::array<Frame, FrameCount> frames;
     std::vector<Resource> resources;
     std::vector<Resource> retiring;
@@ -320,6 +337,7 @@ public:
     bool presentationOutput = false, presentable = false, acquiredImage = false, retired = false;
     SurfaceHealth surfaceHealth = SurfaceHealth::Unknown;
     bool swapchainReadback = false;
+    bool loseAtAcquire = false, loseAtPresent = false;
     bool ValidSurface(const SwapchainDesc&) const;
     RebuildResult RebuildSurface(const SwapchainDesc&);
     void ReleaseSurface();
@@ -329,6 +347,8 @@ public:
         stats.lastError = result;
         if (result == VK_ERROR_DEVICE_LOST)
             lost = true;
+        if (result == VK_ERROR_SURFACE_LOST_KHR)
+            surfaceHealth = SurfaceHealth::Removed;
         return result == VK_SUCCESS;
     }
     bool Live() const { return native && !lost && !pending && !retired; }
@@ -375,6 +395,8 @@ public:
             Release(legacyDepth);
             Release(white);
             for (auto& f : frames) {
+                if (f.timing)
+                    vkDestroyQueryPool(native, f.timing, nullptr);
                 if (f.acquired)
                     vkDestroySemaphore(native, f.acquired, nullptr);
                 Release(f.uniforms);
@@ -426,6 +448,7 @@ public:
 #endif
     }
     void Release(Buffer& b) {
+        stats.allocatedBytes -= b.allocationBytes;
         if (b.mapped)
             vkUnmapMemory(native, b.memory);
         if (b.native)
@@ -435,6 +458,7 @@ public:
         b = {};
     }
     void Release(Resource& r) {
+        stats.allocatedBytes -= r.allocationBytes;
         Release(r.buffer);
         if (r.attachmentView)
             vkDestroyImageView(native, r.attachmentView, nullptr);
@@ -455,6 +479,11 @@ public:
                 return i;
         return UINT32_MAX;
     }
+    void TrackAllocation(VkDeviceSize bytes, VkDeviceSize& allocationBytes) {
+        allocationBytes = bytes;
+        stats.allocatedBytes += bytes;
+        stats.peakAllocatedBytes = (std::max)(stats.peakAllocatedBytes, stats.allocatedBytes);
+    }
     bool AllocateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& out) {
         VkBufferCreateInfo b{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         b.size = size;
@@ -474,8 +503,12 @@ public:
         VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         a.allocationSize = requirements.size;
         a.memoryTypeIndex = type;
-        if (!Check(vkAllocateMemory(native, &a, nullptr, &out.memory)) ||
-            !Check(vkBindBufferMemory(native, out.native, out.memory, 0)) ||
+        if (!Check(vkAllocateMemory(native, &a, nullptr, &out.memory))) {
+            Release(out);
+            return false;
+        }
+        TrackAllocation(requirements.size, out.allocationBytes);
+        if (!Check(vkBindBufferMemory(native, out.native, out.memory, 0)) ||
             !Check(vkMapMemory(native, out.memory, 0, VK_WHOLE_SIZE, 0, &out.mapped))) {
             Release(out);
             return false;
@@ -526,8 +559,12 @@ public:
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = type;
-        if (!Check(vkAllocateMemory(native, &allocation, nullptr, &out.memory)) ||
-            !Check(vkBindImageMemory(native, out.image, out.memory, 0))) {
+        if (!Check(vkAllocateMemory(native, &allocation, nullptr, &out.memory))) {
+            Release(out);
+            return false;
+        }
+        TrackAllocation(requirements.size, out.allocationBytes);
+        if (!Check(vkBindImageMemory(native, out.image, out.memory, 0))) {
             Release(out);
             return false;
         }
@@ -589,14 +626,40 @@ public:
         wait.pSemaphores = &timeline;
         wait.pValues = &token.value;
         ++stats.timelineWaits;
-        return Check(vkWaitSemaphores(native, &wait, std::uint64_t(timeout) * 1000000)) &&
-               CollectResources();
+        const auto start = profiling ? ProfileClock::now() : ProfileClock::time_point{};
+        const auto result = vkWaitSemaphores(native, &wait, std::uint64_t(timeout) * 1000000);
+        if (profiling)
+            stats.waitNanoseconds += Nanoseconds(start);
+        return Check(result) && CollectResources();
+    }
+    bool CollectTimings(std::uint64_t completed) {
+        for (auto& frame : frames) {
+            if (!frame.timingCompletion || frame.timingCompletion > completed)
+                continue;
+            std::uint64_t ticks[2]{};
+            const auto result =
+                vkGetQueryPoolResults(native, frame.timing, 0, 2, sizeof(ticks), ticks,
+                                      sizeof(ticks[0]), VK_QUERY_RESULT_64_BIT);
+            if (result == VK_NOT_READY)
+                continue;
+            if (!Check(result))
+                return false;
+            const auto mask =
+                timestampBits == 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << timestampBits) - 1;
+            stats.gpuNanoseconds += std::uint64_t(double((ticks[1] - ticks[0]) & mask) *
+                                                  properties.limits.timestampPeriod);
+            ++stats.gpuFrames;
+            frame.timingCompletion = 0;
+        }
+        return true;
     }
     bool CollectResources() {
         std::uint64_t completed = 0;
         if (!lost && !Check(vkGetSemaphoreCounterValue(native, timeline, &completed)))
             return false;
         stats.completed = completed;
+        if (!lost && !CollectTimings(completed))
+            return false;
         for (auto i = retiring.begin(); i != retiring.end();)
             if (lost || i->lastUse <= completed) {
                 Release(*i);
@@ -1043,10 +1106,16 @@ public:
             return false;
         if (presentationOutput) {
             if (!chain || retired || Health() == SurfaceHealth::Suspended ||
-                surfaceHealth == SurfaceHealth::Resettable)
+                Health() == SurfaceHealth::Removed || surfaceHealth == SurfaceHealth::Resettable)
                 return false;
-            const auto result = vkAcquireNextImageKHR(native, chain, 5000000000ull, f.acquired,
+            const auto start = profiling ? ProfileClock::now() : ProfileClock::time_point{};
+            const auto result =
+                loseAtAcquire ? VK_ERROR_SURFACE_LOST_KHR
+                              : vkAcquireNextImageKHR(native, chain, 5000000000ull, f.acquired,
                                                       VK_NULL_HANDLE, &activeImage);
+            loseAtAcquire = false;
+            if (profiling)
+                stats.acquireNanoseconds += Nanoseconds(start);
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                 Check(result);
                 if (result == VK_ERROR_OUT_OF_DATE_KHR)
@@ -1058,6 +1127,10 @@ public:
                 result == VK_SUBOPTIMAL_KHR ? SurfaceHealth::Resettable : SurfaceHealth::Ready;
         }
         frameIndex = (frameIndex + 1) % FrameCount;
+        if (f.timing) {
+            vkCmdResetQueryPool(f.commands, f.timing, 0, 2);
+            vkCmdWriteTimestamp2(f.commands, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, f.timing, 0);
+        }
         f.offset = 0;
         f.draws = 0;
         inFrame = true;
@@ -1150,11 +1223,16 @@ public:
             Barrier(frame.commands, target, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                     VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
         }
+        if (frame.timing)
+            vkCmdWriteTimestamp2(frame.commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.timing,
+                                 1);
         if (!Submit(frame.commands, presentationOutput ? frame.acquired : VK_NULL_HANDLE,
                     presentationOutput ? readyToPresent[activeImage] : VK_NULL_HANDLE))
             return false;
         presentable = presentationOutput;
         frames[frameIndex].completion = issued;
+        if (frame.timing)
+            frame.timingCompletion = issued;
         ++stats.submissions;
         return true;
     }
@@ -1373,7 +1451,8 @@ void VulkanDevice::ReleaseSurface() {
 RebuildResult VulkanDevice::RebuildSurface(const SwapchainDesc& d) {
     if (!ValidSurface(d))
         return RebuildResult::Unsupported;
-    if (lost || retired)
+    if (lost || retired ||
+        ((surfaceSource || presentation.window.handle) && Health() == SurfaceHealth::Removed))
         return RebuildResult::ReplacementRequired;
     if (!Live() || inFrame || presentable || acquiredImage)
         return RebuildResult::Busy;
@@ -1485,7 +1564,7 @@ RebuildResult VulkanDevice::RebuildSurface(const SwapchainDesc& d) {
 }
 bool VulkanDevice::Present() {
     if (!Live() || inFrame || !chain || !presentable || !acquiredImage ||
-        Health() == SurfaceHealth::Suspended)
+        Health() == SurfaceHealth::Suspended || Health() == SurfaceHealth::Removed)
         return false;
     VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     info.swapchainCount = 1;
@@ -1493,7 +1572,11 @@ bool VulkanDevice::Present() {
     info.pImageIndices = &activeImage;
     info.waitSemaphoreCount = 1;
     info.pWaitSemaphores = &readyToPresent[activeImage];
-    const auto result = vkQueuePresentKHR(queue, &info);
+    const auto start = profiling ? ProfileClock::now() : ProfileClock::time_point{};
+    const auto result = loseAtPresent ? VK_ERROR_SURFACE_LOST_KHR : vkQueuePresentKHR(queue, &info);
+    loseAtPresent = false;
+    if (profiling)
+        stats.presentNanoseconds += Nanoseconds(start);
     presentable = acquiredImage = false;
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
         surfaceHealth = SurfaceHealth::Resettable;
@@ -1502,7 +1585,8 @@ bool VulkanDevice::Present() {
             surfaceHealth = SurfaceHealth::Ready;
     } else {
         Check(result);
-        surfaceHealth = lost ? SurfaceHealth::Removed : SurfaceHealth::Unknown;
+        surfaceHealth = lost || result == VK_ERROR_SURFACE_LOST_KHR ? SurfaceHealth::Removed
+                                                                    : SurfaceHealth::Unknown;
     }
     if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
         ++stats.presentations;
@@ -1517,7 +1601,8 @@ public:
     SwapchainDesc Description() const override { return device.presentation; }
     SwapchainSupport Query(const SwapchainDesc& d) const override {
         SwapchainSupport s;
-        if (device.retired || device.lost || !device.ValidSurface(d))
+        if (device.retired || device.lost || device.Health() == SurfaceHealth::Removed ||
+            !device.ValidSurface(d))
             return s;
         VkSurfaceCapabilitiesKHR caps{};
         if (device.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.physical, device.surface,
@@ -1577,6 +1662,7 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
                               const SwapchainDesc* window) {
     reason = "invalid_options";
     surfaceSource = options.surface;
+    profiling = options.profiling;
     if (!w || !h || w > 4096 || h > 4096 || (window && !ValidSurface(*window)) ||
         (driver != VulkanDriver::Hardware && driver != VulkanDriver::Software))
         return false;
@@ -1834,6 +1920,7 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
                     physical = candidate;
                     properties = p;
                     family = i;
+                    timestampBits = queues[i].timestampValidBits;
                 }
                 break;
             }
@@ -1949,9 +2036,17 @@ bool VulkanDevice::Initialize(unsigned w, unsigned h, VulkanDriver driver, Vulka
         return Check(vkAllocateCommandBuffers(native, &a, &cmd));
     };
     reason = "frame_resources_failed";
+    stats.gpuTimingSupported = profiling && timestampBits && properties.limits.timestampPeriod > 0;
     if (!commands(transferPool, transfer))
         return false;
     for (auto& frame : frames) {
+        if (stats.gpuTimingSupported) {
+            VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            info.queryCount = 2;
+            if (!Check(vkCreateQueryPool(native, &info, nullptr, &frame.timing)))
+                return false;
+        }
         if (!commands(frame.pool, frame.commands) ||
             !AllocateBuffer(UniformBytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, frame.uniforms))
             return false;
@@ -2668,6 +2763,19 @@ bool SetVulkanQueueBlockedForTest(Device& base, bool blocked) {
     if (!d->Check(d->vkQueueSubmit2(d->queue, 1, &submit, VK_NULL_HANDLE)))
         return false;
     d->gateBlocked = true;
+    return true;
+}
+bool LoseVulkanSurfaceForTest(Device& base, VulkanSurfaceLossPoint point) {
+    auto* d = dynamic_cast<VulkanDevice*>(&base);
+    if (!d || !d->Live() || d->inFrame || !d->chain || d->presentable ||
+        d->Health() != SurfaceHealth::Ready || d->loseAtAcquire || d->loseAtPresent)
+        return false;
+    if (point == VulkanSurfaceLossPoint::Acquire)
+        d->loseAtAcquire = true;
+    else if (point == VulkanSurfaceLossPoint::Present)
+        d->loseAtPresent = true;
+    else
+        return false;
     return true;
 }
 bool ReadVulkanPresentation(Device& device, RgbaImage& out) {

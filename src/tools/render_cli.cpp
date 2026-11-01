@@ -75,10 +75,13 @@ int Run(const std::vector<std::string>& args) {
                 settings.shadow.mode = int(number);
             else if (arg == "--debug")
                 options.debugLayer = number != 0;
+            else if (arg == "--profile")
+                options.profiling = number != 0;
             else
                 throw std::runtime_error("unknown_option:" + arg);
         }
     }
+    Require(!options.profiling || options.backend == Backend::Vulkan, "profiling_requires_vulkan");
     Require(
         !input.empty() && !assets.empty() && !output.empty() && frames > 0 && frames <= 10000 &&
             resize <= 1,
@@ -253,10 +256,15 @@ int Run(const std::vector<std::string>& args) {
            << ",\"buffer_waits\":" << stats.bufferWaits << ",\"upload_bytes\":" << stats.uploadBytes
            << ",\"vulkan_readbacks\":" << vk.readbacks
            << ",\"validation_errors\":" << vk.validationErrors
+           << ",\"profiling\":" << (options.profiling ? "true" : "false")
+           << ",\"gpu_timing_supported\":" << (vk.gpuTimingSupported ? "true" : "false")
+           << ",\"gpu_frames\":" << vk.gpuFrames
+           << ",\"peak_backend_allocation_bytes\":" << vk.peakAllocatedBytes
            << ",\"milliseconds\":{\"cpu_update\":" << updateMs
            << ",\"frame_production\":" << produceMs << ",\"prepare\":" << prepareMs
            << ",\"submit_collect\":" << submitMs << ",\"explicit_readback\":" << readMs
-           << ",\"cold_frame\":" << coldMs
+           << ",\"gpu\":" << vk.gpuNanoseconds / 1e6
+           << ",\"timeline_wait\":" << vk.waitNanoseconds / 1e6 << ",\"cold_frame\":" << coldMs
            << ",\"warm_frame_mean\":" << (frames > 1 ? warmMs / (frames - 1) : 0) << "}}\n";
     Require(bool(report), "report_write");
     std::cout << "P3 scene rendered: " << adapter << ", frames=" << frames << '\n';

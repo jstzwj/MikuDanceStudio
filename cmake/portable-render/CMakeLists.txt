@@ -62,6 +62,9 @@ else()
 endif()
 # Linux runs these explicitly under an isolated X server / Wayland compositor.
 if(NOT UNIX OR APPLE)
+    add_test(NAME p3_performance COMMAND portable_presentation_test benchmark-${MDS_P3_DRIVER}
+        "${CMAKE_CURRENT_BINARY_DIR}/p3-performance.json")
+    set_tests_properties(p3_performance PROPERTIES LABELS "p3;presentation;performance" TIMEOUT 240 RUN_SERIAL TRUE)
     add_test(NAME p3_presentation COMMAND portable_presentation_test ${MDS_P3_DRIVER})
     set_tests_properties(p3_presentation PROPERTIES LABELS "p3;presentation" TIMEOUT 120 RUN_SERIAL TRUE)
     add_test(NAME p3_scene_presentation COMMAND ${Python3_EXECUTABLE}

@@ -21,9 +21,12 @@ struct Host final : NativeSurfaceHost {
         window = {mikudancestudio::rhi::WindowSystem::Win32,
                   reinterpret_cast<std::uintptr_t>(hwnd)};
     }
-    ~Host() override {
+    ~Host() override { Remove(); }
+    void Remove() override {
         if (hwnd)
             DestroyWindow(hwnd);
+        hwnd = nullptr;
+        removed = true;
     }
     bool Resize(unsigned w, unsigned h) override {
         if (!SetWindowPos(hwnd, nullptr, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE))
@@ -69,11 +72,17 @@ struct XcbHost final : NativeSurfaceHost {
             throw std::runtime_error("xcb_window_creation");
     }
     ~XcbHost() override {
-        if (connection) {
-            if (id)
-                xcb_destroy_window(connection, id);
+        Remove();
+        if (connection)
             xcb_disconnect(connection);
+    }
+    void Remove() override {
+        if (connection && id) {
+            xcb_destroy_window(connection, id);
+            xcb_flush(connection);
         }
+        id = 0;
+        removed = true;
     }
     bool Resize(unsigned w, unsigned h) override {
         const std::uint32_t values[]{w, h};
@@ -157,12 +166,7 @@ struct WaylandHost final : NativeSurfaceHost {
             throw std::runtime_error("wayland_initial_configure");
     }
     ~WaylandHost() override {
-        if (top)
-            xdg_toplevel_destroy(top);
-        if (role)
-            xdg_surface_destroy(role);
-        if (surface)
-            wl_surface_destroy(surface);
+        Remove();
         if (shell)
             xdg_wm_base_destroy(shell);
         if (compositor)
@@ -171,6 +175,20 @@ struct WaylandHost final : NativeSurfaceHost {
             wl_registry_destroy(registry);
         if (connection)
             wl_display_disconnect(connection);
+    }
+    void Remove() override {
+        if (top)
+            xdg_toplevel_destroy(top);
+        if (role)
+            xdg_surface_destroy(role);
+        if (surface)
+            wl_surface_destroy(surface);
+        if (connection)
+            wl_display_flush(connection);
+        top = nullptr;
+        role = nullptr;
+        surface = nullptr;
+        removed = true;
     }
     bool Resize(unsigned w, unsigned h) override {
         width = w;

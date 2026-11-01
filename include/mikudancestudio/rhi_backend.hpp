@@ -21,6 +21,7 @@ struct BackendOptions {
     MaterialSamplingPolicy materialSampling = MaterialSamplingPolicy::PortableTrilinear;
     std::string vulkanLibrary;
     std::shared_ptr<const VulkanSurfaceSource> surface;
+    bool profiling = false;
 };
 // Factory owns native API selection. Destruction order is intentional: all
 // SceneRenderer owners must detach before the swapchain and device are freed.
