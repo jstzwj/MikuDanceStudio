@@ -234,7 +234,7 @@ void SyncMorphRow(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spi
 
 // Morph-selection step for the four facial-panel combo rows (prev at
 // 0x48C735, next at 0x48C941; the remaining rows repeat the same logic).
-// It wraps at morphCount, skips morphs outside panel 1 and bails after a full
+// It wraps at morphCount, skips morphs outside the selected category and bails after a full
 // circle, matching the original saved-index comparison.
 void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spinId, int textId,
                bool next) {
@@ -263,7 +263,7 @@ void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spinId
         idx = m->selectedMorphs[lane];
         if (idx == orig)
             return;
-        if (m->morphs[idx].panel == mdl::MorphPanel::eyebrow)
+        if (m->morphs[idx].panel == static_cast<mdl::MorphPanel>(lane + 1))
             break;
     }
     SyncMorphRow(app, hwnd, lane, comboId, spinId, textId, next);

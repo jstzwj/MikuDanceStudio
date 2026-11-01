@@ -58,6 +58,7 @@ bool PositionNear(const float* actual, float x, float y, float z) {
 }
 struct Fixture {
     std::unique_ptr<mds::MMDApp> app = std::make_unique<mds::MMDApp>();
+    std::unique_ptr<mds::D3DRenderer> renderer = std::make_unique<mds::D3DRenderer>();
     std::unique_ptr<mdl::ModelRecord> model = std::make_unique<mdl::ModelRecord>();
     std::array<mdl::BoneRecord, 3> bones{};
     std::array<unsigned char, 3> selected{}, edited{};
@@ -66,18 +67,24 @@ struct Fixture {
     std::vector<mdl::MorphKey> morphKeys{mdl::kMorphKeyCapacity};
     std::vector<mdl::DisplayKey> displayKeys{mdl::kDisplayKeyCapacity};
     std::array<mdl::MorphRecord, 5> morphs{};
+    std::array<std::int32_t, 5> morphRows{};
     std::array<mdl::FrameGroup, 4> faces{};
     HWND window = CreateWindowExA(0, "STATIC", "", WS_POPUP, 0, 0, 900, 900, nullptr, nullptr,
                                   GetModuleHandleA(nullptr), nullptr);
     HBITMAP bitmap = CreateBitmap(128, 128, 1, 32, nullptr);
+    HBITMAP spare = CreateBitmap(128, 128, 1, 32, nullptr);
     HDC dc = CreateCompatibleDC(nullptr);
     HGDIOBJ previous;
     Fixture() {
-        if (!window || !bitmap || !dc)
+        if (!window || !bitmap || !spare || !dc)
             std::abort();
         std::memset(&app->state, 0, sizeof app->state);
         previous = SelectObject(dc, bitmap);
         app->CurveDC() = dc;
+        app->PanelDC() = dc;
+        app->state.bmpPanelSpare = spare;
+        app->Renderer() = renderer.get();
+        renderer->screenHeight = 900;
         app->MainWindow() = window;
         app->SidebarWidth() = 300;
         app->state.slotIdx = 7;
@@ -94,6 +101,7 @@ struct Fixture {
         model->morphKeys = morphKeys.data();
         model->displayKeys = displayKeys.data();
         model->morphs = morphs.data();
+        model->morphTimelineRows = morphRows.data();
         model->displayFrames = faces.data();
         model->selectedBone = 2;
         model->UndoCursor() = model->LatestUndoCursor() = mdl::kUndoHistoryDepth - 1;
@@ -130,6 +138,7 @@ struct Fixture {
             }
         SelectObject(dc, previous);
         DeleteObject(bitmap);
+        DeleteObject(spare);
         DeleteDC(dc);
         DestroyWindow(window);
         mds::g_Block = nullptr;
@@ -422,6 +431,86 @@ void TestMorphRows() {
     f.Click(30, 170);
     Check(f.faces[3].selected == 0 && f.model->selectedMorphs[3] == 4,
           "empty row sentinel clears selection without selecting morph 998");
+}
+
+void TestMorphCategoryArrows() {
+    Fixture f;
+    // Interleave categories so combo order differs from the model's morph index.
+    // The final eye entry also exercises wrapping across the end of the array.
+    std::array<mdl::MorphRecord, 10> morphs{};
+    const int categories[] = {0, 2, 1, 4, 3, 1, 3, 4, 0, 2};
+    const int first[] = {2, 1, 4, 3}, last[] = {5, 9, 6, 7};
+    const int combos[] = {mds::panel::kMorphCombo0, mds::panel::kMorphCombo1,
+                          mds::panel::kMorphCombo2, mds::panel::kMorphCombo3};
+    const int sliders[] = {mds::panel::kMorphSlider0, mds::panel::kMorphSlider1,
+                           mds::panel::kMorphSlider2, mds::panel::kMorphSlider3};
+    const int edits[] = {mds::panel::kMorphEdit0, mds::panel::kMorphEdit1, mds::panel::kMorphEdit2,
+                         mds::panel::kMorphEdit3};
+    const int previous[] = {mds::panel::kMorphPreviousButton0, mds::panel::kMorphPreviousButton1,
+                            mds::panel::kMorphPreviousButton2, mds::panel::kMorphPreviousButton3};
+    const int next[] = {mds::panel::kMorphNextButton0, mds::panel::kMorphNextButton1,
+                        mds::panel::kMorphNextButton2, mds::panel::kMorphNextButton3};
+    f.model->morphs = morphs.data();
+    f.model->morphCount = static_cast<int>(morphs.size());
+    f.model->physicsMode = 2;
+    for (int i = 0; i < static_cast<int>(morphs.size()); ++i) {
+        morphs[i].panel = static_cast<mdl::MorphPanel>(categories[i]);
+        morphs[i].value = i / 16.0f;
+    }
+    for (int lane = 0; lane < 4; ++lane) {
+        HWND combo = Child(f.window, combos[lane], "COMBOBOX", CBS_DROPDOWNLIST);
+        Add(combo, "first");
+        Add(combo, "last");
+        Child(f.window, sliders[lane], TRACKBAR_CLASSA);
+        Child(f.window, edits[lane]);
+        f.model->selectedMorphs[lane] = first[lane];
+        Pick(f.window, combos[lane], 0);
+    }
+    for (int lane = 0; lane < 4; ++lane) {
+        const auto check = [&](int index, int cursor) {
+            Check(f.model->selectedMorphs[lane] == index &&
+                      SendDlgItemMessageA(f.window, combos[lane], CB_GETCURSEL, 0, 0) == cursor &&
+                      SendDlgItemMessageA(f.window, sliders[lane], TBM_GETPOS, 0, 0) ==
+                          static_cast<int>(morphs[index].value * 100) &&
+                      NumberNear(f.window, edits[lane], morphs[index].value),
+                  "category arrows keep the model index, combo, slider and value synchronized");
+            for (int other = 0; other < 4; ++other)
+                if (other != lane)
+                    Check(f.model->selectedMorphs[other] == first[other],
+                          "category arrows preserve the other categories");
+        };
+        int expectedCursor = 0;
+        for (int command : {next[lane], next[lane], previous[lane], previous[lane]}) {
+            mds::CommandDispatch(nullptr, MAKEWPARAM(command, BN_CLICKED));
+            expectedCursor ^= 1;
+            check(expectedCursor ? last[lane] : first[lane], expectedCursor);
+        }
+    }
+    for (int lane = 0; lane < 4; ++lane) {
+        // The original stops after a full circle without updating the controls
+        // when this category has only one entry.
+        morphs[last[lane]].panel = mdl::MorphPanel::system;
+        SendDlgItemMessageA(f.window, combos[lane], CB_DELETESTRING, 1, 0);
+        SendDlgItemMessageA(f.window, sliders[lane], TBM_SETPOS, TRUE, 73);
+        SetDlgItemTextA(f.window, edits[lane], "unchanged");
+        for (int command : {previous[lane], next[lane]}) {
+            mds::CommandDispatch(nullptr, MAKEWPARAM(command, BN_CLICKED));
+            Check(f.model->selectedMorphs[lane] == first[lane] &&
+                      SendDlgItemMessageA(f.window, combos[lane], CB_GETCURSEL, 0, 0) == 0 &&
+                      SendDlgItemMessageA(f.window, sliders[lane], TBM_GETPOS, 0, 0) == 73 &&
+                      TextIs(f.window, edits[lane], "unchanged"),
+                  "a single morph preserves controls after a full-circle search");
+        }
+    }
+    for (int index : {-1, 0}) {
+        f.model->selectedMorphs[0] = index;
+        f.model->physicsMode = 0;
+        for (int command : {previous[0], next[0]}) {
+            mds::CommandDispatch(nullptr, MAKEWPARAM(command, BN_CLICKED));
+            Check(f.model->selectedMorphs[0] == index && TextIs(f.window, edits[0], "unchanged"),
+                  "unset selection and the PMD base morph retain the original early return");
+        }
+    }
 }
 
 void TestNumericCommitAndReadout() {
@@ -739,6 +828,7 @@ int main() {
     TestModelSwitchBoundary();
     TestTimelineUndo();
     TestMorphRows();
+    TestMorphCategoryArrows();
     TestNumericCommitAndReadout();
     TestAuxiliaryReset();
     TestTimelineDoubleClick();

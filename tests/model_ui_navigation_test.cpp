@@ -20,6 +20,7 @@ std::vector<unsigned> scrolls;
 struct Label {
     std::string text;
     int x, y;
+    COLORREF color;
 };
 std::vector<Label> labels;
 void Check(bool ok, const char* message) {
@@ -60,6 +61,7 @@ struct Fixture {
     std::array<unsigned char, 6> selected{}, edited{};
     std::array<std::int32_t, 6> boneRows{};
     std::array<std::int32_t, 2> morphRows{};
+    std::array<mdl::MorphRecord, 2> morphs{};
     HWND window;
     HDC panel = CreateCompatibleDC(nullptr);
     HBITMAP bitmap = CreateBitmap(320, 900, 1, 32, nullptr);
@@ -93,6 +95,7 @@ struct Fixture {
         model->bonePhysicsState = edited.data();
         model->boneTimelineRows = boneRows.data();
         model->morphTimelineRows = morphRows.data();
+        model->morphs = morphs.data();
         model->displayRootBone = 5;
         model->displayGroups = groups.data();
         model->groupCount = static_cast<unsigned char>(groups.size());
@@ -371,6 +374,80 @@ void TestBoxReleaseRefresh() {
     mds::BeginOrEndViewportToolDrag(f.app.get(), mds::ViewportToolAction::None);
     Check(paints == 1, "repeated release does not refresh an already finished box");
 }
+
+void TestNameSelectionRefresh() {
+    Fixture f;
+    f.app->SidebarWidth() = 250;
+    f.app->state.themeColors[33] = RGB(12, 34, 56);
+    f.app->state.themeColors[34] = RGB(231, 45, 67);
+    f.model->selectedBone = -1;
+    f.morphs[0].panel = mdl::MorphPanel::eyebrow;
+    f.morphs[1].panel = mdl::MorphPanel::eye;
+    strcpy_s(f.faces[0].nameEn, "expression0");
+    strcpy_s(f.faces[1].nameEn, "expression1");
+    const auto click = [&](int row, bool shift = false) {
+        f.app->ShiftModifierState() = shift ? 3 : 0;
+        f.app->MouseX() = 30;
+        f.app->MouseY() = 160 + row * 14 + 7;
+        labels.clear();
+        mds::HandleLButtonDown(f.app.get());
+    };
+    const auto color = [&](const char* text, COLORREF expected) {
+        // Header clicks repaint once before their toggle and again after it;
+        // only the last draw determines the color left in the panel bitmap.
+        for (auto it = labels.rbegin(); it != labels.rend(); ++it)
+            if (it->text == text)
+                return it->color == expected;
+        return false;
+    };
+    for (int english : {0, 1}) {
+        f.app->EnglishUI() = english;
+        f.selected.fill(0);
+        f.faces[0].selected = f.faces[1].selected = 0;
+        f.Sweep();
+        const char* bone = english ? "display1" : "entry1";
+        const char* other = english ? "display2" : "entry2";
+        const char* root = english ? "english5" : "bone5";
+        click(f.boneRows[1]);
+        Check(f.selected[1] == 1 && color(bone, f.app->state.themeColors[34]),
+              "clicking a bone immediately redraws its selected name color");
+        click(f.boneRows[2], true);
+        Check(f.selected[1] && f.selected[2] && color(bone, f.app->state.themeColors[34]) &&
+                  color(other, f.app->state.themeColors[34]),
+              "Shift selection refreshes both bone names without clearing the first");
+        click(f.boneRows[1], true);
+        Check(!f.selected[1] && f.selected[2] && color(bone, f.app->state.themeColors[33]) &&
+                  color(other, f.app->state.themeColors[34]),
+              "Shift deselection immediately restores the ordinary name color");
+        click(f.morphRows[1]);
+        Check(f.faces[0].selected && !f.selected[2] &&
+                  color(english ? "expression0" : "morph0", f.app->state.themeColors[34]) &&
+                  color(other, f.app->state.themeColors[33]),
+              "clicking a morph redraws its name and clears the previous bone highlight");
+        click(f.morphRows[1], true);
+        Check(!f.faces[0].selected &&
+                  color(english ? "expression0" : "morph0", f.app->state.themeColors[33]),
+              "deselecting a morph immediately restores its ordinary name color");
+        click(0);
+        Check(f.selected[5] && color(root, f.app->state.themeColors[34]),
+              "the pinned root uses the same immediate selection refresh");
+        click(5); // expanded bone group 3
+        Check(f.selected[1] && f.selected[2] && !f.selected[5] &&
+                  color(bone, f.app->state.themeColors[34]) &&
+                  color(other, f.app->state.themeColors[34]),
+              "the common refresh preserves a group header's single selection toggle");
+        click(5, true);
+        Check(!f.selected[1] && !f.selected[2] && color(bone, f.app->state.themeColors[33]),
+              "a second group click deselects its bones exactly once");
+        click(2); // morph header
+        Check(f.faces[0].selected && f.faces[1].selected &&
+                  color(english ? "expression0" : "morph0", f.app->state.themeColors[34]),
+              "the morph header still selects and redraws its children");
+        click(1); // display / IK / OP header
+        Check(f.model->displayKeyframesPresent && !f.faces[0].selected && f.app->PanelRowFlags()[1],
+              "the display header retains its original selection toggle and highlight");
+    }
+}
 } // namespace
 
 namespace mikudancestudio {
@@ -379,9 +456,9 @@ void PanelPaint(MMDApp* app) {
     ++paints;
     boxActiveAtPaint = app->BoneBoxSelectionActive();
 }
-int DrawGlyph(MMDApp*, const char* text, HDC, int, int x, int y, unsigned char, unsigned char,
-              unsigned char, int) {
-    labels.push_back({text, x, y});
+int DrawGlyph(MMDApp*, const char* text, HDC, int, int x, int y, unsigned char r, unsigned char g,
+              unsigned char b, int) {
+    labels.push_back({text, x, y, RGB(r, g, b)});
     return 0;
 }
 } // namespace mikudancestudio
@@ -393,5 +470,6 @@ int main() {
     TestAccessoryParent();
     TestAccessoryRows();
     TestBoxReleaseRefresh();
+    TestNameSelectionRefresh();
     return failures ? 1 : 0;
 }

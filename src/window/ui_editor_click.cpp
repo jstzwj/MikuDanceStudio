@@ -566,6 +566,10 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd, std::int32_t
         }
     }
 
+    // x86 0x44702D / x64 RVA 0x3A29C: refresh the cached name column
+    // after every selection change, before dispatching the header toggles.
+    RebuildTimelineTrackPanel(app);
+
     // loc_447034: row-type dispatch after selection (entry point for
     // the selection paths above)
     {
