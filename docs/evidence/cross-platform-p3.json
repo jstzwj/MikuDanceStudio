@@ -3,31 +3,34 @@
   "stage": "P3",
   "status": "complete",
   "recorded_date": "2026-11-01",
-  "source_commit": "0a7cce118d1021b6161b1c65a77ff41864e43c42",
+  "source_commit": "543d296b2d86d0498999aa81293cc585865b8caf",
   "implementation_commits": [
     "bd435ae9537c341806ff68cfba2d883c71e7f659",
     "adbea04a0f92730f3a0c292b51f4b640102ed153",
     "0f07421d441d3d4d7450bf7bd4131cffce1aac09",
     "f428e84d8db447aefdaf52d4c2d0b571971757c5",
     "4b732b6133166efed050c87b4140c024788c58ec",
-    "0a7cce118d1021b6161b1c65a77ff41864e43c42"
+    "0a7cce118d1021b6161b1c65a77ff41864e43c42",
+    "193ed757533d81b8340b4b18b4624839ee56c37f",
+    "5a284803600bfac3e71bbbe2a5a7907dc9f35b3b",
+    "543d296b2d86d0498999aa81293cc585865b8caf"
   ],
-  "render_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924",
+  "render_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41270434909",
   "jobs": [
-    {
-      "name": "linux",
-      "conclusion": "success",
-      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924/job/124636639931"
-    },
     {
       "name": "mac-compiler",
       "conclusion": "success",
-      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924/job/124636639951"
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41270434909/job/124741917306"
+    },
+    {
+      "name": "linux",
+      "conclusion": "success",
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41270434909/job/124741917494"
     },
     {
       "name": "macos",
       "conclusion": "success",
-      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924/job/124636700283"
+      "url": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41270434909/job/124741942316"
     }
   ],
   "thresholds": {
@@ -42,7 +45,7 @@
       "architecture": "x64",
       "adapter": "NVIDIA TITAN Xp",
       "ctest": {
-        "tests": 11,
+        "tests": 12,
         "failures": 0,
         "skipped": 0
       },
@@ -140,14 +143,83 @@
           "strict_post_copy": true
         }
       ],
-      "depth_attachment": "D24S8"
+      "depth_attachment": "D24S8",
+      "native_performance": {
+        "schema": 1,
+        "adapter": "NVIDIA TITAN Xp",
+        "profile": "physical",
+        "width": 640,
+        "height": 480,
+        "vsync": true,
+        "cases": [
+          {
+            "animated": false,
+            "frames": 90,
+            "gpu_timestamp_samples": 90,
+            "gpu_budget_evaluated": true,
+            "gpu_clock_status": "measured",
+            "gpu_mean_ms": 0.0499004,
+            "cpu_draw_mean_ms": 58.3844,
+            "cpu_draw_p95_ms": 95.2339,
+            "cold_draw_ms": 100.299,
+            "acquire_cpu_ms": 1.6144,
+            "present_cpu_ms": 3.1065,
+            "timeline_wait_ms": 5400.47,
+            "readbacks": 0,
+            "peak_backend_allocation_bytes": 12939040,
+            "buffer_creations": 0,
+            "buffer_reuses": 0,
+            "upload_bytes": 0,
+            "budget": {
+              "gpu_mean_ms": 20,
+              "cpu_draw_p95_ms": 100,
+              "timeline_wait_mean_ms": 100,
+              "backend_allocation_bytes": 268435456
+            }
+          },
+          {
+            "animated": true,
+            "frames": 90,
+            "gpu_timestamp_samples": 90,
+            "gpu_budget_evaluated": true,
+            "gpu_clock_status": "measured",
+            "gpu_mean_ms": 0.0494923,
+            "cpu_draw_mean_ms": 59.0229,
+            "cpu_draw_p95_ms": 94.852,
+            "cold_draw_ms": 91.5675,
+            "acquire_cpu_ms": 0.547,
+            "present_cpu_ms": 2.8745,
+            "timeline_wait_ms": 5458.99,
+            "readbacks": 0,
+            "peak_backend_allocation_bytes": 12939616,
+            "buffer_creations": 4,
+            "buffer_reuses": 86,
+            "upload_bytes": 17280,
+            "budget": {
+              "gpu_mean_ms": 20,
+              "cpu_draw_p95_ms": 100,
+              "timeline_wait_mean_ms": 100,
+              "backend_allocation_bytes": 268435456
+            }
+          }
+        ],
+        "status": "passed"
+      },
+      "swapchain_image_exact_comparison": true,
+      "surface_recovery": {
+        "injected_acquire_surface_lost": true,
+        "injected_present_surface_lost": true,
+        "actual_native_window_removal": true,
+        "new_native_window_and_vulkan_surface": true,
+        "same_cpu_snapshot": true
+      }
     },
     {
       "system": "macos",
       "architecture": "arm64",
       "adapter": "Apple Paravirtual device",
       "ctest": {
-        "tests": 11,
+        "tests": 12,
         "failures": 0,
         "skipped": 0
       },
@@ -245,7 +317,77 @@
           "strict_post_copy": true
         }
       ],
-      "depth_attachment": "D32FS8; exact D24S8 query and creation rejected"
+      "depth_attachment": "D32FS8; exact D24S8 query and creation rejected",
+      "native_performance": {
+        "schema": 1,
+        "adapter": "Apple Paravirtual device",
+        "profile": "ci-virtual",
+        "width": 640,
+        "height": 480,
+        "vsync": true,
+        "cases": [
+          {
+            "animated": false,
+            "frames": 90,
+            "gpu_timestamp_samples": 90,
+            "gpu_budget_evaluated": false,
+            "gpu_clock_status": "virtual_driver_zero_intervals",
+            "gpu_mean_ms": null,
+            "cpu_draw_mean_ms": 16.3017,
+            "cpu_draw_p95_ms": 19.0909,
+            "cold_draw_ms": 643.594,
+            "acquire_cpu_ms": 3.15054,
+            "present_cpu_ms": 3.61491,
+            "timeline_wait_ms": 3.04692,
+            "readbacks": 0,
+            "peak_backend_allocation_bytes": 13708800,
+            "buffer_creations": 0,
+            "buffer_reuses": 0,
+            "upload_bytes": 0,
+            "budget": {
+              "gpu_mean_ms": 1000,
+              "cpu_draw_p95_ms": 1500,
+              "timeline_wait_mean_ms": 1500,
+              "backend_allocation_bytes": 536870912
+            }
+          },
+          {
+            "animated": true,
+            "frames": 90,
+            "gpu_timestamp_samples": 90,
+            "gpu_budget_evaluated": false,
+            "gpu_clock_status": "virtual_driver_zero_intervals",
+            "gpu_mean_ms": null,
+            "cpu_draw_mean_ms": 16.6065,
+            "cpu_draw_p95_ms": 19.5268,
+            "cold_draw_ms": 11.9337,
+            "acquire_cpu_ms": 5.39975,
+            "present_cpu_ms": 3.41621,
+            "timeline_wait_ms": 2.39367,
+            "readbacks": 0,
+            "peak_backend_allocation_bytes": 13709056,
+            "buffer_creations": 2,
+            "buffer_reuses": 88,
+            "upload_bytes": 17280,
+            "budget": {
+              "gpu_mean_ms": 1000,
+              "cpu_draw_p95_ms": 1500,
+              "timeline_wait_mean_ms": 1500,
+              "backend_allocation_bytes": 536870912
+            }
+          }
+        ],
+        "status": "passed"
+      },
+      "swapchain_image_exact_comparison": true,
+      "surface_recovery": {
+        "injected_acquire_surface_lost": true,
+        "injected_present_surface_lost": true,
+        "actual_native_window_removal": true,
+        "new_native_window_and_vulkan_surface": true,
+        "same_cpu_snapshot": true
+      },
+      "gpu_timing_limitation": "Apple Paravirtual: 90 available timestamp intervals are all zero; reported as null, GPU budget not evaluated. Physical Mac timing remains P7."
     },
     {
       "system": "linux",
@@ -351,7 +493,139 @@
           "strict_post_copy": true
         }
       ],
-      "depth_attachment": "D24S8"
+      "depth_attachment": "D24S8",
+      "native_performance": {
+        "xcb": {
+          "schema": 1,
+          "adapter": "llvmpipe (LLVM 15.0.7, 256 bits)",
+          "profile": "ci-software",
+          "width": 640,
+          "height": 480,
+          "vsync": true,
+          "cases": [
+            {
+              "animated": false,
+              "frames": 90,
+              "gpu_timestamp_samples": 90,
+              "gpu_budget_evaluated": true,
+              "gpu_clock_status": "measured",
+              "gpu_mean_ms": 5.27435,
+              "cpu_draw_mean_ms": 6.19051,
+              "cpu_draw_p95_ms": 6.30137,
+              "cold_draw_ms": 238.734,
+              "acquire_cpu_ms": 4.70493,
+              "present_cpu_ms": 539.061,
+              "timeline_wait_ms": 0,
+              "readbacks": 0,
+              "peak_backend_allocation_bytes": 12528416,
+              "buffer_creations": 0,
+              "buffer_reuses": 0,
+              "upload_bytes": 0,
+              "budget": {
+                "gpu_mean_ms": 1000,
+                "cpu_draw_p95_ms": 1500,
+                "timeline_wait_mean_ms": 1500,
+                "backend_allocation_bytes": 536870912
+              }
+            },
+            {
+              "animated": true,
+              "frames": 90,
+              "gpu_timestamp_samples": 90,
+              "gpu_budget_evaluated": true,
+              "gpu_clock_status": "measured",
+              "gpu_mean_ms": 5.2804,
+              "cpu_draw_mean_ms": 6.17739,
+              "cpu_draw_p95_ms": 6.34482,
+              "cold_draw_ms": 19.9768,
+              "acquire_cpu_ms": 3.83152,
+              "present_cpu_ms": 538.639,
+              "timeline_wait_ms": 0,
+              "readbacks": 0,
+              "peak_backend_allocation_bytes": 12528608,
+              "buffer_creations": 2,
+              "buffer_reuses": 88,
+              "upload_bytes": 17280,
+              "budget": {
+                "gpu_mean_ms": 1000,
+                "cpu_draw_p95_ms": 1500,
+                "timeline_wait_mean_ms": 1500,
+                "backend_allocation_bytes": 536870912
+              }
+            }
+          ],
+          "status": "passed"
+        },
+        "wayland": {
+          "schema": 1,
+          "adapter": "llvmpipe (LLVM 15.0.7, 256 bits)",
+          "profile": "ci-software",
+          "width": 640,
+          "height": 480,
+          "vsync": true,
+          "cases": [
+            {
+              "animated": false,
+              "frames": 90,
+              "gpu_timestamp_samples": 90,
+              "gpu_budget_evaluated": true,
+              "gpu_clock_status": "measured",
+              "gpu_mean_ms": 5.52672,
+              "cpu_draw_mean_ms": 25.519,
+              "cpu_draw_p95_ms": 25.6941,
+              "cold_draw_ms": 236.439,
+              "acquire_cpu_ms": 0.160966,
+              "present_cpu_ms": 2279.36,
+              "timeline_wait_ms": 0,
+              "readbacks": 0,
+              "peak_backend_allocation_bytes": 12528416,
+              "buffer_creations": 0,
+              "buffer_reuses": 0,
+              "upload_bytes": 0,
+              "budget": {
+                "gpu_mean_ms": 1000,
+                "cpu_draw_p95_ms": 1500,
+                "timeline_wait_mean_ms": 1500,
+                "backend_allocation_bytes": 536870912
+              }
+            },
+            {
+              "animated": true,
+              "frames": 90,
+              "gpu_timestamp_samples": 90,
+              "gpu_budget_evaluated": true,
+              "gpu_clock_status": "measured",
+              "gpu_mean_ms": 5.3872,
+              "cpu_draw_mean_ms": 25.547,
+              "cpu_draw_p95_ms": 25.6179,
+              "cold_draw_ms": 25.7024,
+              "acquire_cpu_ms": 0.17223,
+              "present_cpu_ms": 2281.56,
+              "timeline_wait_ms": 0,
+              "readbacks": 0,
+              "peak_backend_allocation_bytes": 12528608,
+              "buffer_creations": 2,
+              "buffer_reuses": 88,
+              "upload_bytes": 17280,
+              "budget": {
+                "gpu_mean_ms": 1000,
+                "cpu_draw_p95_ms": 1500,
+                "timeline_wait_mean_ms": 1500,
+                "backend_allocation_bytes": 536870912
+              }
+            }
+          ],
+          "status": "passed"
+        }
+      },
+      "swapchain_image_exact_comparison": true,
+      "surface_recovery": {
+        "injected_acquire_surface_lost": true,
+        "injected_present_surface_lost": true,
+        "actual_native_window_removal": true,
+        "new_native_window_and_vulkan_surface": true,
+        "same_cpu_snapshot": true
+      }
     }
   ],
   "windows_additional_gates": [
@@ -439,10 +713,12 @@
   ],
   "windows_validation_presentation": "native-debug passed; procedural and P2 scene frames, 0 validation errors",
   "windows_application_builds": {
+    "source_commit": "543d296b2d86d0498999aa81293cc585865b8caf",
     "x64": "Release MikuDanceStudio and mds_render_cli passed",
     "x86": "Release MikuDanceStudio and mds_render_cli passed",
-    "vulkan_in_editor_build": false,
-    "note": "Vulkan execution separately validated by the production portable-render x64 build."
+    "vulkan_in_editor_build": true,
+    "runtime_note": "Applications were built, not launched. Presentation tested separately with never-shown windows.",
+    "x86_runtime": "Generated PMD CPU scene -> Vulkan -> exact post-copy and three GPU timestamp samples passed."
   },
   "private_model_local_only": {
     "model_sha256": "4542728612d1055186dc500bfc897cf458ce5530a87bb2c84de1dfeffeb6e5fa",
@@ -474,16 +750,99 @@
         "upload_bytes": 105650736,
         "vulkan_readbacks": 0,
         "validation_errors": 0,
+        "profiling": false,
+        "gpu_timing_supported": false,
+        "gpu_frames": 0,
+        "peak_backend_allocation_bytes": 0,
         "milliseconds": {
-          "cpu_update": 1631.95,
-          "frame_production": 4321.9,
-          "prepare": 83.6143,
-          "submit_collect": 127.889,
-          "explicit_readback": 1.9682,
-          "cold_frame": 197.016,
-          "warm_frame_mean": 67.0608
+          "cpu_update": 1501.82,
+          "frame_production": 3961.15,
+          "prepare": 92.0558,
+          "submit_collect": 127.341,
+          "explicit_readback": 2.2248,
+          "cold_frame": 198.707,
+          "warm_frame_mean": 61.6152
         },
-        "motion": "static"
+        "motion": "static",
+        "sha256": "045a7e8ca6dba60bf606837e2d1961da74c8be7ef34bbafb6f271262b2b2298c"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "dx12",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 20,
+        "buffer_creations": 3,
+        "buffer_reuses": 0,
+        "buffer_waits": 0,
+        "upload_bytes": 105650736,
+        "vulkan_readbacks": 0,
+        "validation_errors": 0,
+        "profiling": false,
+        "gpu_timing_supported": false,
+        "gpu_frames": 0,
+        "peak_backend_allocation_bytes": 0,
+        "milliseconds": {
+          "cpu_update": 1847.94,
+          "frame_production": 4612.3,
+          "prepare": 86.7532,
+          "submit_collect": 58.9745,
+          "explicit_readback": 7.1409,
+          "cold_frame": 107.397,
+          "warm_frame_mean": 73.0184
+        },
+        "motion": "static",
+        "sha256": "045a7e8ca6dba60bf606837e2d1961da74c8be7ef34bbafb6f271262b2b2298c"
+      },
+      {
+        "schema": 1,
+        "stage": "P3",
+        "status": "passed",
+        "adapter": "NVIDIA TITAN Xp",
+        "backend": "vulkan",
+        "width": 640,
+        "height": 480,
+        "frames": 90,
+        "cpu_updates": 89,
+        "timeline_frame": 89,
+        "device_replacements": 0,
+        "uploads": 20,
+        "buffer_creations": 3,
+        "buffer_reuses": 0,
+        "buffer_waits": 0,
+        "upload_bytes": 105650736,
+        "vulkan_readbacks": 3,
+        "validation_errors": 0,
+        "profiling": true,
+        "gpu_timing_supported": true,
+        "gpu_frames": 90,
+        "peak_backend_allocation_bytes": 135264272,
+        "milliseconds": {
+          "cpu_update": 1691.14,
+          "frame_production": 5023.34,
+          "prepare": 187.591,
+          "submit_collect": 382.511,
+          "explicit_readback": 11.7897,
+          "gpu": 112.187,
+          "timeline_wait": 15.0317,
+          "cold_frame": 205.98,
+          "warm_frame_mean": 79.5358
+        },
+        "budget": {
+          "warm_cpu_mean_ms": 100,
+          "gpu_mean_ms": 20,
+          "timeline_wait_mean_ms": 20,
+          "backend_allocation_bytes": 536870912
+        },
+        "motion": "static",
+        "sha256": "045a7e8ca6dba60bf606837e2d1961da74c8be7ef34bbafb6f271262b2b2298c"
       },
       {
         "schema": 1,
@@ -504,46 +863,21 @@
         "upload_bytes": 503493552,
         "vulkan_readbacks": 0,
         "validation_errors": 0,
+        "profiling": false,
+        "gpu_timing_supported": false,
+        "gpu_frames": 0,
+        "peak_backend_allocation_bytes": 0,
         "milliseconds": {
-          "cpu_update": 1435.97,
-          "frame_production": 3860.93,
-          "prepare": 151.606,
-          "submit_collect": 130.691,
-          "explicit_readback": 2.3505,
-          "cold_frame": 210.207,
-          "warm_frame_mean": 60.3263
+          "cpu_update": 1498.52,
+          "frame_production": 3854.3,
+          "prepare": 155.999,
+          "submit_collect": 138.366,
+          "explicit_readback": 2.9371,
+          "cold_frame": 227.085,
+          "warm_frame_mean": 60.901
         },
-        "motion": "animated"
-      },
-      {
-        "schema": 1,
-        "stage": "P3",
-        "status": "passed",
-        "adapter": "NVIDIA TITAN Xp",
-        "backend": "dx12",
-        "width": 640,
-        "height": 480,
-        "frames": 90,
-        "cpu_updates": 89,
-        "timeline_frame": 89,
-        "device_replacements": 0,
-        "uploads": 20,
-        "buffer_creations": 3,
-        "buffer_reuses": 0,
-        "buffer_waits": 0,
-        "upload_bytes": 105650736,
-        "vulkan_readbacks": 0,
-        "validation_errors": 0,
-        "milliseconds": {
-          "cpu_update": 1442.81,
-          "frame_production": 3728.53,
-          "prepare": 83.494,
-          "submit_collect": 66.2992,
-          "explicit_readback": 6.9022,
-          "cold_frame": 123.597,
-          "warm_frame_mean": 58.3999
-        },
-        "motion": "static"
+        "motion": "animated",
+        "sha256": "58e817ca02fcd333982a8cbfb99472ecfbbad08bd7fdc72bde18bca2f8f7b573"
       },
       {
         "schema": 1,
@@ -564,46 +898,21 @@
         "upload_bytes": 503493552,
         "vulkan_readbacks": 0,
         "validation_errors": 0,
+        "profiling": false,
+        "gpu_timing_supported": false,
+        "gpu_frames": 0,
+        "peak_backend_allocation_bytes": 0,
         "milliseconds": {
-          "cpu_update": 1547.76,
-          "frame_production": 4324.71,
-          "prepare": 143.326,
-          "submit_collect": 61.1749,
-          "explicit_readback": 6.8321,
-          "cold_frame": 92.3144,
-          "warm_frame_mean": 67.244
+          "cpu_update": 2064.53,
+          "frame_production": 6048.58,
+          "prepare": 208.458,
+          "submit_collect": 91.5754,
+          "explicit_readback": 13.2197,
+          "cold_frame": 129.541,
+          "warm_frame_mean": 93.0753
         },
-        "motion": "animated"
-      },
-      {
-        "schema": 1,
-        "stage": "P3",
-        "status": "passed",
-        "adapter": "NVIDIA TITAN Xp",
-        "backend": "vulkan",
-        "width": 640,
-        "height": 480,
-        "frames": 90,
-        "cpu_updates": 89,
-        "timeline_frame": 89,
-        "device_replacements": 0,
-        "uploads": 20,
-        "buffer_creations": 3,
-        "buffer_reuses": 0,
-        "buffer_waits": 0,
-        "upload_bytes": 105650736,
-        "vulkan_readbacks": 3,
-        "validation_errors": 0,
-        "milliseconds": {
-          "cpu_update": 1497.07,
-          "frame_production": 4069.05,
-          "prepare": 141.958,
-          "submit_collect": 340.308,
-          "explicit_readback": 10.4856,
-          "cold_frame": 157.301,
-          "warm_frame_mean": 66.1926
-        },
-        "motion": "static"
+        "motion": "animated",
+        "sha256": "58e817ca02fcd333982a8cbfb99472ecfbbad08bd7fdc72bde18bca2f8f7b573"
       },
       {
         "schema": 1,
@@ -624,16 +933,29 @@
         "upload_bytes": 503493552,
         "vulkan_readbacks": 3,
         "validation_errors": 0,
+        "profiling": true,
+        "gpu_timing_supported": true,
+        "gpu_frames": 90,
+        "peak_backend_allocation_bytes": 135264272,
         "milliseconds": {
-          "cpu_update": 1510.83,
-          "frame_production": 3963.49,
-          "prepare": 232.674,
-          "submit_collect": 354.995,
-          "explicit_readback": 10.3544,
-          "cold_frame": 199.867,
-          "warm_frame_mean": 65.8673
+          "cpu_update": 1559.11,
+          "frame_production": 4371.21,
+          "prepare": 343.666,
+          "submit_collect": 365.103,
+          "explicit_readback": 10.293,
+          "gpu": 109.485,
+          "timeline_wait": 19.6811,
+          "cold_frame": 324.41,
+          "warm_frame_mean": 70.9525
         },
-        "motion": "animated"
+        "budget": {
+          "warm_cpu_mean_ms": 100,
+          "gpu_mean_ms": 20,
+          "timeline_wait_mean_ms": 20,
+          "backend_allocation_bytes": 536870912
+        },
+        "motion": "animated",
+        "sha256": "58e817ca02fcd333982a8cbfb99472ecfbbad08bd7fdc72bde18bca2f8f7b573"
       }
     ],
     "parity": [
@@ -663,7 +985,9 @@
       }
     ],
     "no_private_asset_or_image_committed": true,
-    "timing_contract": "CPU wall-clock, asynchronous submissions; excludes loading and final explicit readback; not GPU timestamps or editor FPS"
+    "timing_contract": "CPU wall-clock, asynchronous submissions; excludes loading and final explicit readback; not GPU timestamps or editor FPS",
+    "source_commit": "193ed757533d81b8340b4b18b4624839ee56c37f",
+    "gpu_timing_scope": "Vulkan only; no GPU timing collected on DX11/DX12. Later changes affect report diagnostics only."
   },
   "remaining_scope": [
     "P4 Qt/editor commands and C1 rendering completion",
@@ -683,6 +1007,31 @@
       "missing library rejected",
       "macOS compatibility metadata parsed separately",
       "Windows runtime imports accepted"
+    ]
+  },
+  "initial_source_commit": "0a7cce118d1021b6161b1c65a77ff41864e43c42",
+  "initial_render_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41234951924",
+  "closure_acceptance": {
+    "status": "passed_with_documented_platform_measurement_limit",
+    "render_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41270434909",
+    "foundation_ci": "https://github.com/jstzwj/MikuDanceStudio/actions/runs/41270434952",
+    "windows_p3": {
+      "tests": 12,
+      "failures": 0,
+      "skipped": 0
+    },
+    "windows_related_resources_and_hidden_presentation": {
+      "tests": 12,
+      "failures": 0,
+      "skipped": 0
+    },
+    "windows_validation_layer": "Native loss/recovery and legacy HWND presentation passed, zero validation errors.",
+    "image_thresholds_unchanged": true,
+    "gpu_timing": "Measured by completed Vulkan timestamp queries; no WAIT flag or image readback. Unobservable virtual clock explicitly null, never a passing GPU budget.",
+    "allocation_scope": "Backend VkDeviceMemory including host-visible staging, excluding swapchain, query pool and driver overhead; not total VRAM.",
+    "p7_remaining": [
+      "Physical macOS/Linux GPU performance and driver/package qualification",
+      "Apple Paravirtual zero-duration timestamp limitation"
     ]
   }
 }
