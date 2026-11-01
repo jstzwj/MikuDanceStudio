@@ -111,11 +111,16 @@ int Benchmark(const std::string& argument, const char* output) {
             static_cast<unsigned long long>(after.gpuFrames - before.gpuFrames),
             static_cast<unsigned long long>(after.gpuNanoseconds - before.gpuNanoseconds), p95,
             waitMs);
-        CHECK(after.gpuTimingSupported && after.gpuFrames - before.gpuFrames == 90 && gpuMs > 0);
+        CHECK(after.gpuTimingSupported && after.gpuFrames - before.gpuFrames == 90);
+        // The Apple Paravirtual CI driver advertises timestamps and returns
+        // available queries, but every duration is zero. Preserve that evidence
+        // as unavailable, never as a measured 0 ms or a passed GPU budget.
+        const bool observableClock = gpuMs > 0;
+        CHECK(observableClock || virtualGpu);
         CHECK(after.presentations - before.presentations == 90 &&
               after.readbacks == before.readbacks);
         CHECK(after.validationErrors == 0 && after.retiringResources == 0);
-        CHECK(gpuMs <= gpuBudget && p95 <= cpuBudget && waitMs <= cpuBudget &&
+        CHECK((!observableClock || gpuMs <= gpuBudget) && p95 <= cpuBudget && waitMs <= cpuBudget &&
               after.peakAllocatedBytes <= memoryBudget);
         if (!animated)
             CHECK(stats.uploads == resources.uploads);
@@ -124,9 +129,16 @@ int Benchmark(const std::string& argument, const char* output) {
         if (animated)
             report << ',';
         report << "{\"animated\":" << (animated ? "true" : "false")
-               << ",\"frames\":90,\"gpu_mean_ms\":" << gpuMs << ",\"cpu_draw_mean_ms\":" << sum / 90
-               << ",\"cpu_draw_p95_ms\":" << p95 << ",\"cold_draw_ms\":" << coldMs
-               << ",\"acquire_cpu_ms\":"
+               << ",\"frames\":90,\"gpu_timestamp_samples\":90,\"gpu_budget_evaluated\":"
+               << (observableClock ? "true" : "false") << ",\"gpu_clock_status\":"
+               << std::quoted(observableClock ? "measured" : "virtual_driver_zero_intervals")
+               << ",\"gpu_mean_ms\":";
+        if (observableClock)
+            report << gpuMs;
+        else
+            report << "null";
+        report << ",\"cpu_draw_mean_ms\":" << sum / 90 << ",\"cpu_draw_p95_ms\":" << p95
+               << ",\"cold_draw_ms\":" << coldMs << ",\"acquire_cpu_ms\":"
                << (after.acquireNanoseconds - before.acquireNanoseconds) / 1e6
                << ",\"present_cpu_ms\":"
                << (after.presentNanoseconds - before.presentNanoseconds) / 1e6

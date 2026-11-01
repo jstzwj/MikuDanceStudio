@@ -26,6 +26,8 @@ struct VulkanStats {
     unsigned validationErrors = 0;
     std::int32_t lastError = 0;
     std::uint64_t presentations = 0, readbacks = 0;
+    // Advertised queue capability; a virtual driver can still return only
+    // zero-duration intervals. Consumers must not report those as 0 ms work.
     bool gpuTimingSupported = false;
     std::uint64_t gpuFrames = 0, gpuNanoseconds = 0;
     std::uint64_t waitNanoseconds = 0, acquireNanoseconds = 0, presentNanoseconds = 0;
