@@ -120,14 +120,15 @@ const wchar_t* __cdecl GetMaterialName(unsigned long long object_id,
 }
 
 // --- ordinal 13 [0x1800010e0 GetSphereMapMode; bytes @0x18006e789/78a] ------
-unsigned char __cdecl GetSphereMapMode(void)
+MMH_SPHERE_MAP_MODE __cdecl GetSphereMapMode(void)
 {
-    // 0 = none, 1 = multiply, 2 = add, 3 = sub-texture (cd2 techniques).
+    // Original RVA 0x10E9/0x10F5/0x1106 returns a full 32-bit value in
+    // EAX, consumed without zero-extension by MMEffect RVA 0x59CC8.
     if (g_mmh.sphereUsed == 0)
-        return 0;
+        return MMH_SPHERE_NONE;
     if (g_mmh.subTexUsed != 0)
-        return 3;
-    return (unsigned char)(1 + (g_mmh.sphereAdd != 0 ? 1 : 0));
+        return MMH_SPHERE_SUBTEXTURE;
+    return g_mmh.sphereAdd != 0 ? MMH_SPHERE_ADD : MMH_SPHERE_MULTIPLY;
 }
 
 // --- ordinal 14 [0x1800010d0 GetSphereMapTexture; DAT_18006e7b0] ------------

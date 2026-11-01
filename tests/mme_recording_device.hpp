@@ -213,6 +213,7 @@ struct MmeRecordingDevice : SnapshotDeviceFixture {
         case D3DFMT_R32F:
         case D3DFMT_G16R16F:
             return 4;
+        case D3DFMT_A16B16G16R16:
         case D3DFMT_A16B16G16R16F:
         case D3DFMT_G32R32F:
             return 8;

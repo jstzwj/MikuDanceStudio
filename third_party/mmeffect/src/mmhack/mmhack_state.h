@@ -56,7 +56,7 @@ struct MmhCachedObject {
     unsigned long long id = 0;   // node[2]
     int isPmd = 0;               // node[3]: 1 = PMD model, 0 = accessory
     std::string fileName;        // node[1]: ANSI filename (ExpGetPmdFilename)
-    void* texRef = nullptr;      // node[4]: AddRef'd object captured at creation
+    IUnknown* geometryRef = nullptr; // node[4]: owned vertex buffer / accessory mesh
     MmhObjData* data = nullptr;  // node[5]: MmhGetObjectData(id) result
 };
 

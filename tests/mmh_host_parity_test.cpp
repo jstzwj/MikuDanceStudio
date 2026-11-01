@@ -12,6 +12,8 @@ extern "C" const wchar_t* MmdModelPathW(int);
 extern "C" const wchar_t* MmdAcsPathW(int);
 
 namespace {
+static_assert(sizeof(decltype(GetSphereMapMode())) == sizeof(DWORD),
+              "Original MMEffect consumes a 32-bit sphere-map mode");
 using NativeId = std::conditional_t<sizeof(void*) == 8, unsigned long long, unsigned>;
 NativeMmhOracle* oracle = nullptr;
 bool native = false;

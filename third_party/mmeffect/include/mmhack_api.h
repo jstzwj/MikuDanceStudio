@@ -49,7 +49,8 @@ extern void     __cdecl GetLightViewProjMatrix(D3DMATRIX* light_view,
 extern HWND     __cdecl GetMMDMainWindow(void);
 extern const wchar_t* __cdecl GetMaterialName(unsigned long long object_id,
                                               unsigned long material_index, int name_kind);
-extern unsigned char __cdecl GetSphereMapMode(void);
+// Original MMHack writes EAX; MMEffect stores the full DWORD in snapshot+0x50.
+extern MMH_SPHERE_MAP_MODE __cdecl GetSphereMapMode(void);
 extern IDirect3DBaseTexture9* __cdecl GetSphereMapTexture(void);
 extern IDirect3DBaseTexture9* __cdecl GetTexture(void);
 extern IDirect3DBaseTexture9* __cdecl GetToonTexture(void);

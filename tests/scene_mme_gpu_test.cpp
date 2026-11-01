@@ -407,6 +407,44 @@ int Run(const std::filesystem::path& modelFile, const std::filesystem::path& dll
     // shaders' actual inputs and target readbacks, as for external packages.
     recording.capturePasses = true;
     MappingDefaults(f, native.get(), output, simple, multi, sample);
+    Mapping(f, native.get(), "none", simple.string());
+    Check(sample("atomic_accessory_assigned").color != baseline.color,
+          "atomic accessory reload needs an assigned effect");
+    auto* reloadedAccessory = mdl::Accessory(app.AccessorySlot(0));
+    auto* previousMesh = static_cast<ID3DXMesh*>(reloadedAccessory->mesh);
+    ID3DXMesh* replacementMesh = nullptr;
+    Hr(previousMesh->CloneMeshFVF(previousMesh->GetOptions(), previousMesh->GetFVF(),
+                                 f.device, &replacementMesh), "replace accessory geometry");
+    previousMesh->Release();
+    reloadedAccessory->mesh = replacementMesh;
+    SameImage(baseline, sample("atomic_accessory_replaced"),
+              "same-address accessory replacement retained its old effect assignment");
+    // A PMM reload can replace a model between frames at the same address.
+    // Keep the old geometry bound/alive to cover real D3D resource references
+    // in addition to the cache's own reference. The old assignment must die.
+    Mapping(f, native.get(), relative.string(), "none");
+    const auto beforeReplacement = sample("atomic_model_assigned");
+    Check(beforeReplacement.color != baseline.color, "atomic reload needs an assigned effect");
+    Com<IDirect3DVertexBuffer9> previousGeometry;
+    previousGeometry.p = static_cast<IDirect3DVertexBuffer9*>(model.vertexBuffer);
+    previousGeometry->AddRef();
+    ModelDispose(&model);
+    std::memset(&model, 0, sizeof(model));
+    ModelInitDefaults(&model);
+    Check(ModelLoadPMD(&model, f.window, path.c_str(), f.renderer.get(), 1, 0, 1,
+                       f.physics.get(), app.PathWorkspace()), "reload model at the same address");
+    model.comboSelIndex = model.comboSelIndex2 = 1;
+    SeekModelFrame(model, 0, 0);
+    ModelApplyMorphs(&model);
+    SetPhysicsMode(&model, 0, app.ModelSlots(), 0);
+    SetPhysicsMode(&model, 1, app.ModelSlots(), 0);
+    model.toonFlag = 1;
+    UpdateModelVertexBuffers(&app, &model, &world._11);
+    Check(model.vertexBuffer != previousGeometry.p, "replacement must have new geometry");
+    SameImage(baseline, sample("atomic_model_replaced"),
+              "same-address model replacement retained its old effect assignment");
+    Mapping(f, native.get(), relative.string(), "none");
+    SameImage(fixedImage, sample("atomic_model_reassigned"), "same-address model reassignment");
     // Let the production host observe deletion before releasing the old ID.
     // Reapply the same EMM explicitly after loading the replacement model.
     app.ModelSlot(0) = nullptr;
