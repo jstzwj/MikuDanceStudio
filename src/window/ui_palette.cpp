@@ -65,6 +65,7 @@ constexpr char kJpCamLightAccessoryPanel[] =
     "\xb6\xd2\xd7\xa5\x8f\xc6\x96\xbe\xa5\xb1\xb8\xbe\xbb\xd8"; // camera/lighting/accessory
 constexpr char kJpCamLightAccessoryPanelFmt[] =
     "\xb6\xd2\xd7\xa5\x8f\xc6\x96\xbe\xa5\xb1\xb8\xbe\xbb\xd8\x20\x2f\x20\x25\x73"; // camera/lighting/accessory / %s
+constexpr char kJpModelBoneFmt[] = "%s\x81\x46%s"; // model name + fullwidth colon + bone name
 
 } // namespace
 
@@ -228,9 +229,10 @@ void HandlePaletteChanged(HDC hdc) {
 //       / %s" / JP "camera/lighting/accessory / %s" into the 256-byte Buffer.
 //     - bone: model slots this+0x780 [byte this+0x910]; name at model+0x227A
 //       (EN) / model+0x2248 (JP); bone index model+0x2D90; bone record =
-//       (model+0x26BC) + sizeof(mikudancestudio::mdl::BoneRecord) *index, name at +0x14 (EN, "%s : %s").  The JP
-//       branch keeps the original quirk: sprintf_s with a "%s" format and
-//       TWO extra arguments, the second (bone record, no +0x14) is ignored.
+//       (model+0x26BC) + sizeof(mikudancestudio::mdl::BoneRecord) *index, name at +0x14 (EN, "%s : %s")
+//       or +0 (JP, "%s\x81\x46%s"). The JP separator is a CP932 fullwidth
+//       colon; IDA's ASCII string item truncates this format to the first "%s".
+//       Raw bytes at x64 EXE RVA 0x12D17C are 25 73 81 46 25 73 00.
 //     - trace-mode line pair when
 //       byte 0x9ED98 & (slotidx == this+0xA0430) & (this+0xA0430 >= 0);
 //       second line (r=0xFF, g=b=0x32) at x+1/y-1 repeats the text.
@@ -377,7 +379,13 @@ void HandlePaletteChanged2(HDC hdc) {
             mdl::ModelRecord* model = app->SelectedModel();
             if (model != nullptr) { // 0x42C660
                 const mikudancestudio::mdl::ModelRecord& record = *model;
-                sprintf_s(buffer, 0x100, "%s", record.name);
+                const std::int32_t boneIdx = record.selectedBone;
+                if (boneIdx < 0) {
+                    sprintf_s(buffer, 0x100, "%s", record.name);
+                } else {
+                    sprintf_s(buffer, 0x100, kJpModelBoneFmt, record.name,
+                              record.boneTable[boneIdx].name);
+                }
                 const int width = DrawGlyph(app, buffer, hdc, 16, xBase + 10, hideTop - 20, 0xFF,
                                             0xFF, 0xFF, 1); // 0x42C6F4
                 const std::int32_t traceTarget = app->CameraParentModel();

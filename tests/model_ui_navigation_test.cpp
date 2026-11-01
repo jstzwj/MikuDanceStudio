@@ -448,6 +448,53 @@ void TestNameSelectionRefresh() {
               "the display header retains its original selection toggle and highlight");
     }
 }
+
+void TestSelectedBoneStatus() {
+    Fixture f;
+    f.app->SidebarWidth() = 250;
+    f.app->state.hideTop = 90;
+    f.app->state.hideBottom = 700;
+    strcpy_s(f.model->name, "\x83\x7e\x83\x4e"); // Miku, CP932
+    strcpy_s(f.model->nameEn, "Miku");
+    strcpy_s(f.bones[1].name, "\x8f\xe3\x94\xbc\x90\x67"); // upper body, CP932
+    strcpy_s(f.bones[1].nameEn, "upper body");
+    const auto title = [&](const std::string& expected, bool playing = false) {
+        labels.clear();
+        mds::HandlePaletteChanged2(f.panel);
+        Check(!labels.empty() && labels.front().text == expected &&
+                  labels.front().x == f.app->SidebarWidth() + 19 &&
+                  labels.front().y ==
+                      f.app->state.hideTop - ((f.app->EnglishUI() || playing) ? 22 : 20) &&
+                  labels.front().color == RGB(255, 255, 255),
+              "status painter draws the original localized model/bone title");
+    };
+    const auto click = [&](int row) {
+        f.app->MouseX() = 30;
+        f.app->MouseY() = 160 + row * 14 + 7;
+        mds::HandleLButtonDown(f.app.get());
+    };
+    for (int english : {0, 1}) {
+        f.app->EnglishUI() = english;
+        f.model->selectedBone = -1;
+        f.model->boneTable = nullptr;
+        const std::string model = english ? f.model->nameEn : f.model->name;
+        // Native JP format bytes at EXE RVA 0x12D17C: 25 73 81 46 25 73 00.
+        const char* separator = english ? " : " : "\x81\x46";
+        title(model);
+        f.model->boneTable = f.bones.data();
+        f.Sweep();
+        click(f.boneRows[1]);
+        Check(f.model->selectedBone == 1, "timeline click selects the status title's bone");
+        title(model + separator + (english ? f.bones[1].nameEn : f.bones[1].name));
+        click(f.boneRows[2]);
+        title(model + separator + (english ? f.bones[2].nameEn : f.bones[2].name));
+        click(0);
+        title(model + separator + (english ? f.bones[5].nameEn : f.bones[5].name));
+        f.app->PlaybackActive() = 1;
+        title(english ? "Playing" : "\x8d\xc4\x90\xb6\x92\x86", true);
+        f.app->PlaybackActive() = 0;
+    }
+}
 } // namespace
 
 namespace mikudancestudio {
@@ -471,5 +518,6 @@ int main() {
     TestAccessoryRows();
     TestBoxReleaseRefresh();
     TestNameSelectionRefresh();
+    TestSelectedBoneStatus();
     return failures ? 1 : 0;
 }
