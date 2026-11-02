@@ -240,9 +240,9 @@ public:
     // mirroring the original blob reuse.
     float* GroundShadowColor() { return reinterpret_cast<float*>(CameraFrameScratch() + 112); }
 
-    // Accessory-edit dialog (menu 442) scratch buffer 2 (x86 blob slot
-    // 0xA0B24) and its close gate byte (0xA0664).
-    void*& AccessoryEditArray() { return m_runtime.dialogs.accessoryEditArray; }
+    // Bone indices shown by the display-group editor (former blob slot 0xA0B24).
+    // The accessory apply gate retains its separate original slot 0xA0664.
+    std::int32_t*& SelectableBoneIndices() { return m_runtime.dialogs.selectableBoneIndices; }
     unsigned char& AccessoryApplyGate() { return m_runtime.dialogs.accessoryApplyGate; }
 
     // Render/screenshot save path (x86 blob slot 0x9F134).
@@ -253,18 +253,11 @@ public:
 
     mdl::AccessoryRecord*& AccessorySlot(int index) { return AccessorySlots()[index]; }
     mdl::AccessoryRecord* AccessorySlot(int index) const { return AccessorySlots()[index]; }
-    mdl::AccessoryRecord** AccessorySlots() {
-        return reinterpret_cast<mdl::AccessoryRecord**>(state.objectSlots);
-    }
-    mdl::AccessoryRecord* const* AccessorySlots() const {
-        return reinterpret_cast<mdl::AccessoryRecord* const*>(state.objectSlots);
-    }
-    // The 255-entry display-object list shares storage with accessory
-    // records, but also contains objects selected by the model timeline.
-    void*& ObjectSlot(int index) { return reinterpret_cast<void*&>(AccessorySlots()[index]); }
-    const void* ObjectSlot(int index) const {
-        return reinterpret_cast<void* const&>(AccessorySlots()[index]);
-    }
+    mdl::AccessoryRecord** AccessorySlots() { return state.objectSlots; }
+    mdl::AccessoryRecord* const* AccessorySlots() const { return state.objectSlots; }
+    // Legacy display-object spelling for the same accessory slots.
+    mdl::AccessoryRecord*& ObjectSlot(int index) { return AccessorySlot(index); }
+    const mdl::AccessoryRecord* ObjectSlot(int index) const { return AccessorySlot(index); }
     mdl::ModelRecord*& ModelSlot(int index) { return ModelSlots()[index]; }
     mdl::ModelRecord* ModelSlot(int index) const { return ModelSlots()[index]; }
     mdl::ModelRecord** ModelSlots() { return state.modelSlots; }
@@ -802,7 +795,7 @@ public:
     DShowRecorder*& Recorder() { return reinterpret_cast<DShowRecorder*&>(state.recorder); }
     // AccessoryRecord slot that carries the coordinate-axis gizmo X-file
     // mesh (was sub04b0 / 0x04B0(); 0x4B0 obj, freed via DisposeAccessory).
-    void*& AxisMeshObject() { return state.axisMeshObject; }
+    mdl::AccessoryRecord*& AxisMeshObject() { return state.axisMeshObject; }
     // Physics scene wrapper ("0x48 object"), allocated in
     // InitMainWindowAndD3D, filled by SceneConstruct; see physics_scene.hpp.
     PhysicsScene*& Physics() { return reinterpret_cast<PhysicsScene*&>(state.physicsScene); }

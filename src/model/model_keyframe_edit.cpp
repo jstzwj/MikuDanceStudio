@@ -200,7 +200,7 @@ void BoneKeyOverflow(mdl::ModelRecord* model) {
         "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
     static const char kJpTitle[] = "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
     char text[0x100];
-    if (model->physicsFlags != 0) {
+    if (model->englishUI != 0) {
         sprintf_s(text, sizeof(text),
                   "You cannot regist over %d point\n"
                   "Please execute 'delete unused frame'",

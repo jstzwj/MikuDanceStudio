@@ -43,7 +43,7 @@ struct DialogRuntimeState {
     std::int32_t blinkStartFrame = 0;
     std::int32_t blinkEndFrame = 0;
     std::int32_t frameRangeStartFrame = 0;
-    void* accessoryEditArray = nullptr;
+    std::int32_t* selectableBoneIndices = nullptr;
     std::uint8_t accessoryApplyGate = 0;
     void* rigidScratchArray = nullptr;
     void* jointScratchArray = nullptr;

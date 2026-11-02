@@ -39,7 +39,7 @@
 #include <cstring>
 #include <new>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -253,13 +253,13 @@ void RebuildTargetBoneList(MMDApp* app, HWND hDlg, int keepSelection) { // VA 0x
             ++nSelectable;
     }
 
-    if (app->AccessoryEditArray() != nullptr) { // 0x43D40A
-        ::operator delete(app->AccessoryEditArray());
-        app->AccessoryEditArray() = nullptr;
+    if (app->SelectableBoneIndices() != nullptr) { // 0x43D40A
+        ::operator delete(app->SelectableBoneIndices());
+        app->SelectableBoneIndices() = nullptr;
     }
     int* const boneIds =
         static_cast<int*>(operator new(static_cast<std::size_t>(4 * nSelectable))); // 0x43D441
-    app->AccessoryEditArray() = boneIds;
+    app->SelectableBoneIndices() = boneIds;
 
     int n = 0;                            // 0x43D454
     for (int i = 0; i < boneCount; ++i) { // 0x43D4EA
@@ -302,7 +302,7 @@ void CommitTargetBonePick(MMDApp* app, HWND hDlg) { // VA 0x0043D560
     if (attach >= 2) { // 0x43D5A5
         const int pick = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCURSEL, 0, 0)); // 0x43D5DF
-        rec->linkedBone = static_cast<int*>(app->AccessoryEditArray())[pick];
+        rec->linkedBone = app->SelectableBoneIndices()[pick];
     } else {
         rec->linkedBone = 0; // 0x43D5B0
     }

@@ -46,7 +46,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/bone_axis.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/globals.hpp"

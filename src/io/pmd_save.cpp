@@ -39,7 +39,7 @@ int SavePmdFile(mdl::ModelRecord& model, const wchar_t* path, D3DRenderer* rende
         _wsopen_s(&fh, path, _O_BINARY | _O_WRONLY | _O_CREAT | _O_TRUNC, _SH_DENYNO, _S_IREAD);
     if (openErr != 0 || fh == -1) {
         char text[0x100];
-        if (model.physicsFlags != 0) // English-data byte (set at load)
+        if (model.englishUI != 0) // English-data byte (set at load)
             sprintf_s(text, 0x100, "Cannot save file:%d", openErr);
         else // 0x54FED0: "Cannot save file:%d"
             sprintf_s(text, 0x100,

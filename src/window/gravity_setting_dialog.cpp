@@ -13,7 +13,7 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/physics_scene.hpp"
 #include "btBulletDynamicsCommon.h"
 #include "dialog_scaffold.hpp"

@@ -22,7 +22,7 @@
 
 #include "fx_slots.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -46,10 +46,10 @@ void Identity(Matrix* value) {
     value->m[0][0] = value->m[1][1] = value->m[2][2] = value->m[3][3] = 1.0f;
 }
 
-void ReleaseCom(void* object) {
+void ReleaseCom(IUnknown* object) {
     if (object == nullptr)
         return;
-    reinterpret_cast<IUnknown*>(object)->Release(); // vtable slot 2
+    object->Release(); // vtable slot 2
 }
 
 // Porting-era trace under MIKUDANCESTUDIO_PMM_TRACE_DIR (CMake option
@@ -86,31 +86,27 @@ IDirect3DTexture9* CachedTexture(D3DRenderer* sub, const wchar_t* path) {
     return nullptr;
 }
 
-void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
+void AccessoryPlacement(MMDApp* app, mdl::AccessoryRecord* accessory, Matrix* world) {
     auto& api = d3dx::Get();
     Matrix part;
-    const float scale = mdl::Accessory(accessory)->scale * 10.0f;
+    const float scale = accessory->scale * 10.0f;
     api.scaling(world, scale, scale, scale);
-    api.rotZ(&part, mdl::Accessory(accessory)->rotation[2]);
+    api.rotZ(&part, accessory->rotation[2]);
     api.multiply(world, world, &part);
-    api.rotX(&part, mdl::Accessory(accessory)->rotation[0]);
+    api.rotX(&part, accessory->rotation[0]);
     api.multiply(world, world, &part);
-    api.rotY(&part, mdl::Accessory(accessory)->rotation[1]);
+    api.rotY(&part, accessory->rotation[1]);
     api.multiply(world, world, &part);
-    api.translation(&part, mdl::Accessory(accessory)->position[0],
-                    mdl::Accessory(accessory)->position[1], mdl::Accessory(accessory)->position[2]);
+    api.translation(&part, accessory->position[0], accessory->position[1], accessory->position[2]);
     api.multiply(world, world, &part);
 
-    const int modelSlot = mdl::Accessory(accessory)->parentModel;
-    // x64 0x7FF7CB4C19F3 only tests parentModel == -1 (cmp dword[r10+240h],-1),
-    // with no upper-bound check; use slot capacity here to prevent indexing outside the slot array
-    if (modelSlot < 0 || modelSlot >= kModelSlotCount)
+    const int modelSlot = accessory->parentModel;
+    // x64 RVA 0xA19F3: -1 is the unattached sentinel.
+    if (modelSlot == -1)
         return;
     auto* model = app->ModelSlot(modelSlot);
-    if (model == nullptr)
-        return;
     auto* bones = model->boneTable;
-    const int boneIndex = std::max(mdl::Accessory(accessory)->parentBone, 0);
+    const int boneIndex = std::max(accessory->parentBone, 0);
     auto* bone = &bones[boneIndex];
     api.translation(&part, bone->position[0], bone->position[1], bone->position[2]);
     api.multiply(world, world, &part);
@@ -124,10 +120,11 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
 // half-texel matrix diag(0.5, -0.5, 0) + translation (0.5, 0.5) built once
 // in the prologue; the old reconstruction used CAMERASPACEREFLECTIONVECTOR
 // and no transform.
-void ConfigureFixedTexture(void* accessory, D3DRenderer* sub, IDirect3DDevice9* device,
-                           DWORD material, IDirect3DTexture9* screenTexture) {
-    auto* paths = mdl::Accessory(accessory)->texturePaths;
-    auto* types = mdl::Accessory(accessory)->textureTypes;
+void ConfigureFixedTexture(mdl::AccessoryRecord* accessory, D3DRenderer* sub,
+                           IDirect3DDevice9* device, DWORD material,
+                           IDirect3DTexture9* screenTexture) {
+    auto* paths = accessory->texturePaths;
+    auto* types = accessory->textureTypes;
     const unsigned char type = types != nullptr ? types[material] : 0;
     const wchar_t* first = paths != nullptr ? paths[material].primary : L"";
     const wchar_t* second = paths != nullptr ? paths[material].sphere : L"";
@@ -198,10 +195,10 @@ IDirect3DTexture9* AccessoryScreenTexture(MMDApp* app) {
 // plain null check keeps the empty slots out of the walk exactly like the
 // reachable original behaviour (same form Wave1-C left in
 // accessory_paste.cpp's ApplyAccessoryTrack).
-void* FindAccessoryByOrder(MMDApp* app, int order) {
+mdl::AccessoryRecord* FindAccessoryByOrder(MMDApp* app, int order) {
     for (int slot = 0; slot < 255; ++slot) {
-        void* accessory = app->AccessorySlot(slot);
-        if (accessory != nullptr && mdl::Accessory(accessory)->order == order)
+        mdl::AccessoryRecord* accessory = app->AccessorySlot(slot);
+        if (accessory != nullptr && accessory->order == order)
             return accessory;
     }
     return nullptr;
@@ -219,8 +216,9 @@ void SetAccessoryLight(MMDApp* app, IDirect3DDevice9* device, bool accessoryPass
     device->SetLight(0, &light);
 }
 
-void RenderAccessoryFixedOne(MMDApp* app, void* accessory, bool projectedGroundShadow) {
-    if (accessory == nullptr || mdl::Accessory(accessory)->visible == 0)
+void RenderAccessoryFixedOne(MMDApp* app, mdl::AccessoryRecord* accessory,
+                             bool projectedGroundShadow) {
+    if (accessory == nullptr || accessory->visible == 0)
         return;
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
@@ -234,15 +232,14 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory, bool projectedGroundS
     d3dx::Get().multiply(&world, &world, &base);
     device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    device->SetRenderState(D3DRS_DESTBLEND,
-                           !projectedGroundShadow && mdl::Accessory(accessory)->additiveBlend != 0
-                               ? D3DBLEND_ONE
-                               : D3DBLEND_INVSRCALPHA);
+    device->SetRenderState(D3DRS_DESTBLEND, !projectedGroundShadow && accessory->additiveBlend != 0
+                                                ? D3DBLEND_ONE
+                                                : D3DBLEND_INVSRCALPHA);
     device->SetRenderState(static_cast<D3DRENDERSTATETYPE>(143), TRUE);
 
-    const DWORD count = mdl::Accessory(accessory)->materialCount;
-    auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
-    mdl::Accessory(accessory)->currentMaterial = -1;
+    const DWORD count = accessory->materialCount;
+    auto* materials = accessory->materials;
+    accessory->currentMaterial = -1;
     if (projectedGroundShadow) {
         D3DMATERIAL9 shadow{};
         const float gray = app->ProjectedShadowAmbientIntensity();
@@ -255,34 +252,35 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory, bool projectedGroundS
         device->SetMaterial(&shadow);
         device->SetTexture(0, nullptr);
         for (DWORD i = 0; i < count; ++i) {
-            ++mdl::Accessory(accessory)->currentMaterial;
+            ++accessory->currentMaterial;
             mme::DrawAccessorySubset(app, accessory, i);
             ResetAccessoryTextureStages(device);
         }
     } else {
         for (DWORD i = 0; i < count; ++i) {
-            ++mdl::Accessory(accessory)->currentMaterial;
+            ++accessory->currentMaterial;
             // 0x4C4D86: texture states first, then the material copy
             // (alpha scaled by +1184) immediately before the subset draw.
             ConfigureFixedTexture(accessory, sub, device, i, AccessoryScreenTexture(app));
             D3DMATERIAL9 material = materials[i];
-            material.Diffuse.a *= mdl::Accessory(accessory)->opacity;
+            material.Diffuse.a *= accessory->opacity;
             device->SetMaterial(&material);
             mme::DrawAccessorySubset(app, accessory, i);
             ResetAccessoryTextureStages(device);
         }
     }
-    mdl::Accessory(accessory)->currentMaterial = -1;
+    accessory->currentMaterial = -1;
     // 0x4C50FD..0x4C5141: color write off, world restore - and no texture
     // unbinding (the original leaves the last bindings in place).
     device->SetRenderState(static_cast<D3DRENDERSTATETYPE>(143), FALSE);
     device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&base));
 }
 
-void SelectEffectTechnique(void* accessory, D3DRenderer* sub, IDirect3DDevice9* device,
-                           void* effect, DWORD material, IDirect3DTexture9* screenTexture) {
-    auto* paths = mdl::Accessory(accessory)->texturePaths;
-    auto* types = mdl::Accessory(accessory)->textureTypes;
+void SelectEffectTechnique(mdl::AccessoryRecord* accessory, D3DRenderer* sub,
+                           IDirect3DDevice9* device, ID3DXEffect* effect, DWORD material,
+                           IDirect3DTexture9* screenTexture) {
+    auto* paths = accessory->texturePaths;
+    auto* types = accessory->textureTypes;
     const unsigned char type = types != nullptr ? types[material] : 0;
     const wchar_t* first = paths != nullptr ? paths[material].primary : L"";
     const wchar_t* second = paths != nullptr ? paths[material].sphere : L"";
@@ -358,17 +356,17 @@ void WideToAnsi(const wchar_t* source, char* destination, int count) {
     WideCharToMultiByte(CP_ACP, 0, source, -1, destination, count, nullptr, nullptr);
 }
 
-bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material, const char* name,
-                    wchar_t* destination) {
+bool LoadOneTexture(D3DRenderer* sub, mdl::AccessoryRecord* accessory, DWORD material,
+                    const char* name, wchar_t* destination) {
     wchar_t converted[256] = {};
-    wchar_t* directory = mdl::Accessory(accessory)->directory;
+    wchar_t* directory = accessory->directory;
 
     ConvertMaterialName(sub, name, converted, 0x100, directory);
     swprintf_s(destination, 0x200, L"%s%s", directory, converted);
     if (LoadTextureShared(sub, destination))
         return true;
     char fallback[256] = {};
-    const wchar_t* xFile = mdl::Accessory(accessory)->sourcePath;
+    const wchar_t* xFile = accessory->sourcePath;
     if (!ExtractXTexture(xFile, static_cast<int>(material), fallback))
         return false;
     ConvertMaterialName(sub, fallback, converted, 0x100, directory);
@@ -409,10 +407,10 @@ void ShowCannotFindXfile(MMDApp* app) {
 // VA 0x004C4700 - moved out of the anonymous namespace so the PMM loaders
 // (0x459221 / 0x4541D9) and the shutdown chain (0x462F9C / 0x46324D) bind to
 // this one definition instead of the old no-op stub.
-void DisposeAccessory(void* accessory) {
+void DisposeAccessory(mdl::AccessoryRecord* accessory) {
     if (accessory == nullptr)
         return;
-    mdl::AccessoryRecord& record = *mdl::Accessory(accessory);
+    mdl::AccessoryRecord& record = *accessory;
     ReleaseCom(record.mesh);
     record.mesh = nullptr;
     // Preserve the original materials, texture types, texture paths order.
@@ -424,7 +422,7 @@ void DisposeAccessory(void* accessory) {
     record.texturePaths = nullptr;
 }
 
-bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
+bool LoadAccessoryObject(MMDApp* app, mdl::AccessoryRecord* accessory, const wchar_t* path) {
     auto* sub = app->Renderer();
     TraceAccessoryLoadStage("entry", accessory);
     PathResolutionWorkspace& paths = app->PathWorkspace();
@@ -441,7 +439,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
         ShowCannotFindXfile(app); // x64 sub_7FF7CB4FC768 path
         return false;
     }
-    mdl::AccessoryRecord& record = *mdl::Accessory(accessory);
+    mdl::AccessoryRecord& record = *accessory;
     WideToAnsi(tail + 1, record.name, sizeof record.name);
     tail[1] = L'\0';
     wcscpy_s(record.directory, source);
@@ -495,7 +493,8 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
     TraceAccessoryLoadStage("mesh-loaded", mesh);
     record.mesh = mesh;
     record.materialCount = materialCount;
-    record.materials = ::operator new(sizeof(D3DMATERIAL9) * materialCount);
+    record.materials =
+        static_cast<D3DMATERIAL9*>(::operator new(sizeof(D3DMATERIAL9) * materialCount));
     record.texturePaths = static_cast<mdl::AccessoryTexturePaths*>(
         ::operator new(sizeof(mdl::AccessoryTexturePaths) * materialCount));
     record.textureTypes = static_cast<std::uint8_t*>(::operator new(materialCount));
@@ -507,7 +506,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
         auto* sourceMaterials = static_cast<D3DXMATERIAL*>(materialBuffer->GetBufferPointer());
         for (DWORD i = 0; i < materialCount; ++i) {
             const D3DXMATERIAL& source = sourceMaterials[i];
-            auto* material = &static_cast<D3DMATERIAL9*>(record.materials)[i];
+            auto* material = &record.materials[i];
             *material = source.MatD3D;
             material->Ambient = material->Diffuse;
             material->Diffuse.r *= 0.1f;
@@ -519,7 +518,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
             char* texture = source.pTextureFilename;
             if (texture == nullptr || texture[0] == '\0')
                 continue;
-            auto* types = mdl::Accessory(accessory)->textureTypes;
+            auto* types = accessory->textureTypes;
             if (char* star = strchr(texture, '*')) {
                 *star = '\0';
                 LoadOneTexture(sub, accessory, i, texture, record.texturePaths[i].primary);
@@ -542,17 +541,16 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
 
     TraceAccessoryLoadStage("materials-complete", mesh);
 
-    auto* typedMesh = static_cast<ID3DXMesh*>(mesh);
-    if (typedMesh->GetFVF() != 274) {
-        const DWORD options = typedMesh->GetOptions();
+    if (mesh->GetFVF() != 274) {
+        const DWORD options = mesh->GetOptions();
         ID3DXMesh* clone = nullptr;
-        if (SUCCEEDED(typedMesh->CloneMeshFVF(options, 274, sub->device, &clone))) {
-            typedMesh->Release();
-            mdl::Accessory(accessory)->mesh = clone;
+        if (SUCCEEDED(mesh->CloneMeshFVF(options, 274, sub->device, &clone))) {
+            mesh->Release();
+            accessory->mesh = clone;
             D3DXComputeNormals(clone, nullptr);
         }
     }
-    TraceAccessoryLoadStage("complete", mdl::Accessory(accessory)->mesh);
+    TraceAccessoryLoadStage("complete", accessory->mesh);
     return true;
 }
 
@@ -591,12 +589,13 @@ void LoadAccessoryFile(const wchar_t* path) { // 0x460B30
         return;
     }
 
-    void* accessory = ::operator new(sizeof(mdl::AccessoryRecord), std::nothrow);
+    auto* accessory = static_cast<mdl::AccessoryRecord*>(
+        ::operator new(sizeof(mdl::AccessoryRecord), std::nothrow));
     if (accessory == nullptr)
         return;
     std::memset(accessory, 0, sizeof(mdl::AccessoryRecord));
     InitAccessoryRecord(accessory);
-    app->AccessorySlot(slot) = static_cast<mdl::AccessoryRecord*>(accessory);
+    app->AccessorySlot(slot) = accessory;
     if (!LoadAccessoryObject(app, accessory, path)) {
         const bool english = app->state.englishUI != 0;
         MessageBoxA(static_cast<HWND>(app->Hwnd()),
@@ -612,10 +611,10 @@ void LoadAccessoryFile(const wchar_t* path) { // 0x460B30
 
     HWND hwnd = static_cast<HWND>(app->Hwnd());
     app->state.sceneModified = 1;
-    const char* name = mdl::Accessory(accessory)->name;
+    const char* name = accessory->name;
     LRESULT displayIndex = SendDlgItemMessageA(hwnd, panel::kAccessoryCombo, CB_ADDSTRING, 0,
                                                reinterpret_cast<LPARAM>(name));
-    mdl::Accessory(accessory)->order = static_cast<std::uint8_t>(displayIndex);
+    accessory->order = static_cast<std::uint8_t>(displayIndex);
     if (displayIndex >= 0)
         app->AccessoryRenderSplitOrder() =
             std::max(app->AccessoryRenderSplitOrder(), static_cast<std::int32_t>(displayIndex + 1));
@@ -626,35 +625,28 @@ void LoadAccessoryFile(const wchar_t* path) { // 0x460B30
     SendDlgItemMessageA(hwnd, panel::kMainComboGround, CB_SETCURSEL, 0, 0);
     SendDlgItemMessageA(hwnd, panel::kAttachBoneCombo, CB_SHOWDROPDOWN, 0, 0);
     CheckDlgButton(hwnd, panel::kAccessoryVisibleCheckbox, BST_CHECKED);
-    mdl::Accessory(accessory)->parentModel = -1;
-    SetEditFloat(hwnd, panel::kAccPosXEdit, "%3.4f", mdl::Accessory(accessory)->position[0]);
-    SetEditFloat(hwnd, panel::kAccPosYEdit, "%3.4f", mdl::Accessory(accessory)->position[1]);
-    SetEditFloat(hwnd, panel::kAccPosZEdit, "%3.4f", mdl::Accessory(accessory)->position[2]);
+    accessory->parentModel = -1;
+    SetEditFloat(hwnd, panel::kAccPosXEdit, "%3.4f", accessory->position[0]);
+    SetEditFloat(hwnd, panel::kAccPosYEdit, "%3.4f", accessory->position[1]);
+    SetEditFloat(hwnd, panel::kAccPosZEdit, "%3.4f", accessory->position[2]);
     constexpr float kRadToDeg = 180.0f / 3.141592025756836f;
-    SetEditFloat(hwnd, panel::kAccRotXEdit, "%3.4f",
-                 mdl::Accessory(accessory)->rotation[0] * kRadToDeg);
-    SetEditFloat(hwnd, panel::kAccRotYEdit, "%3.4f",
-                 mdl::Accessory(accessory)->rotation[1] * kRadToDeg);
-    SetEditFloat(hwnd, panel::kAccRotZEdit, "%3.4f",
-                 mdl::Accessory(accessory)->rotation[2] * kRadToDeg);
-    SetEditFloat(hwnd, panel::kAccScaleEdit, "%3.4f", mdl::Accessory(accessory)->scale);
-    SetEditFloat(hwnd, panel::kAccOpacityEdit, "%3.2f", mdl::Accessory(accessory)->opacity);
+    SetEditFloat(hwnd, panel::kAccRotXEdit, "%3.4f", accessory->rotation[0] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccRotYEdit, "%3.4f", accessory->rotation[1] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccRotZEdit, "%3.4f", accessory->rotation[2] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccScaleEdit, "%3.4f", accessory->scale);
+    SetEditFloat(hwnd, panel::kAccOpacityEdit, "%3.2f", accessory->opacity);
     EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, MF_ENABLED);
     CheckDlgButton(hwnd, panel::kAccessoryAddBlendCheckbox, BST_UNCHECKED);
     CheckDlgButton(hwnd, panel::kAccessoryShadowCheckbox,
-                   mdl::Accessory(accessory)->shadowEnabled ? BST_CHECKED : BST_UNCHECKED);
+                   accessory->shadowEnabled ? BST_CHECKED : BST_UNCHECKED);
 
     auto* frame = app->AccessoryKeys(slot);
     if (frame != nullptr) {
-        std::memcpy(frame[0].position,
-                    reinterpret_cast<unsigned char*>(mdl::Accessory(accessory)->position),
-                    sizeof(frame[0].position));
-        std::memcpy(frame[0].rotation,
-                    reinterpret_cast<unsigned char*>(mdl::Accessory(accessory)->rotation),
-                    sizeof(frame[0].rotation));
-        frame[0].scale = mdl::Accessory(accessory)->scale;
-        frame[0].opacity = mdl::Accessory(accessory)->opacity;
-        frame[0].shadowEnabled = mdl::Accessory(accessory)->shadowEnabled;
+        std::memcpy(frame[0].position, accessory->position, sizeof(frame[0].position));
+        std::memcpy(frame[0].rotation, accessory->rotation, sizeof(frame[0].rotation));
+        frame[0].scale = accessory->scale;
+        frame[0].opacity = accessory->opacity;
+        frame[0].shadowEnabled = accessory->shadowEnabled;
     }
     SelectAccessoryTimelineTrack(app->SelectedAccessorySlot());
     InvalidateSelectionReadouts(app);
@@ -667,12 +659,12 @@ void LoadAccessoryFile(const wchar_t* path) { // 0x460B30
 void RegisterAccessoryKey(MMDApp* app, int frameArg, int slot) { // 0x413CB0
     if (app == nullptr || slot < 0 || slot >= 255)
         return;
-    auto* object = reinterpret_cast<unsigned char*>(app->AccessorySlot(slot));
+    auto* object = app->AccessorySlot(slot);
     auto* keys = app->AccessoryKeys(slot);
     if (object == nullptr || keys == nullptr)
         return;
     const std::uint32_t frame = static_cast<std::uint32_t>(frameArg);
-    const mdl::AccessoryRecord& accessory = *mdl::Accessory(object);
+    const mdl::AccessoryRecord& accessory = *object;
 
     const auto fill = [&](int index) {
         mdl::AccessoryKey& key = keys[index];
@@ -745,8 +737,8 @@ void RenderAccessoriesFixedRange(MMDApp* app, int firstOrder, int lastOrder) {
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     SetAccessoryLight(app, device, true);
     for (int order = firstOrder; order < lastOrder; ++order) {
-        void* accessory = FindAccessoryByOrder(app, order);
-        if (accessory == nullptr || mdl::Accessory(accessory)->visible == 0)
+        mdl::AccessoryRecord* accessory = FindAccessoryByOrder(app, order);
+        if (accessory == nullptr || accessory->visible == 0)
             continue;
         app->ActiveRenderObject() = accessory;
         RenderAccessoryFixedOne(app, accessory, false);
@@ -762,10 +754,10 @@ void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp* app) {
         return;
     app->ActiveRenderPass() = AccessoryRenderPass::ProjectedGroundShadow;
     for (int slot = 0; slot < 255; ++slot) {
-        void* accessory = app->AccessorySlot(slot);
+        mdl::AccessoryRecord* accessory = app->AccessorySlot(slot);
         if (accessory == nullptr)
             continue;
-        if (mdl::Accessory(accessory)->shadowEnabled == 0)
+        if (accessory->shadowEnabled == 0)
             continue;
         device->SetRenderState(D3DRS_ALPHABLENDENABLE, app->ProjectedShadowBlendEnabled());
         app->ActiveRenderObject() = accessory;
@@ -786,14 +778,13 @@ void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp* app) {
 void RenderAccessoriesShadow(MMDApp* app) { // 0x4C52D0
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    void* effect = sub->effect;
+    ID3DXEffect* effect = sub->effect;
     if (device == nullptr || effect == nullptr)
         return;
     for (int slot = 0; slot < 255; ++slot) {
-        void* accessory = app->AccessorySlot(slot);
-        if (accessory == nullptr || mdl::Accessory(accessory)->visible == 0 ||
-            mdl::Accessory(accessory)->shadowEnabled == 0 ||
-            mdl::Accessory(accessory)->additiveBlend != 0)
+        mdl::AccessoryRecord* accessory = app->AccessorySlot(slot);
+        if (accessory == nullptr || accessory->visible == 0 || accessory->shadowEnabled == 0 ||
+            accessory->additiveBlend != 0)
             continue;
         Matrix world;
         Matrix light;
@@ -808,19 +799,19 @@ void RenderAccessoriesShadow(MMDApp* app) { // 0x4C52D0
         device->SetMaterial(&material);
         device->SetTexture(0, nullptr);
         fx::BeginPass(effect);
-        auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
-        const DWORD count = mdl::Accessory(accessory)->materialCount;
+        auto* materials = accessory->materials;
+        const DWORD count = accessory->materialCount;
         // Original shadow-map slot walk sets the accessory identity before
         // DrawSubset so MMHack/MMEffect can resolve its subset and pass.
         app->ActiveRenderObject() = accessory;
-        mdl::Accessory(accessory)->currentMaterial = -1;
+        accessory->currentMaterial = -1;
         for (DWORD i = 0; i < count; ++i) {
-            ++mdl::Accessory(accessory)->currentMaterial;
+            ++accessory->currentMaterial;
             if (materials[i].Diffuse.a != 0.9800000190734863f)
                 mme::DrawAccessorySubset(app, accessory, i);
         }
         fx::EndPass(effect);
-        mdl::Accessory(accessory)->currentMaterial = -1;
+        accessory->currentMaterial = -1;
         app->ActiveRenderObject() = nullptr;
     }
 }
@@ -832,7 +823,7 @@ void RenderAccessoriesEffect(MMDApp* app) { // 0x4C55C0
 void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    void* effect = sub->effect;
+    ID3DXEffect* effect = sub->effect;
     if (device == nullptr || effect == nullptr)
         return;
     const D3DLIGHT9& light = app->SceneLight();
@@ -847,11 +838,11 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     SetAccessoryLight(app, device, true);
     for (int order = firstOrder; order < lastOrder; ++order) {
-        void* accessory = FindAccessoryByOrder(app, order);
-        if (accessory == nullptr || mdl::Accessory(accessory)->visible == 0)
+        mdl::AccessoryRecord* accessory = FindAccessoryByOrder(app, order);
+        if (accessory == nullptr || accessory->visible == 0)
             continue;
         app->ActiveRenderObject() = accessory;
-        if (mdl::Accessory(accessory)->shadowEnabled == 0) {
+        if (accessory->shadowEnabled == 0) {
             app->ActiveRenderPass() = AccessoryRenderPass::FixedFunction;
             RenderAccessoryFixedOne(app, accessory, false);
             app->ActiveRenderObject() = nullptr;
@@ -874,7 +865,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
         world.m[3][0] = world.m[3][1] = world.m[3][2] = 0.0f;
         fx::SetMatrix(effect, "matWorld", &world);
         Matrix inverseScale;
-        const float inv = 1.0f / (mdl::Accessory(accessory)->scale * 10.0f);
+        const float inv = 1.0f / (accessory->scale * 10.0f);
         d3dx::Get().scaling(&inverseScale, inv, inv, inv);
         d3dx::Get().multiply(&value, &inverseScale, &world);
         // x64 0x7FF7CB4FE29F: "matRotate" goes through slot 39, GetMatrix -
@@ -885,15 +876,14 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
         fx::GetMatrix(effect, "matRotate", &inverseScale);
         d3dx::Get().multiply(&value, &value, &inverseScale);
         fx::SetMatrix(effect, "matWRotate", &value);
-        device->SetRenderState(D3DRS_DESTBLEND, mdl::Accessory(accessory)->additiveBlend != 0
-                                                    ? D3DBLEND_ONE
-                                                    : D3DBLEND_INVSRCALPHA);
+        device->SetRenderState(D3DRS_DESTBLEND,
+                               accessory->additiveBlend != 0 ? D3DBLEND_ONE : D3DBLEND_INVSRCALPHA);
 
-        const DWORD count = mdl::Accessory(accessory)->materialCount;
-        auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
-        mdl::Accessory(accessory)->currentMaterial = -1;
+        const DWORD count = accessory->materialCount;
+        auto* materials = accessory->materials;
+        accessory->currentMaterial = -1;
         for (DWORD i = 0; i < count; ++i) {
-            ++mdl::Accessory(accessory)->currentMaterial;
+            ++accessory->currentMaterial;
             const auto* material = &materials[i];
             // RVA DE337..DE34F passes the stored material unchanged; opacity belongs
             // to EgColor.a, including when MME captures the device material.
@@ -902,7 +892,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
                 (material->Ambient.r * light.Ambient.r + material->Emissive.r) * edgeFactor,
                 (material->Ambient.g * light.Ambient.g + material->Emissive.g) * edgeFactor,
                 (material->Ambient.b * light.Ambient.b + material->Emissive.b) * edgeFactor,
-                material->Diffuse.a * mdl::Accessory(accessory)->opacity};
+                material->Diffuse.a * accessory->opacity};
             float specular[4] = {material->Specular.r * light.Specular.r,
                                  material->Specular.g * light.Specular.g,
                                  material->Specular.b * light.Specular.b, material->Power};
@@ -922,7 +912,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
             fx::EndPass(effect);
             fx::End(effect);
         }
-        mdl::Accessory(accessory)->currentMaterial = -1;
+        accessory->currentMaterial = -1;
         device->SetVertexShader(nullptr);
         device->SetPixelShader(nullptr);
         app->ActiveRenderObject() = nullptr;

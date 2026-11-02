@@ -14,7 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -1353,9 +1353,9 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
     if (app->DialogOrders().modelIndices != nullptr) {
         app->DialogOrders().modelIndices.reset();
     }
-    if (app->AccessoryEditArray() != nullptr) {
-        ::operator delete(app->AccessoryEditArray());
-        app->AccessoryEditArray() = nullptr;
+    if (app->SelectableBoneIndices() != nullptr) {
+        ::operator delete(app->SelectableBoneIndices());
+        app->SelectableBoneIndices() = nullptr;
     }
     if (app->SelectNavRecords() != nullptr) {
         delete[] app->SelectNavRecords();

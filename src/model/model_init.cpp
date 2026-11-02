@@ -73,7 +73,7 @@ void ModelInitDefaults(mdl::ModelRecord* record) { // 0x4A8DC0
     std::memset(model.undoRings, 0, sizeof(model.undoRings));
     model.undoDirty = 0;
     model.redoDirty = 0;
-    model.physicsFlags = 0;
+    model.englishUI = 0;
     model.rigidTable = nullptr;
     model.rigidCount = 0;
     model.jointCount = 0;

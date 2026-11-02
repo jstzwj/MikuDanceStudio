@@ -19,7 +19,7 @@
 #include "btBulletDynamicsCommon.h"
 
 #include "mikudancestudio/accessory_layout.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -165,19 +165,17 @@ void BulletTransformToMatrix(const btTransform& source, Matrix* out) {
     out->m[3][2] = origin.z();
 }
 
-using MeshDrawSubset = HRESULT(WINAPI*)(void*, DWORD);
-
-void ReleaseCom(void* object) {
+void ReleaseCom(IUnknown* object) {
     if (object != nullptr)
-        reinterpret_cast<IUnknown*>(object)->Release(); // vtable slot 2
+        object->Release(); // vtable slot 2
 }
 
-void DrawAxisMesh(void* axis, MMDApp* app) {
+void DrawAxisMesh(mdl::AccessoryRecord* axis, MMDApp* app) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    mdl::AccessoryRecord& gizmo = *mdl::Accessory(axis);
+    mdl::AccessoryRecord& gizmo = *axis;
     const DWORD count = gizmo.materialCount;
-    auto* materials = static_cast<D3DMATERIAL9*>(gizmo.materials);
+    auto* materials = gizmo.materials;
     for (DWORD i = 0; i < count; ++i) {
         device->SetMaterial(&materials[i]);
         device->SetTexture(0, nullptr);
@@ -214,8 +212,8 @@ void AttachToBone(MMDApp* app, Matrix* world, int boneIndex) {
 
 } // namespace
 
-void InitAccessoryRecord(void* object) {
-    mdl::AccessoryRecord& accessory = *mdl::Accessory(object);
+void InitAccessoryRecord(mdl::AccessoryRecord* object) {
+    mdl::AccessoryRecord& accessory = *object;
     accessory.mesh = nullptr;
     accessory.materials = nullptr;
     accessory.texturePaths = nullptr;
@@ -236,7 +234,7 @@ void InitAccessoryRecord(void* object) {
 }
 
 bool InitAxisMesh(MMDApp* app) {
-    mdl::AccessoryRecord& gizmo = *mdl::Accessory(app->state.axisMeshObject);
+    mdl::AccessoryRecord& gizmo = *app->state.axisMeshObject;
     ReleaseCom(gizmo.mesh);
     gizmo.mesh = nullptr;
 

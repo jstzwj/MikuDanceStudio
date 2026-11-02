@@ -4,7 +4,7 @@
 // The PMX 2.0 binary parser, __thiscall on the 0x4CCF4 model block;
 // reached from ModelLoadPMD when the magic is "PMX".  Signature:
 //
-//   LoadPMX(model, renderSub, showInfoByte, a4, appPathBuf, fileHandle)
+//   LoadPMX(model, renderer, showLoadMessages, englishUI, paths, fileHandle)
 //
 // Structure (annotated with the model offsets the original stores):
 //   header   version==2.0, 8 index-size bytes -> m+8624..8631 in the
@@ -59,7 +59,7 @@
 #include <fcntl.h>
 #include <io.h>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/physics_scene.hpp"
@@ -123,8 +123,8 @@ static const wchar_t kFmtPmxWrongMorphDataJp[] = L"\x30E2\x30C7\x30EB" // モデ
                                                  L"\x5F37\x5236\x7684\x306B"        // forcibly
                                                  L"\x5909\x63DB\x3057\x307E\x3059"; // convert
 
-IDirect3DDevice9* DevOf(D3DRenderer* sub) {
-    return sub->device; // wrapper + 120032
+IDirect3DDevice9* DevOf(D3DRenderer* renderer) {
+    return renderer->device; // wrapper + 120032
 }
 
 void InitializePmxMainVertices(const mdl::PmxVertex* source, std::int32_t count,
@@ -164,13 +164,13 @@ void InitializePmxEdgeVertices(const mdl::PmxVertex* source, std::int32_t count,
 }
 
 // Size-prefixed UTF16 buffer (common shape).  Empty -> "Null_%02d".
-wchar_t* ReadTextBuf(int fh, int& nullIdx) {
+wchar_t* ReadTextBuf(int fileHandle, int& nullIdx) {
     std::uint32_t len = 0;
-    _read(fh, &len, 4);
+    _read(fileHandle, &len, 4);
     if (len != 0) {
         wchar_t* p = static_cast<wchar_t*>(operator new(2 * len));
         std::memset(p, 0, 2 * len);
-        _read(fh, p, len);
+        _read(fileHandle, p, len);
         return p;
     }
     wchar_t* p = static_cast<wchar_t*>(operator new(0x28));
@@ -179,13 +179,13 @@ wchar_t* ReadTextBuf(int fh, int& nullIdx) {
 }
 
 // Size-prefixed UTF16 buffer, contents discarded (names not stored).
-void SkipTextBuf(int fh) {
+void SkipTextBuf(int fileHandle) {
     std::uint32_t len = 0;
-    _read(fh, &len, 4);
+    _read(fileHandle, &len, 4);
     if (len != 0) {
         void* p = operator new(2 * len);
         std::memset(p, 0, 2 * len);
-        _read(fh, p, len);
+        _read(fileHandle, p, len);
         operator delete(p);
     }
 }
@@ -194,7 +194,7 @@ void SkipTextBuf(int fh) {
 // MIKUDANCESTUDIO_DIAG, default OFF); the OFF stub keeps the call sites
 // valid and inlines away to nothing.
 #ifdef MIKUDANCESTUDIO_DIAG
-void TracePmxOffset(int fh, const char* phase, int index, int value) {
+void TracePmxOffset(int fileHandle, const char* phase, int index, int value) {
     char directory[MAX_PATH];
     const DWORD length =
         GetEnvironmentVariableA("MIKUDANCESTUDIO_PMX_TRACE_DIR", directory, MAX_PATH);
@@ -205,7 +205,7 @@ void TracePmxOffset(int fh, const char* phase, int index, int value) {
     FILE* stream = nullptr;
     if (fopen_s(&stream, path, "a") != 0 || stream == nullptr)
         return;
-    fprintf(stream, "%s index=%d value=%d offset=%ld\n", phase, index, value, _tell(fh));
+    fprintf(stream, "%s index=%d value=%d offset=%ld\n", phase, index, value, _tell(fileHandle));
     fclose(stream);
 }
 #else
@@ -215,12 +215,12 @@ inline void TracePmxOffset(int, const char*, int, int) {
 
 } // namespace
 
-bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::uint8_t englishUI,
-             PathResolutionWorkspace& paths, int fh) {
-    (void)englishUI; // dispatch argument mirrors model.physicsFlags
+bool LoadPMX(mdl::ModelRecord* modelRecord, D3DRenderer* renderer, std::uint8_t showLoadMessages,
+             std::uint8_t englishUI, PathResolutionWorkspace& paths, int fileHandle) {
+    (void)englishUI; // dispatch argument mirrors model.englishUI
     (void)paths;
-    mdl::ModelRecord& model = *m;
-    const bool enData = model.physicsFlags != 0;
+    mdl::ModelRecord& model = *modelRecord;
+    const bool enData = model.englishUI != 0;
     HWND hwnd = static_cast<HWND>(model.hwnd);
     char text[256];
     int nullIdx = 0;
@@ -228,35 +228,35 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
     auto& d = d3dx::Get();
 
     // ---- header -----------------------------------------------------------
-    _read(fh, text, 1); // 0x4B7806
+    _read(fileHandle, text, 1); // 0x4B7806
     float version = 0.0f;
-    _read(fh, &version, 4);
+    _read(fileHandle, &version, 4);
     if (version != 2.0f) {
         if (enData)
             sprintf_s(text, 0x100, "PMX files version is different from 2.0.");
         else
             sprintf_s(text, 0x100, kMsgPmxVersionJp);
         MessageBoxA(hwnd, text, enData ? "open file" : kTitleOpenFailJp, 0);
-        _close(fh);
+        _close(fileHandle);
         return false;
     }
     model.physicsMode = 2;
-    _read(fh, text, 1);
-    _read(fh, &model.pmxTextEncoding, 1);
-    _read(fh, &model.pmxAdditionalUvCount, 1);
-    _read(fh, &model.pmxVertexIndexSize, 1);
-    _read(fh, &model.pmxTextureIndexSize, 1);
-    _read(fh, &model.pmxMaterialIndexSize, 1);
-    _read(fh, &model.pmxBoneIndexSize, 1);
-    _read(fh, &model.pmxMorphIndexSize, 1);
-    _read(fh, &model.pmxRigidIndexSize, 1);
+    _read(fileHandle, text, 1);
+    _read(fileHandle, &model.pmxTextEncoding, 1);
+    _read(fileHandle, &model.pmxAdditionalUvCount, 1);
+    _read(fileHandle, &model.pmxVertexIndexSize, 1);
+    _read(fileHandle, &model.pmxTextureIndexSize, 1);
+    _read(fileHandle, &model.pmxMaterialIndexSize, 1);
+    _read(fileHandle, &model.pmxBoneIndexSize, 1);
+    _read(fileHandle, &model.pmxMorphIndexSize, 1);
+    _read(fileHandle, &model.pmxRigidIndexSize, 1);
     if (model.pmxTextEncoding != 0) {
         sprintf_s(text, 0x100,
                   enData ? "MMD can't read UTF8 encorded PMX.\nPlease exchange it to "
                            "UTF16."
                          : kMsgPmxUtf8Jp);
         MessageBoxA(hwnd, text, enData ? "open file" : kTitleOpenFailJp, 0);
-        _close(fh);
+        _close(fileHandle);
         return false;
     }
 
@@ -272,13 +272,13 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                                    sizeof model.commentEn};
     for (int i = 0; i < 4; ++i) {
         std::uint32_t len = 0;
-        _read(fh, &len, 4);
+        _read(fileHandle, &len, 4);
         wchar_t* buf;
         if (len != 0) {
             buf = static_cast<wchar_t*>(operator new(2 * len));
             model.pmxTextBuffers[static_cast<std::size_t>(kTextSlots[i])] = buf;
             std::memset(buf, 0, 2 * len);
-            _read(fh, buf, len);
+            _read(fileHandle, buf, len);
         } else {
             buf = static_cast<wchar_t*>(operator new(0x28));
             model.pmxTextBuffers[static_cast<std::size_t>(kTextSlots[i])] = buf;
@@ -289,9 +289,9 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             else
                 swprintf_s(buf, 0x14, L"Null_%02d", nullIdx++);
         }
-        WideToSjis(sub, sjisMirrors[i], buf, kSjisSizes[i]);
+        WideToSjis(renderer, sjisMirrors[i], buf, kSjisSizes[i]);
     }
-    if (showInfo) { // 0x4B7A56
+    if (showLoadMessages) { // 0x4B7A56
         const int r =
             MessageBoxW(hwnd,
                         model.pmxTextBuffers[static_cast<std::size_t>(
@@ -299,16 +299,16 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                                    : mdl::PmxTextBufferSlot::japaneseComment)],
                         enData ? L"Model Infomation" : L"\x30E2\x30C7\x30EB\x60C5\x5831", 0x40001u);
         if (r != 1) {
-            _close(fh);
+            _close(fileHandle);
             return false;
         }
     }
 
     // ---- vertices -----------------------------------------------------------
-    _read(fh, &model.vertexCount, sizeof(model.vertexCount));
+    _read(fileHandle, &model.vertexCount, sizeof(model.vertexCount));
     const std::int32_t vertCount = static_cast<std::int32_t>(model.vertexCount);
     if (vertCount != 0) {
-        IDirect3DDevice9* dev = DevOf(sub);
+        IDirect3DDevice9* dev = DevOf(renderer);
         struct VbSpec {
             std::uint32_t stride, fvf;
         };
@@ -319,33 +319,29 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         const std::uint32_t uvLadder =
             model.pmxAdditionalUvCount < 5 ? model.pmxAdditionalUvCount : 0;
         const VbSpec& s = kSpec[uvLadder];
-        IDirect3DVertexBuffer9* vb = nullptr;
+        IDirect3DVertexBuffer9*& vb = model.vertexBuffer;
         // pool = D3DPOOL_MANAGED: every addl-UV ladder branch writes the
         // 5th argument slot with 1 (x64 0x7FF7CB4CA1CF)
-        if (FAILED(dev->CreateVertexBuffer(s.stride * vertCount, 8, s.fvf, D3DPOOL_MANAGED, &vb,
-                                           nullptr)) ||
-            vb == nullptr) {
+        if (dev->CreateVertexBuffer(s.stride * vertCount, 8, s.fvf, D3DPOOL_MANAGED, &vb,
+                                    nullptr) != D3D_OK) {
             sprintf_s(text, 0x100,
                       enData ? "The performance of the graphics card doesn't suffice."
                              : kMsgNoPerfJp);
             MessageBoxA(hwnd, text, enData ? "open file" : kTitleOpenFailJp, 0);
-            _close(fh);
+            _close(fileHandle);
             return false;
         }
-        mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer) = vb;
-        IDirect3DVertexBuffer9* vb2 = nullptr;
+        IDirect3DVertexBuffer9*& vb2 = model.vertexBuffer2;
         // edge VB: pool = 1 too (x64 0x7FF7CB4CA272)
-        if (FAILED(
-                dev->CreateVertexBuffer(16 * vertCount, 8, 66, D3DPOOL_MANAGED, &vb2, nullptr)) ||
-            vb2 == nullptr) {
+        if (dev->CreateVertexBuffer(16 * vertCount, 8, 66, D3DPOOL_MANAGED, &vb2, nullptr) !=
+            D3D_OK) {
             sprintf_s(text, 0x100,
                       enData ? "The performance of the graphics card doesn't suffice."
                              : kMsgNoPerfJp);
             MessageBoxA(hwnd, text, enData ? "open file" : kTitleLoad2Jp, 0);
-            _close(fh);
+            _close(fileHandle);
             return false;
         }
-        mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2) = vb2;
 
         mdl::PmxVertex* verts =
             static_cast<mdl::PmxVertex*>(operator new(sizeof(*verts) * vertCount));
@@ -355,21 +351,21 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         std::memset(verts, 0, 40 * vertCount);
 
         const std::uint8_t boneIdxSize = model.pmxBoneIndexSize;
-        auto readIdx = [fh](int size) -> std::int32_t {
+        auto readIdx = [fileHandle](int size) -> std::int32_t {
             switch (size) {
             case 1: {
                 std::int8_t v = 0;
-                _read(fh, &v, 1);
+                _read(fileHandle, &v, 1);
                 return v;
             }
             case 2: {
                 std::uint16_t v = 0;
-                _read(fh, &v, 2);
+                _read(fileHandle, &v, 2);
                 return static_cast<std::int16_t>(v);
             }
             default: {
                 std::int32_t v = 0;
-                _read(fh, &v, 4);
+                _read(fileHandle, &v, 4);
                 return v;
             }
             }
@@ -377,30 +373,30 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
 
         for (std::int32_t i = 0; i < vertCount; ++i) {
             mdl::PmxVertex& rec = verts[i];
-            _read(fh, &rec, 0x20); // pos+normal+uv
+            _read(fileHandle, &rec, 0x20); // pos+normal+uv
             const int addl = model.pmxAdditionalUvCount;
             for (int j = 0; j < addl; ++j) // SOA addl UVs
                 for (int c = 0; c < 4; ++c)
-                    _read(fh, &rec.additionalUvByComponent[c][j], 4);
-            _read(fh, &rec.weightType, 1);
+                    _read(fileHandle, &rec.additionalUvByComponent[c][j], 4);
+            _read(fileHandle, &rec.weightType, 1);
             switch (rec.weightType) {
             case mdl::PmxWeightType::bdef2:
                 rec.bone[0] = readIdx(boneIdxSize);
                 rec.bone[1] = readIdx(boneIdxSize);
-                _read(fh, rec.weight, 4);
+                _read(fileHandle, rec.weight, 4);
                 break;
             case mdl::PmxWeightType::bdef4:
                 for (int b = 0; b < 4; ++b)
                     rec.bone[b] = readIdx(boneIdxSize);
-                _read(fh, rec.weight, 0x10);
+                _read(fileHandle, rec.weight, 0x10);
                 break;
             case mdl::PmxWeightType::sdef: {
                 rec.bone[0] = readIdx(boneIdxSize);
                 rec.bone[1] = readIdx(boneIdxSize);
-                _read(fh, rec.weight, 4);          // weight
-                _read(fh, rec.sdef.center, 0xC);   // PMX C
-                _read(fh, rec.sdef.r0Offset, 0xC); // PMX R0
-                _read(fh, rec.sdef.r1Offset, 0xC); // PMX R1
+                _read(fileHandle, rec.weight, 4);          // weight
+                _read(fileHandle, rec.sdef.center, 0xC);   // PMX C
+                _read(fileHandle, rec.sdef.r0Offset, 0xC); // PMX R0
+                _read(fileHandle, rec.sdef.r1Offset, 0xC); // PMX R1
                 const float w = rec.weight[0];
                 float mid[3];
                 for (int c = 0; c < 3; ++c)
@@ -422,7 +418,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 // fields keep their zeroed state.
                 break;
             }
-            _read(fh, &rec.edgeScale, 4);
+            _read(fileHandle, &rec.edgeScale, 4);
             rec.hasPmxEdgeData = 1;
         }
 
@@ -482,25 +478,24 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
     }
 
     // ---- faces ---------------------------------------------------------------
-    _read(fh, &model.indexCount, sizeof(model.indexCount));
+    _read(fileHandle, &model.indexCount, sizeof(model.indexCount));
     const std::int32_t faceCount = static_cast<std::int32_t>(model.indexCount);
     if (faceCount != 0) {
-        IDirect3DDevice9* dev = DevOf(sub);
+        IDirect3DDevice9* dev = DevOf(renderer);
         const bool wideIdx = model.pmxVertexIndexSize >= 4;
-        IDirect3DIndexBuffer9* ib = nullptr;
-        if (FAILED(dev->CreateIndexBuffer((wideIdx ? 4 : 2) * faceCount, 0,
-                                          wideIdx ? D3DFMT_INDEX32 : D3DFMT_INDEX16,
-                                          // x64 LoadPMX 0x7FF7CB4CB3D6: Pool immediate is 1
-                                          // (D3DPOOL_MANAGED), not SYSTEMMEM.
-                                          D3DPOOL_MANAGED, &ib, nullptr))) {
+        IDirect3DIndexBuffer9*& ib = model.indexBuffer;
+        if (dev->CreateIndexBuffer((wideIdx ? 4 : 2) * faceCount, 0,
+                                   wideIdx ? D3DFMT_INDEX32 : D3DFMT_INDEX16,
+                                   // x64 LoadPMX 0x7FF7CB4CB3D6: Pool immediate is 1
+                                   // (D3DPOOL_MANAGED), not SYSTEMMEM.
+                                   D3DPOOL_MANAGED, &ib, nullptr) != D3D_OK) {
             sprintf_s(text, 0x100,
                       enData ? "The performance of the graphics card doesn't suffice."
                              : kMsgNoPerfJp);
             MessageBoxA(hwnd, text, "CreateIndexBuffer", 0);
-            _close(fh);
+            _close(fileHandle);
             return false;
         }
-        mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer) = ib;
         auto* indices = static_cast<std::int32_t*>(operator new(sizeof(std::int32_t) * faceCount));
         model.indices = indices;
         std::memset(indices, 0, sizeof(std::int32_t) * faceCount);
@@ -510,16 +505,16 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             switch (idxSize) {
             case 1: {
                 std::uint8_t input;
-                _read(fh, &input, 1);
+                _read(fileHandle, &input, 1);
                 return input;
             }
             case 2: {
                 std::uint16_t input;
-                _read(fh, &input, 2);
+                _read(fileHandle, &input, 2);
                 return input;
             }
             default:
-                _read(fh, &value, 4);
+                _read(fileHandle, &value, 4);
                 return value;
             }
         };
@@ -528,11 +523,11 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                       enData ? "The performance of the graphics card doesn't suffice."
                              : kMsgNoPerfJp);
             MessageBoxA(hwnd, text, "pIndBuf->Lock", 0);
-            _close(fh);
+            _close(fileHandle);
         };
         if (wideIdx) {
             std::uint32_t* gpuIndices = nullptr;
-            if (SUCCEEDED(ib->Lock(0, 0, reinterpret_cast<void**>(&gpuIndices), 0))) {
+            if (ib->Lock(0, 0, reinterpret_cast<void**>(&gpuIndices), 0) == D3D_OK) {
                 for (std::int32_t i = 0; i < faceCount; ++i) {
                     const std::int32_t value = readVertexIndex();
                     indices[i] = value;
@@ -545,7 +540,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             }
         } else {
             std::uint16_t* gpuIndices = nullptr;
-            if (SUCCEEDED(ib->Lock(0, 0, reinterpret_cast<void**>(&gpuIndices), 0))) {
+            if (ib->Lock(0, 0, reinterpret_cast<void**>(&gpuIndices), 0) == D3D_OK) {
                 for (std::int32_t i = 0; i < faceCount; ++i) {
                     const std::int32_t value = readVertexIndex();
                     indices[i] = value;
@@ -561,17 +556,17 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
 
     // ---- textures (local path table) ----------------------------------------
     std::uint32_t texCount = 0;
-    _read(fh, &texCount, 4);
+    _read(fileHandle, &texCount, 4);
     wchar_t** texPaths =
         static_cast<wchar_t**>(texCount ? operator new(sizeof(*texPaths) * texCount) : nullptr);
     for (std::uint32_t t = 0; t < texCount; ++t) {
         texPaths[t] = nullptr;
         std::uint32_t len = 0;
-        _read(fh, &len, 4);
+        _read(fileHandle, &len, 4);
         if (static_cast<std::int32_t>(len) > 0) {
             texPaths[t] = static_cast<wchar_t*>(operator new(2 * len));
             std::memset(texPaths[t], 0, 2 * len);
-            _read(fh, texPaths[t], len);
+            _read(fileHandle, texPaths[t], len);
         }
     }
     static const char* kToonNames[10] = {"toon01.bmp", "toon02.bmp", "toon03.bmp", "toon04.bmp",
@@ -581,7 +576,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         strcpy_s(model.pmdToonFileNames[i], sizeof(model.pmdToonFileNames[i]), kToonNames[i]);
 
     // ---- materials -------------------------------------------------------------
-    _read(fh, &model.materialCount, sizeof(model.materialCount));
+    _read(fileHandle, &model.materialCount, sizeof(model.materialCount));
     const std::int32_t matCount = static_cast<std::int32_t>(model.materialCount);
     mdl::ModelMaterialRecord*& materials = model.materials;
     if (matCount != 0) {
@@ -589,21 +584,21 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             static_cast<mdl::ModelMaterialRecord*>(operator new(sizeof(*materials) * matCount));
         std::memset(materials, 0, sizeof(*materials) * matCount);
         const int texIdxSize = model.pmxTextureIndexSize;
-        auto readTexIdx = [fh, texIdxSize]() -> std::int32_t {
+        auto readTexIdx = [fileHandle, texIdxSize]() -> std::int32_t {
             switch (texIdxSize) {
             case 1: {
                 std::int8_t v;
-                _read(fh, &v, 1);
+                _read(fileHandle, &v, 1);
                 return v;
             }
             case 2: {
                 std::uint16_t v;
-                _read(fh, &v, 2);
+                _read(fileHandle, &v, 2);
                 return static_cast<std::int16_t>(v);
             }
             default: {
                 std::int32_t v;
-                _read(fh, &v, 4);
+                _read(fileHandle, &v, 4);
                 return v;
             }
             }
@@ -611,16 +606,16 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         wchar_t emptyPath[2] = L"";
         for (std::int32_t i = 0; i < matCount; ++i) {
             mdl::ModelMaterialRecord& mat = materials[i];
-            SkipTextBuf(fh); // JP name
-            SkipTextBuf(fh); // EN name
-            _read(fh, mat.diffuse, sizeof(mat.diffuse));
+            SkipTextBuf(fileHandle); // JP name
+            SkipTextBuf(fileHandle); // EN name
+            _read(fileHandle, mat.diffuse, sizeof(mat.diffuse));
             std::memcpy(mat.diffuseMirror, mat.diffuse, sizeof(mat.diffuseMirror));
-            _read(fh, mat.specular, sizeof(mat.specular));
-            _read(fh, &mat.specularPower, sizeof(mat.specularPower));
-            _read(fh, mat.ambient, sizeof(mat.ambient));
-            _read(fh, &mat.flags, 1);
-            _read(fh, mat.edgeColor, sizeof(mat.edgeColor));
-            _read(fh, &mat.edgeSize, sizeof(mat.edgeSize));
+            _read(fileHandle, mat.specular, sizeof(mat.specular));
+            _read(fileHandle, &mat.specularPower, sizeof(mat.specularPower));
+            _read(fileHandle, mat.ambient, sizeof(mat.ambient));
+            _read(fileHandle, &mat.flags, 1);
+            _read(fileHandle, mat.edgeColor, sizeof(mat.edgeColor));
+            _read(fileHandle, &mat.edgeSize, sizeof(mat.edgeSize));
             mat.doubleSided = (mat.flags & 0x10) != 0;
             // texture path
             {
@@ -630,7 +625,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 } else {
                     swprintf_s(mat.texturePath, 0x118, L"%s%s", model.modelDirectory,
                                texPaths[idx]);
-                    if (!LoadTextureShared(sub, mat.texturePath))
+                    if (!LoadTextureShared(renderer, mat.texturePath))
                         wcscpy_s(mat.texturePath, 0x118, emptyPath);
                 }
             }
@@ -640,19 +635,19 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 if (idx < 0 || idx >= static_cast<std::int32_t>(texCount) ||
                     (swprintf_s(mat.spherePath, 0x118, L"%s%s", model.modelDirectory,
                                 texPaths[idx]),
-                     !LoadTextureShared(sub, mat.spherePath))) {
+                     !LoadTextureShared(renderer, mat.spherePath))) {
                     wcscpy_s(mat.spherePath, 0x118, emptyPath);
                 }
             }
-            _read(fh, &mat.sphereMode, 1);
+            _read(fileHandle, &mat.sphereMode, 1);
             std::uint8_t sharedToon = 0;
-            _read(fh, &sharedToon, 1);
+            _read(fileHandle, &sharedToon, 1);
             if (!sharedToon) { // own toon file
                 mat.toonReference = 0xFE;
                 const std::int32_t idx = readTexIdx();
                 if (idx >= 0) {
                     swprintf_s(mat.toonPath, 0x200, L"%s%s", model.modelDirectory, texPaths[idx]);
-                    if (!LoadTextureShared(sub, mat.toonPath)) {
+                    if (!LoadTextureShared(renderer, mat.toonPath)) {
                         wcscpy_s(mat.toonPath, 0x200, emptyPath);
                         mat.toonReference = 0xFF;
                     }
@@ -660,10 +655,10 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                     mat.toonReference = 0xFF;
                 }
             } else {
-                _read(fh, &mat.toonReference, 1);
+                _read(fileHandle, &mat.toonReference, 1);
             }
-            SkipTextBuf(fh); // memo
-            _read(fh, &mat.faceVertexCount, sizeof(mat.faceVertexCount));
+            SkipTextBuf(fileHandle); // memo
+            _read(fileHandle, &mat.faceVertexCount, sizeof(mat.faceVertexCount));
         }
     }
     // per-vertex material assignment by smallest edge size.  Runs whenever
@@ -703,28 +698,28 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
     if (texPaths)
         operator delete(texPaths);
 
-    TracePmxOffset(fh, "materials-end", matCount, static_cast<int>(texCount));
+    TracePmxOffset(fileHandle, "materials-end", matCount, static_cast<int>(texCount));
 
     // ---- bones ---------------------------------------------------------------
-    _read(fh, &model.boneCount, sizeof(model.boneCount));
+    _read(fileHandle, &model.boneCount, sizeof(model.boneCount));
     const std::int32_t boneCount = static_cast<std::int32_t>(model.boneCount);
-    TracePmxOffset(fh, "bones-begin", boneCount, 0);
+    TracePmxOffset(fileHandle, "bones-begin", boneCount, 0);
     const std::uint8_t boneIdxSize = model.pmxBoneIndexSize;
-    auto readBoneIdx = [fh, boneIdxSize]() -> std::int32_t {
+    auto readBoneIdx = [fileHandle, boneIdxSize]() -> std::int32_t {
         switch (boneIdxSize) {
         case 1: {
             std::int8_t v;
-            _read(fh, &v, 1);
+            _read(fileHandle, &v, 1);
             return v;
         }
         case 2: {
             std::uint16_t v;
-            _read(fh, &v, 2);
+            _read(fileHandle, &v, 2);
             return static_cast<std::int16_t>(v);
         }
         default: {
             std::int32_t v;
-            _read(fh, &v, 4);
+            _read(fileHandle, &v, 4);
             return v;
         }
         }
@@ -750,9 +745,8 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         mikudancestudio::mdl::BoneRecord* bones = model.boneTable;
         for (std::int32_t i = 0; i < boneCount; ++i) {
             mikudancestudio::mdl::BoneRecord* bone = &bones[i];
-            bone->jpText = ReadTextBuf(fh, nullIdx); // JP name
-            WideToSjis(sub, reinterpret_cast<char*>(bone),
-                       reinterpret_cast<const wchar_t*>(bone->jpText), 0x14);
+            bone->jpText = ReadTextBuf(fileHandle, nullIdx); // JP name
+            WideToSjis(renderer, bone->name, reinterpret_cast<const wchar_t*>(bone->jpText), 0x14);
             // center bone detection (SJIS memcmp, 9 bytes with NUL; x64
             // 0x7FF7CB4CC36D: operation center first, center as pre-flag
             // fallback - same pair/order as the PMD path)
@@ -762,23 +756,23 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             } else if (!centerFound && !std::memcmp(bone->name, kNameCenterJp, 9)) {
                 model.centerBone = i;
             }
-            bone->enText = ReadTextBuf(fh, nullIdx); // EN name
-            WideToSjis(sub, reinterpret_cast<char*>(bone->nameEn),
-                       reinterpret_cast<const wchar_t*>(bone->enText), 0x14);
-            _read(fh, bone->position, 4); // position
-            _read(fh, &bone->position[1], 4);
-            _read(fh, &bone->position[2], 4);
-            bone->parent = readBoneIdx(); // parent
-            _read(fh, &bone->layer, 4);   // layer
+            bone->enText = ReadTextBuf(fileHandle, nullIdx); // EN name
+            WideToSjis(renderer, bone->nameEn, reinterpret_cast<const wchar_t*>(bone->enText),
+                       0x14);
+            _read(fileHandle, bone->position, 4); // position
+            _read(fileHandle, &bone->position[1], 4);
+            _read(fileHandle, &bone->position[2], 4);
+            bone->parent = readBoneIdx();       // parent
+            _read(fileHandle, &bone->layer, 4); // layer
             if (model.maxBoneLayer < bone->layer)
                 model.maxBoneLayer = bone->layer;
-            _read(fh, &bone->flags, 2); // flags
+            _read(fileHandle, &bone->flags, 2); // flags
             if (bone->flags & mdl::kBoneFlagTailIsBone) {
                 bone->tailBone = readBoneIdx();
             } else { // tail offset
-                _read(fh, bone->tailOffset, 4);
-                _read(fh, &bone->tailOffset[1], 4);
-                _read(fh, &bone->tailOffset[2], 4);
+                _read(fileHandle, bone->tailOffset, 4);
+                _read(fileHandle, &bone->tailOffset[1], 4);
+                _read(fileHandle, &bone->tailOffset[2], 4);
                 bone->tailOffset[0] += bone->position[0];
                 bone->tailOffset[1] += bone->position[1];
                 bone->tailOffset[2] += bone->position[2];
@@ -787,13 +781,13 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 bone->type = mdl::BoneType::Move;          // 0x4BA033
             if (bone->flags & mdl::kBoneFlagInheritMask) { // inheritance
                 bone->tailIdx = readBoneIdx();
-                _read(fh, &bone->inheritRatio, 4);
+                _read(fileHandle, &bone->inheritRatio, 4);
             }
             if (bone->flags & mdl::kBoneFlagFixedAxis) {
                 bone->type = mdl::BoneType::FixedAxis; // 0x4BA127
-                _read(fh, bone->axis, 4);
-                _read(fh, &bone->axis[1], 4);
-                _read(fh, &bone->axis[2], 4);
+                _read(fileHandle, bone->axis, 4);
+                _read(fileHandle, &bone->axis[1], 4);
+                _read(fileHandle, &bone->axis[2], 4);
                 float axis[3] = {bone->axis[0], bone->axis[1], bone->axis[2]};
                 d.vec3Normalize(axis, axis);
                 bone->axis[0] = axis[0];
@@ -802,16 +796,16 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             }
             if (bone->flags & mdl::kBoneFlagLocalAxes) {
                 for (int f = 0; f < 6; ++f)
-                    _read(fh, bone->localAxes + f, 4);
+                    _read(fileHandle, bone->localAxes + f, 4);
             }
             if (bone->flags & mdl::kBoneFlagExternalParent)
-                _read(fh, &bone->extParent, 4);
+                _read(fileHandle, &bone->extParent, 4);
             if (bone->flags & mdl::kBoneFlagIk) { // IK
                 ++ikBoneCount;
-                bone->ikTarget = readBoneIdx();   // target
-                _read(fh, &bone->ikLoop, 4);      // loop count
-                _read(fh, &bone->ikAngle, 4);     // angle
-                _read(fh, &bone->ikLinkCount, 4); // link count
+                bone->ikTarget = readBoneIdx();           // target
+                _read(fileHandle, &bone->ikLoop, 4);      // loop count
+                _read(fileHandle, &bone->ikAngle, 4);     // angle
+                _read(fileHandle, &bone->ikLinkCount, 4); // link count
                 if (bone->ikLinkCount > 0) {
                     bone->ikLinks = static_cast<mdl::PmxIkLinkRecord*>(operator new(
                         sizeof(*bone->ikLinks) * bone->ikLinkCount));
@@ -819,10 +813,10 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                     for (int l = 0; l < bone->ikLinkCount; ++l) {
                         mdl::PmxIkLinkRecord& link = bone->ikLinks[l];
                         link.boneIndex = readBoneIdx();
-                        _read(fh, &link.hasLimits, 1);
+                        _read(fileHandle, &link.hasLimits, 1);
                         if (link.hasLimits == 1) {
-                            _read(fh, link.minimum, sizeof(link.minimum));
-                            _read(fh, link.maximum, sizeof(link.maximum));
+                            _read(fileHandle, link.minimum, sizeof(link.minimum));
+                            _read(fileHandle, link.maximum, sizeof(link.maximum));
                         }
                     }
                 }
@@ -836,10 +830,10 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 bone->matWorld[f] = (f % 5 == 0) ? 1.0f : 0.0f;
             bone->slotIndex = -1;
             bone->rigidIdx = -296;
-            TracePmxOffset(fh, "bone-end", i, bone->flags);
+            TracePmxOffset(fileHandle, "bone-end", i, bone->flags);
         }
 
-        // IK -> 24-byte chain records (m+9920, count m+11656) ---------------
+        // IK -> 24-byte chain records (modelRecord+9920, count modelRecord+11656) ---------------
         model.ikChainCount = ikBoneCount;
         if (ikBoneCount > 0) {
             model.ikChains =
@@ -914,53 +908,53 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             }
         }
     }
-    InitBoneSortOrder(m); // 0x490070
+    InitBoneSortOrder(modelRecord); // 0x490070
 
     // ---- morphs -----------------------------------------------------------
     std::uint8_t* vmap = static_cast<std::uint8_t*>(vertCount ? operator new(vertCount) : nullptr);
     std::memset(vmap, 0, vertCount);
-    _read(fh, &model.morphCount, sizeof(model.morphCount));
+    _read(fileHandle, &model.morphCount, sizeof(model.morphCount));
     const std::int32_t morphCount = static_cast<std::int32_t>(model.morphCount);
-    TracePmxOffset(fh, "morphs-begin", morphCount, 0);
+    TracePmxOffset(fileHandle, "morphs-begin", morphCount, 0);
     std::int32_t boneMorphTotal = 0, uvMorphTotal = 0, uv2Total = 0, uv3Total = 0, uv4Total = 0,
                  uv5Total = 0;
     const std::uint8_t vertIdxSize = model.pmxVertexIndexSize;
     const std::uint8_t morphIdxSize = model.pmxMorphIndexSize;
     const std::uint8_t matIdxSize = model.pmxMaterialIndexSize;
-    auto readIdxS = [fh](int size) -> std::int32_t {
+    auto readIdxS = [fileHandle](int size) -> std::int32_t {
         switch (size) {
         case 1: {
             std::int8_t v;
-            _read(fh, &v, 1);
+            _read(fileHandle, &v, 1);
             return v;
         }
         case 2: {
             std::uint16_t v;
-            _read(fh, &v, 2);
+            _read(fileHandle, &v, 2);
             return static_cast<std::int16_t>(v);
         }
         default: {
             std::int32_t v;
-            _read(fh, &v, 4);
+            _read(fileHandle, &v, 4);
             return v;
         }
         }
     };
-    auto readVertexIdx = [fh](int size) -> std::int32_t {
+    auto readVertexIdx = [fileHandle](int size) -> std::int32_t {
         switch (size) {
         case 1: {
             std::uint8_t value;
-            _read(fh, &value, 1);
+            _read(fileHandle, &value, 1);
             return value;
         }
         case 2: {
             std::uint16_t value;
-            _read(fh, &value, 2);
+            _read(fileHandle, &value, 2);
             return value;
         }
         default: {
             std::int32_t value;
-            _read(fh, &value, 4);
+            _read(fileHandle, &value, 4);
             return value;
         }
         }
@@ -970,29 +964,30 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             static_cast<mdl::MorphRecord*>(operator new(sizeof(mdl::MorphRecord) * morphCount));
         std::memset(model.morphs, 0, sizeof(mdl::MorphRecord) * morphCount);
         // track cursors/flags beside the table (x64 0x7FF7CB4CD40D/CD42A
-        // -> m+88/96) - ModelKeyframeAdvance writes morphTrackActive[morph]
-        void* w1 = operator new(4 * morphCount);
-        std::memset(w1, 0, 4 * morphCount);
-        model.morphKeyCursors = static_cast<std::uint32_t*>(w1);
-        void* w2 = operator new(morphCount);
-        std::memset(w2, 0, morphCount);
-        model.morphTrackActive = static_cast<unsigned char*>(w2);
+        // -> modelRecord+88/96) - ModelKeyframeAdvance writes morphTrackActive[morph]
+        auto* cursors =
+            static_cast<std::uint32_t*>(operator new(sizeof(*model.morphKeyCursors) * morphCount));
+        std::memset(cursors, 0, sizeof(*cursors) * morphCount);
+        model.morphKeyCursors = cursors;
+        auto* activeTracks = static_cast<std::uint8_t*>(operator new(morphCount));
+        std::memset(activeTracks, 0, morphCount);
+        model.morphTrackActive = activeTracks;
         for (std::int32_t i = 0; i < morphCount; ++i) {
-            TracePmxOffset(fh, "morph-record-begin", i, 0);
+            TracePmxOffset(fileHandle, "morph-record-begin", i, 0);
             mdl::MorphRecord& morph = model.morphs[i];
-            morph.jpText = ReadTextBuf(fh, nullIdx);
-            WideToSjis(sub, morph.name, morph.jpText, 0x14);
-            morph.enText = ReadTextBuf(fh, nullIdx);
-            WideToSjis(sub, morph.nameEn, morph.enText, 0x14);
-            _read(fh, &morph.panel, 1);
-            _read(fh, &morph.type, 1);
-            _read(fh, &morph.offsetCount, 4);
+            morph.jpText = ReadTextBuf(fileHandle, nullIdx);
+            WideToSjis(renderer, morph.name, morph.jpText, 0x14);
+            morph.enText = ReadTextBuf(fileHandle, nullIdx);
+            WideToSjis(renderer, morph.nameEn, morph.enText, 0x14);
+            _read(fileHandle, &morph.panel, 1);
+            _read(fileHandle, &morph.type, 1);
+            _read(fileHandle, &morph.offsetCount, 4);
             const std::int32_t cnt = morph.offsetCount;
             const std::uint8_t type = morph.type;
-            TracePmxOffset(fh, "morph-header", i,
+            TracePmxOffset(fileHandle, "morph-header", i,
                            (static_cast<int>(type) << 24) | (cnt & 0x00FFFFFF));
             if (cnt == 0) {
-                TracePmxOffset(fh, "morph-record-end", i, 0);
+                TracePmxOffset(fileHandle, "morph-record-end", i, 0);
                 continue;
             }
             switch (type) {
@@ -1019,7 +1014,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                         MessageBoxW(hwnd, wbuf, L"load pmx model", 0);
                         entry.morphIndex = 0;
                     }
-                    _read(fh, &entry.weight, 4);
+                    _read(fileHandle, &entry.weight, 4);
                 }
                 morph.offsetCount = 0;
                 break;
@@ -1031,7 +1026,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 for (int o = 0; o < cnt; ++o) {
                     mdl::PmdVertexMorphEntry& entry = morph.vertexEntries[o];
                     entry.vertexIndex = readVertexIdx(vertIdxSize);
-                    _read(fh, entry.offset, sizeof(entry.offset));
+                    _read(fileHandle, entry.offset, sizeof(entry.offset));
                     vmap[entry.vertexIndex] = 1;
                 }
                 break;
@@ -1059,8 +1054,8 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                         MessageBoxW(hwnd, wbuf, L"load pmx model", 0);
                         entry.boneIndex = 0;
                     }
-                    _read(fh, entry.translation, sizeof(entry.translation));
-                    _read(fh, entry.rotation, sizeof(entry.rotation));
+                    _read(fileHandle, entry.translation, sizeof(entry.translation));
+                    _read(fileHandle, entry.rotation, sizeof(entry.rotation));
                     // load-time dedup: a bone already offered by an
                     // EARLIER bone morph is not counted, so the baseline
                     // count equals the fill and leaves no zeroed tail
@@ -1097,7 +1092,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 for (int o = 0; o < cnt; ++o) {
                     mdl::PmxUvMorphEntry& entry = morph.uvEntries[family][o];
                     entry.vertexIndex = readVertexIdx(vertIdxSize);
-                    _read(fh, entry.offset, sizeof(entry.offset));
+                    _read(fileHandle, entry.offset, sizeof(entry.offset));
                     // load-time dedup within the family: a vertex
                     // already offered by an earlier same-family morph
                     // is not counted (x64 0x7FF7CB4CDF5F..CDFAF scans
@@ -1146,16 +1141,18 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 for (int o = 0; o < cnt; ++o) {
                     mdl::PmxMaterialMorphEntry& entry = morph.materialEntries[o];
                     entry.materialIndex = readIdxS(matIdxSize);
-                    _read(fh, &entry.operation, 1);
-                    _read(fh, entry.channels.diffuse, sizeof(entry.channels.diffuse));
-                    _read(fh, entry.channels.specular, sizeof(entry.channels.specular));
-                    _read(fh, &entry.channels.specularPower, sizeof(entry.channels.specularPower));
-                    _read(fh, entry.channels.ambient, sizeof(entry.channels.ambient));
-                    _read(fh, entry.channels.edgeColor, sizeof(entry.channels.edgeColor));
-                    _read(fh, &entry.channels.edgeSize, sizeof(entry.channels.edgeSize));
-                    _read(fh, entry.channels.textureTint, sizeof(entry.channels.textureTint));
-                    _read(fh, entry.channels.sphereTint, sizeof(entry.channels.sphereTint));
-                    _read(fh, entry.channels.toonTint, sizeof(entry.channels.toonTint));
+                    _read(fileHandle, &entry.operation, 1);
+                    _read(fileHandle, entry.channels.diffuse, sizeof(entry.channels.diffuse));
+                    _read(fileHandle, entry.channels.specular, sizeof(entry.channels.specular));
+                    _read(fileHandle, &entry.channels.specularPower,
+                          sizeof(entry.channels.specularPower));
+                    _read(fileHandle, entry.channels.ambient, sizeof(entry.channels.ambient));
+                    _read(fileHandle, entry.channels.edgeColor, sizeof(entry.channels.edgeColor));
+                    _read(fileHandle, &entry.channels.edgeSize, sizeof(entry.channels.edgeSize));
+                    _read(fileHandle, entry.channels.textureTint,
+                          sizeof(entry.channels.textureTint));
+                    _read(fileHandle, entry.channels.sphereTint, sizeof(entry.channels.sphereTint));
+                    _read(fileHandle, entry.channels.toonTint, sizeof(entry.channels.toonTint));
                 }
                 morph.offsetCount = 0;
                 break;
@@ -1163,7 +1160,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
             default: // 9/10 skipped
                 break;
             }
-            TracePmxOffset(fh, "morph-record-end", i,
+            TracePmxOffset(fileHandle, "morph-record-end", i,
                            (static_cast<int>(type) << 24) | (cnt & 0x00FFFFFF));
         }
     }
@@ -1344,7 +1341,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
 
     // ---- display frames --------------------------------------------------------
     std::uint32_t frameCount = 0;
-    _read(fh, &frameCount, 4);
+    _read(fileHandle, &frameCount, 4);
     struct FrameTmp {
         std::uint8_t special;
         std::int32_t count;
@@ -1357,17 +1354,17 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
     std::memset(frames, 0, sizeof(FrameTmp) * frameCount);
     std::int32_t boneEntryTotal = 0, morphEntryTotal = 0;
     for (std::uint32_t f = 0; f < frameCount; ++f) {
-        frames[f].name = ReadTextBuf(fh, nullIdx);
-        frames[f].nameEn = ReadTextBuf(fh, nullIdx);
-        _read(fh, &frames[f].special, 1);
-        _read(fh, &frames[f].count, 4);
+        frames[f].name = ReadTextBuf(fileHandle, nullIdx);
+        frames[f].nameEn = ReadTextBuf(fileHandle, nullIdx);
+        _read(fileHandle, &frames[f].special, 1);
+        _read(fileHandle, &frames[f].count, 4);
         if (frames[f].count > 0) {
             frames[f].entries = static_cast<mdl::PmxDisplayFrameEntry*>(operator new(
                 sizeof(*frames[f].entries) * frames[f].count));
             std::memset(frames[f].entries, 0, sizeof(*frames[f].entries) * frames[f].count);
             for (int e = 0; e < frames[f].count; ++e) {
                 mdl::PmxDisplayFrameEntry& entry = frames[f].entries[e];
-                _read(fh, &entry.type, 1);
+                _read(fileHandle, &entry.type, 1);
                 if (entry.type)
                     entry.index = readIdxS(morphIdxSize);
                 else
@@ -1381,7 +1378,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         }
     }
 
-    // facial group records (m+9948): morph entries of ALL frames; the count
+    // facial group records (modelRecord+9948): morph entries of ALL frames; the count
     // is stored byte-truncated with no special gate (x64 0x7FF7CB4D0234)
     const int morphGroupCount = static_cast<unsigned char>(morphEntryTotal);
     model.facialFrameCount = static_cast<std::uint8_t>(morphGroupCount);
@@ -1413,7 +1410,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
     if (frameCount > 0 && frames[0].count > 0 && frames[0].entries[0].type == 0) {
         model.displayRootBone = frames[0].entries[0].index;
     }
-    // group name table (m+9936)
+    // group name table (modelRecord+9936)
     model.groupCount = static_cast<std::uint8_t>(frameCount);
     if (model.facialFrameCount)
         model.groupCount = static_cast<std::uint8_t>(frameCount + 1);
@@ -1436,13 +1433,13 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         }
         for (int g = start; g < groups; ++g) {
             const int frameIndex = model.facialFrameCount ? g - 1 : g;
-            WideToSjis(sub, displayGroups[g].name, frames[frameIndex].name,
+            WideToSjis(renderer, displayGroups[g].name, frames[frameIndex].name,
                        sizeof(displayGroups[g].name));
-            WideToSjis(sub, displayGroups[g].nameEn, frames[frameIndex].nameEn,
+            WideToSjis(renderer, displayGroups[g].nameEn, frames[frameIndex].nameEn,
                        sizeof(displayGroups[g].nameEn));
         }
     }
-    // bone frame records (m+9944): bone entries from frame 2 on
+    // bone frame records (modelRecord+9944): bone entries from frame 2 on
     model.displayBoneCount = boneEntryTotal;
     if (boneEntryTotal > 0) {
         auto* boneFrames =
@@ -1480,27 +1477,27 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         operator delete(frames);
 
     // ---- rigid bodies -----------------------------------------------------------
-    _read(fh, &model.rigidCount, sizeof(model.rigidCount));
+    _read(fileHandle, &model.rigidCount, sizeof(model.rigidCount));
     if (model.rigidCount > 0) {
         PhysicsScene* physScene = model.scenePtr;
-        SetPhysicsMode(m, 0, nullptr, 0); // 0x4A9220
-        SetPhysicsMode(m, 1, nullptr, 0);
+        SetPhysicsMode(modelRecord, 0, nullptr, 0); // 0x4A9220
+        SetPhysicsMode(modelRecord, 1, nullptr, 0);
         const std::uint8_t rigidIdxSize = model.pmxRigidIndexSize;
-        auto readRigidIdx = [fh, rigidIdxSize]() -> std::int32_t {
+        auto readRigidIdx = [fileHandle, rigidIdxSize]() -> std::int32_t {
             switch (rigidIdxSize) {
             case 1: {
                 std::int8_t v;
-                _read(fh, &v, 1);
+                _read(fileHandle, &v, 1);
                 return v;
             }
             case 2: {
                 std::uint16_t v;
-                _read(fh, &v, 2);
+                _read(fileHandle, &v, 2);
                 return static_cast<std::int16_t>(v);
             }
             default: {
                 std::int32_t v;
-                _read(fh, &v, 4);
+                _read(fileHandle, &v, 4);
                 return v;
             }
             }
@@ -1511,24 +1508,24 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         std::memset(model.rigidTable, 0, sizeof(mdl::RigidRecord) * rcount);
         mikudancestudio::mdl::BoneRecord* bones = model.boneTable;
         for (std::int32_t i = 0; i < rcount; ++i) {
-            TracePmxOffset(fh, "rigid-record-begin", i, rcount);
+            TracePmxOffset(fileHandle, "rigid-record-begin", i, rcount);
             mdl::RigidRecord& rb = model.rigidTable[i];
-            rb.jpText = ReadTextBuf(fh, nullIdx);
-            WideToSjis(sub, rb.name, rb.jpText, 0x14);
-            rb.enText = ReadTextBuf(fh, nullIdx);
+            rb.jpText = ReadTextBuf(fileHandle, nullIdx);
+            WideToSjis(renderer, rb.name, rb.jpText, 0x14);
+            rb.enText = ReadTextBuf(fileHandle, nullIdx);
             rb.boneIndex = readBoneIdx();
-            _read(fh, &rb.group, 1);
-            _read(fh, &rb.noCollapse, 2);
-            _read(fh, &rb.shape, 1);
-            _read(fh, rb.size, sizeof(rb.size));
-            _read(fh, rb.position, sizeof(rb.position));
-            _read(fh, rb.rotation, sizeof(rb.rotation));
-            _read(fh, &rb.mass, 4);
-            _read(fh, &rb.linearDamping, 4);
-            _read(fh, &rb.angularDamping, 4);
-            _read(fh, &rb.restitution, 4);
-            _read(fh, &rb.friction, 4);
-            _read(fh, &rb.mode, 1);
+            _read(fileHandle, &rb.group, 1);
+            _read(fileHandle, &rb.noCollapse, 2);
+            _read(fileHandle, &rb.shape, 1);
+            _read(fileHandle, rb.size, sizeof(rb.size));
+            _read(fileHandle, rb.position, sizeof(rb.position));
+            _read(fileHandle, rb.rotation, sizeof(rb.rotation));
+            _read(fileHandle, &rb.mass, 4);
+            _read(fileHandle, &rb.linearDamping, 4);
+            _read(fileHandle, &rb.angularDamping, 4);
+            _read(fileHandle, &rb.restitution, 4);
+            _read(fileHandle, &rb.friction, 4);
+            _read(fileHandle, &rb.mode, 1);
             if (rb.mode == 2)
                 rb.kinematicFlag = 1;
             if (rb.mode == 0)
@@ -1580,35 +1577,35 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                 d.multiply(&inv, &inv, &t2);
                 std::memcpy(rb.invTransform, &inv, sizeof(rb.invTransform));
             }
-            TracePmxOffset(fh, "rigid-record-end", i, rcount);
+            TracePmxOffset(fileHandle, "rigid-record-end", i, rcount);
         }
 
         // ---- joints ------------------------------------------------------------
-        _read(fh, &model.jointCount, sizeof(model.jointCount));
-        TracePmxOffset(fh, "joints-begin", model.jointCount, rcount);
+        _read(fileHandle, &model.jointCount, sizeof(model.jointCount));
+        TracePmxOffset(fileHandle, "joints-begin", model.jointCount, rcount);
         if (model.jointCount > 0) {
             const std::int32_t jcount = static_cast<std::int32_t>(model.jointCount);
             model.jointTable =
                 static_cast<mdl::JointRecord*>(operator new(sizeof(mdl::JointRecord) * jcount));
             std::memset(model.jointTable, 0, sizeof(mdl::JointRecord) * jcount);
             for (std::int32_t i = 0; i < jcount; ++i) {
-                TracePmxOffset(fh, "joint-record-begin", i, jcount);
+                TracePmxOffset(fileHandle, "joint-record-begin", i, jcount);
                 mdl::JointRecord& jt = model.jointTable[i];
-                jt.jpText = ReadTextBuf(fh, nullIdx);
-                WideToSjis(sub, jt.name, jt.jpText, 0x14);
-                jt.enText = ReadTextBuf(fh, nullIdx);
+                jt.jpText = ReadTextBuf(fileHandle, nullIdx);
+                WideToSjis(renderer, jt.name, jt.jpText, 0x14);
+                jt.enText = ReadTextBuf(fileHandle, nullIdx);
                 std::uint8_t jointType = 0;
-                _read(fh, &jointType, 1); // ignored by v9.32
+                _read(fileHandle, &jointType, 1); // ignored by v9.32
                 jt.rigidA = readRigidIdx();
                 jt.rigidB = readRigidIdx();
-                _read(fh, jt.position, sizeof(jt.position));
-                _read(fh, jt.rotation, sizeof(jt.rotation));
+                _read(fileHandle, jt.position, sizeof(jt.position));
+                _read(fileHandle, jt.rotation, sizeof(jt.rotation));
                 // Original stores the four limit vectors in a shuffled order.
-                _read(fh, &jt.limits[3], 3 * sizeof(float));
-                _read(fh, &jt.limits[0], 3 * sizeof(float));
-                _read(fh, &jt.limits[9], 3 * sizeof(float));
-                _read(fh, &jt.limits[6], 3 * sizeof(float));
-                _read(fh, jt.springs, sizeof(jt.springs));
+                _read(fileHandle, &jt.limits[3], 3 * sizeof(float));
+                _read(fileHandle, &jt.limits[0], 3 * sizeof(float));
+                _read(fileHandle, &jt.limits[9], 3 * sizeof(float));
+                _read(fileHandle, &jt.limits[6], 3 * sizeof(float));
+                _read(fileHandle, jt.springs, sizeof(jt.springs));
                 {
                     using d3dx::D3DXMATRIXF;
                     const std::int32_t a = jt.rigidA;
@@ -1663,11 +1660,11 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
                         jt.springs[0], jt.springs[1], jt.springs[2], jt.springs[3], jt.springs[4],
                         jt.springs[5]);
                 }
-                TracePmxOffset(fh, "joint-record-end", i, jcount);
+                TracePmxOffset(fileHandle, "joint-record-end", i, jcount);
             }
         }
     }
-    _close(fh);
+    _close(fileHandle);
 
     // ---- animation pools -------------------------------------------------------
     model.boneKeys =
@@ -1713,7 +1710,7 @@ bool LoadPMX(mdl::ModelRecord* m, D3DRenderer* sub, std::uint8_t showInfo, std::
         key.rotation[3] = 1.0f;
     }
     model.loadComplete = 1;
-    PostLoadInit(m); // 0x49C850
+    PostLoadInit(modelRecord); // 0x49C850
     return true;
 }
 

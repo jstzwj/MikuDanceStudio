@@ -84,7 +84,7 @@
 #endif
 #include <Windows.h>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/physics_world.hpp"
 
 #include <cmath>

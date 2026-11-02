@@ -102,21 +102,16 @@ int Run(const std::filesystem::path& modelPath, const std::filesystem::path& ori
                 reference->model->edgeScale = scale;
                 reference->Skin(app, world);
                 const bool mainEqual =
-                    Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer)) ==
-                    Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(reference->model->vertexBuffer));
+                    Buffer(model.vertexBuffer) == Buffer(reference->model->vertexBuffer);
                 const bool edgeEqual =
-                    Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2)) ==
-                    Buffer(
-                        mdl::ResourceAs<IDirect3DVertexBuffer9>(reference->model->vertexBuffer2));
+                    Buffer(model.vertexBuffer2) == Buffer(reference->model->vertexBuffer2);
                 std::printf("vertices view=%d edge=%.0f: main=%d edge=%d\n", view, scale, mainEqual,
                             edgeEqual);
                 failures += !mainEqual || !edgeEqual;
                 for (auto item : {std::make_pair("port", &model),
                                   std::make_pair("original", reference->model.get())}) {
-                    const auto main =
-                        Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(item.second->vertexBuffer));
-                    const auto edge =
-                        Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(item.second->vertexBuffer2));
+                    const auto main = Buffer(item.second->vertexBuffer);
+                    const auto edge = Buffer(item.second->vertexBuffer2);
                     const auto name = "view" + std::to_string(view) + "_edge" +
                                       std::to_string(int(scale)) + "_" + item.first;
                     SaveRenderBytes(output, name + ".main", main.data(), main.size());

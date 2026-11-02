@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#include <d3d9.h>
 
 #include <cstdint>
 
@@ -97,12 +98,12 @@ void SetStereoConvergence(D3DRenderer* wrapper, float value) { // 0x407450
 
 } // namespace
 
-bool ProbeStereo3D(void* device, void* handleSlot) { // 0x4CB430 wrapper
-    using CreateHandle = int(__cdecl*)(void*, void**);
+bool ProbeStereo3D(IDirect3DDevice9* device, void** handleSlot) { // 0x4CB430 wrapper
+    using CreateHandle = int(__cdecl*)(IUnknown*, void**);
     auto create = Resolve<CreateHandle>(kNvapiStereoCreateHandleId);
     // The original caller clears wrapper+120166 when the NVAPI status is
     // non-zero, so this bool intentionally means "probe failed".
-    return create == nullptr || create(device, static_cast<void**>(handleSlot)) != 0;
+    return create == nullptr || create(device, handleSlot) != 0;
 }
 
 // VA 0x004CAF10 - stereo capability query, interface id 0xBE7692EC.

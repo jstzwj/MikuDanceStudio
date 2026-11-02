@@ -26,7 +26,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -661,8 +661,8 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const flo
     const unsigned int additionalUv = state.pmxAdditionalUvCount;
     if (additionalUv > 4)
         return;
-    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer);
-    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer2);
+    auto* mainVb = state.vertexBuffer;
+    auto* edgeVb = state.vertexBuffer2;
     if (mainVb == nullptr || edgeVb == nullptr)
         return;
     d3dx::Api& d3dxApi = d3dx::Get();
@@ -725,8 +725,8 @@ void UpdateModelVertexBuffers(MMDApp* app, mdl::ModelRecord* model, const float 
     }
 
     ApplyPmdVertexMorphs(model);
-    auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer);
-    auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer2);
+    auto* mainVb = state.vertexBuffer;
+    auto* edgeVb = state.vertexBuffer2;
     if (mainVb == nullptr || edgeVb == nullptr)
         return;
 

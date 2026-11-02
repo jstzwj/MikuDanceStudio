@@ -1,15 +1,5 @@
-// ===========================================================================
-// Late-landing full ports (ledger: 418 ported / 0 stub)
-// ===========================================================================
-// Everything defined with a body below is a verified full port of its
-// original VA; comments record each original VA and behaviour notes.
-// Formerly src/unported/stubs.cpp: that name predated the port, when no-op
-// twins of not-yet-ported functions lived here.  Every such twin was deleted
-// once its real body landed elsewhere, and the comments below record where
-// each port lives - the file now holds only full ports that had no natural
-// subsystem file.  The porting ledger (docs/PORTING_STATUS.md) is the
-// authoritative tracker.
-// =========================================================================//
+// Application lifecycle helpers, renderer defaults and PMM migration dialog.
+// Original addresses below identify the behavior reconstructed in each body.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
@@ -32,17 +22,6 @@ namespace mikudancestudio {
 // Full-port callees defined in other TUs (local declarations).
 void TeardownDShowGraph(DShowRecorder* rec); // VA 0x409320 (shutdown_cleanup.cpp)
 void RefreshAfterFrameApply(MMDApp* app);    // VA 0x432FA0 (ui_frame_step.cpp),
-
-// ---- frame-driver tail targets (0x0046B090) -------------------------------
-// TimelineAdvance (0x460130, actually the frame-capture/screenshot tail)
-// is a full port in src/app/frame_driver.cpp.
-// PostDeviceReset (0x440DB0) is a full port in src/render/device_reset.cpp.
-// 0x433A40 UpdateBoneFrames is ported in src/app/playback_state.cpp.
-
-// ---- playback catch-up dependencies (0x0046EEE0..0x0046F575) -------------
-// VA 0x004A31D0 (per-model keyframe application) is ported in
-// src/model/model_keyframe_advance.cpp together with its helpers
-// 0x4A05A0 (VMD easing) and 0x499B50 (bone physics-mode notify).
 
 // ---------------------------------------------------------------------------
 // VA 0x00464A00 - FinishAviRecord: recording-wait epilogue (called at 0x46F122
@@ -127,11 +106,6 @@ void FinishAviRecord(MMDApp* app) {
 // (edit commit) is ported in src/window/ui_edit_commit.cpp; 0x4C2680/
 // 0x4C2A00/0x4C2B80 live in ui_refresh.cpp / ui_timeline_gfx.cpp.
 
-// ---- lifecycle --------------------------------------------------------------
-// VA 0x00462C40 (0x6A8) - DirectX teardown before free(Block) - full port in
-// src/app/shutdown_cleanup.cpp (with 0x409320/0x4096C0/0x4030F0/0x4C2C40/
-// 0x406BE0/0x4CB4F0).
-
 // VA 0x0042A110 - model count query behind ExpGetPmdNum.  Original walks the
 // 100-slot model array at +0x780 in an unrolled 20x5 loop counting non-null
 // entries (the loop body is the compiler's unroll of `for i in 0..100`).
@@ -202,107 +176,12 @@ void RendererInit(D3DRenderer* r) {
         }
     }
 }
-// FontSubInit (0x408E70) is ported in src/io/pmm_load_dispatch.cpp.
-// InitFlagSubsystem (0x461E00) / SaveFlagSubsystem (0x461FA0) - the
-// separate ("Mic") window create/destroy pair - are ported in
-// src/window/mic_window.cpp.
-// InitAudioContext (0x4C2450) / PhysicsSceneInit (0x401360) / WaveSeekAndFeed (0x4C34A0)
-// are ported in src/app/subsystem_init.cpp; 0x4C2760 is WaveStartPlayback
-// in src/media/wave_audio.cpp.
-// 0x458F80 LoadSceneFile + 0x450000 v2 body live in src/io/pmm_load_*.cpp.
-
-// ---- message targets referenced by MainWndProc (0x004C3A10) --------------
-
-// ---- file loaders reached from the command dialogs ------------------------
-// 0x418A10 LoadVpdFile / 0x418750 SaveVpdFile: src/io/vpd_file.cpp.
-// ResetAppState (0x44E540 scene reset) is a full port in
-// src/app/reset_app_state.cpp.
-// 0x418500 LoadWaveFile: full port in src/media/wave_audio.cpp; the old
-// path-arg twin here was dead code (all callers take the app object) and
-// was removed.
-// 0x41B080 SaveSceneFile is ported in src/io/pmm_save.cpp.
-// VA 0x00434B60 (VMD motion load) is ported in src/model/vmd_load.cpp.
-// 0x419370 SaveVmdFile is ported in src/io/vmd_save.cpp.
-// 0x433250 LoadAviFile: full port in src/media/media_load.cpp; the old
-// path-arg twin here was dead code (all callers take the app object) and
-// was removed.
-// SelectFrameGroup (0xD9/DA/DC) is ported in src/window/frame_line_edit.cpp.
-
-// ---- morph color re-eval (placeholder until the UI phase ports 0x430510) --
-
-// ---- editor-panel refresh helpers (wave-3 call targets) -------------------
-// Prototypes are `int __thiscall(_DWORD)` (this = app) in the IDB; names are
-// provisional address-style placeholders - renamed in the finishing phase.
-// Signatures marked (model,...) take the model pointer (slot array element),
-// matching the call sites ported from the wave-3/4 TUs.
-// 0x412330 (gravity-track apply + physics dialog refresh) and
-// 0x413120 (accessory key-track apply) are ported in
-// src/model/track_apply.cpp.
-// 0x416280 (interp-curve drag handler) is ported in
-// src/window/ui_selection_reeval.cpp.
-// RelayoutSidebarControls (0x442EB0) is ported in ui_windowsize.cpp.
-// VA 0x004B4260 (frame seek / pose rebuild) is ported in
-// src/model/model_frame_seek.cpp.
-// WaveRestartAt (; 0x4C3530 audio-timer restart) is ported in
-// src/app/subsystem_init.cpp.
-// 0x4168D0 (AVI background frame update) is ported in
-// src/render/background_plane.cpp.
-// CompareFunction (0x40EC70) is ported in src/window/ui_editor_click.cpp.
-// RefreshMainWindowViewport (0x42C810) is ported in src/window/ui_viewport_refresh.cpp.
-// 0x40CAC0 (0x40CAC0) is ported in src/window/ui_viewport_layout.cpp -
-// viewport overlay layout for ids 536..557 (was the silent no-op that kept
-// those 22 controls stacked at their creation-time fallback coordinates).
-
-// ---- command-family helpers (wave-4 call targets) --------------------------
-// 0x417130 (picture background quad rebuild) is ported in
-// src/render/background_plane.cpp.
-// 0x435FE0 (VSQ load / auto lipsync) is a full port in
-// src/io/vsq_load.cpp (LoadVsqFile); the old stub here was removed.
-// 0x4337A0 background picture load is a full port in
-// src/media/media_load.cpp (LoadBackgroundPicture).
-// 0x42AE40 CopyPathW lives in src/media/media_load.cpp; the twin stub here
-// was dead code (callers use CopyPathW) and was removed.
-// 0x464760 StartAviRecordFullscreen / 0x45E820 StartAviRecordWindow are
-// full ports in src/app/avi_record_start.cpp (callers there use the real
-// names); the old no-op twins here were dead code and were removed.
-// 0x414110 (0x414110) is ported in src/window/accessory_paste.cpp.
 // 0x4C46F0: the original is the identity ctor `return this;` (verified on
 // the decompile) - callers ignore the return value, so an empty body is
 // the faithful port, not a placeholder.
 void IdentityCtor(void* obj) {
     (void)obj;
 }
-// 0x441070 JumpNextKeyframe / 0x4414C0 JumpPrevKeyframe (timeline
-// registration jumps) are full ports in src/app/app_utilities.cpp; the old
-// no-op stubs here were removed (callers rewired in command_frame_register.cpp).
-// ApplyCameraReferenceModeChange (; 0x41ACD0 camera-reference
-// switch re-anchor) is ported in
-// src/app/frame_modes.cpp.
-// PushBoneEditUndo (0x42D6E0) is ported in src/model/bone_edit_undo.cpp.
-// 0x401150 (0x401150 array ctor) is ported in src/window/accessory_paste.cpp.
-// 0x4341E0 stop-playback restore is ported in src/app/playback_state.cpp.
-// 0x40A710 (0x40A710 dispose+free wrapper) is ported in
-// src/model/model_dispose.cpp; SeekSelectedModelToCurrentFrame (0x4220C0 seek+flag) in
-// src/model/model_frame_seek.cpp.
-
-// ---- VMD loader dependencies (0x00434B60; registrars pending phases) ----
-// PanelPaint (0x414610) is ported in src/window/ui_panel_paint.cpp; the old
-// duplicate stub here used to win the link (stubs.obj is always pulled in for
-// the other placeholders), silently blacking out the timeline panel.
-// ---- dialog-proc dependencies (dialog_procs.cpp; VAs recorded) -----------
-// 0x466630/0x461C20/0x4256C0/0x43D2E0/0x43D560/0x43D610 (select-dialog
-// family, real signatures thiscall(app, hDlg...)) are ported in
-// src/window/dialog_select_ops.cpp.
-
-// 0x410AA0/0x411900/0x4120B0 global-track key registrars: real (app, rec)
-// overloads live in src/window/command_frame_edit.cpp.
-
-// ---- v2 loader dependencies (0x00450000 phase 2) --------------------------
-// ClearTimelineAndCurveDCs (0x40AE00) is ported in src/window/ui_init.cpp; it initializes
-// the timeline and interpolation-curve GDI caches.  RefillBoneRegisterCombo (bone-register
-// combo refill) is also a full port there.
-// 0x4C4700 accessory-track dtor is DisposeAccessory in
-// src/render/accessory.cpp.
 // ---------------------------------------------------------------------------
 // VA 0x0040FF80 - DialogFunc: generic message-box-style dialog procedure
 // used by the v2 loader's old-version migration dialogs (three DialogBox
@@ -311,7 +190,7 @@ void IdentityCtor(void* obj) {
 // DialogBox return codes (2AF->1, 2B0->3, 2B1->4, 2B2->5, IDCANCEL->2);
 // everything else returns FALSE without chaining.
 // ---------------------------------------------------------------------------
-INT_PTR CALLBACK DialogFuncStub(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
+INT_PTR CALLBACK PmmMigrationDialogProc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
     (void)lp;
     if (msg == WM_INITDIALOG) { // 0x410014
         MMDApp* app = g_Block;

@@ -5,6 +5,26 @@
 
 namespace {
 unsigned checks = 0;
+#ifdef _WIN64
+std::vector<void*> constructionOrder;
+void RecordConstruction(void* element) {
+    constructionOrder.push_back(element);
+}
+void CompareConstruction(OriginalPhysicsModule& module) {
+    using NativeConstruct = void (*)(void*, std::size_t, std::uint32_t, void (*)(void*));
+    const auto original = module.Function<NativeConstruct>(0x1220);
+    std::array<std::uint64_t, 3> elements{};
+    for (std::uint32_t count : {0u, 1u, 3u, 0xFFFFFFFFu}) {
+        constructionOrder.clear();
+        ConstructArrayElements(elements.data(), sizeof(elements[0]), count, &RecordConstruction);
+        const auto port = constructionOrder;
+        constructionOrder.clear();
+        original(elements.data(), sizeof(elements[0]), count, &RecordConstruction);
+        Check(port == constructionOrder, "native array construction order");
+    }
+    std::puts("Original array constructor: 4 callback-order comparisons passed");
+}
+#endif
 void Equal(const std::string& port, const std::string& native, const char* name) {
     ++checks;
     Check(port == native, name);
@@ -111,6 +131,9 @@ int Run(const std::filesystem::path& original) {
     if (original.empty())
         return 0; // The always-on semantic checks remain in model_effect_query.
     OriginalPhysicsModule module(original);
+#ifdef _WIN64
+    CompareConstruction(module);
+#endif
     NativeMmdQueries native(module);
     auto app = std::make_unique<MMDApp>();
     auto renderer = std::make_unique<D3DRenderer>();

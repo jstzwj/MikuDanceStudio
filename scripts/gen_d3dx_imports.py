@@ -10,7 +10,7 @@ import re
 
 
 X86_WORD_TYPES = frozenset({
-    "BOOL", "D3DCOLOR", "D3DFORMAT", "D3DPOOL", "DWORD", "HMODULE",
+    "BOOL", "D3DCOLOR", "D3DFORMAT", "D3DPOOL", "D3DXIMAGE_FILEFORMAT", "DWORD", "HMODULE",
     "LPCSTR", "LPCVOID", "LPCWSTR", "UINT", "float", "int",
     "unsigned int", "unsigned long",
 })

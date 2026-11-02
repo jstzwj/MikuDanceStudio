@@ -20,6 +20,10 @@ MikuDanceStudio 使用 C++、Win32 和 DirectX 9，内置 Bullet 2.75 与 MME。
 
 应用仍包含具有兼容布局约束的运行时记录。新业务代码优先使用具名成员和明确的拥有关系；磁盘记录、运行时对象和外部 COM/插件 ABI 分开维护。`RawPad` 表示保留布局区域，不能根据位置猜测语义后直接用于业务逻辑。
 
+D3DX 的共享声明位于 `third_party/mmeffect/include/d3dx9.h`，宿主封装为 `include/mikudancestudio/d3dx_api.hpp`。它通过普通 PE 导入调用原运行时；效果、网格、错误缓冲、调色板和图像格式均使用具体类型。模型顶点／索引缓冲、附件槽位／网格／材质贯通具体指针类型，保留原有布局和释放顺序。原始数据、通用 COM 锁定输出和外部不透明句柄继续保留无类型指针；原运行时记录的浮点数组在数学调用边界适配，不改变数值求值顺序。
+
+状态栏与面板背景分别由 `PaintViewportStatus`、`PaintTimelinePanelBackground` 绘制；PMM 迁移对话框由 `PmmMigrationDialogProc` 处理。显示组编辑器的 `SelectableBoneIndices` 保存骨骼索引；模型的 `englishUI` 是与界面本地化同步的语言标志，原名 `physicsFlags` 与其用途不符。
+
 `MMDApp` 在 x86/x64 上使用同一份 `AppRuntimeState`（[定义](../include/mikudancestudio/app_runtime_state.hpp)）。对话框句柄、完整宽度的回调、临时缓冲区、剪贴板、选区、矩阵和设备灯光均通过具名接口访问。`MMDAppState` 中对应的 `reserved*` 成员只保留旧布局的尺寸和偏移；`layout_pins.hpp` 防止意外改变兼容记录，不代表这些保留槽位仍是业务状态，也不构成全程序等价证明。PMM 继续按字段读写，不能整体序列化这两个对象。
 
 运行时状态的维护规则：

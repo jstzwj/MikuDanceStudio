@@ -1355,3 +1355,41 @@ GJK／EPA 内还有需要区分的两类差异：`btGjkEpa2.cpp:679` 的重心�
 原生交叉实验与编码验证记录位于本机 `out/issue11/FINDINGS.md`、`verification.json`。这些实验不修改机器的系统区域设置。
 
 修复后两架构完整 Release 构建成功；效果路径、原生编译器、PE 导入、直接导入及缺失入口拒绝共 **5/5** 专项测试在两架构均通过，无跳过。当时的默认 ACP 为 1252，路径测试使用可表示的非 ASCII 字符；此前同一 x86 功能回归已出现 X1507。随后 CPU 集合 x86 **14/14**、x64 **13/13** 通过。再通过仅作用于测试副本的 manifest 选择 ACP 932／65001，四组原生编译器测试均通过，覆盖日文路径及 include 失败；此时桌面再次锁定，四组完整加载器测试因 HAL 不可用返回 77，明确记为跳过，不作为日文 GPU 加载通过的证据。本轮未跑全量 CTest。结果位于 `out/issue11/test-fix-targeted-{x86,x64}.xml`、`test-fix-cpu-{x86,x64}.xml` 和 `fixed-locales/verification.json`。
+
+## 2026-11-02：内部接口类型与名称整理
+
+D3DX 宿主封装由 `d3dx_dyn.hpp` 更名为 `d3dx_api.hpp`，移除无用的函数指针签名副本和不再加载任何模块的 `Api::Load`。效果创建使用 `D3DXMACRO`、`ID3DXInclude`、效果池／效果／错误缓冲类型；网格加载使用 `ID3DXBuffer**` 与 `ID3DXMesh**`，法线计算接收 `ID3DXBaseMesh*`，图像保存使用 `D3DXIMAGE_FILEFORMAT`、`PALETTEENTRY` 和 `RECT`。共享声明同时恢复 include 回调、函数描述、状态管理器及常量表的实际类型；导入元数据生成器明确接受已断言为 32 位的图像格式枚举。
+
+模型的主／辅助顶点缓冲及索引缓冲、附件槽位／操作轴／网格／材质贯通具体指针类型，删除 `ResourceAs` 转接；PMD 的锁定顶点与索引按现有 GPU 记录访问，保留 32／16 字节顶点步长和 16 位索引。附件材质查询按 `D3DMATERIAL9` 复制，断言其 68 字节布局。数组构造回调恢复为函数指针；NVAPI 设备参数为 `IDirect3DDevice9*`，立体句柄仍按外部 ABI 保持不透明。
+
+加载参数改用 `renderer`、`showLoadMessages`、`englishUI`、`physicsScene`、`fileHandle` 等语义名称；原版未使用的参数明确标为 `legacyOption`。模型的语言标志由误导性的 `physicsFlags` 更名为 `englishUI`。状态绘制、PMM 迁移对话框和显示组骨骼索引按实际职责命名，清理动态加载／待实现等过时说明。字符串仍是字符串，原始数据和通用 COM 锁定输出保留原类型；原记录的浮点数组只在数学边界适配。外部导出声明、两架构兼容布局、分配／释放方式及数值求值顺序未改动。
+
+两架构 Release 完整构建通过，既有布局断言和新增 D3DX 封装／共享声明的完整函数签名断言均通过；非 GPU 测试集 x64 **78/78**（78.31 秒）、x86 **74/74**（48.51 秒）通过，无跳过。桌面恢复后，完整 CTest 为 x64 **103/103**（174.55 秒）、x86 **99/99**（200.29 秒）通过，零失败、零跳过，包含 D3DX 运行库、GPU 渲染、MME 离屏与 ray-mmd 回归。原版场景、渲染特性和交叉加载三组对照分别有 19、19、20 个阶段；每架构共 58 个阶段的颜色／阴影无差异，矩阵、几何、绘制状态与着色器常量均相等。
+
+格式检查与 `git diff --check` 通过。构建和 CPU 日志位于本机 `out/typed-interfaces-build-{x64,x86}.log`、`out/typed-interfaces-tests-{x64,x86}-cpu.log`；恢复桌面后的完整日志为 `out/typed-interfaces-tests-{x64,x86}-desktop-restored.log`，JUnit、原版对照报告副本及汇总见 `out/typed-interfaces-desktop-restored/`。
+
+初次完整 x64 CTest 为 78 通过、23 跳过、2 失败：原生 D3D9 能力查询返回 `0x8876086A`，导致设备用例跳过及 `mme_d3dx_runtime` 失败；`scene_reset` 则在 CPU 后备设备继承的 `LightEnable` 中转发空设备指针。后者是原有测试夹具遗漏，补齐该方法后，两架构在 CPU 后备设备上均通过场景重置断言；恢复桌面后，真实设备上的完整回归也通过。诊断栈与链接映射位于 `out/typed-interface-debug/`。本轮画面对照使用既有生成场景夹具，效果测试包含已配置的 ray-mmd；未新增真实 Sour Miku 或 sdPBR480 的 AVI 导出对照，不能据此扩大这两类场景的兼容结论。
+
+### 同日：改动的行为保持复核
+
+逐项核对当前改动的类型宽度、字段布局、分配／释放配对及顺序、GPU 缓冲步进、加载器读取顺序和条件分支。去除注释与空白并归一已知重命名后，50 个 C++ 文件的记号序列相同；其余类型及访问方式变更逐项核查。D3DX 的 27 个封装入口完整保留，数学函数体不变；外部导出声明未变化。`SceneMemoryDevice::LightEnable` 仅补齐测试设备，未修改生产设备逻辑。
+
+发现并修正截图未知扩展名分支的枚举转换风险：原先的 `intptr_t → int` 截断在接口类型化后变成了直接转未固定底层类型的枚举。现在明确先截断为原来的 32 位 `int`，共享枚举固定为相同 ABI 的 `int`，允许保留原有原始格式值，并增加底层类型断言。已知扩展名对应的格式值及保存、清理顺序不变。转换规则参见 [C++ 草案 expr.static.cast 第 8 段](https://eel.is/c++draft/expr.static.cast#8)。
+
+修正后两架构完整 Release 构建、格式检查及 `git diff --check` 通过。本次完整 CTest 尝试为 x64 79 通过／23 跳过／1 失败，x86 75 通过／23 跳过／1 失败；唯一失败均为 `mme_d3dx_runtime` 无法创建设备。只调用系统 `d3d9.dll`、不加载任何项目代码的独立探针，对 HAL／REF／NULLREF 的 `GetDeviceCaps` 均返回 `0x8876086A`，确认当前图形环境不可用。因此，上文 103/103 与 99/99 的全部通过和画面对照是本次边界补齐前的验证记录，本次 GPU 复验尚未完成。
+
+本机复核证据：`out/typed-interface-review-tokens.json`、`out/typed-interface-review-results.json`、`out/typed-interface-review-system-d3d9.json`；构建／测试日志为 `out/typed-interface-review-{build,tests}-{x64,x86}.log`，JUnit 为各构建目录中的 `typed-interface-review-{x64,x86}.xml`。
+
+### 同日：指定原版 x64 的 IDA-MCP 对照
+
+进一步核对原版 PMD／PMX 加载、GPU 记录布局、模型析构、附件材质导出、截图和 NVAPI 调用。确认已核对的类型宽度与关键有效调用结果匹配；同时发现已有的 `ConstructArrayElements` 遍历方向与原版相反：原版计数器递减、元素地址递增，当前实现按元素地址递减。现有十个调用点均使用无副作用的 `IdentityCtor`，尚未影响这些调用结果，但实现与注释都不能称为严格对应原版。本轮类型整理未引入该差异；本次仅审计，未改生产逻辑。
+
+当前 x64 构建对同一原版执行宿主接口 7536 次比较，以及生成 PMD／PMX 共十二组主／描边顶点缓冲逐字节比较，均通过。设备仍不可用，场景验证使用 CPU 缓冲，未复测最终画面。具体 RVA、样本哈希、已有防护差异和验证范围见 [内部接口原版对照审计](TYPED_INTERFACE_NATIVE_AUDIT_2026-11-02.md)。
+
+### 2026-11-03：对齐上述审计差异
+
+按用户要求修正构造回调为地址递增，恢复 PMD 按实际骨骼数分配、模型析构保留姿势追踪字段、附件父模型仅判断 `-1` 哨兵；资源效果创建传空错误输出，按原版 HRESULT 和顺序清理。PMD／PMX 的创建和索引锁定、截图创建和 blit、D3D 初始化相关格式及资源检查恢复精确零值判断；顶点锁定、多重采样和设备创建保持符号判断，设备能力查询忽略返回值。PMX 资源输出直接写入模型字段，确保与原版在非零返回值下保留相同的输出存储。
+
+新增构造顺序与析构状态断言、四组原版 x64 构造回调对照及五个 PMX `S_FALSE` 失败案例。详见[审计记录的对齐实现与回归](TYPED_INTERFACE_NATIVE_AUDIT_2026-11-02.md#2026-11-03对齐实现与回归)。
+
+两架构 Release 完整构建通过，选定 CPU 集合 x64 **80/80**、x86 **76/76** 通过，无失败或跳过；每架构明确排除 23 个依赖 GPU 的用例。x64 原版构造顺序四组、宿主接口 7536 次以及生成 PMD／PMX 十二组主／描边缓冲比较通过。Kinect 旧析构断言同步为原版保留行为，夹具自行释放存储；PMX 正返回值的资源输出归属检查在两架构单独复跑通过。当前未完成图形设备上的截图、效果编译和 AVI 验证。

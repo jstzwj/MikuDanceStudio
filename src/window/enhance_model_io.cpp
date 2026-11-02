@@ -28,7 +28,7 @@
 #include <share.h>
 #include <sys/stat.h>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -127,7 +127,7 @@ void SetModelColor(mdl::ModelRecord* modelPtr, int r, int g, int b) {
         return;
     if (model.vertexCount == 0)
         return;
-    IDirect3DVertexBuffer9* vb = mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2);
+    IDirect3DVertexBuffer9* vb = model.vertexBuffer2;
     if (vb == nullptr)
         return;
     mdl::EdgeVertex* bits = nullptr;

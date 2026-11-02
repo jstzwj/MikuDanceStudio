@@ -96,7 +96,7 @@ void HandleWindowPaint(MMDApp* app) {
     DeleteObject(brush);
     SelectObject(hdc, oldPen);
     DeleteObject(pen);
-    HandlePaletteChanged(hdc); // 0x42CEB0
+    PaintTimelinePanelBackground(hdc); // 0x42CEB0
 
     HPEN black = CreatePen(0, 1, 0);
     SelectObject(hdc, black);
@@ -398,7 +398,7 @@ void HandleWindowPaint(MMDApp* app) {
         Lbl(app, kJpLblVolume, hdc, 12, 1016 - panelShift, rc.bottom - 77);
 
     if (app->FloatingWindow() == nullptr)
-        HandlePaletteChanged2(hdc); // 0x42C140
+        PaintViewportStatus(hdc); // 0x42C140
 
     BitBlt(hdc, 6, 95, side - 10, 50, app->TimelineDC(), 0, 0, SRCCOPY);
     BitBlt(hdc, 6, 145, side - 25, rc.bottom - 393, app->PanelDC(), 0, 0, SRCCOPY);

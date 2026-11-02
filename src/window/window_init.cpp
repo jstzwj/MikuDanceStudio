@@ -92,9 +92,8 @@ void InitDShowRecorder(DShowRecorder* recorder) {
     recorder->selectedCodec = selectedCodec;
 }
 
-bool InitMainWindowAndD3D(MMDApp* app, void* hInstanceIn, int nShowCmd) {
+bool InitMainWindowAndD3D(MMDApp* app, HINSTANCE hInstance, int nShowCmd) {
     (void)nShowCmd;
-    HINSTANCE hInstance = static_cast<HINSTANCE>(hInstanceIn);
     auto& s = *app;
 
     // ---- phase 1: subsystem allocations (ctor chains are no-ops) -------
@@ -117,11 +116,11 @@ bool InitMainWindowAndD3D(MMDApp* app, void* hInstanceIn, int nShowCmd) {
     recorder->compressor = nullptr;
     InitDShowRecorder(recorder); // 0x408EA0
 
-    void* sub04b0 = operator new(sizeof(mdl::AccessoryRecord),
-                                 std::nothrow); // 0x47A6E1
-    s.AxisMeshObject() = sub04b0;
-    *static_cast<std::uint32_t*>(sub04b0) = 0;
-    InitAccessoryRecord(sub04b0); // 0x4C4760
+    auto* axisMesh = static_cast<mdl::AccessoryRecord*>(operator new(sizeof(mdl::AccessoryRecord),
+                                                                     std::nothrow)); // 0x47A6E1
+    s.AxisMeshObject() = axisMesh;
+    axisMesh->mesh = nullptr;
+    InitAccessoryRecord(axisMesh); // 0x4C4760
 
     // 0x47A727: allocation size follows the restored PhysicsScene layout
     // (x86 0x48 / x64 0x90, pinned by static_assert).

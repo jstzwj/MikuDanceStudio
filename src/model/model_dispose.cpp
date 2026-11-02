@@ -3,6 +3,7 @@
 // ===========================================================================
 // Releases model-owned resources; the caller still owns the ModelRecord.
 // DeleteModel is the dispose-and-optionally-free wrapper.
+// Like the reference, it leaves pose-trace storage and its scalar state intact.
 //
 // Original teardown order:
 //   joints and their constraints; rigid bodies; paired undo/redo slots;
@@ -24,7 +25,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <unknwn.h>
+#include <d3d9.h>
 
 #include <cstdint>
 #include <new>
@@ -44,8 +45,7 @@ template <typename T> inline void DeleteOwnedStorage(T*& pointer) {
     pointer = nullptr;
 }
 
-inline void ReleaseCom(void*& storage) {
-    IUnknown*& object = mdl::ResourceAs<IUnknown>(storage);
+template <typename T> inline void ReleaseCom(T*& object) {
     if (object != nullptr) {
         object->Release();
         object = nullptr;
@@ -84,12 +84,6 @@ void ReleasePhysRigid(PhysicsScene* physics, btRigidBody* body) {
 void ModelDispose(mdl::ModelRecord* m) {
     mdl::ModelRecord& model = *m;
     PhysicsScene* scene = model.scenePtr;
-
-    // Unlike the reference destructor, release an interrupted capture as well.
-    // Resetting tracking only stops recording and retains storage for reuse.
-    DeleteOwnedStorage(model.poseTraceBuffer);
-    model.poseTraceSampleCount = 0;
-    model.poseTraceRecording = 0;
 
     // ---- joints -----------------------------------------------------------
     if (model.jointCount > 0) {

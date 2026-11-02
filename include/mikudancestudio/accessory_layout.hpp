@@ -3,23 +3,24 @@
 #include <cstddef>
 #include <cstdint>
 
+struct ID3DXMesh;
+typedef struct _D3DMATERIAL9 D3DMATERIAL9;
+
 namespace mikudancestudio::mdl {
 
 inline constexpr int kAccessorySlotCount = 255;
 
-// Runtime accessory object.  Its first four fields are native pointers;
-// consequently the scalar/string tail starts 16 bytes later in the x64
-// executable.  The opaque block between the resource pointers and editable
-// transform is retained only at this ABI boundary.
 struct AccessoryTexturePaths {
     wchar_t primary[512];
     wchar_t sphere[512];
 };
 static_assert(sizeof(AccessoryTexturePaths) == 2048);
 
+// Runtime accessory object. The four native resource/table pointers place
+// the directory and editable fields 16 bytes later on x64 than on x86.
 struct AccessoryRecord {
-    void* mesh;
-    void* materials;
+    ID3DXMesh* mesh;
+    D3DMATERIAL9* materials;
     AccessoryTexturePaths* texturePaths;
     std::uint8_t* textureTypes;
     wchar_t directory[256];

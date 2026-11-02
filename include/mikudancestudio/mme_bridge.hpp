@@ -15,6 +15,9 @@
 namespace mikudancestudio {
 
 class MMDApp;
+namespace mdl {
+struct AccessoryRecord;
+}
 
 namespace mme {
 
@@ -56,7 +59,7 @@ bool EffectsActive();
 // Accessory mesh DrawSubset equivalent: when MME is active, set streams/indices/FVF manually and forward
 // the draw (replicating ID3DXMesh::DrawSubset's hardware path); otherwise call the original
 // DrawSubset directly. Returns the draw HRESULT.
-HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material);
+HRESULT DrawAccessorySubset(MMDApp* app, mdl::AccessoryRecord* accessory, unsigned long material);
 
 // Notify successful .pmm project load/save points (EMM automatic loading/saving).
 void NotifyPmmLoaded(MMDApp* app);

@@ -44,7 +44,7 @@
 #include <share.h>
 #include <sys/stat.h>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/path_workspace.hpp"

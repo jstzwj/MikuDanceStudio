@@ -35,7 +35,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/bone_axis.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -61,7 +61,7 @@ void OverflowBox(const mdl::ModelRecord* model, int limit) {
     char text[256];
     // x64 sub_7FF7CB4E9390 @0x7FF7CB4E9D4B: language byte selects both the
     // format and the caption ("register frame" / JP "register frame").
-    if (model->physicsFlags != 0) {
+    if (model->englishUI != 0) {
         sprintf_s(text, 0x100,
                   "You cannot regist over %d point\n"
                   "Please execute 'delete unused frame'",

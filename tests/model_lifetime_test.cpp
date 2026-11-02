@@ -48,6 +48,11 @@ int main() {
     std::memset(storage, 0, mdl::kSize);
     ModelInitDefaults(storage);
     auto& model = *storage;
+    // The native destructor leaves pose-trace storage and scalar state intact.
+    auto* trace = Allocate<mdl::PoseTraceSample>();
+    model.poseTraceBuffer = trace;
+    model.poseTraceSampleCount = 7;
+    model.poseTraceRecording = 1;
     model.materials = static_cast<mdl::ModelMaterialRecord*>(
         ::operator new(sizeof(mdl::ModelMaterialRecord) * 2));
     model.boneKeyCursors = static_cast<std::uint32_t*>(::operator new(4));
@@ -71,9 +76,9 @@ int main() {
     BufferReleaseProbe edge(model, 0, sequence, correctOrder);
     BufferReleaseProbe vertices(model, 1, sequence, correctOrder);
     BufferReleaseProbe indices(model, 2, sequence, correctOrder);
-    model.vertexBuffer2 = &edge;
-    model.vertexBuffer = &vertices;
-    model.indexBuffer = &indices;
+    model.vertexBuffer2 = reinterpret_cast<IDirect3DVertexBuffer9*>(&edge);
+    model.vertexBuffer = reinterpret_cast<IDirect3DVertexBuffer9*>(&vertices);
+    model.indexBuffer = reinterpret_cast<IDirect3DIndexBuffer9*>(&indices);
     // Flag zero retains the model object for the caller after disposing its resources.
     DeleteModel(storage, 0);
     bool released = model.materials == nullptr && model.boneKeyCursors == nullptr &&
@@ -81,10 +86,12 @@ int main() {
                     model.pmxTextBuffers[0] == nullptr && model.boneOrderTable == nullptr &&
                     model.displayKeys == nullptr && model.vertexBuffer2 == nullptr &&
                     model.vertexBuffer == nullptr && model.indexBuffer == nullptr &&
-                    sequence == 3 && correctOrder;
+                    sequence == 3 && correctOrder && model.poseTraceBuffer == trace &&
+                    model.poseTraceSampleCount == 7 && model.poseTraceRecording == 1;
     for (const auto& ring : model.undoRings)
         for (const auto& undo : ring.slots)
             released &= undo.bonePose == nullptr && undo.keySnapshots == nullptr;
+    ::operator delete(trace);
     ::operator delete(storage);
     return released ? 0 : 1;
 }

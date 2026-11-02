@@ -34,7 +34,7 @@
 #include <cstring>
 #include <new>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/screen_vertex.hpp"
 #include "mikudancestudio/image_resources.hpp"

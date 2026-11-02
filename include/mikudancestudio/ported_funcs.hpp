@@ -1,9 +1,9 @@
 // ===========================================================================
 // MikuDanceStudio - cross-module declarations for ported original functions
 // ===========================================================================
-// Every declaration carries the original virtual address.  Functions whose
-// bodies have not been ported yet live in src/app/late_ports.cpp (or
-// src/window/wndproc_aux_windows.cpp) and are tracked in docs/PORTING_STATUS.md.
+// Cross-module APIs use semantic parameter and resource types. Original virtual
+// addresses are retained as provenance; implementation coverage and validation
+// are tracked in docs/PORTING_STATUS.md.
 // ===========================================================================
 #pragma once
 
@@ -19,12 +19,14 @@
 #include <cstdio>
 
 class btRigidBody;
+struct IDirect3DDevice9;
 
 namespace mikudancestudio {
 
 class MMDApp;
 enum class GlobalTimelineTrack : std::uint8_t;
 namespace mdl {
+struct AccessoryRecord;
 struct ModelRecord;
 struct BoneClipboardRecord;
 struct MorphClipboardRecord;
@@ -45,7 +47,7 @@ class PhysicsScene; // physics_scene.hpp (the "0x48" physics scene wrapper)
 
 // ---- startup chain --------------------------------------------------------
 // VA 0x0047A5B0 - subsystem alloc + config load + window classes + window.
-bool InitMainWindowAndD3D(MMDApp* app, void* hInstance, int nShowCmd);
+bool InitMainWindowAndD3D(MMDApp* app, HINSTANCE hInstance, int nShowCmd);
 
 // VA 0x0046B090 - per-frame driver (60 KB in the original; ported in phases).
 void FrameDriver(MMDApp* app);
@@ -67,7 +69,7 @@ wchar_t* ExtractDirFromPath(wchar_t* destination, const wchar_t* fullPath);
 void RendererInit(D3DRenderer* renderer);             // VA 0x00406D40 (locale/font)
 void InitAudioContext(WaveAudioContext* audio);       // VA 0x004C2450
 void InitDShowRecorder(DShowRecorder* recorder);      // VA 0x00408EA0
-void InitAccessoryRecord(void* sub);                  // VA 0x004C4760
+void InitAccessoryRecord(mdl::AccessoryRecord* accessory); // VA 0x004C4760
 bool InitAxisMesh(MMDApp* app);                       // VA 0x004C5150
 bool MakeLineGeometry(MMDApp* app);                   // VA 0x0040AF40 (was InitGridGeometry;
                                                       // full body incl. ground-quad VB + JP msg)
@@ -85,18 +87,17 @@ void LoadAccessoryFile(const wchar_t* path);          // VA 0x00460B30 (.x)
 // ---- model object chain (0x460430 -> 0x4A8DC0 -> 0x4BF3E0) ---------------
 void ModelInitDefaults(mdl::ModelRecord* model);   // VA 0x004A8DC0
 void ModelInitMorphSlots(mdl::ModelRecord* model); // VA 0x004A89B0
-bool ModelLoadPMD(mdl::ModelRecord* model, HWND hwnd, const wchar_t* path, D3DRenderer* sub, int a5,
-                  std::uint8_t a6, std::uint8_t a7, PhysicsScene* a8,
+bool ModelLoadPMD(mdl::ModelRecord* model, HWND hwnd, const wchar_t* path, D3DRenderer* renderer,
+                  int legacyOption, std::uint8_t showLoadMessages, std::uint8_t englishUI,
+                  PhysicsScene* physicsScene,
                   PathResolutionWorkspace& paths); // VA 0x004BF3E0
-// a6 = message-box gate (constant 1 at 0x460430), a7 = EnglishUI flag
-// (stored to model+12740), a8 = 0x048 pointer *(app+0x9EDB0), typed as
-// PhysicsScene* (stored to model+60 - the physics scene wrapper).  Full
-// arg map in pmd_load.cpp header.
-bool LoadPMX(mdl::ModelRecord* model, D3DRenderer* sub, std::uint8_t showInfo,
-             std::uint8_t englishUI, PathResolutionWorkspace& paths, int fh); // VA 0x004B77E0
+// legacyOption is retained for the original call shape and is unused.
+bool LoadPMX(mdl::ModelRecord* model, D3DRenderer* renderer, std::uint8_t showLoadMessages,
+             std::uint8_t englishUI, PathResolutionWorkspace& paths,
+             int fileHandle);                                                 // VA 0x004B77E0
 void ModelDispose(mdl::ModelRecord* model);                                   // VA 0x0048F830
 void DeleteModel(mdl::ModelRecord* model, int freeFlag);                      // VA 0x0040A710
-void DisposeAccessory(void* accessory);                                       // VA 0x004C4700
+void DisposeAccessory(mdl::AccessoryRecord* accessory);                       // VA 0x004C4700
 void InitBoneSortOrder(mdl::ModelRecord* model);                              // VA 0x00490070
 void PostLoadInit(mdl::ModelRecord* model);                                   // VA 0x0049C850
 bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub);                // 0x4032B0
@@ -203,7 +204,7 @@ LRESULT CALLBACK MainWndProc(HWND, UINT, WPARAM, LPARAM); // VA 0x004C3A10 (port
 LRESULT CALLBACK RecWndProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x00479DA0
 LRESULT CALLBACK MicWndProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x00466A10
 
-// ---- message targets referenced by MainWndProc (bodies pending) ----------
+// ---- message targets referenced by MainWndProc (implementations in their owning modules) ----------
 void CommandDispatch(HWND ctrl, WPARAM wParam);   // VA 0x0047E8A0 (68KB)
 void SaveFlagSubsystem(MMDApp*);                  // VA 0x00461FA0
 void HandleWindowSize(MMDApp*);                   // VA 0x00443300
@@ -211,8 +212,8 @@ void RefreshMainWindowViewport(MMDApp*);          // VA 0x0042C810
 void RefreshSeparateWindowViewport(MMDApp*);      // VA 0x004290F0
 void HandleWindowPaint(MMDApp*);                  // VA 0x0047C0A0
 LRESULT HandleNotify(HWND, UINT, WPARAM, LPARAM); // VA 0x004398B0
-void HandlePaletteChanged(HDC);                   // VA 0x0042CEB0
-void HandlePaletteChanged2(HDC);                  // VA 0x0042C140
+void PaintTimelinePanelBackground(HDC);           // VA 0x0042CEB0
+void PaintViewportStatus(HDC);                    // VA 0x0042C140
 void HandleDropFiles(HDROP);                      // VA 0x00461300
 
 // ---- render-output chain (0xD4 / 0x114 / 0xDF; bodies in
@@ -257,7 +258,7 @@ int DrawGlyph(MMDApp*, const char*, HDC, int size, int x, int y, unsigned char r
 bool InitToonTextures(MMDApp* app);     // VA 0x00424DC0 (reclassified: toon, not font)
 bool InitSceneFontTexture(MMDApp* app); // VA 0x0042AE80
 
-// ---- frame driver sub-phases (0x0046B090; bodies pending) -----------------
+// ---- frame driver sub-phases (0x0046B090) -----------------
 void MouseInteractionBegin(MMDApp*);                        // mouse-delta snapshot
 void MouseInteractionEnd(MMDApp*);                          // mouse position update
 void ModeRotate(MMDApp*, int axis);                         // modes 1..3 view-axis bone rotation
@@ -309,7 +310,7 @@ void RenderAccessoriesShadow(MMDApp*); // VA 0x004C52D0
 void RenderAccessoriesEffect(MMDApp*); // VA 0x004C55C0
 void RenderAccessoriesEffectRange(MMDApp*, int, int);
 
-// ---- command targets (0x0047E8A0 phase A; bodies pending) ----------------
+// ---- command targets (0x0047E8A0 phase A) ----------------
 void CmdLoadPose(MMDApp*);   // 0xCA
 void CmdSavePose(MMDApp*);   // 0xCB
 void CmdResetState(MMDApp*); // 0xCC -> 0x0044E540
@@ -323,7 +324,7 @@ void CmdLoadAvi(MMDApp*);    // 0xD5 -> 0x00433250
 // ---- D3D subsystem (phase 5) -----------------------------------------------
 bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule); // 0x00408020
 void InitRenderStates(MMDApp*);                                      // VA 0x00406E90
-bool ProbeStereo3D(void* device, void* arg20);                       // VA 0x004CB430
+bool ProbeStereo3D(IDirect3DDevice9* device, void** handleSlot);     // VA 0x004CB430
 void UpdateFrameStereo(MMDApp* app);                                 // VA 0x0046DC75
 int NvapiInitChain();                                                // VA 0x004C6940 (0/-1/-2)
 int NvapiStereoCaps(int arg);                                        // VA 0x004CAF10 (0/status/-3)
@@ -407,13 +408,13 @@ void RefillBoneRegisterCombo(MMDApp* app, int slot); // VA 0x00410040
 // (VA 0x004C4700 - accessory-track dtor; the real port is
 //  DisposeAccessory in src/render/accessory.cpp, the decl had zero callers
 //  and was removed.)
-INT_PTR CALLBACK DialogFuncStub(HWND hwnd, UINT msg, WPARAM wp,
-                                LPARAM lp); // VA 0x0040FF80 (real body:
-                                            //  migration dialog proc)
+INT_PTR CALLBACK PmmMigrationDialogProc(HWND hwnd, UINT msg, WPARAM wp,
+                                        LPARAM lp); // VA 0x0040FF80 (real body:
+                                                    //  migration dialog proc)
 
 // ---- v2 loader misc dependencies (decls; bodies elsewhere) ----------------
 void* ConstructArrayElements(void* block, std::uint32_t elementSize, std::uint32_t count,
-                             void* constructor);
+                             void (*constructor)(void*));
 int PasteAccessoryKeyRecord(MMDApp* app, const mdl::AccessoryClipboardKey& record,
                             int useSelectedSlot);
 void IdentityCtor(void* obj); // VA 0x004C46F0
@@ -421,7 +422,7 @@ void IdentityCtor(void* obj); // VA 0x004C46F0
                               //  `return this;`; callers
                               //  ignore the result, so the
                               //  empty body is faithful)
-bool LoadAccessoryObject(MMDApp* app, void* accessory,
+bool LoadAccessoryObject(MMDApp* app, mdl::AccessoryRecord* accessory,
                          const wchar_t* path); // VA 0x004C5F40
 void SyncAccessoryEditPanel(MMDApp* app);      // VA 0x004134E0
 // (/0x417130 - the 0x4168D0/0x417130 bg-overlay refresh twins

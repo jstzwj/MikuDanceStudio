@@ -17,7 +17,7 @@
 
 #include "fx_slots.hpp"
 #include "model_materials.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
@@ -587,14 +587,14 @@ bool ContainsTextureMarker(const wchar_t* value, const wchar_t* lower, const wch
     return value != nullptr && (wcsstr(value, lower) != nullptr || wcsstr(value, upper) != nullptr);
 }
 
-void SetEffectColor(void* effect, const char* name, const float source[4]) {
+void SetEffectColor(ID3DXEffect* effect, const char* name, const float source[4]) {
     float value[4] = {source[0], source[1], source[2], source[3]};
     for (float& channel : value)
         channel = std::min(channel, 1.0f);
     fx::SetFloatArray(effect, name, value, 4);
 }
 
-void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device, void* effect,
+void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device, ID3DXEffect* effect,
                         const mdl::ModelMaterialRecord& record) {
     const wchar_t* mainPath = record.texturePath;
     const wchar_t* spherePath = record.spherePath;
@@ -640,7 +640,7 @@ void SelectPmxTechnique(D3DRenderer* sub, IDirect3DDevice9* device, void* effect
     }
 }
 
-void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device, void* effect,
+void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device, ID3DXEffect* effect,
                         const mdl::ModelMaterialRecord& record) {
     const wchar_t* mainPath = record.texturePath;
     const wchar_t* spherePath = record.spherePath;
@@ -683,9 +683,9 @@ void SelectPmdTechnique(D3DRenderer* sub, IDirect3DDevice9* device, void* effect
     }
 }
 
-void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* device, void* effect,
-                             const mdl::ModelRecord* model, const mdl::ModelMaterialRecord& record,
-                             UINT materialIndex) {
+void ConfigureEffectMaterial(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* device,
+                             ID3DXEffect* effect, const mdl::ModelRecord* model,
+                             const mdl::ModelMaterialRecord& record, UINT materialIndex) {
     const float alpha = record.diffuse[3];
     const float diffuse[4] = {record.diffuse[0], record.diffuse[1], record.diffuse[2], alpha};
     const float ambient[4] = {record.diffuseMirror[0], record.diffuseMirror[1],
@@ -780,8 +780,8 @@ void DrawModelMaterials(MMDApp* app, mdl::ModelRecord* model, bool effectPass, b
     auto* device = sub->device;
     auto* effect = sub->effect;
     auto* materials = model->materials;
-    auto* vertices = mdl::ResourceAs<IDirect3DVertexBuffer9>(model->vertexBuffer);
-    auto* indices = mdl::ResourceAs<IDirect3DIndexBuffer9>(model->indexBuffer);
+    auto* vertices = model->vertexBuffer;
+    auto* indices = model->indexBuffer;
     if (device == nullptr || materials == nullptr || vertices == nullptr || indices == nullptr)
         return;
 
@@ -954,12 +954,12 @@ void DrawModelMaterials(MMDApp* app, mdl::ModelRecord* model, bool effectPass, b
 void DrawModelEdgeGeometry(MMDApp* app, mdl::ModelRecord* model, bool projectedShadow) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    void* effect = sub->effect;
+    ID3DXEffect* effect = sub->effect;
     if (model == nullptr || model->loadComplete == 0 || model->displayState != 0)
         return;
     mdl::ModelRecord& state = *model;
-    auto* vb = mdl::ResourceAs<IDirect3DVertexBuffer9>(model->vertexBuffer2);
-    auto* ib = mdl::ResourceAs<IDirect3DIndexBuffer9>(model->indexBuffer);
+    auto* vb = model->vertexBuffer2;
+    auto* ib = model->indexBuffer;
     auto* materials = model->materials;
     if (vb == nullptr || ib == nullptr || materials == nullptr)
         return;
@@ -1124,7 +1124,7 @@ void RestoreModelMaterialPass(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* d
 void DrawModelOutlines(MMDApp* app, bool effectEdge) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    void* effect = sub->effect;
+    ID3DXEffect* effect = sub->effect;
     UINT passes = 0;
     if (effectEdge) {
         if (effect == nullptr)
@@ -1340,7 +1340,7 @@ void RenderModelsFixed(MMDApp* app) { // 0x425D20
 void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    void* effect = sub->effect;
+    ID3DXEffect* effect = sub->effect;
     if (effect == nullptr) {
         RenderModelsFixed(app);
         return;
@@ -1499,7 +1499,7 @@ void RenderModelsEffect(MMDApp* app, const float frameMatrix[16]) { // 0x4277E0
 void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) { // 0x426CD0
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    void* effect = sub->effect;
+    ID3DXEffect* effect = sub->effect;
     auto& api = d3dx::Get();
     if (device == nullptr || effect == nullptr)
         return;

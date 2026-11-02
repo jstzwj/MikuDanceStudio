@@ -262,9 +262,9 @@ bool EffectsActive() {
 // ---------------------------------------------------------------------------
 // Accessory mesh drawing (observable equivalent of ID3DXMesh::DrawSubset)
 // ---------------------------------------------------------------------------
-HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material) {
+HRESULT DrawAccessorySubset(MMDApp* app, mdl::AccessoryRecord* accessory, unsigned long material) {
     IDirect3DDevice9* device = app->Renderer()->device;
-    auto* mesh = static_cast<ID3DXMesh*>(mdl::Accessory(accessory)->mesh);
+    auto* mesh = accessory->mesh;
     if (mesh == nullptr)
         return E_FAIL;
     if (!EffectsActive())

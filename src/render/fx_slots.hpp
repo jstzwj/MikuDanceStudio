@@ -1,60 +1,59 @@
 // Typed D3DX effect calls shared by the host renderers.
-// The COM declaration handles x86/x64 dispatch; original VA/slot evidence is
-// retained in reports/audit10_mme_render.md and the owning call-site notes.
+// The shared COM declaration handles x86/x64 dispatch. Call-site comments
+// retain original addresses where ordering or behavior needs explanation.
 #pragma once
 
 #include <cstring>
 #include <d3dx9.h>
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 
 namespace mikudancestudio::fx {
 
-inline ID3DXEffect* Effect(void* effect) {
-    return static_cast<ID3DXEffect*>(effect);
+inline HRESULT SetTechnique(ID3DXEffect* effect, D3DXHANDLE technique) {
+    return effect->SetTechnique(technique);
 }
-inline HRESULT SetTechnique(void* effect, const char* technique) {
-    return Effect(effect)->SetTechnique(technique);
+inline HRESULT SetBool(ID3DXEffect* effect, D3DXHANDLE parameter, int value) {
+    return effect->SetBool(parameter, value);
 }
-inline HRESULT SetBool(void* effect, const char* parameter, int value) {
-    return Effect(effect)->SetBool(parameter, value);
+inline HRESULT SetFloatArray(ID3DXEffect* effect, D3DXHANDLE parameter, const float* values,
+                             UINT count) {
+    return effect->SetFloatArray(parameter, values, count);
 }
-inline HRESULT SetFloatArray(void* effect, const char* parameter, const float* values, UINT count) {
-    return Effect(effect)->SetFloatArray(parameter, values, count);
-}
-inline HRESULT SetMatrix(void* effect, const char* parameter, const d3dx::D3DXMATRIXF* matrix) {
+inline HRESULT SetMatrix(ID3DXEffect* effect, D3DXHANDLE parameter,
+                         const d3dx::D3DXMATRIXF* matrix) {
     D3DMATRIX value;
     static_assert(sizeof(value) == sizeof(*matrix), "D3DX matrix ABI");
     std::memcpy(&value, matrix, sizeof(value));
-    return Effect(effect)->SetMatrix(parameter, &value);
+    return effect->SetMatrix(parameter, &value);
 }
-inline HRESULT GetMatrix(void* effect, const char* parameter, d3dx::D3DXMATRIXF* matrix) {
+inline HRESULT GetMatrix(ID3DXEffect* effect, D3DXHANDLE parameter, d3dx::D3DXMATRIXF* matrix) {
     D3DMATRIX value;
     std::memcpy(&value, matrix, sizeof(value));
-    const HRESULT hr = Effect(effect)->GetMatrix(parameter, &value);
+    const HRESULT hr = effect->GetMatrix(parameter, &value);
     std::memcpy(matrix, &value, sizeof(value));
     return hr;
 }
-inline HRESULT Begin(void* effect, UINT* passes) {
-    return Effect(effect)->Begin(passes, 0);
+inline HRESULT Begin(ID3DXEffect* effect, UINT* passes) {
+    return effect->Begin(passes, 0);
 }
-inline HRESULT Begin(void* effect) {
+inline HRESULT Begin(ID3DXEffect* effect) {
     UINT passes = 0;
     return Begin(effect, &passes);
 }
-inline HRESULT BeginPass(void* effect, UINT pass = 0) {
-    return Effect(effect)->BeginPass(pass);
+inline HRESULT BeginPass(ID3DXEffect* effect, UINT pass = 0) {
+    return effect->BeginPass(pass);
 }
-inline HRESULT EndPass(void* effect) {
-    return Effect(effect)->EndPass();
+inline HRESULT EndPass(ID3DXEffect* effect) {
+    return effect->EndPass();
 }
-inline HRESULT End(void* effect) {
-    return Effect(effect)->End();
+inline HRESULT End(ID3DXEffect* effect) {
+    return effect->End();
 }
-inline HRESULT OnLostDevice(void* effect) {
-    return Effect(effect)->OnLostDevice();
+inline HRESULT OnLostDevice(ID3DXEffect* effect) {
+    return effect->OnLostDevice();
 }
-inline HRESULT OnResetDevice(void* effect) {
-    return Effect(effect)->OnResetDevice();
+inline HRESULT OnResetDevice(ID3DXEffect* effect) {
+    return effect->OnResetDevice();
 }
 
 } // namespace mikudancestudio::fx

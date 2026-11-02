@@ -10,8 +10,8 @@
 // CheckDepthStencilMatch 75/77/80 + multisample ladder 8/4/2/1) ->
 // CreateDevice 7-attempt ladder (HAL/64 fmt22,21 -> SW/64 -> soft flags ->
 // SW/64,32 -> REF/64,32) -> caps gate (VS/PS major >= 2) -> HDR RT +
-// sprite + effect (res 118 SM3 / 117 SM2; technique desc 'r' check ->
-// SetFloat("SKII1", 600/500)) -> aspect + PerspectiveFovLH(PI/4, aspect,
+// sprite + effect (res 118 SM3 / 117 SM2; level-0 format check ->
+// SetInt("SKII1", 600/500)) -> aspect + PerspectiveFovLH(PI/4, aspect,
 // 1.0f, 10000.0f) -> SetTransform(PROJECTION) -> render states (0x406E90)
 // -> backbuffer/depth handles -> lockable capture render target.
 // =========================================================================//
@@ -25,7 +25,7 @@
 #include <cstdint>
 
 #include "mikudancestudio/d3d_wrapper.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -43,12 +43,6 @@ BOOL CALLBACK EnumMonitorsMax(HMONITOR, HDC, LPRECT rect, LPARAM lParam) {
     if (renderer->screenHeight < h)
         renderer->screenHeight = h;
     return TRUE;
-}
-
-void ReleaseCom(void* object) {
-    if (object == nullptr)
-        return;
-    reinterpret_cast<IUnknown*>(object)->Release(); // vtable slot 2
 }
 
 // Porting-era error/state dumps under MIKUDANCESTUDIO_STATE_DUMP_DIR /
@@ -82,32 +76,6 @@ void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp, const HRESULT* att
     std::fclose(stream);
 }
 
-void DumpEffectFailure(HRESULT result, int resourceId, void* errors) {
-    char directory[MAX_PATH]{};
-    DWORD length = GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) {
-        length = GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
-    }
-    if (length == 0 || length >= MAX_PATH)
-        return;
-    CreateDirectoryA(directory, nullptr);
-    char path[MAX_PATH]{};
-    std::snprintf(path, sizeof(path), "%s\\effect_create.error.txt", directory);
-    FILE* stream = nullptr;
-    if (fopen_s(&stream, path, "wb") != 0 || stream == nullptr)
-        return;
-    std::fprintf(stream, "resource=%d HRESULT=0x%08X\r\n", resourceId,
-                 static_cast<unsigned>(result));
-    if (errors != nullptr) {
-        auto* buffer = static_cast<ID3DXBuffer*>(errors);
-        const void* bytes = buffer->GetBufferPointer();
-        const DWORD size = buffer->GetBufferSize();
-        if (bytes != nullptr && size != 0)
-            std::fwrite(bytes, 1, size, stream);
-    }
-    std::fclose(stream);
-}
-
 void DumpEffectStatus(bool haveD3dx, int vsMajor, int psMajor, int maxTexW, int maxTexH,
                       D3DRenderer* renderer) {
     char directory[MAX_PATH]{};
@@ -131,8 +99,6 @@ void DumpEffectStatus(bool haveD3dx, int vsMajor, int psMajor, int maxTexW, int 
 }
 #else
 inline void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS&, const HRESULT*, int, D3DFORMAT) {
-}
-inline void DumpEffectFailure(HRESULT, int, void*) {
 }
 inline void DumpEffectStatus(bool, int, int, int, int, D3DRenderer*) {
 }
@@ -173,19 +139,19 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
 
     // back-buffer format preference: A8R8G8B8(21) unless unsupported -> X8R8G8B8(22)
     r->backbufferFormat = static_cast<D3DFORMAT>(21);
-    if (FAILED(d3d->CheckDeviceType(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8 /*22*/,
-                                    D3DFMT_A8R8G8B8 /*21*/, TRUE)))
+    if (d3d->CheckDeviceType(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8 /*22*/, D3DFMT_A8R8G8B8 /*21*/,
+                             TRUE) != D3D_OK)
         r->backbufferFormat = static_cast<D3DFORMAT>(22);
 
     // depth format ladder: D24S8(75) -> D24X8(77) -> D16(80)
     const D3DFORMAT bbFmt = r->backbufferFormat;
     r->presentParameters.AutoDepthStencilFormat = static_cast<D3DFORMAT>(75);
-    if (FAILED(
-            d3d->CheckDepthStencilMatch(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, bbFmt, D3DFMT_D24S8))) {
+    if (d3d->CheckDepthStencilMatch(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, bbFmt, D3DFMT_D24S8) !=
+        D3D_OK) {
         r->d3dInitialized = 0;
         r->presentParameters.AutoDepthStencilFormat = static_cast<D3DFORMAT>(77);
-        if (FAILED(d3d->CheckDepthStencilMatch(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, bbFmt,
-                                               D3DFMT_D24X8)))
+        if (d3d->CheckDepthStencilMatch(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, bbFmt, D3DFMT_D24X8) !=
+            D3D_OK)
             r->presentParameters.AutoDepthStencilFormat = static_cast<D3DFORMAT>(80);
     }
 
@@ -298,8 +264,7 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
 
     // caps: raw dword reads at the original offsets (Ghidra split locals)
     D3DCAPS9 caps;
-    if (FAILED(device->GetDeviceCaps(&caps)))
-        return true; // original proceeds regardless
+    device->GetDeviceCaps(&caps); // x64 RVA 0x80AB ignores the HRESULT.
     // x64 0x7FF7CB4280E1: renderer+240048 mirrors caps+0x6C, which is
     // D3DCAPS9::MaxAnisotropy (MaxTextureWidth/Height live at +0x58/+0x5C
     // in this struct, pushing MaxAnisotropy to +0x6C; MaxStreams is the
@@ -333,9 +298,11 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
         r->renderTargetWidth = rtW;
         r->renderTargetHeight = rtH;
 
-        if (SUCCEEDED(d3dx->createTexture(device, rtW, rtH, 1, D3DUSAGE_RENDERTARGET /*1*/,
-                                          static_cast<D3DFORMAT>(114) /*R32F*/,
-                                          D3DPOOL_DEFAULT /*0*/, &r->hdrTexture))) {
+        if (d3dx->createTexture(device, rtW, rtH, 1, D3DUSAGE_RENDERTARGET /*1*/,
+                                static_cast<D3DFORMAT>(114) /*R32F*/, D3DPOOL_DEFAULT /*0*/,
+                                &r->hdrTexture) != D3D_OK) {
+            r->postProcessEnabled = 0;
+        } else {
             // sprite texture from the embedded PNG (res 0x67)
             HRSRC res = FindResourceA(hModule, MAKEINTRESOURCEA(0x67), "PNG");
             DWORD size = SizeofResource(nullptr, res);
@@ -348,9 +315,9 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
             r->hdrTexture->GetSurfaceLevel(0, spriteSurf);
 
             IDirect3DSurface9** shadowDepth = &r->shadowDepthSurface;
-            if (FAILED(device->CreateDepthStencilSurface(
-                    rtW, rtH, static_cast<D3DFORMAT>(77) /*D24X8*/, D3DMULTISAMPLE_NONE, 0, FALSE,
-                    shadowDepth, nullptr))) {
+            if (device->CreateDepthStencilSurface(rtW, rtH, static_cast<D3DFORMAT>(77) /*D24X8*/,
+                                                  D3DMULTISAMPLE_NONE, 0, FALSE, shadowDepth,
+                                                  nullptr) != D3D_OK) {
                 if (*spriteSurf) {
                     (*spriteSurf)->Release();
                     *spriteSurf = nullptr;
@@ -359,22 +326,19 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                     r->hdrTexture->Release();
                     r->hdrTexture = nullptr;
                 }
+                r->postProcessEnabled = 0;
             } else {
-                void** effect = reinterpret_cast<void**>(&r->effect);
-                void* effectErrors = nullptr;
-                HRESULT effectResult = E_FAIL;
-                int effectResource = 0;
+                ID3DXEffect** effect = &r->effect;
+                HRESULT effectResult;
                 if (vsMajor >= 3 && psMajor >= 3) {
-                    effectResource = 118;
                     effectResult =
                         d3dx->createEffectFromResA(device, nullptr, MAKEINTRESOURCEA(118), nullptr,
-                                                   nullptr, 0, nullptr, effect, &effectErrors);
+                                                   nullptr, 0, nullptr, effect, nullptr);
                     r->shaderModel3 = 1; // SM3
                 } else {
-                    effectResource = 117;
                     effectResult =
                         d3dx->createEffectFromResA(device, nullptr, MAKEINTRESOURCEA(117), nullptr,
-                                                   nullptr, 0, nullptr, effect, &effectErrors);
+                                                   nullptr, 0, nullptr, effect, nullptr);
                     // Level-0 format of the HDR texture decides the integer
                     // the effect receives under the name "SKII1": 114 ==
                     // D3DFMT_R32F ('r') -> 600 plus the shader-model-3 flag,
@@ -382,19 +346,14 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                     // IDirect3DTexture9::GetLevelDesc followed by
                     // ID3DXBaseEffect::SetInt - x86 vtable bytes 0x44 on the
                     // texture and 0x68 on the effect.)
-                    if (*effect != nullptr) {
-                        D3DSURFACE_DESC levelDesc{};
-                        r->hdrTexture->GetLevelDesc(0, &levelDesc);
-                        const bool r32fTarget = levelDesc.Format == D3DFMT_R32F;
-                        static_cast<d3dx::Effect*>(*effect)->SetInt("SKII1",
-                                                                    r32fTarget ? 600 : 500);
-                        r->shaderModel3 = static_cast<std::uint8_t>(r32fTarget);
-                    }
+                    D3DSURFACE_DESC levelDesc{};
+                    r->hdrTexture->GetLevelDesc(0, &levelDesc);
+                    const bool r32fTarget = levelDesc.Format == D3DFMT_R32F;
+                    (*effect)->SetInt("SKII1", r32fTarget ? 600 : 500);
+                    r->shaderModel3 = static_cast<std::uint8_t>(r32fTarget);
                 }
-                if (FAILED(effectResult) || *effect == nullptr)
-                    DumpEffectFailure(effectResult, effectResource, effectErrors);
-                ReleaseCom(effectErrors);
-                if (*effect == nullptr) {
+                // x64 RVA 0x8388 tests the HRESULT, not the effect pointer.
+                if (effectResult != D3D_OK) {
                     if (*spriteSurf) {
                         (*spriteSurf)->Release();
                         *spriteSurf = nullptr;
@@ -407,11 +366,10 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                         (*shadowDepth)->Release();
                         *shadowDepth = nullptr;
                     }
+                    r->postProcessEnabled = 0;
                 }
             }
         }
-        if (r->effect == nullptr)
-            r->postProcessEnabled = 0;
     }
     DumpEffectStatus(haveD3dx, vsMajor, psMajor, maxTexW, maxTexH, r);
 
@@ -438,8 +396,7 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                                    nullptr) != D3D_OK)
         r->multisampleAvailable = 1;
 
-    if (r->stereoEnabled != 0 &&
-        ProbeStereo3D(device, reinterpret_cast<unsigned char*>(&r->stereoHandle)))
+    if (r->stereoEnabled != 0 && ProbeStereo3D(device, &r->stereoHandle))
         r->stereoEnabled = 0;
 
     // Embedded MMEffect: the device and embedded standard effect are ready; register the host window/standard effect.

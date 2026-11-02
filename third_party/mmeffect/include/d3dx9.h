@@ -13,7 +13,9 @@
 // ---------------------------------------------------------------------------
 typedef const char* D3DXHANDLE;
 
-enum D3DXIMAGE_FILEFORMAT {
+// Keep the SDK's 32-bit int ABI while allowing the capture path's legacy raw
+// format value for an unrecognized extension to be converted without enum-range UB.
+enum D3DXIMAGE_FILEFORMAT : int {
     D3DXIFF_BMP = 0,
     D3DXIFF_JPG = 1,
     D3DXIFF_TGA = 2,
@@ -78,11 +80,18 @@ struct D3DXMATERIAL {
     LPSTR pTextureFilename;
 };
 
-// ID3DXInclude is passed only as nullptr to D3DXCreateEffectFromFileA/W.
-struct ID3DXInclude {
-    virtual HRESULT __stdcall Open(void) = 0;
-    virtual HRESULT __stdcall Close(void) = 0;
+enum D3DXINCLUDE_TYPE {
+    D3DXINC_LOCAL = 0,
+    D3DXINC_SYSTEM = 1,
+    D3DXINC_FORCE_DWORD = 0x7fffffff
 };
+struct ID3DXInclude {
+    virtual HRESULT __stdcall Open(D3DXINCLUDE_TYPE type, LPCSTR fileName, LPCVOID parentData,
+                                   LPCVOID* data, UINT* bytes) = 0;
+    virtual HRESULT __stdcall Close(LPCVOID data) = 0;
+};
+struct ID3DXEffectStateManager;
+struct ID3DXConstantTable;
 
 // ---------------------------------------------------------------------------
 // ID3DXBuffer（d3dx9core.h：IUnknown + GetBufferPointer/GetBufferSize）
@@ -246,7 +255,7 @@ struct ID3DXEffect : public IUnknown {
     virtual HRESULT __stdcall GetPassDesc(D3DXHANDLE pass,
                                           D3DXPASS_DESC* desc) = 0;              // 6
     virtual HRESULT __stdcall GetFunctionDesc(D3DXHANDLE function,
-                                              void* desc) = 0;                   // 7
+                                              D3DXFUNCTION_DESC* desc) = 0; // 7
     virtual D3DXHANDLE __stdcall GetParameter(D3DXHANDLE object,
                                               unsigned int index) = 0;           // 8
     virtual D3DXHANDLE __stdcall GetParameterByName(D3DXHANDLE object,
@@ -364,8 +373,8 @@ struct ID3DXEffect : public IUnknown {
     virtual HRESULT __stdcall GetDevice(IDirect3DDevice9** device) = 0;           // 68
     virtual HRESULT __stdcall OnLostDevice() = 0;                                 // 69
     virtual HRESULT __stdcall OnResetDevice() = 0;                                // 70
-    virtual HRESULT __stdcall SetStateManager(void* manager) = 0;                 // 71
-    virtual HRESULT __stdcall GetStateManager(void** manager) = 0;                // 72
+    virtual HRESULT __stdcall SetStateManager(ID3DXEffectStateManager* manager) = 0;  // 71
+    virtual HRESULT __stdcall GetStateManager(ID3DXEffectStateManager** manager) = 0; // 72
     virtual HRESULT __stdcall BeginParameterBlock() = 0;                          // 73
     virtual D3DXHANDLE __stdcall EndParameterBlock() = 0;                         // 74
     virtual HRESULT __stdcall ApplyParameterBlock(D3DXHANDLE block) = 0;          // 75
@@ -444,10 +453,11 @@ HRESULT WINAPI D3DXCreateVolumeTexture(IDirect3DDevice9* device,
 // (sas+0x48 FullPath); profile comes from "Target" (default tx_1_0); defines/include/flags
 // are always empty, ppShader/ppErrorMsgs are ID3DXBuffer**, and the ninth parameter ppConstantTable
 // is NULL.
-HRESULT WINAPI D3DXCompileShaderFromFileA(
-    const char* srcFile, const D3DXMACRO* defines, ID3DXInclude* include,
-    const char* functionName, const char* profile, unsigned long flags,
-    ID3DXBuffer** shader, ID3DXBuffer** errorMsgs, void** constantTable);
+HRESULT WINAPI D3DXCompileShaderFromFileA(const char* srcFile, const D3DXMACRO* defines,
+                                          ID3DXInclude* include, const char* functionName,
+                                          const char* profile, unsigned long flags,
+                                          ID3DXBuffer** shader, ID3DXBuffer** errorMsgs,
+                                          ID3DXConstantTable** constantTable);
 // [MMEffect.dll static import 0x1800A46F8, call site 0x180015688] Wrap the compiled
 // ID3DXBuffer::GetBufferPointer bytecode as ID3DXTextureShader.
 HRESULT WINAPI D3DXCreateTextureShader(const unsigned long* function,
@@ -461,10 +471,9 @@ HRESULT WINAPI D3DXFillCubeTextureTX(IDirect3DCubeTexture9* cubeTexture,
 HRESULT WINAPI D3DXFillVolumeTextureTX(IDirect3DVolumeTexture9* volumeTexture,
                                        ID3DXTextureShader* textureShader);
 // Debug dump: save a surface as PNG (D3DXSaveSurfaceToFileA).
-HRESULT WINAPI D3DXSaveSurfaceToFileA(const char* destFile, unsigned long format,
-                                      IDirect3DSurface9* srcSurface,
-                                      const void* srcPalette,
-                                      const void* srcRect);
+HRESULT WINAPI D3DXSaveSurfaceToFileA(const char* destFile, D3DXIMAGE_FILEFORMAT format,
+                                      IDirect3DSurface9* srcSurface, const PALETTEENTRY* srcPalette,
+                                      const RECT* srcRect);
 HRESULT WINAPI D3DXCreateEffectPool(ID3DXEffectPool** pool);
 HRESULT WINAPI D3DXCreateEffectFromFileA(IDirect3DDevice9* device,
                                          const char* srcFile,
@@ -548,7 +557,8 @@ void WINAPI D3DXQuaternionToAxisAngle(const D3DXQUATERNION*, D3DXVECTOR3*, float
 D3DXQUATERNION* WINAPI D3DXQuaternionNormalize(D3DXQUATERNION*, const D3DXQUATERNION*);
 D3DXQUATERNION* WINAPI D3DXQuaternionInverse(D3DXQUATERNION*, const D3DXQUATERNION*);
 D3DXQUATERNION* WINAPI D3DXQuaternionRotationAxis(D3DXQUATERNION*, const D3DXVECTOR3*, float);
-HRESULT WINAPI D3DXSaveSurfaceToFileW(LPCWSTR, int, IDirect3DSurface9*, const void*, const RECT*);
+HRESULT WINAPI D3DXSaveSurfaceToFileW(LPCWSTR, D3DXIMAGE_FILEFORMAT, IDirect3DSurface9*,
+                                      const PALETTEENTRY*, const RECT*);
 }  // extern "C"
 
 #endif  // MIKUDANCESTUDIO_MME_D3DX9_MIRROR_H_

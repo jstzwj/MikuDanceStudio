@@ -44,7 +44,7 @@
 #include <cstring>
 #include <cwchar>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -216,10 +216,10 @@ void HoldPresentCaptureFence() {
 // GetBackBuffer, 0x70 = CreateRenderTarget, 0x88 = StretchRect, 0x94 =
 // SetRenderTarget):
 //   1. CreateRenderTarget(w, h, backBufferFormat, 0, 0, 0, &surf, 0);
-//      FAILED -> destroy wait window, viewport refresh, return.
+//      nonzero HRESULT -> destroy wait window, viewport refresh, return.
 //   2. back buffer lazily re-fetched (GetBackBuffer(0, 0, MONO, &bb)).
 //   3. StretchRect(bb, rect{0,0,w,h}, surf, same rect, D3DTEXF_LINEAR);
-//      if that FAILED, retried with filter NONE.  If both succeeded ->
+//      if nonzero, retry with filter NONE.  Either call returning zero ->
 //      D3DXSaveSurfaceToFileW(path, extFormat(path), surf, 0, &rect) (the
 //      extension ladder ".bmp"0/".jpg"1/".png"3/".dds"4/".dib"6/".pfm"8/
 //      ".hdr"7; an unrecognized extension passes the surface pointer as the
@@ -241,9 +241,9 @@ void TimelineAdvance(MMDApp* app) {
         return;
 
     IDirect3DSurface9* surf = nullptr; // 0x46016A
-    if (FAILED(device->CreateRenderTarget(app->RenderWidth(), app->RenderHeight(),
-                                          r->backbufferFormat, // wrapper+0x1D540
-                                          D3DMULTISAMPLE_NONE, 0, FALSE, &surf, nullptr))) {
+    if (device->CreateRenderTarget(app->RenderWidth(), app->RenderHeight(),
+                                   r->backbufferFormat, // wrapper+0x1D540
+                                   D3DMULTISAMPLE_NONE, 0, FALSE, &surf, nullptr) != D3D_OK) {
         DestroyWindow(app->RecordingWindow()); // 0x460177
         app->RecordingWindow() = nullptr;
         RefreshMainWindowViewport(app); // 0x460185
@@ -262,10 +262,10 @@ void TimelineAdvance(MMDApp* app) {
 
     HRESULT hr = device->StretchRect(*backBuffer, &rect, surf, &rect,
                                      D3DTEXF_LINEAR); // 0x460200
-    if (FAILED(hr))
+    if (hr != D3D_OK)
         hr = device->StretchRect(*backBuffer, &rect, surf, &rect,
                                  D3DTEXF_NONE); // 0x46022E
-    if (FAILED(hr)) {
+    if (hr != D3D_OK) {
         // both blits rejected: no file is written, just clean up.
         DestroyWindow(app->RecordingWindow()); // 0x46023B
         app->RecordingWindow() = nullptr;
@@ -277,25 +277,27 @@ void TimelineAdvance(MMDApp* app) {
 
     // ---- save path (0x460269): extension ladder -------------------------
     const wchar_t* path = app->CaptureSavePath();
-    std::intptr_t format; // passed straight to D3DX as the original does
+    D3DXIMAGE_FILEFORMAT format;
     if (wcsstr(path, L".bmp") != nullptr)
-        format = 0; // D3DXIFF_BMP
+        format = D3DXIFF_BMP;
     else if (wcsstr(path, L".jpg") != nullptr)
-        format = 1; // D3DXIFF_JPG
+        format = D3DXIFF_JPG;
     else if (wcsstr(path, L".png") != nullptr)
-        format = 3; // D3DXIFF_PNG
+        format = D3DXIFF_PNG;
     else if (wcsstr(path, L".dds") != nullptr)
-        format = 4; // D3DXIFF_DDS
+        format = D3DXIFF_DDS;
     else if (wcsstr(path, L".dib") != nullptr)
-        format = 6; // D3DXIFF_DIB
+        format = D3DXIFF_DIB;
     else if (wcsstr(path, L".pfm") != nullptr)
-        format = 8; // D3DXIFF_PFM
+        format = D3DXIFF_PFM;
     else if (wcsstr(path, L".hdr") != nullptr)
-        format = 7; // D3DXIFF_HDR
+        format = D3DXIFF_HDR;
     else
-        format = reinterpret_cast<std::intptr_t>(surf); // 0x46031C
+        // Preserve the original invalid-format fallback for an unknown extension (0x46031C).
+        format = static_cast<D3DXIMAGE_FILEFORMAT>(
+            static_cast<int>(reinterpret_cast<std::intptr_t>(surf)));
     auto& d3dxApi = d3dx::Get();
-    d3dxApi.saveSurfaceToFileW(path, static_cast<int>(format), surf, nullptr, &rect); // 0x46032D
+    d3dxApi.saveSurfaceToFileW(path, format, surf, nullptr, &rect); // 0x46032D
     if (surf != nullptr) {
         surf->Release(); // 0x460340
         surf = nullptr;

@@ -3,8 +3,7 @@
 // The reverse-engineered executable stores one model in a flat allocation.
 // The actual field map lives in model_layout.hpp; that runtime record is
 // the only place where ABI offsets and unknown padding belong. Callers pass
-// ModelRecord directly and access its named members. ResourceAs is retained
-// for opaque D3D resource slots whose storage is fixed by that layout.
+// ModelRecord directly and access its named members, including typed D3D resources.
 #pragma once
 
 #include <cstddef>
@@ -186,9 +185,5 @@ enum class PmxTextBufferSlot : std::size_t {
     japaneseComment,
     englishComment,
 };
-
-template <typename T> inline T*& ResourceAs(void*& storage) {
-    return reinterpret_cast<T*&>(storage);
-}
 
 } // namespace mikudancestudio::mdl

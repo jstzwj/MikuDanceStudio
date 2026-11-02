@@ -111,17 +111,18 @@ float UnsignedFrameDelta(std::uint32_t a, std::uint32_t b) {
 } // namespace
 
 // ---- VA 0x00401150: array constructor --------------------------------------
-// Calls `ctor` over each of `count` elements of `elementSize` bytes, walking
-// from the last element down to the first (the original's counting loop).
+// x64 RVA 0x1220 decrements the counter while advancing the element pointer.
+// Calls the constructor from the first element to the last.
 // The ctor receives the element address (original passes it in ECX; the
 // ported no-op 0x4C46F0 takes it as a plain pointer argument).
 //
 void* ConstructArrayElements(void* block, std::uint32_t elementSize, std::uint32_t count,
-                             void* ctor) {
-    const auto fn = reinterpret_cast<void (*)(void*)>(ctor);
-    unsigned char* p = static_cast<unsigned char*>(block);
-    for (std::int32_t i = static_cast<std::int32_t>(count) - 1; i >= 0; --i) {
-        fn(p + static_cast<std::size_t>(i) * elementSize);
+                             void (*constructor)(void*)) {
+    auto* element = static_cast<unsigned char*>(block);
+    for (std::int32_t remaining = static_cast<std::int32_t>(count - 1); remaining >= 0;
+         --remaining) {
+        constructor(element);
+        element += elementSize;
     }
     return block;
 }

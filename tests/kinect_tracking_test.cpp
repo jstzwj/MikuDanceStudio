@@ -52,7 +52,11 @@ struct Fixture {
         }
         ModelInitMorphSlots(model.get());
     }
-    ~Fixture() { ModelDispose(model.get()); }
+    ~Fixture() {
+        ModelDispose(model.get());
+        // The native destructor leaves this allocation to the capture lifecycle.
+        ::operator delete(model->poseTraceBuffer);
+    }
     void Trace(unsigned n = 2) {
         model->poseTraceBuffer = Allocate<mdl::PoseTraceSample>(n);
         model->poseTraceSampleCount = n;
@@ -171,9 +175,11 @@ void RecordingAndLifetime() {
     ModelStandardPoseSetup(&m, true, 1, 0);
     Check(m.poseTraceSampleCount == mdl::kPoseTraceCapacity, "last trace sample fits capacity");
     ModelStandardPoseSetup(&m, false, 1, 0);
+    buffer = m.poseTraceBuffer;
     ModelDispose(&m);
-    Check(!m.poseTraceBuffer && !m.poseTraceSampleCount && !m.poseTraceRecording,
-          "disposing an interrupted capture releases owned storage");
+    Check(m.poseTraceBuffer == buffer && m.poseTraceSampleCount == mdl::kPoseTraceCapacity &&
+              !m.poseTraceRecording,
+          "model disposal retains interrupted capture storage and state as native does");
     // The fixture destructor can safely repeat disposal for these empty pools.
     m.boneCount = 0;
 }

@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 
 namespace mikudancestudio::mdl {
 

@@ -77,7 +77,7 @@ void RefreshMorphGroup(mdl::ModelRecord* model, mdl::MorphPanel panel, int combo
     SendMessage(combo, CB_RESETCONTENT, 0, 0);
     const int n = static_cast<int>(model->morphCount);
     mdl::MorphRecord* morphs = model->morphs;
-    const bool useEnglishNames = model->physicsFlags != 0;
+    const bool useEnglishNames = model->englishUI != 0;
     if (n > 0) {
         for (int i = 0; i < n; ++i) {
             const mdl::MorphRecord& morph = morphs[i];
@@ -137,7 +137,7 @@ void PostLoadInit(mdl::ModelRecord* model) {
     HWND boneCombo = Dlg(model, panel::kIkChainCombo);
     SendMessage(boneCombo, CB_RESETCONTENT, 0, 0);
     mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
-    const bool useEnglishNames = model->physicsFlags != 0;
+    const bool useEnglishNames = model->englishUI != 0;
     const int chainCount = static_cast<int>(model->ikChainCount);
     if (chainCount > 0) {
         for (int i = 0; i < chainCount; ++i) {

@@ -75,7 +75,7 @@ namespace mikudancestudio {
 
 // 0x4C4700 real body lives in src/render/accessory.cpp (not yet declared
 // in ported_funcs.hpp; the no-op stub for it in stubs.cpp is superseded).
-void DisposeAccessory(void* accessory);
+void DisposeAccessory(mdl::AccessoryRecord* accessory);
 
 namespace {
 
@@ -355,8 +355,8 @@ void ShutdownCleanup(MMDApp* app) {
     }
     std::free(s.JointScratchArray());
     s.JointScratchArray() = nullptr;
-    ::operator delete(s.AccessoryEditArray());
-    s.AccessoryEditArray() = nullptr;
+    ::operator delete(s.SelectableBoneIndices());
+    s.SelectableBoneIndices() = nullptr;
 
     // ---- 8: render-side and AVI-config Release() run ----------------------
     ReleaseSlot(s.GroundGridIndices());        // 0x462DE2
@@ -429,7 +429,7 @@ void ShutdownCleanup(MMDApp* app) {
         ::operator delete(phys);            // 0x463233
         s.Physics() = nullptr;
     }
-    if (void* acc = s.AxisMeshObject()) { // 0x463241
+    if (auto* acc = s.AxisMeshObject()) { // 0x463241
         DisposeAccessory(acc);            // 0x46324D
         ::operator delete(acc);           // 0x463253
         s.AxisMeshObject() = nullptr;

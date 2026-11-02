@@ -460,7 +460,7 @@ void TestSelectedBoneStatus() {
     strcpy_s(f.bones[1].nameEn, "upper body");
     const auto title = [&](const std::string& expected, bool playing = false) {
         labels.clear();
-        mds::HandlePaletteChanged2(f.panel);
+        mds::PaintViewportStatus(f.panel);
         Check(!labels.empty() && labels.front().text == expected &&
                   labels.front().x == f.app->SidebarWidth() + 19 &&
                   labels.front().y ==

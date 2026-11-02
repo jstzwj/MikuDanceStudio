@@ -1,4 +1,4 @@
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -129,8 +129,8 @@ struct Fixture {
         app->ReleaseTimelineSelectionRecords();
         delete[] app->SelectNavRecords();
         app->SelectNavRecords() = nullptr;
-        ::operator delete(app->AccessoryEditArray());
-        app->AccessoryEditArray() = nullptr;
+        ::operator delete(app->SelectableBoneIndices());
+        app->SelectableBoneIndices() = nullptr;
         for (auto& ring : model->undoRings)
             for (auto& slot : ring.slots) {
                 ::operator delete(slot.bonePose);
@@ -819,10 +819,31 @@ void TestBindingDialog() {
 }
 }
 
+namespace {
+struct ConstructionRecord {
+    unsigned sequence = 0;
+};
+unsigned constructions = 0;
+void RecordConstruction(void* element) {
+    static_cast<ConstructionRecord*>(element)->sequence = ++constructions;
+}
+void TestArrayConstruction() {
+    ConstructionRecord elements[3]{};
+    mds::ConstructArrayElements(elements, sizeof(elements[0]), 0, &RecordConstruction);
+    mds::ConstructArrayElements(elements, sizeof(elements[0]), 0xFFFFFFFFu, &RecordConstruction);
+    Check(constructions == 0, "empty and negative native counters do not invoke constructors");
+    mds::ConstructArrayElements(elements, sizeof(elements[0]), 3, &RecordConstruction);
+    Check(constructions == 3 && elements[0].sequence == 1 && elements[1].sequence == 2 &&
+              elements[2].sequence == 3,
+          "array constructors visit consecutive elements in ascending address order");
+}
+}
+
 int main() {
     INITCOMMONCONTROLSEX controls{sizeof controls, ICC_BAR_CLASSES};
     if (!InitCommonControlsEx(&controls))
         return 1;
+    TestArrayConstruction();
     TestCurves();
     TestCommandModelBoundary();
     TestModelSwitchBoundary();

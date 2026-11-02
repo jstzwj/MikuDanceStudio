@@ -112,9 +112,8 @@ int RunEffects(const std::filesystem::path& path, const std::filesystem::path& e
         original->model->toonFlag = 1;
         original->Skin(app, world);
         for (auto member : {&mdl::ModelRecord::vertexBuffer, &mdl::ModelRecord::vertexBuffer2}) {
-            const auto port = Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(model.*member));
-            const auto native =
-                Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(original->model.get()->*member));
+            const auto port = Buffer(model.*member);
+            const auto native = Buffer(original->model.get()->*member);
             const std::string kind = member == &mdl::ModelRecord::vertexBuffer ? ".main" : ".edge";
             SaveRenderBytes(output, "port" + kind, port.data(), port.size());
             SaveRenderBytes(output, "original" + kind, native.data(), native.size());

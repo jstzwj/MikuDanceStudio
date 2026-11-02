@@ -38,7 +38,7 @@
 #include <cstdint>
 #include <cstdio>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -109,8 +109,8 @@ void InvalidateSelectionReadouts(MMDApp* app) {
 // The original re-derives the model pointer before every access (no side
 // effects intervene, so one load is taken, as in ui_scroll_mouse.cpp).
 //
-// Then D3DXMatrixRotationQuaternion (d3dx9_32 import, resolved through
-// d3dx_dyn.hpp; the original hard-imports it and calls unconditionally)
+// Then D3DXMatrixRotationQuaternion (a PE import forwarded by d3dx_api.hpp,
+// called unconditionally as in the original)
 // followed by the Euler extraction (0x40D643-0x40D7BF), written to
 // this+0xA04C0/0xA04C4/0xA04C8 (rx/ry/rz):
 //   rz = atan2(m12, m22);  rx = asin(-m32);  ry = atan2(m31, m33)

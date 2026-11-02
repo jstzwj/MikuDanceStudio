@@ -16,6 +16,9 @@
 #include "mikudancestudio/undo_layout.hpp"
 #include "mikudancestudio/skeleton_tracking.hpp"
 
+struct IDirect3DVertexBuffer9;
+struct IDirect3DIndexBuffer9;
+
 namespace mikudancestudio {
 class PhysicsScene;
 }
@@ -57,9 +60,9 @@ using mikudancestudio::RawPad;
 struct ModelRecord {
     void* hwnd;                                // 0  (dialog owner (0x4BF42B this[0]))
     std::uint32_t vertexCount;                 // 4  (this[1])
-    void* vertexBuffer;                        // 8  (FVF 0x112, 32 B/vtx)
-    void* vertexBuffer2;                       // 12  (FVF 0x042, 16 B/vtx)
-    void* indexBuffer;                         // 16
+    IDirect3DVertexBuffer9* vertexBuffer;      // 8  (FVF 0x112, 32 B/vtx)
+    IDirect3DVertexBuffer9* vertexBuffer2;     // 12  (FVF 0x042, 16 B/vtx)
+    IDirect3DIndexBuffer9* indexBuffer;        // 16
     std::uint32_t indexCount;                  // 20  (this[5])
     std::int32_t* indices;                     // 24 (PMD/PMX CPU indices, 32-bit stride)
     std::uint32_t materialCount;               // 28  (this[7])
@@ -177,7 +180,7 @@ struct ModelRecord {
     unsigned char postLoadFlag2;         // 12734
     RawPad<1> gap16;                     // 12735..12736 (unrecovered)
     float edgeScale;                     // 12736  (model_skinning/render)
-    unsigned char physicsFlags;          // 12740  (pmd/pmx/post_load)
+    std::uint8_t englishUI; // 12740 (per-model UI language, synchronized by localization)
     RawPad<3> gap17;                     // 12741..12744 (unrecovered)
     RigidRecord* rigidTable;             // 12744  (172/192-byte records; x64 0x3568)
     JointRecord* jointTable;             // 12748  (140/152-byte records; x64 0x3570)
@@ -299,7 +302,7 @@ static_assert(offsetof(ModelRecord, undoDirty) == 12732, "undoDirty x86");
 static_assert(offsetof(ModelRecord, redoDirty) == 12733, "redoDirty x86");
 static_assert(offsetof(ModelRecord, postLoadFlag2) == 12734, "postLoadFlag2 x86");
 static_assert(offsetof(ModelRecord, edgeScale) == 12736, "edgeScale x86");
-static_assert(offsetof(ModelRecord, physicsFlags) == 12740, "physicsFlags x86");
+static_assert(offsetof(ModelRecord, englishUI) == 12740, "englishUI x86");
 static_assert(offsetof(ModelRecord, rigidTable) == 12744, "rigidTable x86");
 static_assert(offsetof(ModelRecord, jointTable) == 12748, "jointTable x86");
 static_assert(offsetof(ModelRecord, rigidCount) == 12752, "rigidCount x86");
@@ -365,8 +368,8 @@ static_assert(offsetof(ModelRecord, boneListRowType) == 0x315C, "boneListRowType
 static_assert(offsetof(ModelRecord, boneListRowRecord) == 0x3224, "boneListRowRecord x64");
 static_assert(offsetof(ModelRecord, boneListRows) == 0x3544, "boneListRows x64");
 static_assert(offsetof(ModelRecord, boneListPos) == 0x3548, "boneListPos x64");
-static_assert(offsetof(ModelRecord, physicsFlags) == 13664,
-              "physicsFlags x64 (0x3560; per-model language-flag sweep "
+static_assert(offsetof(ModelRecord, englishUI) == 13664,
+              "englishUI x64 (0x3560; per-model language-flag sweep "
               "store 0x7FF7CB43A4F5)");
 static_assert(offsetof(ModelRecord, rigidTable) == 13672, "rigidTable x64");
 static_assert(offsetof(ModelRecord, jointTable) == 13680, "jointTable x64");

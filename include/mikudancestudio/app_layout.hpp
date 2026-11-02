@@ -233,7 +233,7 @@ struct MMDAppState {
     std::int32_t jointLineMap[200]; // x64 pin 648480
     // 255-entry display-object list (was buf9ddx): AccessoryRecord slots
     // plus model-timeline-selected objects (x64 pin 649280)
-    void* objectSlots[mdl::kAccessorySlotCount];
+    mdl::AccessoryRecord* objectSlots[mdl::kAccessorySlotCount];
     std::uint32_t lastRegisteredFrame; // x64 pin 651320
     // shared accessory/model-display list selection byte (was
     // selLightAccSlotOrUint32)
@@ -355,10 +355,10 @@ struct MMDAppState {
     unsigned char projectedShadowBlendEnabled;  // +0x9ED9A
     RawPad<1> pad164;
     std::int32_t coordinateSystem; // x64 pin 654500 (0x9FCA4)
-    void* axisMeshObject;          // AccessoryRecord slot holding the axis gizmo
-                                   // X-file mesh (was sub04b0OrUint32) - x64 pin
-                                   // 654504 (0x9FCA8); no pad165 on x64, the pointer
-                                   // is already 8-aligned right after the dword
+    mdl::AccessoryRecord* axisMeshObject; // AccessoryRecord slot holding the axis gizmo
+                                          // X-file mesh (was sub04b0OrUint32) - x64 pin
+                                          // 654504 (0x9FCA8); no pad165 on x64, the pointer
+                                          // is already 8-aligned right after the dword
 #if !defined(_M_X64)
     RawPad<4> pad166;
 #endif

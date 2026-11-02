@@ -6,26 +6,26 @@
 //   WM_CREATE      -> CreateUIControls (0x466D20); failure exits process
 //   WM_DESTROY     -> save Data\mmconfig.ini (mirror of the 0x47A5B0 load)
 //                     then PostQuitMessage
-//   WM_SIZE        -> flag 672812 toggles around sub_443300 [stubbed]
-//   WM_PAINT       -> sub_47C0A0 [stubbed]
+//   WM_SIZE        -> flag 672812 toggles around sub_443300
+//   WM_PAINT       -> sub_47C0A0
 //   WM_CLOSE       -> dirty-flag confirm dialogs (EN + JP texts; JP bytes
 //                     backfilled from x64 0x7FF7CB552700/0x7FF7CB552798)
 //   WM_ERASEBKGND  -> suppress (D3D owns the client area)
-//   WM_NOTIFY      -> sub_4398B0 [stubbed]
-//   WM_COMMAND     -> command dispatcher 0x47E8A0 (68 KB) [stubbed]
-//   WM_DROPFILES   -> sub_461300 [stubbed]
-//   0x318 (792)    -> palette: sub_42CEB0 + sub_42C140 [stubbed]
+//   WM_NOTIFY      -> sub_4398B0
+//   WM_COMMAND     -> command dispatcher 0x47E8A0 (68 KB)
+//   WM_DROPFILES   -> sub_461300
+//   0x318 (792)    -> PaintTimelinePanelBackground + PaintViewportStatus
 //   WM_TIMER       -> timer 100: sub_429770; timer 101: the Kinect
 //                     auto-frame-record stage byte (app+658792 = 0xA0D68,
 //                     state.autoRepeat / x64 0xA1E14), walked 1->2->3->4
 //                     at 1500 ms intervals
-//   WM_H/VSCROLL   -> sub_44AEE0 / sub_44BB30 [stubbed]
-//   WM_CTLCOLORSTATIC(0x138) -> sub_40E0E0 [stubbed]
+//   WM_H/VSCROLL   -> sub_44AEE0 / sub_44BB30
+//   WM_CTLCOLORSTATIC(0x138) -> sub_40E0E0
 //   WM_MOUSE*      -> capture handling + sub_446A70/44A9A0/44AAA0; the
 //                     panel-activation sub_4632F0 rides WM_RBUTTONDBLCLK
 //                     (x64 0x7FF7CB4FC2C9 case 518), NOT WM_MOUSEACTIVATE
 //                     (0x21 falls through to DefWindowProc)
-//   WM_MOUSEWHEEL  -> sub_44BD70 [stubbed]
+//   WM_MOUSEWHEEL  -> sub_44BD70
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -193,8 +193,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     if (msg > 0x233) {
         if (msg != 792 /*0x318*/)
             return DefWindowProcA(hwnd, msg, wParam, lParam);
-        HandlePaletteChanged(reinterpret_cast<HDC>(wParam));  // 0x42CEB0
-        HandlePaletteChanged2(reinterpret_cast<HDC>(wParam)); // 0x42C140
+        PaintTimelinePanelBackground(reinterpret_cast<HDC>(wParam)); // 0x42CEB0
+        PaintViewportStatus(reinterpret_cast<HDC>(wParam));          // 0x42C140
         return 0;
     }
 

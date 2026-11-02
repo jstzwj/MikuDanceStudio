@@ -12,7 +12,7 @@
 //      branch re-sets the same strings the controls were created with -
 //      restored from ui_controls.inc by id, single source of truth).
 //   3. model-slot language flag sweep: for each of the 100 slots at
-//      this+1920, physicsFlags(slot) = english (x86 12740 / x64 0x3560 =
+//      this+1920, englishUI(slot) = english (x86 12740 / x64 0x3560 =
 //      13664, x64 store at 0x7FF7CB43A4F5); subobject(this+204)+596 too.
 //   4. InvalidateRect + sub_42F1E0 + sub_40D070 [stubs]
 //   5. camera-mode branch (this+760): combobox 434 entries
@@ -199,12 +199,12 @@ void LocalizeUI(MMDApp* app) {
     // model-slot language flag sweep (20 x 5 slots at this+1920); the x64
     // twin sub_7FF7CB438E70 sweeps all 255 slots (mov r8d, 0FFh ... dec r8
     // at 0x7FF7CB43A4E0), storing the app language byte into model+0x3560
-    // (= physicsFlags, x64 store at 0x7FF7CB43A4F5; x86 twin 12740 - the
+    // (= englishUI, x64 store at 0x7FF7CB43A4F5; x86 twin 12740 - the
     // same typed field on both ABIs, never a raw offset).
     for (int i = 0; i < kModelSlotCount; ++i) {
         mdl::ModelRecord* slot = s.ModelSlot(i);
         if (slot != nullptr)
-            slot->physicsFlags = static_cast<unsigned char>(english);
+            slot->englishUI = static_cast<unsigned char>(english);
     }
     if (s.Audio() != nullptr)
         s.Audio()->englishUI = static_cast<unsigned char>(english);

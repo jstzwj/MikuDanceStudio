@@ -1,4 +1,4 @@
-#include "d3d9_device_fixture.hpp"
+#include "scene_memory_device.hpp"
 
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -28,6 +28,7 @@ int messageCount = 0;
 
 class FailedIndexBuffer final : public IDirect3DIndexBuffer9 {
 public:
+    explicit FailedIndexBuffer(HRESULT result) : result(result) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void**) override { return E_NOINTERFACE; }
     ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
     ULONG STDMETHODCALLTYPE Release() override {
@@ -46,11 +47,16 @@ public:
     DWORD STDMETHODCALLTYPE GetPriority() override { return 0; }
     void STDMETHODCALLTYPE PreLoad() override {}
     D3DRESOURCETYPE STDMETHODCALLTYPE GetType() override { return D3DRTYPE_INDEXBUFFER; }
-    HRESULT STDMETHODCALLTYPE Lock(UINT, UINT, void**, DWORD) override { return E_OUTOFMEMORY; }
+    HRESULT STDMETHODCALLTYPE Lock(UINT, UINT, void** output, DWORD) override {
+        *output = bytes;
+        return result;
+    }
     HRESULT STDMETHODCALLTYPE Unlock() override { return E_FAIL; }
     HRESULT STDMETHODCALLTYPE GetDesc(D3DINDEXBUFFER_DESC*) override { return E_FAIL; }
 
 private:
+    HRESULT result;
+    unsigned char bytes[4]{};
     ULONG references = 1;
 };
 
@@ -59,14 +65,26 @@ public:
     explicit PmxDeviceFixture(IDirect3DDevice9* device) : SnapshotDeviceFixture(device) {}
 
     bool failIndexLock = false;
+    HRESULT indexLockResult = E_OUTOFMEMORY;
+    unsigned nonzeroVertexCreate = 0;
+    bool nonzeroIndexCreate = false;
+    HRESULT STDMETHODCALLTYPE CreateVertexBuffer(UINT length, DWORD usage, DWORD fvf, D3DPOOL pool,
+                                                 IDirect3DVertexBuffer9** output,
+                                                 HANDLE* shared) override {
+        const HRESULT result =
+            SnapshotDeviceFixture::CreateVertexBuffer(length, usage, fvf, pool, output, shared);
+        return result == S_OK && vertexCreates == nonzeroVertexCreate ? S_FALSE : result;
+    }
     HRESULT STDMETHODCALLTYPE CreateIndexBuffer(UINT length, DWORD usage, D3DFORMAT format,
                                                 D3DPOOL pool, IDirect3DIndexBuffer9** output,
                                                 HANDLE* shared) override {
-        if (!failIndexLock)
-            return SnapshotDeviceFixture::CreateIndexBuffer(length, usage, format, pool, output,
-                                                            shared);
+        if (!failIndexLock) {
+            const HRESULT result = SnapshotDeviceFixture::CreateIndexBuffer(length, usage, format,
+                                                                            pool, output, shared);
+            return result == S_OK && nonzeroIndexCreate ? S_FALSE : result;
+        }
         ++indexCreates;
-        *output = new FailedIndexBuffer;
+        *output = new FailedIndexBuffer(indexLockResult);
         return S_OK;
     }
 };
@@ -82,7 +100,7 @@ LRESULT CALLBACK CloseErrorBox(int code, WPARAM window, LPARAM data) {
         if (std::strcmp(className, "#32770") == 0) {
             if (loadingApp != nullptr) {
                 const auto* model = loadingApp->ModelSlot(mikudancestudio::kModelSlotCount - 1);
-                sawOccupiedSlot = model != nullptr && model->physicsFlags == 1;
+                sawOccupiedSlot = model != nullptr && model->englishUI == 1;
             }
             char buffer[256]{};
             GetWindowTextA(dialog, buffer, sizeof(buffer));
@@ -154,7 +172,7 @@ void RunFailure(PmxDeviceFixture& device, const char* expectedCaption,
     auto storage = std::make_unique<mikudancestudio::mdl::ModelRecord>();
     mikudancestudio::ModelInitDefaults(storage.get());
     auto& model = *storage;
-    model.physicsFlags = 1;
+    model.englishUI = 1;
     model.hwnd = owner;
     mikudancestudio::PathResolutionWorkspace paths{};
     caption.clear();
@@ -174,6 +192,13 @@ void RunFailure(PmxDeviceFixture& device, const char* expectedCaption,
     Check(device.vertexCreates == expectedVertexCreates &&
               device.indexCreates == expectedIndexCreates,
           "wrong D3D call sequence");
+    if (device.nonzeroVertexCreate != 0)
+        Check((device.nonzeroVertexCreate == 1 ? model.vertexBuffer : model.vertexBuffer2) !=
+                  nullptr,
+              "nonzero vertex creation retains the API output in the model as native does");
+    if (device.nonzeroIndexCreate)
+        Check(model.indexBuffer != nullptr,
+              "nonzero index creation retains the API output in the model as native does");
 
     // Exercise the production failed-load cleanup, including the buffers
     // successfully created before the injected Create/Lock failure.
@@ -243,43 +268,35 @@ int main() {
         RunFailure(vertexFailure, "open file", 1, 0);
         RunModelSlotFailure();
 
-        HWND window = CreateWindowW(L"STATIC", L"PMX failure fixture", WS_OVERLAPPED, 0, 0, 64, 64,
-                                    nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-        if (window == nullptr)
-            return 77;
-        IDirect3D9* d3d = Direct3DCreate9(D3D_SDK_VERSION);
-        if (d3d == nullptr) {
-            DestroyWindow(window);
-            return 77;
-        }
-        D3DPRESENT_PARAMETERS parameters{};
-        parameters.Windowed = TRUE;
-        parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
-        parameters.hDeviceWindow = window;
-        IDirect3DDevice9* real = nullptr;
-        const HRESULT created = d3d->CreateDevice(
-            0, D3DDEVTYPE_HAL, window, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &parameters, &real);
-        if (FAILED(created)) {
-            d3d->Release();
-            DestroyWindow(window);
-            return 77;
-        }
-        PmxDeviceFixture indexFailure(real);
+        // These cases validate API failures and cleanup, not GPU rendering.
+        SceneMemoryDevice memory;
+        PmxDeviceFixture indexFailure(&memory);
         indexFailure.indexResults.push_back(E_OUTOFMEMORY);
-        RunFailure(indexFailure, "CreateIndexBuffer", 2, 1, 2, window);
-        PmxDeviceFixture edgeFailure(real);
+        RunFailure(indexFailure, "CreateIndexBuffer", 2, 1);
+        PmxDeviceFixture edgeFailure(&memory);
         edgeFailure.vertexResults.push_back(S_OK);
         edgeFailure.vertexResults.push_back(E_OUTOFMEMORY);
-        RunFailure(edgeFailure, "open file", 2, 0, 2, window);
-        PmxDeviceFixture lockFailure(real);
+        RunFailure(edgeFailure, "open file", 2, 0);
+        PmxDeviceFixture lockFailure(&memory);
         lockFailure.failIndexLock = true;
-        RunFailure(lockFailure, "pIndBuf->Lock", 2, 1, 2, window);
-        PmxDeviceFixture wideLockFailure(real);
+        RunFailure(lockFailure, "pIndBuf->Lock", 2, 1);
+        PmxDeviceFixture wideLockFailure(&memory);
         wideLockFailure.failIndexLock = true;
-        RunFailure(wideLockFailure, "pIndBuf->Lock", 2, 1, 4, window);
-        real->Release();
-        d3d->Release();
-        DestroyWindow(window);
+        RunFailure(wideLockFailure, "pIndBuf->Lock", 2, 1, 4);
+        for (unsigned create : {1u, 2u}) {
+            PmxDeviceFixture positiveVertex(&memory);
+            positiveVertex.nonzeroVertexCreate = create;
+            RunFailure(positiveVertex, "open file", create, 0);
+        }
+        PmxDeviceFixture positiveIndex(&memory);
+        positiveIndex.nonzeroIndexCreate = true;
+        RunFailure(positiveIndex, "CreateIndexBuffer", 2, 1);
+        for (std::uint8_t width : {2, 4}) {
+            PmxDeviceFixture positiveLock(&memory);
+            positiveLock.failIndexLock = true;
+            positiveLock.indexLockResult = S_FALSE;
+            RunFailure(positiveLock, "pIndBuf->Lock", 2, 1, width);
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

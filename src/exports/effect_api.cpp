@@ -19,7 +19,7 @@
 #include <cstdint>
 
 #include "mikudancestudio/charset_conv.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 
@@ -411,9 +411,8 @@ __declspec(dllexport) float* ExpGetAcsMaterial(float* out, int index, int mat) {
     // 0x4C5EE0: `cmp/jl` - SIGNED `<` (a negative index copies the
     // out-of-bounds record before the table, exactly like the original).
     if (mat < static_cast<std::int32_t>(acc->materialCount)) {
-        const float* rec =
-            static_cast<const float*>(acc->materials) + 17 * static_cast<std::size_t>(mat);
-        std::memcpy(out, rec, 0x44);
+        static_assert(sizeof(D3DMATERIAL9) == 0x44);
+        std::memcpy(out, &acc->materials[mat], sizeof(D3DMATERIAL9));
     }
     return out;
 }

@@ -99,7 +99,7 @@ LRESULT CALLBACK MicWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         BitBlt(hdc, 0, 0, viewport.left, rc.bottom, 0, 0, 0, 0x42);
         BitBlt(hdc, viewport.right, 0, rc.right, rc.bottom, 0, 0, 0, 0x42);
         BitBlt(hdc, 0, viewport.bottom, rc.right, rc.bottom, 0, 0, 0, 0x42);
-        HandlePaletteChanged2(hdc); // 0x466B60
+        PaintViewportStatus(hdc); // 0x466B60
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -133,7 +133,7 @@ LRESULT CALLBACK MicWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         PostViewRefresh(app); // 0x466D00
         return 0;
     case 792 /*WM_PALETTECHANGED*/: // 0x466CBC
-        HandlePaletteChanged2(reinterpret_cast<HDC>(wParam));
+        PaintViewportStatus(reinterpret_cast<HDC>(wParam));
         return 0;
     default:
         return DefWindowProcA(hwnd, msg, wParam, lParam); // 0x466A51

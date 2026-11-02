@@ -107,7 +107,7 @@
 #include <io.h>
 
 #include "mikudancestudio/accessory_layout.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
@@ -1051,7 +1051,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd, PmmModelLoadWo
             DialogBoxParamA(hInst,
                             MAKEINTRESOURCEA(s->EnglishUI() != 0 ? MDS_DLG_PMM_MISSING_MODEL_EN
                                                                  : MDS_DLG_PMM_MISSING_MODEL_JP),
-                            main, DialogFuncStub, 0);
+                            main, PmmMigrationDialogProc, 0);
         if (r == IDCANCEL || r == 4) {
             AbortV2Load(s, fd, workspaces, modelCount);
             return false;
@@ -1281,7 +1281,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd, PmmModelLoadWo
                                               MAKEINTRESOURCEA(s->EnglishUI() != 0
                                                                    ? MDS_DLG_PMM_MODEL_MISMATCH_EN
                                                                    : MDS_DLG_PMM_MODEL_MISMATCH_JP),
-                                              main, DialogFuncStub, 0);
+                                              main, PmmMigrationDialogProc, 0);
             // x64 dispatch table (0x7FF7CB49AA72..0x7FF7CB49BB78):
             //   r==2/r==5 -> abort loading (0x49AA88 jnz 0x49D73F)
             //   r==3      -> discard the current model and open a file dialog to reload (0x49AA8E)

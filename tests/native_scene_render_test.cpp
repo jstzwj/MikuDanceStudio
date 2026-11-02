@@ -384,9 +384,8 @@ int RunScene(const std::filesystem::path& executable, const std::filesystem::pat
                     model.pmxAdditionalUvCount, weights[3]);
     }
     for (auto member : {&mdl::ModelRecord::vertexBuffer, &mdl::ModelRecord::vertexBuffer2}) {
-        const auto port = Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(model.*member));
-        const auto reference =
-            Buffer(mdl::ResourceAs<IDirect3DVertexBuffer9>(original.model.get()->*member));
+        const auto port = Buffer(model.*member);
+        const auto reference = Buffer(original.model.get()->*member);
         const std::string kind = member == &mdl::ModelRecord::vertexBuffer ? ".main" : ".edge";
         SaveRenderBytes(output, "port" + kind, port.data(), port.size());
         SaveRenderBytes(output, "native" + kind, reference.data(), reference.size());

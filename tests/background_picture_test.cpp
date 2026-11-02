@@ -4,11 +4,24 @@
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(&D3DXCreateTextureFromFileExW),
-                             mikudancestudio::d3dx::FnCreateTexFromFileExW>);
+                             decltype(&mikudancestudio::d3dx::Api::fromFileExW)>);
 static_assert(std::is_same_v<decltype(&D3DXCreateTextureFromFileExA),
-                             mikudancestudio::d3dx::FnCreateTexFromFileExA>);
+                             decltype(&mikudancestudio::d3dx::Api::fromFileExA)>);
 static_assert(std::is_same_v<decltype(&D3DXCreateTextureFromFileInMemoryEx),
-                             mikudancestudio::d3dx::FnCreateTexInMemEx>);
+                             decltype(&mikudancestudio::d3dx::Api::fromMemEx)>);
+
+static_assert(sizeof(D3DXIMAGE_FILEFORMAT) == sizeof(DWORD));
+static_assert(std::is_same_v<std::underlying_type_t<D3DXIMAGE_FILEFORMAT>, int>);
+static_assert(std::is_same_v<decltype(&D3DXCreateEffectFromResourceA),
+                             decltype(&mikudancestudio::d3dx::Api::createEffectFromResA)>);
+static_assert(std::is_same_v<decltype(&D3DXLoadMeshFromXW),
+                             decltype(&mikudancestudio::d3dx::Api::loadMeshFromXW)>);
+static_assert(std::is_same_v<decltype(&D3DXLoadMeshFromXInMemory),
+                             decltype(&mikudancestudio::d3dx::Api::loadMeshFromXInMemory)>);
+static_assert(std::is_same_v<decltype(&D3DXComputeNormals),
+                             decltype(&mikudancestudio::d3dx::Api::computeNormals)>);
+static_assert(std::is_same_v<decltype(&D3DXSaveSurfaceToFileW),
+                             decltype(&mikudancestudio::d3dx::Api::saveSurfaceToFileW)>);
 
 namespace {
 struct Picture {

@@ -26,7 +26,7 @@ const char kJpFrameRegTitle[] = "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
 // E build's sprintf arg is 0x927C0 = 600000, the x86 original's 300000).
 void OverflowBoxBoneKey(mdl::ModelRecord* m) {
     char text[256];
-    if (m->physicsFlags != 0)
+    if (m->englishUI != 0)
         sprintf_s(text, 0x100,
                   "You cannot regist over %d point\n"
                   "Please execute 'delete unused frame'",
@@ -36,7 +36,7 @@ void OverflowBoxBoneKey(mdl::ModelRecord* m) {
     // Caption 0x4A4C22: JP 0x52B908 when the JP flag is clear, "register
     // frame" when set (the JP constant was previously unused).
     MessageBoxA(static_cast<HWND>(m->hwnd), text,
-                m->physicsFlags != 0 ? "register frame" : kJpFrameRegTitle, 0);
+                m->englishUI != 0 ? "register frame" : kJpFrameRegTitle, 0);
 }
 
 // The source type selects position-only, rotation-only or full IK pose.

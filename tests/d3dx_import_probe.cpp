@@ -1,7 +1,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 
 int main(int argc, char** argv) {
     // The loader-failure test verifies that this marker is never reached.

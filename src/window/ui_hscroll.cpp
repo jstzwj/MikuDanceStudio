@@ -64,10 +64,8 @@
 //   * The original re-fetches GetDlgItem(main, id) before every use; the
 //     handle is deterministic so a single fetch is taken (same convention
 //     as ui_scroll_mouse.cpp / HandleVScroll).
-//   * D3DXMatrixPerspectiveFovLH is a load-time import in the original
-//     (the exe cannot start without d3dx9_32.dll); the port resolves it
-//     dynamically through d3dx_dyn.hpp and skips the projection update when
-//     absent (d3d_init.cpp convention).
+//   * D3DXMatrixPerspectiveFovLH is a load-time PE import in both builds,
+//     forwarded through d3dx_api.hpp and called unconditionally.
 //
 // Reference: ../translated/MikuMikuDance/fcn_0044aee0.cpp
 // =========================================================================//
@@ -80,7 +78,7 @@
 #include <cstdio>
 #include <cmath>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"

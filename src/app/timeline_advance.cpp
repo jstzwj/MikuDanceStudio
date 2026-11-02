@@ -53,8 +53,8 @@
 //     were reclaimed.  The phase-15 SetClipPlane calls on the light
 //     track were vtable slot 0xDC; the original's 0x467780-series and
 //     the consumer both use slot 0xCC = SetLight - fixed in phase 19.
-//   - D3DXMatrixPerspectiveFovLH is resolved through d3dx_dyn.hpp (load-
-//     time import in the original; same convention as ui_hscroll.cpp).
+//   - D3DXMatrixPerspectiveFovLH uses the load-time PE import through
+//     d3dx_api.hpp, as in ui_hscroll.cpp and the original.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -65,7 +65,7 @@
 #include <cstring>
 
 #include "mikudancestudio/accessory_layout.hpp"
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"

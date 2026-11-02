@@ -22,8 +22,8 @@
 //
 // Physics (rigid bodies + joints) is parsed and its transform chains
 // computed with the same D3DX calls as the original; body/constraint
-// creation goes through the ported 0x4064F0/0x406010 (null-world
-// guarded until the 0x4032B0 scene constructor lands).
+// creation goes through the ported 0x4064F0/0x406010 and SceneConstruct.
+// Null-world guards also support partially initialized scenes.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -42,7 +42,7 @@
 #include <share.h>
 #include <sys/stat.h>
 
-#include "mikudancestudio/d3dx_dyn.hpp"
+#include "mikudancestudio/d3dx_api.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/path_workspace.hpp"
@@ -56,8 +56,8 @@ namespace {
 // Preserve the original encoded bytes when editing; no generator is shipped.
 #include "model_labels.inc"
 
-IDirect3DDevice9* DevOf(D3DRenderer* sub) {
-    return sub->device; // wrapper + 120032
+IDirect3DDevice9* DevOf(D3DRenderer* renderer) {
+    return renderer->device; // wrapper + 120032
 }
 
 bool FailBox(HWND hwnd, bool en, bool enData, const char* enMsg, const char* jpMsg,
@@ -101,26 +101,20 @@ inline void LogPmdRigid(const wchar_t*, std::uint32_t, std::int32_t, std::uint32
 
 } // namespace
 
-bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRenderer* sub,
-                  int unusedA06CE, std::uint8_t boxGate, std::uint8_t englishUi,
-                  PhysicsScene* sub048,
+bool ModelLoadPMD(mdl::ModelRecord* modelRecord, HWND hwnd, const wchar_t* path,
+                  D3DRenderer* renderer, int legacyOption, std::uint8_t showLoadMessages,
+                  std::uint8_t englishUI, PhysicsScene* physicsScene,
                   PathResolutionWorkspace& paths) { // 0x4BF3E0
-    // Arg map (original 0x46050F call site, pushes -0x20..-0x4; the
-    // trailing (aN) tags are the original decompiler parameter names):
-    //   a2 hwnd, a3 path, a4 sub1d574 (device), unusedA06CE (a5) app+0xA06CE
-    //   (unused), boxGate (a6) constant 1 (message-box gate), englishUi
-    //   (a7) EnglishUI *(app+0xA0B4C) (stored to m+12740), sub048 (a8) the
-    //   0x048 pointer *(app+0x9EDB0), typed as PhysicsScene* (stored to
-    //   m+60 - the physics scene wrapper: gizmos +4..44, constraint-id
-    //   counter +56, btDiscreteDynamicsWorld* +64), a9 appPathBuf.
-    const bool enData = englishUi != 0;
-    mdl::ModelRecord& model = *m;
+    // legacyOption corresponds to the unused app+0xA06CE argument of the original loader.
+    // The English UI flag and physics scene are retained by the model.
+    const bool enData = englishUI != 0;
+    mdl::ModelRecord& model = *modelRecord;
     char text[256];
     wchar_t wide1[256], wide2[384], wide3[384];
 
     model.hwnd = hwnd;
-    model.scenePtr = sub048;        // 0x4BF42B
-    model.physicsFlags = englishUi; // 0x4BF431: English-data byte
+    model.scenePtr = physicsScene; // 0x4BF42B
+    model.englishUI = englishUI;   // 0x4BF431: English-data byte
 
     ResolveUserFilePath(paths, path); // 0x4089F0
     wcscpy_s(model.path, 0x100, paths.resolvedPath);
@@ -128,7 +122,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     int fh = -1;
     errno_t err = _wsopen_s(&fh, model.path, _O_BINARY, _SH_DENYNO, _S_IREAD);
     if (err != 0) {
-        if (boxGate) {
+        if (showLoadMessages) {
             if (enData)
                 sprintf_s(text, 0x100,
                           "Cannot open file:%d\n"
@@ -162,7 +156,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     _read(fh, text, 3);
     if (text[0] != 'P' || text[1] != 'm' || text[2] != 'd') {
         if (text[0] == 'P' && text[1] == 'M' && text[2] == 'X')
-            return LoadPMX(m, sub, boxGate, englishUi, paths,
+            return LoadPMX(modelRecord, renderer, showLoadMessages, englishUI, paths,
                            fh); // 0x4B77E0
         _close(fh);
         if (enData) {
@@ -177,13 +171,13 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     _read(fh, text, 4); // version
     _read(fh, model.name, mdl::kPmdModelNameBytes);
     _read(fh, model.comment, sizeof(model.comment));
-    if (!enData && boxGate &&
+    if (!enData && showLoadMessages &&
         MessageBoxA(hwnd, model.comment, kTitleModelInfoJp, 0x40001u) != IDOK) {
         _close(fh);
         return false;
     }
 
-    IDirect3DDevice9* dev = DevOf(sub);
+    IDirect3DDevice9* dev = DevOf(renderer);
     auto* d3dx = &d3dx::Get();
 
     // ---- vertices ---------------------------------------------------------
@@ -193,17 +187,15 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
         if (dev == nullptr) {
             return false;
         }
-        if (FAILED(dev->CreateVertexBuffer(
-                32 * vertCount, 8, 274 /*FVF*/, D3DPOOL_MANAGED,
-                &mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer), nullptr))) {
+        if (dev->CreateVertexBuffer(32 * vertCount, 8, 274 /*FVF*/, D3DPOOL_MANAGED,
+                                    &model.vertexBuffer, nullptr) != D3D_OK) {
             FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "open file", kTitleOpenFailJp);
             _close(fh);
             return false;
         }
-        if (FAILED(dev->CreateVertexBuffer(
-                16 * vertCount, 8, 66 /*FVF*/, D3DPOOL_MANAGED,
-                &mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2), nullptr))) {
+        if (dev->CreateVertexBuffer(16 * vertCount, 8, 66 /*FVF*/, D3DPOOL_MANAGED,
+                                    &model.vertexBuffer2, nullptr) != D3D_OK) {
             FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "open file", kTitleLoad2Jp);
             _close(fh);
@@ -216,25 +208,22 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
         for (std::uint32_t i = 0; i < vertCount; ++i)
             _read(fh, &recs[i], 0x26);
 
-        float* p1 = nullptr;
-        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer)
-                          ->Lock(0, 32 * vertCount, reinterpret_cast<void**>(&p1), 0))) {
-            for (std::uint32_t i = 0; i < vertCount; ++i) {
-                float* dst =
-                    reinterpret_cast<float*>(reinterpret_cast<unsigned char*>(p1) + 32 * i);
-                std::memcpy(dst, &recs[i], 32);
-            }
-            mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer)->Unlock();
+        mdl::SkinnedVertexBase* mainVertices = nullptr;
+        if (SUCCEEDED(model.vertexBuffer->Lock(0, sizeof(*mainVertices) * vertCount,
+                                               reinterpret_cast<void**>(&mainVertices), 0))) {
+            for (std::uint32_t i = 0; i < vertCount; ++i)
+                std::memcpy(&mainVertices[i], &recs[i], sizeof(*mainVertices));
+            model.vertexBuffer->Unlock();
         }
-        float* p2 = nullptr;
-        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2)
-                          ->Lock(0, 16 * vertCount, reinterpret_cast<void**>(&p2), 0))) {
+        mdl::EdgeVertex* edgeVertices = nullptr;
+        if (SUCCEEDED(model.vertexBuffer2->Lock(0, sizeof(*edgeVertices) * vertCount,
+                                                reinterpret_cast<void**>(&edgeVertices), 0))) {
             for (std::uint32_t i = 0; i < vertCount; ++i) {
-                unsigned char* dst = reinterpret_cast<unsigned char*>(p2) + 16 * i;
-                std::memcpy(dst, recs[i].position, 12);
-                *reinterpret_cast<std::uint32_t*>(dst + 12) = 0xFF000000u;
+                std::memcpy(edgeVertices[i].position, recs[i].position,
+                            sizeof(edgeVertices[i].position));
+                edgeVertices[i].diffuse = 0xFF000000u;
             }
-            mdl::ResourceAs<IDirect3DVertexBuffer9>(model.vertexBuffer2)->Unlock();
+            model.vertexBuffer2->Unlock();
         }
     }
 
@@ -244,9 +233,8 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     if (idxCount != 0) {
         if (dev == nullptr)
             return false;
-        if (FAILED(dev->CreateIndexBuffer(
-                2 * idxCount, 0, static_cast<D3DFORMAT>(101), D3DPOOL_MANAGED,
-                &mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer), nullptr))) {
+        if (dev->CreateIndexBuffer(2 * idxCount, 0, static_cast<D3DFORMAT>(101), D3DPOOL_MANAGED,
+                                   &model.indexBuffer, nullptr) != D3D_OK) {
             FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "CreateIndexBuffer", "CreateIndexBuffer");
             _close(fh);
@@ -255,8 +243,8 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
         std::int32_t*& idx = model.indices;
         idx = static_cast<std::int32_t*>(operator new(sizeof(*idx) * idxCount));
         std::memset(idx, 0, sizeof(*idx) * idxCount);
-        void* ib = nullptr;
-        if (FAILED(mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer)->Lock(0, 0, &ib, 0))) {
+        std::uint16_t* gpuIndices = nullptr;
+        if (model.indexBuffer->Lock(0, 0, reinterpret_cast<void**>(&gpuIndices), 0) != D3D_OK) {
             FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "pIndBuf->Lock", "pIndBuf->Lock");
             _close(fh);
@@ -266,9 +254,9 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
             std::uint16_t index = 0;
             _read(fh, &index, 2);
             idx[j] = index;
-            static_cast<std::uint16_t*>(ib)[j] = index;
+            gpuIndices[j] = index;
         }
-        mdl::ResourceAs<IDirect3DIndexBuffer9>(model.indexBuffer)->Unlock();
+        model.indexBuffer->Unlock();
     }
 
     // ---- materials --------------------------------------------------------
@@ -298,18 +286,18 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
                 char* star = strstr(texName, "*");
                 if (star != nullptr) {
                     *star = '\0';
-                    ConvertMaterialName(sub, texName, wide1, 0x100, dirW);
+                    ConvertMaterialName(renderer, texName, wide1, 0x100, dirW);
                     swprintf_s(wide2, 0x180, L"%s%s", dirW, wide1);
-                    LoadTextureShared(sub, wide2); // 0x407490
-                    ConvertMaterialName(sub, star + 1, wide1, 0x100, dirW);
+                    LoadTextureShared(renderer, wide2); // 0x407490
+                    ConvertMaterialName(renderer, star + 1, wide1, 0x100, dirW);
                     swprintf_s(wide3, 0x180, L"%s%s", dirW, wide1);
-                    if (LoadTextureShared(sub, wide3))
+                    if (LoadTextureShared(renderer, wide3))
                         wcscpy_s(mat.spherePath, 0x118, wide3);
                     wcscpy_s(mat.texturePath, 0x118, wide2);
                 } else {
-                    ConvertMaterialName(sub, texName, wide1, 0x100, dirW);
+                    ConvertMaterialName(renderer, texName, wide1, 0x100, dirW);
                     swprintf_s(wide2, 0x180, L"%s%s", dirW, wide1);
-                    LoadTextureShared(sub, wide2);
+                    LoadTextureShared(renderer, wide2);
                     wcscpy_s(mat.texturePath, 0x118, wide2);
                 }
             }
@@ -321,23 +309,20 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     const std::uint32_t boneCount = model.boneCount;
     mikudancestudio::mdl::BoneRecord* bones =
         static_cast<mikudancestudio::mdl::BoneRecord*>(operator new(
-            sizeof(mikudancestudio::mdl::BoneRecord) * (boneCount ? boneCount : 1)));
+            sizeof(mikudancestudio::mdl::BoneRecord) * boneCount));
     model.boneTable = bones;
-    std::memset(bones, 0, sizeof(mikudancestudio::mdl::BoneRecord) * (boneCount ? boneCount : 1));
+    std::memset(bones, 0, sizeof(mikudancestudio::mdl::BoneRecord) * boneCount);
     {
-        void* t1 = operator new(4 * (boneCount ? boneCount : 1));
-        std::memset(t1, 0, 4 * (boneCount ? boneCount : 1));
-        model.boneKeyCursors = static_cast<std::uint32_t*>(t1);
-        void* t2 = operator new(boneCount ? boneCount : 1);
-        std::memset(t2, 0, boneCount ? boneCount : 1);
-        model.boneTrackActive = static_cast<unsigned char*>(t2);
-        void* t3 = operator new(boneCount ? boneCount : 1);
-        std::memset(t3, 0, boneCount ? boneCount : 1);
-        model.boneSelection = static_cast<unsigned char*>(t3);
-        static_cast<unsigned char*>(t3)[0] = 1;
-        void* t4 = operator new(boneCount ? boneCount : 1);
-        std::memset(t4, 0, boneCount ? boneCount : 1);
-        model.bonePhysicsState = static_cast<unsigned char*>(t4);
+        model.boneKeyCursors =
+            static_cast<std::uint32_t*>(operator new(sizeof(*model.boneKeyCursors) * boneCount));
+        std::memset(model.boneKeyCursors, 0, sizeof(*model.boneKeyCursors) * boneCount);
+        model.boneTrackActive = static_cast<std::uint8_t*>(operator new(boneCount));
+        std::memset(model.boneTrackActive, 0, boneCount);
+        model.boneSelection = static_cast<std::uint8_t*>(operator new(boneCount));
+        std::memset(model.boneSelection, 0, boneCount);
+        model.boneSelection[0] = 1;
+        model.bonePhysicsState = static_cast<std::uint8_t*>(operator new(boneCount));
+        std::memset(model.bonePhysicsState, 0, boneCount);
     }
     std::uint8_t centerSeen = 0;
     for (std::uint32_t i = 0; i < boneCount; ++i) {
@@ -407,7 +392,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
                            tailType == mikudancestudio::mdl::BoneType::UnderIk);
         bone->hasFlag = (arm1 || arm2) ? 1 : 0;
     }
-    InitBoneSortOrder(m); // x86 0x490070; bone_sort.cpp
+    InitBoneSortOrder(modelRecord); // x86 0x490070; bone_sort.cpp
 
     // ---- morphs -----------------------------------------------------------
     // (original 0x4C0330..0x4C0613: per-morph offset table of 16-byte
@@ -423,12 +408,13 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
             static_cast<mdl::MorphRecord*>(operator new(sizeof(mdl::MorphRecord) * morphCount));
         model.morphs = morphs;
         std::memset(morphs, 0, sizeof(mdl::MorphRecord) * morphCount);
-        void* w1 = operator new(4 * morphCount);
-        std::memset(w1, 0, 4 * morphCount);
-        model.morphKeyCursors = static_cast<std::uint32_t*>(w1);
-        void* w2 = operator new(morphCount);
-        std::memset(w2, 0, morphCount);
-        model.morphTrackActive = static_cast<unsigned char*>(w2);
+        auto* cursors =
+            static_cast<std::uint32_t*>(operator new(sizeof(*model.morphKeyCursors) * morphCount));
+        std::memset(cursors, 0, sizeof(*cursors) * morphCount);
+        model.morphKeyCursors = cursors;
+        auto* activeTracks = static_cast<std::uint8_t*>(operator new(morphCount));
+        std::memset(activeTracks, 0, morphCount);
+        model.morphTrackActive = activeTracks;
         for (std::uint32_t i = 0; i < morphCount; ++i) {
             mdl::MorphRecord& morph = morphs[i];
             _read(fh, morph.name, sizeof(morph.name));
@@ -524,7 +510,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     std::int8_t hasEn = 0;
     const int enRead = _read(fh, &hasEn, 1);
     if (hasEn == 0 || enRead == 0) {
-        if ((boxGate & model.physicsFlags) != 0)
+        if ((showLoadMessages & model.englishUI) != 0)
             MessageBoxA(hwnd,
                         "For this model, there is no English data.\n"
                         "\n"
@@ -535,8 +521,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
         strcpy_s(model.nameEn, 0x32, model.name);
         strcpy_s(model.commentEn, sizeof(model.commentEn), model.comment);
         for (std::uint32_t i = 0; i < boneCount; ++i)
-            strcpy_s(reinterpret_cast<char*>(&bones[i].nameEn[0]), 0x14,
-                     reinterpret_cast<const char*>(&bones[i]));
+            strcpy_s(bones[i].nameEn, 0x14, bones[i].name);
         mdl::MorphRecord* morphs = model.morphs;
         for (std::uint32_t i = 0; i < morphCount; ++i)
             strcpy_s(morphs[i].nameEn, sizeof(morphs[i].nameEn), morphs[i].name);
@@ -551,7 +536,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
         model.nameEn[19] = 0;
         _read(fh, model.commentEn, sizeof(model.commentEn));
         model.commentEn[255] = 0;
-        if (model.physicsFlags != 0 && boxGate &&
+        if (model.englishUI != 0 && showLoadMessages &&
             MessageBoxA(hwnd, model.commentEn, "model infomation", 0x40001u) != IDOK) {
             _close(fh);
             return false;
@@ -596,9 +581,9 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
                     matched = 1;
             }
             if (!matched) {
-                ConvertAnsiToWide(sub, toon[i], wide1, 0x100);
+                ConvertAnsiToWide(renderer, toon[i], wide1, 0x100);
                 swprintf_s(wide2, 0x180, L"%s%s", model.modelDirectory, wide1);
-                if (!LoadTextureShared(sub, wide2))
+                if (!LoadTextureShared(renderer, wide2))
                     strcpy_s(toon[i], sizeof(toon[i]), text);
             }
         }
@@ -615,8 +600,8 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
     const std::uint32_t rigidCount = model.rigidCount;
     if (rbRead != -1) {
         PhysicsScene* physScene = model.scenePtr;
-        SetPhysicsMode(m, 0, nullptr, 0); // 0x4A9220
-        SetPhysicsMode(m, 1, nullptr, 0);
+        SetPhysicsMode(modelRecord, 0, nullptr, 0); // 0x4A9220
+        SetPhysicsMode(modelRecord, 1, nullptr, 0);
         mdl::RigidRecord* rigids = static_cast<mdl::RigidRecord*>(operator new(
             sizeof(mdl::RigidRecord) * (rigidCount ? rigidCount : 1)));
         model.rigidTable = rigids;
@@ -829,7 +814,7 @@ bool ModelLoadPMD(mdl::ModelRecord* m, HWND hwnd, const wchar_t* path, D3DRender
         }
     }
     model.loadComplete = 1;
-    PostLoadInit(m); // 0x49C850
+    PostLoadInit(modelRecord); // 0x49C850
     return true;
 }
 

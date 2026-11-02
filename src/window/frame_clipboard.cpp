@@ -181,8 +181,7 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
         if (boneSel != 0) {
             void* p = malloc(boneSel * sizeof(BoneClipboardRecord));
             if (p != nullptr) {
-                ConstructArrayElements(p, sizeof(BoneClipboardRecord), boneSel,
-                                       reinterpret_cast<void*>(&IdentityCtor));
+                ConstructArrayElements(p, sizeof(BoneClipboardRecord), boneSel, &IdentityCtor);
             }
             app->BoneClipboard() = static_cast<BoneClipboardRecord*>(p);
             memset(p, 0, boneSel * sizeof(BoneClipboardRecord));
@@ -553,8 +552,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
                                sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
             if (undoBone != nullptr) {
                 ConstructArrayElements(undoBone, sizeof(mikudancestudio::mdl::BonePoseSnapshot),
-                                       static_cast<std::uint32_t>(boneCount),
-                                       reinterpret_cast<void*>(&IdentityCtor));
+                                       static_cast<std::uint32_t>(boneCount), &IdentityCtor);
             }
             undo.bonePose = undoBone;
             memset(undoBone, 0,
@@ -585,8 +583,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
                 boneSel * mdl::kUndoKeysPerInsertion * sizeof(mdl::BoneKeyUndoEntry)));
             if (undoKeys != nullptr) {
                 ConstructArrayElements(undoKeys, sizeof(*undoKeys),
-                                       boneSel * mdl::kUndoKeysPerInsertion,
-                                       reinterpret_cast<void*>(&IdentityCtor));
+                                       boneSel * mdl::kUndoKeysPerInsertion, &IdentityCtor);
             }
             undo.keySnapshots = undoKeys;
             memset(undoKeys, 0,
@@ -815,8 +812,7 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
         static_cast<std::uint32_t>(boneCount) * sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
     if (undoBone != nullptr) {
         ConstructArrayElements(undoBone, sizeof(mikudancestudio::mdl::BonePoseSnapshot),
-                               static_cast<std::uint32_t>(boneCount),
-                               reinterpret_cast<void*>(&IdentityCtor));
+                               static_cast<std::uint32_t>(boneCount), &IdentityCtor);
     }
     undo.bonePose = undoBone;
     memset(undoBone, 0,
@@ -842,7 +838,7 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
         ::operator new(boneSel * mdl::kUndoKeysPerInsertion * sizeof(mdl::BoneKeyUndoEntry)));
     if (undoKeys != nullptr) {
         ConstructArrayElements(undoKeys, sizeof(*undoKeys), boneSel * mdl::kUndoKeysPerInsertion,
-                               reinterpret_cast<void*>(&IdentityCtor));
+                               &IdentityCtor);
     }
     undo.keySnapshots = undoKeys;
     memset(undoKeys, 0, boneSel * mdl::kUndoKeysPerInsertion * sizeof(mdl::BoneKeyUndoEntry));
