@@ -51,9 +51,8 @@ gen_menus_listing.txt  解码后的菜单树（信息性，不参与构建）
 ## templates/（.rc 源码，50 个模板）
 
 `dialog/dialogs.rc`（48 个 `DIALOGEX`，ID 600–817）与 `menu/menus.rc`
-（`SAMPLE02` / `SAMPLE02E`）是模板资源的**唯一源码形态**：原作者的
-`.rc` 源文本从未进入过分发二进制，本文件由编译模板无损解码重建
-（样式、ID、类、文字、字体、坐标全字段还原），原 `.bin` 已移除。
+（`SAMPLE02` / `SAMPLE02E`）是模板资源的**唯一源码形态**，包含样式、
+ID、类、文字、字体和坐标；不再保留单独的 `.bin` 模板。
 
 `gen_resources.py` 在 gen/verify 时用 rc.exe（Windows SDK，`RC_EXE` 可
 覆盖路径）编译这两个 `.rc`，把产物模板按原 `.rsrc` 记录序嵌入 `.res`。

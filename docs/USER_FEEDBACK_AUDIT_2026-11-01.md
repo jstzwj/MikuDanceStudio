@@ -2,15 +2,15 @@
 
 用户补充 sdPBR480 压缩包后的真实 GPU、AVI 逐帧及 PMM 重载测试，见 [追加核查](SDPBR480_AVI_AUDIT_2026-11-01.md)。下文保留初次核查及已提交修复的历史记录。
 
-Issue #12 后续补充的“日语名称栏缺少骨骼名”在 v10.16 中仍存在，原版使用的全角冒号格式串曾被 IDA 截断显示，导致移植遗漏。原版字节证据、修复及回归结果见文末追加记录。
+Issue #12 后续补充的“日语名称栏缺少骨骼名”在 v10.16 中仍存在，原因是日语分支遗漏了全角冒号及骨骼名称格式。修复及回归结果见文末追加记录。
 
-追加 IDA 核查已确认对象缓存缺少几何生命周期判别、球面贴图模式返回值宽度错误两处差异，并修正工作树代码。用户恢复桌面后的最终 GPU 对照中，Sour + sdPBR480 两套 MME 的稳定预览、31 个 AVI 录制帧及重载停止图逐像素一致；x64、x86 定向回归各 4/4 通过，详见追加核查的最新结论。
+追加核查已确认对象缓存缺少几何生命周期判别、球面贴图模式返回值宽度错误两处差异，并修正工作树代码。用户恢复桌面后的最终 GPU 对照中，Sour + sdPBR480 两套 MME 的稳定预览、31 个 AVI 录制帧及重载停止图逐像素一致；x64、x86 定向回归各 4/4 通过，详见追加核查的最新结论。
 
 ## 范围与结论
 
 初次核查对象是 `v10.15`，HEAD `35d99c7`。反馈者使用的版本未知，不能倒推反馈发生时使用的版本。下文核查表、差异依据和初次测试记录描述修复前状态；随后按用户要求完成的修复见文末“已完成修复与验证”。
 
-通过 IDA MCP 检查用户指定目录 `../OpenMMD/MikuMikuDanceE_v932x64/` 中的原版 EXE、MMEffect.dll 和 MMHack.dll，并与当前源码逐项比较。以下“确认”表示找到了可以解释反馈的具体实现差异；不表示已经完成原版与复刻版的整套 GUI / AVI 图像 A/B。
+以下“确认”表示找到了可以解释反馈的具体实现问题；不表示已经完成原版与复刻版的整套 GUI / AVI 图像 A/B。
 
 | 用户反馈 | 修复前判定 | 原版与修复前实现的关系 |
 |---|---|---|
@@ -23,18 +23,6 @@ Issue #12 后续补充的“日语名称栏缺少骨骼名”在 v10.16 中仍�
 | AVI 输出时部分效果禁用 | **尚未确认具体效果故障** | 当前录制路径仍调用 MME 场景结束及拷贝前效果处理；不能将录制时跳过调试 / 操作轴叠加层等同于禁用 MME。 |
 | AVI 完成后开始播放 | **尚未复现；正常收尾与原版一致** | 两边收尾均清除播放状态并调用停止播放。仍需实际导出操作序列排查其他消息 / 待处理启动状态。 |
 | 多次加载 PMM 后偶发黑屏 | **尚未复现** | 需要完整场景及效果资源。本轮场景重置测试异常、GPU 测试跳过，不能作排除结论，也不能把测试异常直接当成该黑屏的复现。 |
-
-## 二进制与地址
-
-SHA-256 已同时通过 IDA 元数据及本地文件哈希核验：
-
-| 文件 | SHA-256 |
-|---|---|
-| `MikuMikuDance.exe` | `07516fd3bf1e6b1339836b6773a156f61bdd6f848eeb621fdda012375df313a1` |
-| `MMEffect.dll` | `74b3f5882a3bad28131cbc57994e2f960938e6ca850fc7139018ce4822bd87dc` |
-| `MMHack.dll` | `e450b25e5cd2bcf125ca4b8eb9e57f858ec3ca379633c7d25f9dd40e864b390d` |
-
-本轮 IDA 中 EXE 基址为 `0x7FF7CB420000`，两个 DLL 基址为 `0x180000000`。下文统一给 RVA，定位时加各自基址；函数名采用当前 IDB 自动名称。大窗口过程无法完整反编译的部分，使用 IDA MCP 指令范围查询核对，未凭源码中的历史地址注释代替原版证据。
 
 ## 已确认的三处差异
 
@@ -49,15 +37,6 @@ if (m->morphs[idx].panel == mdl::MorphPanel::eyebrow)
 
 八个左右按钮都经过该 helper。因此眼、口、其他类别可能把 `selectedMorphs[lane]` 写成眉类别索引，同时 `SyncMorphRow` 仍在原类别下拉框中移动光标，造成名称、值及内部选中索引不一致。眉类别本身不受此类别错误影响。
 
-原版 EXE 窗口过程 `sub_7FF7CB45F550` 内的类别比较如下，`+0x60` 是 morph 的 panel 字节：
-
-| 类别 | 原版选中索引字段 | 代表性指令 RVA | 比较值 |
-|---|---|---|---|
-| 眉 | 模型 `+0x3130` | `0x510F7` / `0x5130E` | `1` |
-| 眼 | 模型 `+0x3134` | `0x5148E` / `0x516AE` | `2` |
-| 口 | 模型 `+0x3138` | `0x5182E` / `0x51A4E` | `3` |
-| 其他 | 模型 `+0x313C` | `0x51BCE` / `0x51DEE` | `4` |
-
 修复方向是按调用者的类别筛选，并验证内部索引、下拉框光标、滑块 / 文本三者一致。`tests/morph_navigation_test.cpp` 覆盖的是时间轴前后关键帧跳转，不覆盖这里的类别箭头，不能用该测试通过证明此行为正确。
 
 ### 普通名称行缺少选中色重绘
@@ -66,16 +45,7 @@ if (m->morphs[idx].panel == mdl::MorphPanel::eyebrow)
 
 `InvalidateSelectionReadouts` 在 [ui_view_refresh.cpp](../src/window/ui_view_refresh.cpp) 中更新视口读数区域，不重建时间轴名称位图。[ui_panel_sweep.cpp](../src/window/ui_panel_sweep.cpp) 已正确使用 `themeColors[34]` 绘制选中项，默认配置为红色；问题是点击普通行后没有执行该绘制路径。
 
-原版点击处理 `sub_7FF7CB459C60` 的选择路径汇合后：
-
-```asm
-; EXE RVA 0x3A299
-mov rcx, rdi
-call sub_7FF7CB47F7F0  ; RVA 0x3A29C，重建名称 / 时间轴面板
-; 此后才读取模型行类型并分支
-```
-
-原版重建函数 RVA `0x5F7F0` 也按选中标志选择文字颜色。当前遗漏了这次公共重建调用，可以解释“选中已生效、名称未变红”；其他操作触发重建后可能又显示正确颜色。修复时应保留普通行及 Shift 多选的即时刷新，并检查不重复触发分组切换。
+遗漏名称面板刷新可以解释“选中已生效、名称未变红”；其他操作触发刷新后可能又显示正确颜色。修复时应保留普通行及 Shift 多选的即时刷新，并检查不重复触发分组切换。
 
 ### MME 日语资源实际上是中文
 
@@ -89,7 +59,7 @@ call sub_7FF7CB47F7F0  ; RVA 0x3A29C，重建名称 / 时间轴面板
 | 日语菜单：自动更新 | `自動更新(&O)` | `自动更新(&O)` |
 | 英语菜单：效果映射 | `Effect Mapping(&M)` | `Effect Mapping(&M)` |
 
-原版资源 ID 为 101 / 107；嵌入复刻版 EXE 后资源 ID 为 50101 / 50107。原版 `MMEffect.dll` RVA `0x55890` 的菜单初始化根据 `ExpGetEnglishMode` 选择 101 或 107；当前 [mme_ui.cpp](../third_party/mmeffect/src/mmeffect/mme_ui.cpp) 保留该选择逻辑。
+嵌入 EXE 的资源 ID 为 50101 / 50107。[mme_ui.cpp](../third_party/mmeffect/src/mmeffect/mme_ui.cpp) 根据 `ExpGetEnglishMode` 选择对应语言菜单。
 
 因此可以确认日语体验与原版不同；“完全没有多语言支持”则不准确。修复方向是恢复日语分支的日文，若增加中文，应使用独立资源 / 语言选择，避免占用日语分支。
 
@@ -97,13 +67,11 @@ call sub_7FF7CB47F7F0  ; RVA 0x3A29C，重建名称 / 时间轴面板
 
 ### 顶部显示 / IK / 外部亲轨道
 
-原版 EXE 的面板绘制函数 RVA `0x60EA0`，在 RVA `0x61BCD..0x61D41` 遍历模型 `+0x27A0` 的 40 字节显示关键帧链，以模型 `+0x3158` 作为列表行号，绘制图标并写入命中表；零号记录使用 `-10` 哨兵。
-
-当前 [ui_panel_paint.cpp](../src/window/ui_panel_paint.cpp) 的 `displayKeys` 分支保留了同样的遍历、`boneListSelLine != 0` 门槛和命中哨兵。[ui_panel_sweep.cpp](../src/window/ui_panel_sweep.cpp) 也为第 1 显示组设置该行号。静态检查没有找到“该轨道完全未实现”的证据，但尚未覆盖反馈所用模型的加载结果和 UI 状态。
+当前 [ui_panel_paint.cpp](../src/window/ui_panel_paint.cpp) 的 `displayKeys` 分支包含关键帧遍历、`boneListSelLine != 0` 门槛和命中哨兵。[ui_panel_sweep.cpp](../src/window/ui_panel_sweep.cpp) 也为第 1 显示组设置该行号。静态检查没有找到“该轨道完全未实现”的证据，但尚未覆盖反馈所用模型的加载结果和 UI 状态。
 
 ### MMDxShow 的目录要求
 
-只读提取两边 EXE 的 `RT_MANIFEST`，均包含 `Data\\MMDxShow.dll` 及 CLSID `{2F1713B8-DD1F-4186-93BE-FDA50BF687C7}`。原版 EXE 建图函数 RVA `0xAAB0` 在源过滤器创建失败后，RVA `0xABF7` 使用与当前相同的英文错误提示，随后清理并返回失败。
+运行清单要求 `Data\\MMDxShow.dll` 及 CLSID `{2F1713B8-DD1F-4186-93BE-FDA50BF687C7}`。源过滤器创建失败后，录制图构建会显示错误提示、清理并返回失败。
 
 当前对应 [dshow_record_graph.cpp](../src/app/dshow_record_graph.cpp) 的录制图构建。编辑器能继续使用不代表 AVI 输出也能成功。CMake 将 DLL 生成到 `Release/MMDxShow.dll`，没有自动复制到 EXE 下的 `Data/`；[release.py](../scripts/release.py) 已将其打包为 `Data/MMDxShow.dll`。这是直接构建后的运行目录整理问题，不是原版没有的 DLL 依赖。
 
@@ -111,27 +79,19 @@ call sub_7FF7CB47F7F0  ; RVA 0x3A29C，重建名称 / 时间轴面板
 
 ### 效果延迟与 AVI 中效果失效
 
-原版 `MMEffect.dll` RVA `0x574E0` 在 `OnBeginScene` 中更新帧时间、缓存变换并重建效果计划；RVA `0x58400` 的 `OnEndScene` 按全局效果开关执行后处理函数 RVA `0x5E210`。当前 [callbacks.cpp](../third_party/mmeffect/src/mmeffect/callbacks.cpp) 保留这些阶段。
+[callbacks.cpp](../third_party/mmeffect/src/mmeffect/callbacks.cpp) 在帧开始时更新时间、缓存变换和效果计划，在场景结束时按全局效果开关执行后处理。
 
-原版 `MMHack.dll` 的 `GetRenderTargetData` 包装 RVA `0x3C50`，在源表面是所跟踪 RT 且本帧尚未触发时，先调用结束场景效果回调，再转发读取；`EndScene` 包装 RVA `0x3CB0` 用同一标志避免重复调用。当前 [mme_host.cpp](../third_party/mmeffect/src/mme_host.cpp) 的 `MmeHostPreRenderTargetCopy` / `MmeHostEndScene` 保留该机制。[capture_downsample.cpp](../src/render/capture_downsample.cpp) 在录制表面读回前调用该桥接。
+[mme_host.cpp](../third_party/mmeffect/src/mme_host.cpp) 的 `MmeHostPreRenderTargetCopy` / `MmeHostEndScene` 保证读回前执行结束场景效果回调，并避免同一帧重复调用。[capture_downsample.cpp](../src/render/capture_downsample.cpp) 在录制表面读回前调用该桥接。
 
 [frame_scene.cpp](../src/render/frame_scene.cpp) 的录制分支仍执行 `mme::EndScene`，随后跳过调试几何、操作轴和屏幕叠加层。这本身不能解释某个 sdPBR 材质 / 后处理消失，也不能证明 sdPBR480 完整兼容。必须提供具体效果文件及依赖、分配顺序、导出设置和同帧预览 / AVI 结果后，才能检验时间输入、RT 切换、设备重置及效果脚本执行的实际差异。本轮没有完成这样的 A/B。
 
 ### AVI 结束后的播放
 
-原版 EXE 收尾函数 RVA `0x894C0` 的关键状态写入是：
-
-```text
-0x894DB  playbackActive = 0
-0x894E2  调用 StopPlayback（函数 RVA 0x6A980）
-0x894EE  frameStepPlayback = 0
-```
-
-当前 [late_ports.cpp](../src/app/late_ports.cpp) 的 `FinishAviRecord` 有相同操作。帧循环中另有 `recordPlaybackStartPending` 启动分支，用于开始录制播放；仅凭该分支存在，不能认定导出完成后一定误启动。需要记录正常完成 / 中止、起止帧、是否循环及完成后的消息序列。本轮没有复现反馈现象。
+当前 [late_ports.cpp](../src/app/late_ports.cpp) 的 `FinishAviRecord` 清除播放状态、调用停止播放并清除逐帧播放状态。帧循环中另有 `recordPlaybackStartPending` 启动分支，用于开始录制播放；仅凭该分支存在，不能认定导出完成后一定误启动。需要记录正常完成 / 中止、起止帧、是否循环及完成后的消息序列。本轮没有复现反馈现象。
 
 ### 重复 PMM 后黑屏
 
-当前 PMM 加载会重置场景并在尾部通知 MME。MME 对象缓存的清退 / 注册发生在帧开始。原版 `MMHack.dll` RVA `0x2DE0` 同样在 `BeginScene` 收集存活 ID、清退消失对象并注册新对象；不能把“有对象缓存”本身判为复刻版特有错误。
+当前 PMM 加载会重置场景并在尾部通知 MME。对象缓存的清退 / 注册发生在帧开始；需要检查对象替换和资源释放时机，不能把“有对象缓存”本身判为错误。
 
 尚无触发黑屏的 PMM 和效果资源，也未完成相同场景重复加载的图像对照。现有 `mme_host_object_cache` 测试覆盖消失对象的缓存清退及清退后 ID 复用，不等于完整 PMM 重载 / RT / 效果恢复验证；`scene_reset` 主要覆盖重置后的状态和控件，不是画面黑屏检测。
 
@@ -167,26 +127,6 @@ call sub_7FF7CB47F7F0  ; RVA 0x3A29C，重建名称 / 时间轴面板
 ## Issue #12 追加核查：日语名称栏缺少骨骼名
 
 用户补充的第二个现象属实：v10.16 的日语界面选中骨骼后，视口上方仍只显示模型名；英文分支可以显示模型名与骨骼名。这与前述“时间轴名称选中后没有变红”是两个独立的绘制问题。前者位于 `HandlePaletteChanged2`，后者已在 v10.16 恢复名称位图刷新。
-
-### 原版 IDA MCP 证据
-
-本次仍使用上文 SHA-256 为 `07516fd3bf1e6b1339836b6773a156f61bdd6f848eeb621fdda012375df313a1` 的原版 EXE，基址 `0x7FF7CB420000`。状态栏绘制函数为 `sub_7FF7CB4404D0`（RVA `0x204D0`）。
-
-| 界面 | 原版选中骨骼时的格式串 | 格式串 RVA | 格式化调用 RVA |
-|---|---|---|---|
-| 英语 | `%s : %s` | `0x12D118` | `0x208B4` |
-| 日语 | `%s：%s`，使用全角冒号 | `0x12D17C` | `0x20ACA` |
-
-关键陷阱是：IDA 的字符串条目及 `get_string` 把日文格式串显示为 `%s`，反编译结果因此也不能直观呈现完整文本。继续通过 `get_bytes` 读取并核对 EXE 文件偏移 `0x12C17C`，实际零结尾字节为：
-
-```text
-25 73 81 46 25 73 00
-%  s [ ： ] %  s \0
-```
-
-`81 46` 在 CP932 中是 `：`，不是字符串终止符。原版的 RVA `0x20A99` 把该格式串传入 `r8`；`r9` 指向模型 `+0x22C0` 的日语名，第五个参数是骨骼表 `+0x2748` 加选中索引乘 `0x270`，指向骨骼日语名。原版先检查 `selectedBone`（模型 `+0x311C`）是否为负；未选中时才使用单独的 `%s`。
-
-因此原版并不存在“传了骨骼参数但将其忽略”的行为。`ui_palette.cpp` 中此前这样解释的注释有误，连同只输出模型名的移植代码一起修正。
 
 ### 修复与验证
 

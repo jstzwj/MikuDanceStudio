@@ -24,7 +24,7 @@ MME v0.37 效果引擎通过 MMEffect 静态库直接链接进 MikuMikuDanceE.ex
 
 ## 验证边界
 
-本轮修复名称注册顺序和回退、单位矩阵重置、Mesh subset 范围和错误传播，并统一类型化 Mesh/Effect 调用。细节及 IDA 证据见[修复报告](../../reports/fix11_mme.md)和[证据记录](../../reports/fix11_mme_ida_evidence.md)。
+已修复名称注册顺序和回退、单位矩阵重置、Mesh subset 范围和错误传播，并统一类型化 Mesh/Effect 调用。
 
 第十二轮恢复普通 D3DX 导入：缺少运行库或必要导出时由 Windows 加载器在程序入口前拒绝启动。缺少标准效果时恢复原 MMHack 的逐帧初始化重试、逐次提示及失败返回 S_OK（不调用真实 BeginScene），详情见[失败状态机修复](../../reports/fix12_effect_failure.md)。
 
