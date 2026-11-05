@@ -9,13 +9,41 @@ MMD 9.32 remains the behavioral reference, not this project's release number.
 `10.01`、`10.08`、`11.00`。不要在源码里单独修改版本，不使用浮点数表示版本。
 Windows 数值版本的 `10.00` 为 `10.0.0.0`，显示文本仍为 `10.00`。
 
+## Release requirements / 发布规范
+
+- Public GitHub Release titles and descriptions must be written in English,
+  including change summaries, validation results and installation instructions.
+  Use the title `MikuDanceStudio vMAJOR.MINOR`.
+- Release both Windows architectures together: x64 and x86, C++17, `Release`,
+  `BUILD_TESTING=ON` and `MIKUDANCESTUDIO_DIAG=OFF`. The release workflow is the
+  authoritative build and test gate; both architecture jobs must succeed before
+  publication.
+- Record actual passed, failed and skipped test counts per architecture, and link
+  the release workflow run. Report local environment failures separately from CI
+  results. Skipped GPU tests do not establish rendering parity; passing the
+  configured suite does not establish full GUI or community-effect equivalence.
+- Commit the intended source and `VERSION`, then create an annotated tag matching
+  `VERSION` exactly. Published tags stay fixed. Rerun the workflow for the same
+  commit when necessary; source changes require a new version and tag.
+- Publish exactly four release assets: an x64 ZIP, an x86 ZIP and one `.zip.sha256`
+  file for each. Package contents and runtime requirements follow the contract
+  below; external models, motions, effects and local diagnostic files stay out.
+- A release is complete after CI succeeds, the public assets are downloaded and
+  verified, and the English release notes have been reviewed. Version commits
+  follow the repository's [commit rules](../AGENTS.md), including no AI attribution
+  trailers.
+
 ## Publish / 发布
 
-Commit the version and changes first, then push the matching tag:
+Check the working tree and changes since the previous release. Update only the
+root `VERSION` for the product version, validate it with
+`python scripts/release.py --tag v10.00`, and commit the intended changes. Replace
+`10.00` in these examples with the version being released. Push the source commit
+and its matching annotated tag:
 
 ```sh
 git tag -a v10.00 -m "MikuDanceStudio 10.00"
-git push origin v10.00
+git push origin main v10.00
 ```
 
 `.github/workflows/release.yml` checks that the tag exactly matches `VERSION`,
@@ -38,6 +66,53 @@ artifacts, and skips packaging and publishing. Existing version tags remain fixe
 ```sh
 gh workflow run release.yml -f tag=main -f validation_only=true
 ```
+
+## English release notes / 英文发布说明
+
+Describe the final changes since the preceding version in plain English. Lead
+with user-visible fixes, then relevant maintenance changes. Include a link to
+the successful release workflow, test counts for each architecture, any skips or
+remaining verification limits, and a short installation reminder.
+
+The workflow currently uses `--generate-notes` when creating a new release. Review
+that generated text and replace it with the English summary before considering
+the release complete; commit titles alone are not the release description. Save
+the reviewed text as a UTF-8 file and update the existing release with:
+
+```sh
+gh release edit v10.00 --title "MikuDanceStudio v10.00" --notes-file out/release-notes-v10.00.md
+```
+
+Example description (replace the changes, test counts and run link with the
+actual release evidence):
+
+```text
+This release fixes ...
+
+- Fix ...
+- Update ...
+
+Validation: x64 N/N and x86 N/N tests passed, with no failures or skips.
+CI: <release workflow run URL>
+
+Windows x64 and x86 ZIPs and their SHA-256 checksums are attached. Extract the
+entire folder and keep Data next to the executable. See RELEASES.md in the ZIP
+for the required Microsoft runtimes.
+```
+
+## Verify the published release / 发布后核验
+
+1. Wait for both architecture jobs and the publish job to finish successfully.
+   Download their JUnit reports and check the actual results, including skips.
+2. Confirm that the release is public, has the intended tag and title, and is
+   marked as the latest stable release for a normal version update. Check that
+   the remote tag resolves to the intended source commit.
+3. Download all four public release assets. Verify each ZIP against its SHA-256
+   file, check archive integrity and the packaged file list, and confirm that
+   `VERSION` and the EXE version resource match the tag. Check the PE architecture
+   of both `MikuDanceStudio.exe` and `Data/MMDxShow.dll` in each ZIP.
+4. Apply and read back the English release notes, then share the release page
+   link and the verified build/test result.
 
 ## Package and runtime / 压缩包与运行环境
 
