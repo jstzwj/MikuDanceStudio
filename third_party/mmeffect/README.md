@@ -1,6 +1,6 @@
 ﻿# 内置 MMEffect
 
-MME v0.37 效果引擎通过 MMEffect 静态库直接链接进 MikuMikuDanceE.exe。产品不依赖 MMEffect.dll、MMHack.dll 或代理 d3d9.dll，没有注入、IAT patch 或 vtable patch。系统 Direct3D 9 与对应架构的 Microsoft D3DX9 运行库仍是运行依赖。
+MME v0.37 效果引擎通过 MMEffect 静态库直接链接进 MikuDanceStudio.exe。产品不依赖 MMEffect.dll、MMHack.dll 或代理 d3d9.dll，没有注入、IAT patch 或 vtable patch。系统 Direct3D 9 与对应架构的 Microsoft D3DX9 运行库仍是运行依赖。
 
 ## 集成和生命周期
 
@@ -9,7 +9,7 @@ MME v0.37 效果引擎通过 MMEffect 静态库直接链接进 MikuMikuDanceE.ex
 - WinMain 显式调用运行时初始化和关闭，管理 GDI+；效果引擎仍按渲染入口惰性初始化。
 - 菜单和对话框编译进 EXE，使用宿主 HINSTANCE。资源 ID 见 include/mme_resources.h：菜单/对话框/图标组使用 501xx，图标子图从 50200 起，避免与原 MMD 资源冲突。控件和命令 ID 保持自身协议。
 - scripts/gen_mme_icon.py 在构建时生成显式编号的图标资源，需要 Python 3。
-- MMEffect.def 仅保留历史接口记录，不参与当前静态构建；没有 EXE/DLL 循环导入库生成步骤。
+- 效果回调通过宿主直接调用；宿主接口见 [mme_host_api.h](include/mme_host_api.h)，无需单独的 DLL 导出表或 manifest。
 
 ## 目录
 
@@ -26,8 +26,8 @@ MME v0.37 效果引擎通过 MMEffect 静态库直接链接进 MikuMikuDanceE.ex
 
 已修复名称注册顺序和回退、单位矩阵重置、Mesh subset 范围和错误传播，并统一类型化 Mesh/Effect 调用。
 
-第十二轮恢复普通 D3DX 导入：缺少运行库或必要导出时由 Windows 加载器在程序入口前拒绝启动。缺少标准效果时恢复原 MMHack 的逐帧初始化重试、逐次提示及失败返回 S_OK（不调用真实 BeginScene），详情见[失败状态机修复](../../reports/fix12_effect_failure.md)。
+当前使用普通 D3DX 导入：缺少运行库或必要导出时由 Windows 加载器在程序入口前拒绝启动。缺少标准效果时保留原 MMHack 的逐帧初始化重试、逐次提示及失败返回 S_OK（不调用真实 BeginScene），覆盖见[初始化回归](../../tests/mme_initialization_test.cpp)。
 
-旧硬件 32 位索引回退按原能力/缓冲容量条件直接调用类型化 D3DX DrawSubset，保留微软库的软件绘制行为，详见[回退修复](../../reports/fix12_mesh_fallback.md)。尚未完成旧显卡实测、真实 GPU 图像、复杂效果包及设备切换的全面对照。
+旧硬件 32 位索引回退按原能力/缓冲容量条件直接调用类型化 D3DX DrawSubset，保留微软库的软件绘制行为，覆盖见[网格回退回归](../../tests/mesh_fallback_test.cpp)。尚未完成旧显卡实测、真实 GPU 图像、复杂效果包及设备切换的全面对照。
 
-CTest 包含局部语义、真实 D3DX NULLREF Mesh/Effect ABI、EXE 内 MMD/MME 资源共存、初始化重试、软件回退分流及普通导入检查；最终结果见[第十二轮汇总](../../reports/fix12_summary.md)。
+CTest 包含局部语义、真实 D3DX NULLREF Mesh/Effect ABI、EXE 内 MMD/MME 资源共存、初始化重试、软件回退分流及普通导入检查；验证结果和覆盖边界见[移植状态](../../docs/PORTING_STATUS.md)与[兼容性基准](../../docs/X64_RECONSTRUCTION.md)。

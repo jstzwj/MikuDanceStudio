@@ -255,7 +255,6 @@ target_include_directories(mikudancestudio_core PUBLIC "${CMAKE_CURRENT_BINARY_D
 add_executable(MikuDanceStudio WIN32
     "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
     src/main/winmain.cpp
-    res/MMD.rc
     ${MIKUDANCESTUDIO_GEN_RES}
     ${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
 )

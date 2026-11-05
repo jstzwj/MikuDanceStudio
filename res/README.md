@@ -1,8 +1,8 @@
 # res/ — 资源目录
 
-本目录持有 MikuDanceStudio 可执行文件内嵌的全部 Win32 资源。资源在构建期由
+本目录持有宿主的 Win32 资源；内置 MME 的资源见 [MMEffect](../third_party/mmeffect/README.md)。资源由
 `scripts/gen_resources.py` 打包成 COFF `.res`（`gen_resources.res` 为 x86、
-`gen_resources_x64.res` 为 x64，仅 manifest 不同），由 CMake 直接交给链接器嵌入
+`gen_resources_x64.res` 为 x64，仅 manifest 不同），提交入库后由 CMake 直接交给链接器嵌入
 `MikuDanceStudio.exe`，运行时经 `FindResource` / `LoadMenu` / `LoadBitmap` 等加载。
 
 ## 素材来源声明
@@ -21,10 +21,8 @@
 ```
 assets/     原生格式素材（人类可读可编辑，嵌入时字节等价还原）
 templates/  模板 .rc 源码（dialogs.rc / menus.rc，gen 时经 rc.exe 编译嵌入）
-MMD.rc      索引注释（无实际资源语句）
 gen_resources*.res   生成产物（提交入库，脚本可随时重建）
 mmd_manifest*.xml    RT_MANIFEST 源文件（x86 / x64 各一）
-gen_menus_listing.txt  解码后的菜单树（信息性，不参与构建）
 ```
 
 ## assets/（原生格式，21 个叶子）

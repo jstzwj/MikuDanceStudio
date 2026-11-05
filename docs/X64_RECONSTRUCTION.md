@@ -48,7 +48,7 @@ Bullet 2.75 的第三方源码保持为用户提供的 `bullet-2.75.zip` 原始 
 
 `model_layout.hpp`、`bone_layout.hpp` 是人工维护的运行时结构及断言。修改时应直接维护头文件；历史注释中的 `scripts/gen_model_layout.py`、`scripts/gen_bone_layout.py` 不在本仓库。
 
-`scripts/regen_layout_pins.py` 只用于整理旧 pin 表，读取既有输入并应用特定字段映射；它不生成上述两个头文件，不能用于自动重写当前结构。
+`layout_pins.hpp` 的宏断言表同样随结构人工维护。整理旧 pin 表和提升偏移访问的一次性迁移脚本已退役，历史实现可通过 Git 历史查阅。
 
 修改布局时应：明确成员语义 → 同步全部消费者 → 更新准确断言 → 运行相关独立测试和完整构建 → 用真实输入补足 A/B 行为测试。不要先改断言去迁就未经验证的结构。
 

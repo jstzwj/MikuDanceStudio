@@ -1,5 +1,5 @@
-// callbacks.cpp - the 11 MMEffect.dll exports (ABI: include/mme_abi.h,
-// export table: src/MMEffect/MMEffect.def, ordinals 1..11 alphabetical).
+// callbacks.cpp - effect callbacks declared in include/mme_abi.h.
+// The embedded engine calls them directly through mme_host.cpp.
 //
 // Ground truth: kit decompiled 1800564a0_Initialize.c, 180058530_Cleanup.c,
 // 180057430_OnCreateModel.c, 1800574a0_OnDeleteModel.c, 1800574e0_OnBeginScene.c,
@@ -10,9 +10,9 @@
 //
 // Documented divergence: the original talks to a device whose vtable is
 // shifted by +0x20 relative to the standard IDirect3DDevice9 (the original
-// MMHack wrapper adds 4 leading slots). The rebuilt suite has no
-// such wrapper yet, so every device interaction uses the standard interface
-// with identical arguments; MMHack must hand MMEffect a standard-shaped device.
+// MMHack wrapper adds 4 leading slots). The embedded host provides a standard
+// device, so every device interaction uses the standard interface with the
+// corresponding arguments.
 // (The former "GetMaterial at a +0x10 shift" special case was a misread of
 // 0x180056bd5/0x18005753c `call [vtable+0x180]`: on the standard interface
 // slot 0x180 IS GetViewport, which is what the original calls there.)

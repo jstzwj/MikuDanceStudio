@@ -1,9 +1,0 @@
-{
-    "version": "0.5",
-    "requires": [
-        "bullet275/2.75#a96b67baa6bbf8feb31adf45cfaefef5%1787985721.535118"
-    ],
-    "build_requires": [],
-    "python_requires": [],
-    "config_requires": []
-}

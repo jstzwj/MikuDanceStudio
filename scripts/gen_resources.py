@@ -30,8 +30,6 @@ Embedding is byte-exact per leaf:
                                               each ICONDIRENTRY + WORD id)
 
 Usage (gen/verify need rc.exe from a Windows 10 SDK, or RC_EXE set):
-  python scripts/gen_resources.py init    # one-shot: res/rsrc/ -> res/assets/
-                                          # (+ extract x64 manifest)
   python scripts/gen_resources.py gen      # rewrite res/gen_resources*.res
   python scripts/gen_resources.py verify   # gen + byte-compare, no writes
 """
@@ -41,10 +39,6 @@ import struct
 import sys
 
 import dialog_rc  # sibling script: rc.exe location + .rc compile + .res parse
-import argparse
-import os
-import struct
-import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RES = os.path.join(ROOT, "res")
@@ -81,7 +75,7 @@ _templates = None
 def templates():
     """Compile res/templates/**/*.rc once -> {(rt, name): template blob}.
 
-    Lazy so `init` (which never touches templates) runs without an SDK;
+    Lazy so icon generation can reuse the resource helpers without an SDK;
     gen/verify compile through rc.exe - see scripts/dialog_rc.py for why
     the emitted bytes are the original ones verbatim.
     """
@@ -212,73 +206,6 @@ def build_records(manifest):
     return records
 
 
-# --------------------------------------------------------------------------
-# init: one-shot conversion res/rsrc/ -> res/assets/ (+ x64 manifest)
-# --------------------------------------------------------------------------
-
-def bmp_file_header(dib):
-    bi_size, _, _, _, bpp = struct.unpack_from("<IiiHH", dib, 0)
-    clr_used = struct.unpack_from("<I", dib, 32)[0]
-    palette = clr_used or (1 << bpp if bpp <= 8 else 0)
-    return (b"BM" + struct.pack("<IHHI", 14 + len(dib), 0, 0,
-                                14 + bi_size + 4 * palette))
-
-
-def cmd_init():
-    rsrc = os.path.join(RES, "rsrc")
-    assets = os.path.join(RES, "assets")
-    os.makedirs(assets, exist_ok=True)
-
-    for rid, fname in PNG_MAP:
-        src = os.path.join(rsrc, "PNG", f"{rid}_{LANG_JP:04X}.bin")
-        dst = os.path.join(assets, fname)
-        blob = open(src, "rb").read()
-        assert blob[:8] == b"\x89PNG\r\n\x1a\n", f"{src}: not a PNG"
-        open(dst, "wb").write(blob)
-
-    simple = [
-        ("XFILE", 115, "axis.x"),
-        ("RCDATA", 117, "skin_effect_sm2.fx"),
-        ("RCDATA", 118, "skin_effect_sm3.fx"),
-    ]
-    for rtype, rid, fname in simple:
-        src = os.path.join(rsrc, rtype, f"{rid}_{LANG_JP:04X}.bin")
-        open(os.path.join(assets, fname), "wb").write(open(src, "rb").read())
-
-    for rid, fname in ((101, "sidebar_icon_sheet.bmp"),
-                       (119, "playing_indicator.bmp")):
-        dib = open(os.path.join(rsrc, "BITMAP",
-                                f"{rid}_{LANG_JP:04X}.bin"), "rb").read()
-        open(os.path.join(assets, fname), "wb").write(
-            bmp_file_header(dib) + dib)
-
-    # app.ico: reassemble from RT_GROUP_ICON 100 + RT_ICON 1..6
-    group = open(os.path.join(rsrc, "GROUP_ICON",
-                              f"100_{LANG_JP:04X}.bin"), "rb").read()
-    count = struct.unpack_from("<H", group, 4)[0]
-    ico = bytearray(group[:6])
-    images, off = [], 6 + 16 * count
-    for i in range(count):
-        entry = bytearray(group[6 + i * 14:6 + i * 14 + 14])
-        rid = struct.unpack_from("<H", entry, 12)[0]
-        blob = open(os.path.join(rsrc, "ICON",
-                                 f"{rid}_{LANG_JP:04X}.bin"), "rb").read()
-        images.append(blob)
-        ico += entry[:12] + struct.pack("<I", off)   # ICONDIRENTRY = 16 bytes
-        off += len(blob)
-    for blob in images:
-        ico += blob
-    open(os.path.join(assets, "app.ico"), "wb").write(bytes(ico))
-
-    # x64 manifest: extract the <assembly> blob from the committed x64 .res
-    res64 = open(os.path.join(RES, "gen_resources_x64.res"), "rb").read()
-    i = res64.find(b"<assembly")
-    j = res64.find(b"</assembly>", i)
-    open(os.path.join(RES, "mmd_manifest_x64.xml"), "wb").write(
-        res64[i:j + len(b"</assembly>")])
-    print(f"init: wrote res/assets/, res/mmd_manifest_x64.xml")
-
-
 def run_gen(verify_only=False):
     ok = True
     for manifest, out in (("mmd_manifest.xml", "gen_resources.res"),
@@ -300,11 +227,8 @@ def run_gen(verify_only=False):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["init", "gen", "verify"])
+    ap.add_argument("cmd", choices=["gen", "verify"])
     args = ap.parse_args()
-    if args.cmd == "init":
-        cmd_init()
-        return 0
     return 0 if run_gen(verify_only=(args.cmd == "verify")) else 1
 
 

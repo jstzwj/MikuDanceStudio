@@ -65,7 +65,7 @@ std::uint32_t ColorLerp(std::uint32_t a, std::uint32_t b, float t);
 // VA 0x00408960 - strip file part from a full path; returns the dir buffer.
 wchar_t* ExtractDirFromPath(wchar_t* destination, const wchar_t* fullPath);
 
-// ---- subsystem init targets (bodies pending; offsets in offsets.hpp) -----
+// ---- subsystem initialization ---------------------------------------------
 void RendererInit(D3DRenderer* renderer);             // VA 0x00406D40 (locale/font)
 void InitAudioContext(WaveAudioContext* audio);       // VA 0x004C2450
 void InitDShowRecorder(DShowRecorder* recorder);      // VA 0x00408EA0

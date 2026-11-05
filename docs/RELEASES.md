@@ -72,8 +72,8 @@ libraries used by the application. Numerical alignment uses compiler settings,
 with no Bullet algorithm, expression-order, class-layout or diagnostic patches.
 This does not guarantee bitwise equivalence with MMD's historical compiler.
 CI creates that local recipe before installing application dependencies.
-`--lockfile=""` deliberately bypasses the historical workstation lock, whose
-Bullet recipe revision predates these versioned sources.
+`--lockfile=""` prevents locally generated lockfiles from pinning an older
+Bullet recipe revision instead of the recipe just exported from these sources.
 
 ```powershell
 python -m pip install conan==2.27.1
